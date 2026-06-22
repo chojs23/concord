@@ -234,7 +234,7 @@ pub struct ForumPostComposerView {
 
 pub enum LocalUploadPreviewView<'a> {
     Loading { filename: String },
-    Ready { protocol: &'a Protocol },
+    Ready { protocol: &'a Protocol, content_hash: u64 },
     Failed { filename: String, message: String },
 }
 

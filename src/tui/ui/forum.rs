@@ -431,7 +431,7 @@ pub(super) fn render_forum_post_reaction_emojis(
                 continue;
             }
             frame.render_widget(
-                RatatuiImage::new(image.protocol),
+                TrackedImage::new(image.protocol, image.content_hash),
                 Rect {
                     x: absolute_col as u16,
                     y: list.y.saturating_add(row as u16),

@@ -488,17 +488,6 @@ impl DashboardState {
         Some(local_upload_preview_view(preview))
     }
 
-    pub(in crate::tui) fn forum_post_attachment_preview_has_image_surface(&self) -> bool {
-        let Some(popup) = self.popups.forum_post_composer() else {
-            return false;
-        };
-        let Some(preview) = popup.attachment_preview.as_ref() else {
-            return false;
-        };
-        popup.editing == Some(ForumPostComposerFieldState::Attachments)
-            && preview.attachment_index == popup.selected_attachment_index
-            && matches!(preview.state, LocalUploadPreviewStatus::Ready(_))
-    }
 
     pub(in crate::tui) fn take_pending_forum_post_attachment_preview(
         &mut self,

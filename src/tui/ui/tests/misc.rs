@@ -823,31 +823,3 @@ fn forwarded_card_rows_push_inline_preview_slot_down() {
     assert_eq!(inline_image_preview_row(&messages, &state, 0, 200, 0, 0), 4);
 }
 
-#[test]
-fn inline_album_overflow_marker_is_visible() {
-    let mut state = state_with_message();
-    let dump = render_dashboard_dump_with_previews(
-        120,
-        20,
-        &mut state,
-        vec![ImagePreview {
-            viewer: false,
-            message_index: 0,
-            preview_x_offset_columns: 0,
-            preview_y_offset_rows: 0,
-            preview_width: 16,
-            preview_height: 3,
-            preview_overflow_count: 2,
-            accent_color: None,
-            state: ImagePreviewState::Loading {
-                filename: "image-4.png".to_owned(),
-            },
-        }],
-    );
-
-    assert!(
-        dump.iter().any(|line| line.contains("+2")),
-        "dashboard dump did not contain overflow overlay marker:\n{}",
-        dump.join("\n")
-    );
-}

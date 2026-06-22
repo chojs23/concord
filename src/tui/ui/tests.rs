@@ -17,7 +17,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MemberEntry, READ_DIM,
+    ACCENT, DIM, ImagePreview, MENTION_ORANGE, MemberEntry, READ_DIM,
     SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
     attachment_viewer_image_area, attachment_viewer_popup, centered_viewer_preview_area,
     channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,

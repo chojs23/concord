@@ -165,7 +165,7 @@ pub(in crate::tui::ui) fn render_messages(
             avatar.visible_height,
             selected_avatar_x_offset(selected_avatar_body_top, avatar.row),
         ) {
-            frame.render_widget(RatatuiImage::new(avatar.protocol), area);
+            frame.render_widget(TrackedImage::new(avatar.protocol, avatar.content_hash), area);
         }
     }
     render_inline_reaction_emojis(frame, message_areas.list, &render_plan, emoji_images);
@@ -196,11 +196,11 @@ pub(in crate::tui::ui) fn render_messages(
             image_preview.preview_height,
             image_preview.accent_color,
         ) {
-            render_image_preview(frame, preview_area, image_preview.state);
-            render_image_preview_overflow_marker(
+            render_image_preview(
                 frame,
                 preview_area,
-                image_preview.preview_overflow_count,
+                image_preview.content_hash,
+                image_preview.state,
             );
         }
     }
@@ -467,7 +467,10 @@ fn render_inline_reaction_emojis(
                 if image_area.y >= list_bottom as u16 {
                     continue;
                 }
-                frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+                frame.render_widget(
+                    TrackedImage::new(image.protocol, image.content_hash),
+                    image_area,
+                );
             }
         }
     }
@@ -539,7 +542,10 @@ fn render_inline_message_body_emojis(
                     width: image_width,
                     height: 1,
                 };
-                frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+                frame.render_widget(
+                    TrackedImage::new(image.protocol, image.content_hash),
+                    image_area,
+                );
             }
         }
     }
@@ -600,6 +606,7 @@ pub(in crate::tui::ui) fn message_body_custom_emoji_rows(
 pub(in crate::tui::ui) fn render_image_preview(
     frame: &mut Frame,
     area: Rect,
+    content_hash: u64,
     image_preview: ImagePreviewState<'_>,
 ) {
     match image_preview {
@@ -616,33 +623,9 @@ pub(in crate::tui::ui) fn render_image_preview(
             area,
         ),
         ImagePreviewState::Ready { protocol, .. } => {
-            let widget = StatefulImage::new().resize(Resize::Fit(None));
-            frame.render_stateful_widget(widget, area, protocol);
+            frame.render_stateful_widget(TrackedStatefulImage::new(content_hash), area, protocol);
         }
     }
-}
-
-fn render_image_preview_overflow_marker(frame: &mut Frame, area: Rect, overflow_count: usize) {
-    if overflow_count == 0 || area.width < 3 || area.height == 0 {
-        return;
-    }
-
-    let marker = format!("+{overflow_count}");
-    let width = u16::try_from(marker.width())
-        .unwrap_or(u16::MAX)
-        .min(area.width);
-    let marker_area = Rect {
-        x: area.x.saturating_add(area.width.saturating_sub(width)),
-        y: area.y.saturating_add(area.height.saturating_sub(1)),
-        width,
-        height: 1,
-    };
-    frame.render_widget(
-        Paragraph::new(marker)
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::White).bg(Color::Black).bold()),
-        marker_area,
-    );
 }
 
 #[cfg(test)]

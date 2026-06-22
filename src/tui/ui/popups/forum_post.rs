@@ -203,8 +203,11 @@ fn render_forum_post_upload_preview(
                 .wrap(Wrap { trim: false }),
             area,
         ),
-        ForumPostAttachmentPreviewView::Ready { protocol } => {
-            frame.render_widget(RatatuiImage::new(protocol), area);
+        ForumPostAttachmentPreviewView::Ready {
+            protocol,
+            content_hash,
+        } => {
+            frame.render_widget(TrackedImage::new(protocol, content_hash), area);
         }
     }
 }

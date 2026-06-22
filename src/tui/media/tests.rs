@@ -499,7 +499,6 @@ fn image_preview_targets_layout_album_grids() {
         (
             (1..=3).map(image_attachment).collect::<Vec<_>>(),
             vec![(0, 0, 0, 8, 3), (1, 8, 0, 8, 2), (2, 8, 2, 4, 1)],
-            vec![0, 0, 0],
         ),
         (
             (1..=4).map(image_attachment).collect::<Vec<_>>(),
@@ -509,7 +508,6 @@ fn image_preview_targets_layout_album_grids() {
                 (2, 0, 2, 4, 1),
                 (3, 4, 2, 4, 1),
             ],
-            vec![0, 0, 0, 0],
         ),
         (
             (1..=5).map(image_attachment).collect::<Vec<_>>(),
@@ -519,16 +517,14 @@ fn image_preview_targets_layout_album_grids() {
                 (2, 0, 2, 4, 1),
                 (3, 4, 2, 4, 1),
             ],
-            vec![0, 0, 0, 1],
         ),
         (
             portrait_album,
             vec![(0, 0, 0, 5, 3), (1, 5, 0, 5, 3)],
-            vec![0, 0],
         ),
     ];
 
-    for (attachments, expected_geometry, expected_overflow) in cases {
+    for (attachments, expected_geometry) in cases {
         let mut state = state_with_image_messages(0, &[]);
         push_media_message(
             &mut state,
@@ -554,13 +550,6 @@ fn image_preview_targets_layout_album_grids() {
                 ))
                 .collect::<Vec<_>>(),
             expected_geometry
-        );
-        assert_eq!(
-            targets
-                .iter()
-                .map(|target| target.preview_overflow_count)
-                .collect::<Vec<_>>(),
-            expected_overflow
         );
     }
 }
@@ -1179,21 +1168,6 @@ fn image_preview_request_is_created_for_draw_target() {
 }
 
 #[test]
-fn image_surface_refresh_protocols_advances_generation() {
-    let mut previews = image_preview_cache_without_picker();
-    let mut avatars = avatar_cache_without_picker();
-    let mut emojis = emoji_cache_without_picker();
-
-    previews.refresh_protocols();
-    avatars.refresh_protocols();
-    emojis.refresh_protocols();
-
-    assert_eq!(previews.cache.protocol_generation, 1);
-    assert_eq!(avatars.cache.protocol_generation, 1);
-    assert_eq!(emojis.cache.protocol_generation, 1);
-}
-
-#[test]
 fn image_preview_render_state_preserves_target_order() {
     let mut cache = image_preview_cache_without_picker();
     let first = image_preview_target(1);
@@ -1558,7 +1532,6 @@ fn clipped_preview_image_stays_within_preview_pixel_bounds() {
         preview_y_offset_rows: 0,
         preview_width: 16,
         preview_height: 3,
-        preview_overflow_count: 0,
         visible_preview_height: 3,
         top_clip_rows: 0,
         accent_color: None,
@@ -1586,7 +1559,6 @@ fn clipped_video_preview_draws_play_marker_into_image_pixels() {
         preview_y_offset_rows: 0,
         preview_width: 16,
         preview_height: 3,
-        preview_overflow_count: 0,
         visible_preview_height: 3,
         top_clip_rows: 0,
         accent_color: None,
@@ -2094,7 +2066,6 @@ fn image_preview_target(id: u64) -> ImagePreviewTarget {
         preview_y_offset_rows: 0,
         preview_width: 16,
         preview_height: 3,
-        preview_overflow_count: 0,
         visible_preview_height: 3,
         top_clip_rows: 0,
         accent_color: None,

@@ -489,7 +489,10 @@ fn render_composer_emoji_picker_images(
             1,
         );
         if image_area.width > 0 {
-            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+            frame.render_widget(
+                TrackedImage::new(image.protocol, image.content_hash),
+                image_area,
+            );
         }
     }
 }
@@ -676,7 +679,10 @@ fn render_composer_custom_emoji_images(
             1,
         );
         if image_area.width > 0 {
-            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+            frame.render_widget(
+                TrackedImage::new(image.protocol, image.content_hash),
+                image_area,
+            );
         }
     }
 }
@@ -777,8 +783,11 @@ fn render_composer_attachment_preview(
                 .wrap(Wrap { trim: false }),
             area,
         ),
-        LocalUploadPreviewView::Ready { protocol } => {
-            frame.render_widget(RatatuiImage::new(protocol), area);
+        LocalUploadPreviewView::Ready {
+            protocol,
+            content_hash,
+        } => {
+            frame.render_widget(TrackedImage::new(protocol, content_hash), area);
         }
     }
 }

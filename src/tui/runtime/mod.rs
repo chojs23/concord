@@ -19,6 +19,7 @@ use super::{
 
 pub(super) mod effects;
 pub(super) mod events;
+pub(in crate::tui) mod image_layer;
 mod media_runtime;
 pub(super) mod notification_audio;
 pub(super) mod redraw;
@@ -26,14 +27,10 @@ mod scheduler;
 
 use effects as effect_helpers;
 use media_runtime::{
-    DashboardMediaRuntime, LocalUploadPreviewResult, clear_image_surfaces_frame,
-    drain_pending_commands_after_draw, draw_dashboard_frame, schedule_media_loads_after_draw,
-    store_local_upload_preview_result,
+    DashboardMediaRuntime, LocalUploadPreviewResult, drain_pending_commands_after_draw,
+    draw_dashboard_frame, schedule_media_loads_after_draw, store_local_upload_preview_result,
 };
-use redraw::{
-    should_redraw_after_visible_signature_change,
-    should_refresh_image_protocols_after_visible_signature_change, visible_dashboard_signature,
-};
+use redraw::visible_dashboard_signature;
 use scheduler::DashboardCommandScheduler;
 
 type ClipboardPasteResult = std::result::Result<
@@ -103,31 +100,26 @@ pub(super) async fn run_dashboard(
     let mut clipboard = ClipboardService::default();
     let mut last_frame_area = Rect::default();
     let mut dirty = true;
-    // Snapshot/effect-driven redraws are coalesced into the next pending
-    // deadline so bursts of background Discord events (presence, typing,
-    // off-screen messages) do not each trigger a fresh OSC 1337 emission for
-    // every visible image. Key and mouse arms still mark `dirty` immediately
-    // to keep input responsiveness intact.
+    // Background Discord events (presence, typing, off-screen messages) are
+    // coalesced into the next pending deadline so a burst does not schedule a
+    // draw per event. Key and mouse arms still mark `dirty` immediately to keep
+    // input responsive. Flicker is no longer a reason to suppress redraws: the
+    // image emission tracker re-emits a surface only when it actually changes.
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut clipboard_paste_in_flight = false;
-    // Terminal image protocols mark image cells as skipped in ratatui's diff
-    // buffer. When a popup closes over an image, those skipped cells can keep
-    // old popup pixels. On overlay transitions, draw one image-free frame first
-    // so normal cells overwrite the stale image surface before images redraw.
-    let mut clear_image_surfaces_before_next_draw = false;
+    // Owns the cross-frame image emission state. It is installed into a
+    // thread-local only for the duration of each synchronous draw, so its state
+    // survives even if this task migrates between Tokio worker threads.
+    let mut image_tracker = image_layer::ImageEmissionTracker::default();
 
     while !state.should_quit() {
         if dirty {
-            if clear_image_surfaces_before_next_draw {
-                terminal.draw(|frame| {
-                    last_frame_area = clear_image_surfaces_frame(frame, &mut state);
-                })?;
-                clear_image_surfaces_before_next_draw = false;
-            }
+            image_layer::install(std::mem::take(&mut image_tracker));
             terminal.draw(|frame| {
                 last_frame_area = draw_dashboard_frame(frame, &mut state, &mut media_runtime);
             })?;
+            image_tracker = image_layer::uninstall();
             dirty = false;
 
             dirty |= drain_pending_commands_after_draw(&mut state, &commands).await;
@@ -149,11 +141,6 @@ pub(super) async fn run_dashboard(
             maybe_event = terminal_events.next() => {
                 match maybe_event {
                     Some(Ok(event)) => {
-                        let before_signature = visible_dashboard_signature(&state);
-                        let image_surfaces_visible_before_event =
-                            media_runtime.image_surfaces_visible(&state);
-                        let composer_preview_surface_visible_before_event =
-                            state.composer_attachment_preview_has_image_surface();
                         let outcome = events::handle_terminal_event(
                             &mut state,
                             event,
@@ -164,6 +151,9 @@ pub(super) async fn run_dashboard(
                             if let Err(error) = open_composer_in_editor(terminal, &mut state) {
                                 logging::error("tui", format!("editor failed: {error}"));
                             }
+                            // The external editor takes over the terminal, so any
+                            // image on screen is gone. Force a full re-emit.
+                            image_tracker.invalidate();
                         }
                         if state.take_paste_clipboard_request()
                             && state.accepts_clipboard_paste()
@@ -216,23 +206,6 @@ pub(super) async fn run_dashboard(
                                     .await;
                                 }
                             }
-                        }
-                        let after_signature = visible_dashboard_signature(&state);
-                        if should_refresh_image_protocols_after_visible_signature_change(
-                            &before_signature,
-                            &after_signature,
-                            image_surfaces_visible_before_event,
-                        ) {
-                            media_runtime.refresh_protocols();
-                            clear_image_surfaces_before_next_draw = true;
-                            dirty = true;
-                        }
-                        if should_clear_composer_preview_surface(
-                            composer_preview_surface_visible_before_event,
-                            state.composer_attachment_preview_has_image_surface(),
-                        ) {
-                            clear_image_surfaces_before_next_draw = true;
-                            dirty = true;
                         }
                         if outcome.dirty {
                             dirty = true;
@@ -301,13 +274,7 @@ pub(super) async fn run_dashboard(
                             &mut ctx,
                         );
                         let after_signature = visible_dashboard_signature(&state);
-                        let images_visible = media_runtime.image_surfaces_visible(&state);
-                        should_redraw_after_visible_signature_change(
-                            &before_signature,
-                            &after_signature,
-                            images_visible,
-                            deferred_outcome.force_redraw,
-                        )
+                        deferred_outcome.force_redraw || before_signature != after_signature
                     }
                     Err(_) => {
                         logging::error("tui", "snapshot stream closed");
@@ -357,14 +324,9 @@ pub(super) async fn run_dashboard(
                             }
                         }
                         let after_signature = visible_dashboard_signature(&state);
-                        let images_visible = media_runtime.image_surfaces_visible(&state);
                         let should_redraw_for_effects = effect_outcome.processed_event
-                            && should_redraw_after_visible_signature_change(
-                                &before_signature,
-                                &after_signature,
-                                images_visible,
-                                effect_outcome.force_redraw,
-                            );
+                            && (effect_outcome.force_redraw
+                                || before_signature != after_signature);
                         if should_redraw_for_effects {
                             schedule_background_redraw(
                                 &mut pending_redraw_deadline,
@@ -458,10 +420,6 @@ fn schedule_background_redraw(
     if pending_redraw_deadline.is_none() {
         *pending_redraw_deadline = Some(tokio::time::Instant::now() + debounce);
     }
-}
-
-fn should_clear_composer_preview_surface(visible_before: bool, visible_after: bool) -> bool {
-    visible_before && !visible_after
 }
 
 fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardPasteResult) {
@@ -597,17 +555,4 @@ fn open_composer_in_editor(
         state.replace_composer_input_from_editor(content);
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::should_clear_composer_preview_surface;
-
-    #[test]
-    fn clears_composer_preview_surface_when_it_disappears() {
-        assert!(should_clear_composer_preview_surface(true, false));
-        assert!(!should_clear_composer_preview_surface(false, false));
-        assert!(!should_clear_composer_preview_surface(false, true));
-        assert!(!should_clear_composer_preview_surface(true, true));
-    }
 }

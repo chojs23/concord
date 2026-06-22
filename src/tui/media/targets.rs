@@ -56,7 +56,6 @@ pub(in crate::tui) struct ImagePreviewTarget {
     pub(super) preview_y_offset_rows: usize,
     pub(super) preview_width: u16,
     pub(super) preview_height: u16,
-    pub(super) preview_overflow_count: usize,
     pub(super) visible_preview_height: u16,
     pub(super) top_clip_rows: u16,
     pub(super) accent_color: Option<u32>,
@@ -125,7 +124,6 @@ pub(in crate::tui) fn visible_image_preview_targets(
             preview_y_offset_rows: 0,
             preview_width,
             preview_height,
-            preview_overflow_count: 0,
             visible_preview_height: preview_height,
             top_clip_rows: 0,
             accent_color: preview.accent_color,
@@ -181,7 +179,6 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             preview_y_offset_rows: 0,
             preview_width,
             preview_height,
-            preview_overflow_count: 0,
             visible_preview_height: preview_height,
             top_clip_rows: 0,
             accent_color: preview.accent_color,
@@ -213,11 +210,6 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             .flatten();
         for cell in &album.cells {
             let preview = previews[cell.preview_index];
-            let preview_overflow_count = if cell.preview_index + 1 == MAX_ALBUM_PREVIEW_TILES {
-                previews.len().saturating_sub(MAX_ALBUM_PREVIEW_TILES)
-            } else {
-                0
-            };
             let preview_top = preview_top_base + cell.y_offset_rows as isize;
             let preview_bottom = preview_top.saturating_add(cell.height as isize);
             let visible_top = preview_top.max(0);
@@ -231,7 +223,6 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
                     preview_y_offset_rows: cell.y_offset_rows,
                     preview_width: cell.width,
                     preview_height: cell.height,
-                    preview_overflow_count,
                     visible_preview_height: u16::try_from(visible_bottom - visible_top)
                         .unwrap_or(u16::MAX),
                     top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),

@@ -37,7 +37,14 @@ pub(in crate::tui::state) fn local_upload_preview_view(
                 filename: preview.filename.clone(),
             }
         }
-        LocalUploadPreviewStatus::Ready(protocol) => LocalUploadPreviewView::Ready { protocol },
+        LocalUploadPreviewStatus::Ready(protocol) => LocalUploadPreviewView::Ready {
+            protocol,
+            content_hash: crate::tui::runtime::image_layer::content_hash(&(
+                preview.attachment_index,
+                preview.generation,
+                preview.filename.as_str(),
+            )),
+        },
         LocalUploadPreviewStatus::Failed(message) => LocalUploadPreviewView::Failed {
             filename: preview.filename.clone(),
             message: message.clone(),

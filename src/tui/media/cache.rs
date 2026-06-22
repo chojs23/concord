@@ -13,7 +13,6 @@ pub(super) struct MediaImageCacheCore<K, E> {
     pub(super) entries: HashMap<K, E>,
     pub(super) tick: u64,
     pub(super) decode_generation: u64,
-    pub(super) protocol_generation: u64,
 }
 
 impl<K, E> MediaImageCacheCore<K, E>
@@ -26,12 +25,7 @@ where
             entries: HashMap::new(),
             tick: 0,
             decode_generation: 0,
-            protocol_generation: 0,
         }
-    }
-
-    pub(super) fn refresh_protocols(&mut self) {
-        self.protocol_generation = self.protocol_generation.saturating_add(1);
     }
 
     pub(super) fn next_tick(&mut self) -> u64 {

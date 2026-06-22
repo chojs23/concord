@@ -81,11 +81,7 @@ mod tests {
         media::{AvatarImageCache, EmojiImageCache, ImagePreviewCache},
         runtime::{
             effects::{self, effect_forces_redraw},
-            redraw::{
-                should_redraw_after_visible_signature_change,
-                should_refresh_image_protocols_after_visible_signature_change,
-                should_suppress_image_redraw_for_signature_change, visible_dashboard_signature,
-            },
+            redraw::visible_dashboard_signature,
         },
     };
     use crate::tui::state::{DashboardState, FocusPane};
@@ -189,9 +185,6 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, false, false,
-        ));
 
         let mut state = state_with_messages(1);
         state.focus_pane(FocusPane::Messages);
@@ -201,9 +194,6 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, false, false,
-        ));
 
         let mut state = state_with_messages(1);
         state.focus_pane(FocusPane::Messages);
@@ -215,9 +205,6 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, false, false,
-        ));
 
         let mut state = DashboardState::new();
         let _ = state.open_user_profile_popup(Id::new(99), None);
@@ -229,9 +216,6 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, false, false,
-        ));
 
         let mut state = DashboardState::new();
         state.push_event(AppEvent::Ready {
@@ -258,53 +242,6 @@ mod tests {
         });
         let failed = visible_dashboard_signature(&state);
         assert_ne!(saving, failed);
-        assert!(should_redraw_after_visible_signature_change(
-            &saving, &failed, false, false,
-        ));
-    }
-
-    #[test]
-    fn overlay_changes_refresh_image_protocols_when_image_surfaces_are_visible() {
-        let mut state = state_with_messages(1);
-        push_image_message(&mut state, 2);
-        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-            guild_id: Some(Id::new(1)),
-            name: "random".to_owned(),
-            ..ChannelInfo::test(Id::new(3), "GuildText")
-        }));
-        state.focus_pane(FocusPane::Messages);
-        let before = visible_dashboard_signature(&state);
-
-        state.open_channel_switcher();
-        let open = visible_dashboard_signature(&state);
-
-        assert_ne!(before, open);
-        assert!(
-            should_refresh_image_protocols_after_visible_signature_change(&before, &open, true)
-        );
-        assert!(
-            !should_refresh_image_protocols_after_visible_signature_change(&before, &open, false)
-        );
-
-        state.move_channel_switcher_down();
-        let moved = visible_dashboard_signature(&state);
-
-        assert_eq!(state.selected_channel_switcher_index(), Some(1));
-        assert_ne!(open, moved);
-        assert!(should_redraw_after_visible_signature_change(
-            &open, &moved, true, false,
-        ));
-        assert!(
-            !should_refresh_image_protocols_after_visible_signature_change(&open, &moved, true)
-        );
-
-        state.close_channel_switcher();
-        let closed = visible_dashboard_signature(&state);
-
-        assert_ne!(moved, closed);
-        assert!(
-            should_refresh_image_protocols_after_visible_signature_change(&moved, &closed, true)
-        );
     }
 
     #[test]
@@ -324,41 +261,6 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, true, false,
-        ));
-        assert!(
-            !should_refresh_image_protocols_after_visible_signature_change(&before, &after, true,)
-        );
-    }
-
-    #[test]
-    fn new_message_count_only_change_is_suppressed_while_images_are_visible() {
-        let mut state = state_with_messages(5);
-        state.focus_pane(FocusPane::Messages);
-        state.set_message_view_height(3);
-        state.scroll_message_viewport_top();
-        let before = visible_dashboard_signature(&state);
-        let mut after = before.clone();
-        after.messages.new_messages_count = 1;
-
-        assert_eq!(before.messages.new_messages_count, 0);
-        assert_eq!(after.messages.new_messages_count, 1);
-        assert!(should_suppress_image_redraw_for_signature_change(
-            &before, &after, true,
-        ));
-        assert!(!should_suppress_image_redraw_for_signature_change(
-            &before, &after, false,
-        ));
-        assert!(!should_redraw_after_visible_signature_change(
-            &before, &after, true, false,
-        ));
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, false, false,
-        ));
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, true, true,
-        ));
     }
 
     #[test]
@@ -378,12 +280,6 @@ mod tests {
             before.messages.visible_messages,
             after.messages.visible_messages
         );
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, true, false,
-        ));
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, false, false,
-        ));
     }
 
     #[test]
@@ -408,15 +304,6 @@ mod tests {
             before.channels.visible_channels,
             after.channels.visible_channels
         );
-        assert!(!should_suppress_image_redraw_for_signature_change(
-            &before, &after, true,
-        ));
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, true, false,
-        ));
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, false, false,
-        ));
 
         let mut state = state_with_active_dm_and_guild();
         state.focus_pane(FocusPane::Messages);
@@ -431,15 +318,6 @@ mod tests {
             after.messages.visible_messages
         );
         assert_ne!(before.guilds.visible_guilds, after.guilds.visible_guilds);
-        assert!(!should_suppress_image_redraw_for_signature_change(
-            &before, &after, true,
-        ));
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, true, false,
-        ));
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, false, false,
-        ));
     }
 
     #[test]
@@ -456,9 +334,6 @@ mod tests {
         let after = visible_dashboard_signature(&state);
 
         assert_ne!(before, after);
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, true, false,
-        ));
     }
 
     #[test]
@@ -475,9 +350,6 @@ mod tests {
             before.messages.visible_messages,
             after.messages.visible_messages
         );
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, true, false,
-        ));
     }
 
     #[test]
@@ -506,15 +378,10 @@ mod tests {
             before.messages.visible_messages,
             after.messages.visible_messages
         );
-        assert!(should_redraw_after_visible_signature_change(
-            &before, &after, true, false,
-        ));
     }
 
     #[test]
-    fn media_effects_force_redraw_without_signature_change() {
-        let state = state_with_messages(1);
-        let signature = visible_dashboard_signature(&state);
+    fn media_effects_force_redraw() {
         let loaded = AppEvent::AttachmentPreviewLoaded {
             url: "https://cdn.discordapp.com/avatars/1/hash.png?size=32".to_owned(),
             bytes: Vec::new(),
@@ -526,26 +393,15 @@ mod tests {
 
         assert!(effect_forces_redraw(&loaded));
         assert!(effect_forces_redraw(&failed));
-        assert!(should_redraw_after_visible_signature_change(
-            &signature, &signature, true, true,
-        ));
-        assert!(!should_redraw_after_visible_signature_change(
-            &signature, &signature, true, false,
-        ));
     }
 
     #[test]
-    fn gateway_error_forces_redraw_without_signature_change() {
-        let state = state_with_messages(1);
-        let signature = visible_dashboard_signature(&state);
+    fn gateway_error_forces_redraw() {
         let error = AppEvent::GatewayError {
             message: "websocket closed before READY".to_owned(),
         };
 
         assert!(effect_forces_redraw(&error));
-        assert!(should_redraw_after_visible_signature_change(
-            &signature, &signature, false, true,
-        ));
     }
 
     fn state_with_messages(count: u64) -> DashboardState {

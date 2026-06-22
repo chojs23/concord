@@ -9,7 +9,7 @@ use ratatui::{
         ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
-use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage};
+use crate::tui::runtime::image_layer::{TrackedImage, TrackedStatefulImage};
 use unicode_width::UnicodeWidthStr;
 
 #[cfg(test)]
@@ -193,6 +193,7 @@ pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewL
     }
 }
 
+#[cfg(test)]
 pub fn render(
     frame: &mut Frame,
     state: &DashboardState,

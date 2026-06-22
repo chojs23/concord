@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-use super::{effects as effect_helpers, redraw::image_surfaces_visible};
+use super::effects as effect_helpers;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LocalUploadPreviewOwner {
@@ -61,21 +61,6 @@ impl DashboardMediaRuntime {
             avatar_targets: Vec::new(),
             emoji_targets: Vec::new(),
         }
-    }
-
-    pub(super) fn refresh_protocols(&mut self) {
-        self.image_previews.refresh_protocols();
-        self.avatar_images.refresh_protocols();
-        self.emoji_images.refresh_protocols();
-    }
-
-    pub(super) fn image_surfaces_visible(&self, state: &DashboardState) -> bool {
-        image_surfaces_visible(
-            state,
-            !self.image_targets.is_empty(),
-            !self.avatar_targets.is_empty(),
-            !self.emoji_targets.is_empty(),
-        )
     }
 
     pub(super) fn schedule_local_upload_previews(
@@ -285,22 +270,13 @@ pub(super) fn store_local_upload_preview_result(
     }
 }
 
-pub(super) fn clear_image_surfaces_frame(
-    frame: &mut ratatui::Frame<'_>,
-    state: &mut DashboardState,
-) -> Rect {
-    let area = frame.area();
-    ui::sync_view_heights(area, state);
-    ui::render(frame, state, Vec::new(), Vec::new(), Vec::new(), None);
-    area
-}
-
 pub(super) fn draw_dashboard_frame(
     frame: &mut ratatui::Frame<'_>,
     state: &mut DashboardState,
     media_runtime: &mut DashboardMediaRuntime,
 ) -> Rect {
     let area = frame.area();
+    super::image_layer::begin_frame(area);
     ui::sync_view_heights(area, state);
     let preview_layout = media_runtime.preview_layout_for_draw(state, area);
     let messages = state.visible_messages();
@@ -340,6 +316,7 @@ pub(super) fn draw_dashboard_frame(
         popup_avatar,
         Some(&viewport_plan),
     );
+    super::image_layer::end_frame(frame.buffer_mut());
     area
 }
 

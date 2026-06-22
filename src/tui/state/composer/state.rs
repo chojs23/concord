@@ -270,15 +270,6 @@ impl DashboardState {
         self.composer.pending_composer_attachment_previews = previews;
     }
 
-    pub(in crate::tui) fn composer_attachment_preview_has_image_surface(&self) -> bool {
-        self.show_images()
-            && self
-                .composer
-                .pending_composer_attachment_previews
-                .iter()
-                .any(|preview| matches!(preview.state, LocalUploadPreviewStatus::Ready(_)))
-    }
-
     pub(in crate::tui) fn take_pending_composer_attachment_preview(
         &mut self,
     ) -> Option<(usize, u64, String, MessageAttachmentUpload)> {

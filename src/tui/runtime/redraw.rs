@@ -258,45 +258,6 @@ pub(in crate::tui) struct ChannelEntrySignature {
     unread_message_count: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct VisibleDashboardChangeSet {
-    layout: bool,
-    overlay: bool,
-    passive_overlay: bool,
-    header: bool,
-    guilds: bool,
-    channels: bool,
-    messages: bool,
-    members: bool,
-    new_message_notice: bool,
-}
-
-impl VisibleDashboardChangeSet {
-    fn only_members_changed(self) -> bool {
-        self.members
-            && !self.layout
-            && !self.overlay
-            && !self.passive_overlay
-            && !self.header
-            && !self.guilds
-            && !self.channels
-            && !self.messages
-            && !self.new_message_notice
-    }
-
-    fn only_new_message_notice_changed(self) -> bool {
-        self.new_message_notice
-            && !self.layout
-            && !self.overlay
-            && !self.passive_overlay
-            && !self.header
-            && !self.guilds
-            && !self.channels
-            && !self.messages
-            && !self.members
-    }
-}
-
 pub(in crate::tui) fn visible_dashboard_signature(
     state: &DashboardState,
 ) -> VisibleDashboardSignature {
@@ -611,31 +572,6 @@ fn member_pane_signature(state: &DashboardState) -> MemberPaneSignature {
     }
 }
 
-fn visible_dashboard_changes(
-    before: &VisibleDashboardSignature,
-    after: &VisibleDashboardSignature,
-) -> VisibleDashboardChangeSet {
-    VisibleDashboardChangeSet {
-        layout: before.layout != after.layout,
-        overlay: before.overlay != after.overlay,
-        passive_overlay: before.passive_overlay != after.passive_overlay,
-        header: before.header != after.header,
-        guilds: before.guilds != after.guilds,
-        channels: before.channels != after.channels,
-        messages: before.messages.selected_message != after.messages.selected_message
-            || before.messages.source != after.messages.source
-            || before.messages.message_scroll != after.messages.message_scroll
-            || before.messages.message_line_scroll != after.messages.message_line_scroll
-            || before.messages.message_pane_title != after.messages.message_pane_title
-            || before.messages.typing_footer != after.messages.typing_footer
-            || before.messages.composer_picker != after.messages.composer_picker
-            || before.messages.visible_messages != after.messages.visible_messages
-            || before.messages.visible_forum_posts != after.messages.visible_forum_posts,
-        members: before.members != after.members,
-        new_message_notice: before.messages.new_messages_count != after.messages.new_messages_count,
-    }
-}
-
 fn composer_picker_signature(state: &DashboardState) -> ComposerPickerSignature {
     if let Some(query) = state.composer_mention_query() {
         return ComposerPickerSignature::Mention {
@@ -697,52 +633,3 @@ fn debug_signature<T: fmt::Debug>(value: &T) -> DebugSignature {
     DebugSignature(writer.hasher.finish())
 }
 
-pub(in crate::tui) fn should_suppress_image_redraw_for_signature_change(
-    before: &VisibleDashboardSignature,
-    after: &VisibleDashboardSignature,
-    image_surfaces_visible: bool,
-) -> bool {
-    let changes = visible_dashboard_changes(before, after);
-    image_surfaces_visible
-        && ((after.layout.focus != state::FocusPane::Members && changes.only_members_changed())
-            || (after.layout.focus != state::FocusPane::Channels
-                && changes.only_new_message_notice_changed()))
-}
-
-pub(in crate::tui) fn should_redraw_after_visible_signature_change(
-    before: &VisibleDashboardSignature,
-    after: &VisibleDashboardSignature,
-    image_surfaces_visible: bool,
-    force_redraw: bool,
-) -> bool {
-    force_redraw
-        || (before != after
-            && !should_suppress_image_redraw_for_signature_change(
-                before,
-                after,
-                image_surfaces_visible,
-            ))
-}
-
-pub(in crate::tui) fn should_refresh_image_protocols_after_visible_signature_change(
-    before: &VisibleDashboardSignature,
-    after: &VisibleDashboardSignature,
-    image_surfaces_visible: bool,
-) -> bool {
-    image_surfaces_visible
-        && before.overlay.active_modal_popup_kind != after.overlay.active_modal_popup_kind
-}
-
-pub(super) fn image_surfaces_visible(
-    state: &DashboardState,
-    image_targets_visible: bool,
-    avatar_targets_visible: bool,
-    emoji_targets_visible: bool,
-) -> bool {
-    image_targets_visible
-        || avatar_targets_visible
-        || emoji_targets_visible
-        || state.composer_attachment_preview_has_image_surface()
-        || state.forum_post_attachment_preview_has_image_surface()
-        || (state.show_avatars() && state.user_profile_popup_has_avatar_preview())
-}

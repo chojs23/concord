@@ -7,7 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use ratatui_image::Image as RatatuiImage;
+use crate::tui::runtime::image_layer::TrackedImage;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
