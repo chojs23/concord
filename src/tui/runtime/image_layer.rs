@@ -39,7 +39,7 @@ use std::fmt::{self, Write as _};
 use std::hash::Hasher as _;
 
 use ratatui::{
-    buffer::Buffer,
+    buffer::{Buffer, CellDiffOption},
     layout::Rect,
     widgets::{StatefulWidget, Widget},
 };
@@ -110,7 +110,8 @@ impl ImageEmissionTracker {
         // ordinary short text. If we kept an occluded surface we would skip
         // re-emitting it once the occluder went away, leaving stale pixels.
         // Forgetting it forces a clean re-render on the next frame.
-        self.current.retain(|_, emitted| surface_intact(emitted.area, buf));
+        self.current
+            .retain(|_, emitted| surface_intact(emitted.area, buf));
         std::mem::swap(&mut self.emitted, &mut self.current);
         // `current` now holds last frame's map; cleared again at next begin_frame.
     }
@@ -198,7 +199,7 @@ fn mark_skip(area: Rect, buf: &mut Buffer) {
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.set_skip(true);
+                cell.set_diff_option(CellDiffOption::Skip);
             }
         }
     }
@@ -209,8 +210,10 @@ fn mark_skip(area: Rect, buf: &mut Buffer) {
 fn surface_intact(area: Rect, buf: &Buffer) -> bool {
     (area.top()..area.bottom()).all(|y| {
         (area.left()..area.right()).all(|x| {
-            buf.cell((x, y))
-                .is_some_and(|cell| cell.skip || cell.symbol().len() >= IMAGE_ANCHOR_MIN_SYMBOL_LEN)
+            buf.cell((x, y)).is_some_and(|cell| {
+                cell.diff_option == CellDiffOption::Skip
+                    || cell.symbol().len() >= IMAGE_ANCHOR_MIN_SYMBOL_LEN
+            })
         })
     })
 }
@@ -263,7 +266,9 @@ impl StatefulWidget for TrackedStatefulImage {
             return;
         }
         if should_render(area, self.content_hash, buf) {
-            StatefulImage::new().resize(Resize::Fit(None)).render(area, buf, state);
+            StatefulImage::new()
+                .resize(Resize::Fit(None))
+                .render(area, buf, state);
         }
     }
 }

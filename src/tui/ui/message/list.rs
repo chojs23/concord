@@ -165,7 +165,10 @@ pub(in crate::tui::ui) fn render_messages(
             avatar.visible_height,
             selected_avatar_x_offset(selected_avatar_body_top, avatar.row),
         ) {
-            frame.render_widget(TrackedImage::new(avatar.protocol, avatar.content_hash), area);
+            frame.render_widget(
+                TrackedImage::new(avatar.protocol, avatar.content_hash),
+                area,
+            );
         }
     }
     render_inline_reaction_emojis(frame, message_areas.list, &render_plan, emoji_images);

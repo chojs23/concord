@@ -23,7 +23,7 @@ pub(super) use targets::{visible_avatar_targets, visible_image_preview_targets};
 pub(in crate::tui) use decode::decode_image_bytes;
 use protocol::{
     AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, avatar_preview_url, clipped_preview_image,
-    emoji_protocol,
+    emoji_protocol, picker_font_size,
 };
 pub(in crate::tui) use protocol::{
     ImagePreviewRenderInfo, clipped_preview_protocol, fixed_image_preview_render_info,

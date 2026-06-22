@@ -822,4 +822,3 @@ fn forwarded_card_rows_push_inline_preview_slot_down() {
 
     assert_eq!(inline_image_preview_row(&messages, &state, 0, 200, 0, 0), 4);
 }
-

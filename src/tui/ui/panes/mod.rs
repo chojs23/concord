@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::tui::runtime::image_layer::TrackedImage;
 use ratatui::{
     Frame,
     layout::{Position, Rect},
@@ -7,7 +8,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use crate::tui::runtime::image_layer::TrackedImage;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{

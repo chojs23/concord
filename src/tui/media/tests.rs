@@ -518,10 +518,7 @@ fn image_preview_targets_layout_album_grids() {
                 (3, 4, 2, 4, 1),
             ],
         ),
-        (
-            portrait_album,
-            vec![(0, 0, 0, 5, 3), (1, 5, 0, 5, 3)],
-        ),
+        (portrait_album, vec![(0, 0, 0, 5, 3), (1, 5, 0, 5, 3)]),
     ];
 
     for (attachments, expected_geometry) in cases {

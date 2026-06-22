@@ -233,9 +233,17 @@ pub struct ForumPostComposerView {
 }
 
 pub enum LocalUploadPreviewView<'a> {
-    Loading { filename: String },
-    Ready { protocol: &'a Protocol, content_hash: u64 },
-    Failed { filename: String, message: String },
+    Loading {
+        filename: String,
+    },
+    Ready {
+        protocol: &'a Protocol,
+        content_hash: u64,
+    },
+    Failed {
+        filename: String,
+        message: String,
+    },
 }
 
 pub type ForumPostAttachmentPreviewView<'a> = LocalUploadPreviewView<'a>;

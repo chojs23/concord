@@ -1,4 +1,5 @@
 use crate::discord::ids::{Id, marker::MessageMarker};
+use crate::tui::runtime::image_layer::{TrackedImage, TrackedStatefulImage};
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -9,7 +10,6 @@ use ratatui::{
         ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
-use crate::tui::runtime::image_layer::{TrackedImage, TrackedStatefulImage};
 use unicode_width::UnicodeWidthStr;
 
 #[cfg(test)]

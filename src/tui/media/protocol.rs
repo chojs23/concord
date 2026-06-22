@@ -1,8 +1,11 @@
 use image::{DynamicImage, ImageBuffer, Rgba, imageops::FilterType};
-use ratatui::layout::Rect;
-use ratatui_image::{Resize, picker::Picker};
+use ratatui::layout::Size;
+use ratatui_image::{
+    Resize,
+    picker::{Picker, ProtocolType},
+};
 
-use crate::logging;
+use crate::{config::ImageProtocolPreference, logging};
 
 pub(super) const AVATAR_PREVIEW_WIDTH: u16 = 4;
 pub(super) const AVATAR_PREVIEW_HEIGHT: u16 = 2;
@@ -19,14 +22,56 @@ pub(super) const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
 pub(in crate::tui) fn query_image_picker(
     target: &str,
     unavailable_message: &str,
+    protocol_preference: ImageProtocolPreference,
 ) -> Option<Picker> {
     match Picker::from_query_stdio() {
-        Ok(picker) => Some(picker),
+        Ok(mut picker) => {
+            apply_protocol_preference(&mut picker, protocol_preference);
+            Some(picker)
+        }
         Err(error) => {
             logging::error(target, format!("{unavailable_message}: {error}"));
             None
         }
     }
+}
+
+fn apply_protocol_preference(picker: &mut Picker, protocol_preference: ImageProtocolPreference) {
+    if let Some(protocol_type) =
+        protocol_type_for_preference(protocol_preference, is_iterm_terminal())
+    {
+        picker.set_protocol_type(protocol_type);
+    }
+}
+
+fn protocol_type_for_preference(
+    protocol_preference: ImageProtocolPreference,
+    iterm_terminal: bool,
+) -> Option<ProtocolType> {
+    match protocol_preference {
+        // iTerm2 answers ratatui-image's Kitty capability query, but its Kitty
+        // implementation does not support the unicode-placeholder mode used by
+        // ratatui-image. Prefer the native iTerm2 protocol when auto-detecting
+        // inside iTerm so images render instead of selecting a broken Kitty path.
+        ImageProtocolPreference::Auto if iterm_terminal => Some(ProtocolType::Iterm2),
+        ImageProtocolPreference::Auto => None,
+        ImageProtocolPreference::Iterm2 => Some(ProtocolType::Iterm2),
+        ImageProtocolPreference::Kitty => Some(ProtocolType::Kitty),
+        ImageProtocolPreference::Sixel => Some(ProtocolType::Sixel),
+        ImageProtocolPreference::Halfblocks => Some(ProtocolType::Halfblocks),
+    }
+}
+
+fn is_iterm_terminal() -> bool {
+    is_iterm_terminal_values(
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+        std::env::var("LC_TERMINAL").ok().as_deref(),
+    )
+}
+
+fn is_iterm_terminal_values(term_program: Option<&str>, lc_terminal: Option<&str>) -> bool {
+    term_program.is_some_and(|value| value.contains("iTerm"))
+        || lc_terminal.is_some_and(|value| value.contains("iTerm"))
 }
 
 pub(super) fn avatar_preview_url(url: &str, width_columns: u16, height_rows: u16) -> String {
@@ -96,6 +141,13 @@ pub(in crate::tui) fn fixed_image_preview_render_info(
         show_play_marker: false,
         mask_circular: false,
     }
+}
+
+/// `Picker::font_size` returns a `FontSize` struct as of ratatui-image 11; the
+/// rest of our pixel math works in `(width, height)` tuples, so convert here.
+pub(super) fn picker_font_size(picker: &Picker) -> (u16, u16) {
+    let font_size = picker.font_size();
+    (font_size.width, font_size.height)
 }
 
 pub(super) fn clipped_preview_image(
@@ -225,13 +277,11 @@ pub(in crate::tui) fn clipped_preview_protocol(
     image: &DynamicImage,
     render_info: ImagePreviewRenderInfo,
 ) -> Option<ratatui_image::protocol::Protocol> {
-    let image = clipped_preview_image(image, picker.font_size(), render_info)?;
+    let image = clipped_preview_image(image, picker_font_size(picker), render_info)?;
     picker
         .new_protocol(
             image,
-            Rect::new(
-                0,
-                0,
+            Size::new(
                 render_info.preview_width,
                 render_info.visible_preview_height,
             ),
@@ -263,7 +313,7 @@ pub(super) fn emoji_protocol(
     picker: &Picker,
     img: DynamicImage,
 ) -> Option<ratatui_image::protocol::Protocol> {
-    let (font_width, font_height) = picker.font_size();
+    let (font_width, font_height) = picker_font_size(picker);
     let canvas_w = u32::from(EMOJI_REACTION_THUMB_WIDTH) * u32::from(font_width);
     let canvas_h = u32::from(font_height);
 
@@ -280,13 +330,58 @@ pub(super) fn emoji_protocol(
     picker
         .new_protocol(
             DynamicImage::ImageRgba8(canvas),
-            Rect::new(
-                0,
-                0,
-                EMOJI_REACTION_THUMB_WIDTH,
-                EMOJI_REACTION_THUMB_HEIGHT,
-            ),
+            Size::new(EMOJI_REACTION_THUMB_WIDTH, EMOJI_REACTION_THUMB_HEIGHT),
             Resize::Fit(None),
         )
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_iterm_terminal_values, protocol_type_for_preference};
+    use crate::config::ImageProtocolPreference;
+    use ratatui_image::picker::ProtocolType;
+
+    #[test]
+    fn auto_protocol_forces_iterm2_inside_iterm() {
+        assert_eq!(
+            protocol_type_for_preference(ImageProtocolPreference::Auto, true),
+            Some(ProtocolType::Iterm2)
+        );
+        assert_eq!(
+            protocol_type_for_preference(ImageProtocolPreference::Auto, false),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_protocol_preference_overrides_terminal_detection() {
+        let cases = [
+            (ImageProtocolPreference::Iterm2, ProtocolType::Iterm2),
+            (ImageProtocolPreference::Kitty, ProtocolType::Kitty),
+            (ImageProtocolPreference::Sixel, ProtocolType::Sixel),
+            (
+                ImageProtocolPreference::Halfblocks,
+                ProtocolType::Halfblocks,
+            ),
+        ];
+
+        for (preference, expected) in cases {
+            assert_eq!(
+                protocol_type_for_preference(preference, true),
+                Some(expected)
+            );
+            assert_eq!(
+                protocol_type_for_preference(preference, false),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn iterm_detection_accepts_term_program_or_lc_terminal() {
+        assert!(is_iterm_terminal_values(Some("iTerm.app"), None));
+        assert!(is_iterm_terminal_values(None, Some("iTerm2")));
+        assert!(!is_iterm_terminal_values(Some("WezTerm"), None));
+    }
 }

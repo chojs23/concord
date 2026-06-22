@@ -460,7 +460,10 @@ fn render_emoji_reaction_images(
                 .min(area.width.saturating_sub(emoji_reaction_image_x_offset())),
             1,
         );
-        frame.render_widget(TrackedImage::new(image.protocol, image.content_hash), image_area);
+        frame.render_widget(
+            TrackedImage::new(image.protocol, image.content_hash),
+            image_area,
+        );
     }
 }
 

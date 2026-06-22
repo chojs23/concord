@@ -17,14 +17,13 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, ImagePreview, MENTION_ORANGE, MemberEntry, READ_DIM,
-    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
-    attachment_viewer_image_area, attachment_viewer_popup, centered_viewer_preview_area,
-    channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
-    composer_content_line_count, composer_cursor_position, composer_lines,
-    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
-    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
-    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
+    ACCENT, DIM, ImagePreview, MENTION_ORANGE, MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER,
+    SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT, attachment_viewer_image_area, attachment_viewer_popup,
+    centered_viewer_preview_area, channel_switcher_cursor_position, channel_switcher_lines,
+    channel_unread_decoration, composer_content_line_count, composer_cursor_position,
+    composer_lines, composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count,
+    composer_text, date_separator_line, debug_log_popup_lines, dm_presence_dot_span,
+    emoji_picker_lines, emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     emoji_reaction_picker_lines_with_existing, emoji_reaction_picker_lines_with_own_reactions,
     filtered_emoji_reaction_picker_lines, focus_pane_at, format_message_sent_time,
     forum_post_reaction_rows_for_test, forum_post_reaction_summary,

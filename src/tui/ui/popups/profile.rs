@@ -85,7 +85,10 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
             width: PROFILE_POPUP_AVATAR_WIDTH.min(inner.width),
             height: PROFILE_POPUP_AVATAR_HEIGHT.min(inner.height),
         };
-        frame.render_widget(TrackedImage::new(avatar.protocol, avatar.content_hash), avatar_area);
+        frame.render_widget(
+            TrackedImage::new(avatar.protocol, avatar.content_hash),
+            avatar_area,
+        );
     }
 }
 

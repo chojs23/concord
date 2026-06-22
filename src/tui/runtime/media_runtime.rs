@@ -5,6 +5,7 @@ use ratatui_image::{picker::Picker, protocol::Protocol};
 use tokio::sync::mpsc;
 
 use crate::{
+    config::ImageProtocolPreference,
     discord::{AppCommand, DiscordClient, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload},
     tui::{
         commands as command_helpers,
@@ -48,14 +49,15 @@ pub(super) struct DashboardMediaRuntime {
 }
 
 impl DashboardMediaRuntime {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(protocol_preference: ImageProtocolPreference) -> Self {
         Self {
-            image_previews: ImagePreviewCache::new(),
-            avatar_images: AvatarImageCache::new(),
-            emoji_images: EmojiImageCache::new(),
+            image_previews: ImagePreviewCache::new_with_protocol_preference(protocol_preference),
+            avatar_images: AvatarImageCache::new_with_protocol_preference(protocol_preference),
+            emoji_images: EmojiImageCache::new_with_protocol_preference(protocol_preference),
             local_upload_preview_picker: query_image_picker(
                 "local upload",
                 "local upload image picker unavailable",
+                protocol_preference,
             ),
             image_targets: Vec::new(),
             avatar_targets: Vec::new(),

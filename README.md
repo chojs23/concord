@@ -434,6 +434,9 @@ to `config.toml`. Key settings are read from `keymap.toml`.
 
 ```toml
 [display]
+# Image protocol: auto, iterm2, kitty, sixel, or halfblocks.
+image_protocol = "auto"
+
 # Master switch that hides all image previews when true.
 disable_image_preview = false
 
@@ -498,7 +501,16 @@ voice_output_volume = 100
 
 </details><br>
 
-`image_preview_quality` supports these values:
+`image_protocol`:
+
+- `auto`: use terminal detection. In iTerm, Concord uses the iTerm2 protocol
+  because terminal capability detection can incorrectly select Kitty there.
+- `iterm2`: force the iTerm2 inline image protocol.
+- `kitty`: force the Kitty graphics protocol.
+- `sixel`: force Sixel rendering.
+- `halfblocks`: force Unicode half-block fallback rendering.
+
+`image_preview_quality`:
 
 - `efficient`: smaller preview requests to reduce bandwidth and memory use.
 - `balanced`: default quality with bounded resource use.
@@ -508,7 +520,7 @@ voice_output_volume = 100
 This setting only applies to attachment, embed, and attachment viewer previews.
 Avatars and custom emoji keep their separate small-image behavior.
 
-`credentials.store` supports these values:
+`credentials.store`:
 
 - `auto`: try the system keychain first, then fall back to the state-file credential store.
 - `keychain`: use only the system keychain. If keychain storage is unavailable, the token is not saved.

@@ -488,7 +488,6 @@ impl DashboardState {
         Some(local_upload_preview_view(preview))
     }
 
-
     pub(in crate::tui) fn take_pending_forum_post_attachment_preview(
         &mut self,
     ) -> Option<(usize, u64, String, MessageAttachmentUpload)> {

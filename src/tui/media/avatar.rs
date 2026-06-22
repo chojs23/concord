@@ -4,6 +4,7 @@ use image::DynamicImage;
 use ratatui_image::{picker::Picker, protocol::Protocol};
 
 use crate::{
+    config::ImageProtocolPreference,
     discord::{AppCommand, AppEvent, ProfileAvatarUpload},
     tui::ui::AvatarImage,
 };
@@ -130,9 +131,20 @@ impl MediaImageCacheEntry for AvatarImageEntry {
 }
 
 impl AvatarImageCache {
+    #[cfg(test)]
     pub(in crate::tui) fn new() -> Self {
+        Self::new_with_protocol_preference(ImageProtocolPreference::Auto)
+    }
+
+    pub(in crate::tui) fn new_with_protocol_preference(
+        protocol_preference: ImageProtocolPreference,
+    ) -> Self {
         Self {
-            picker: query_image_picker("avatar", "avatar image picker unavailable"),
+            picker: query_image_picker(
+                "avatar",
+                "avatar image picker unavailable",
+                protocol_preference,
+            ),
             cache: MediaImageCacheCore::new(),
             active_popup_avatar_url: None,
         }

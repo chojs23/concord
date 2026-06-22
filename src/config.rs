@@ -23,6 +23,7 @@ pub struct DisplayOptions {
     pub show_avatars: bool,
     pub show_images: bool,
     pub image_preview_quality: ImagePreviewQualityPreset,
+    pub image_protocol: ImageProtocolPreference,
     pub show_custom_emoji: bool,
     pub circular_avatars: bool,
 }
@@ -222,6 +223,17 @@ pub enum ImagePreviewQualityPreset {
     Original,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImageProtocolPreference {
+    #[default]
+    Auto,
+    Iterm2,
+    Kitty,
+    Sixel,
+    Halfblocks,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct MicrophoneSensitivityDb(i8);
@@ -377,6 +389,7 @@ impl Default for DisplayOptions {
             show_avatars: true,
             show_images: true,
             image_preview_quality: ImagePreviewQualityPreset::default(),
+            image_protocol: ImageProtocolPreference::default(),
             show_custom_emoji: true,
             circular_avatars: false,
         }
@@ -516,9 +529,9 @@ mod tests {
 
     use super::{
         AppOptions, ComposerOptions, CredentialOptions, CredentialStoreMode, DisplayOptions,
-        ImagePreviewQualityPreset, KeymapFileOptions, KeymapOptions, MicrophoneSensitivityDb,
-        NotificationOptions, VoiceOptions, VoiceVolumePercent, load_keymap_options_from_path,
-        load_options_from_path, save_options_to_path,
+        ImagePreviewQualityPreset, ImageProtocolPreference, KeymapFileOptions, KeymapOptions,
+        MicrophoneSensitivityDb, NotificationOptions, VoiceOptions, VoiceVolumePercent,
+        load_keymap_options_from_path, load_options_from_path, save_options_to_path,
     };
 
     #[test]
@@ -532,6 +545,7 @@ mod tests {
             options.image_preview_quality,
             ImagePreviewQualityPreset::Balanced
         );
+        assert_eq!(options.image_protocol, ImageProtocolPreference::Auto);
     }
 
     #[test]
@@ -541,6 +555,7 @@ mod tests {
             show_avatars: true,
             show_images: true,
             image_preview_quality: ImagePreviewQualityPreset::Balanced,
+            image_protocol: ImageProtocolPreference::Auto,
             show_custom_emoji: true,
             circular_avatars: false,
         };
@@ -678,6 +693,7 @@ mod tests {
             assert!(config.display.show_avatars);
             assert!(config.display.show_images);
             assert_eq!(config.display.image_preview_quality, image_preview_quality);
+            assert_eq!(config.display.image_protocol, ImageProtocolPreference::Auto);
             assert!(config.display.show_custom_emoji);
             assert!(!config.display.circular_avatars);
             let expected_desktop_notifications =
@@ -732,6 +748,25 @@ mod tests {
                 CredentialStoreMode::Auto
             };
             assert_eq!(config.credentials.store, expected_credential_store);
+        }
+    }
+
+    #[test]
+    fn display_image_protocol_parses_supported_values() {
+        let cases = [
+            ("auto", ImageProtocolPreference::Auto),
+            ("iterm2", ImageProtocolPreference::Iterm2),
+            ("kitty", ImageProtocolPreference::Kitty),
+            ("sixel", ImageProtocolPreference::Sixel),
+            ("halfblocks", ImageProtocolPreference::Halfblocks),
+        ];
+
+        for (value, expected) in cases {
+            let config: AppOptions =
+                toml::from_str(&format!("[display]\nimage_protocol = \"{value}\"\n"))
+                    .expect("image protocol config should parse");
+
+            assert_eq!(config.display.image_protocol, expected);
         }
     }
 
@@ -878,6 +913,7 @@ mod tests {
                 show_avatars: false,
                 show_images: false,
                 image_preview_quality: ImagePreviewQualityPreset::Original,
+                image_protocol: ImageProtocolPreference::Kitty,
                 show_custom_emoji: false,
                 circular_avatars: true,
             },

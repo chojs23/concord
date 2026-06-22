@@ -632,4 +632,3 @@ fn debug_signature<T: fmt::Debug>(value: &T) -> DebugSignature {
     write!(&mut writer, "{value:?}").expect("writing into signature hasher cannot fail");
     DebugSignature(writer.hasher.finish())
 }
-

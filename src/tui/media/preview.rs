@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::config::ImageProtocolPreference;
 use crate::discord::ids::{Id, marker::MessageMarker};
 use image::DynamicImage;
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol};
@@ -17,7 +18,7 @@ use super::{
     cache::{MediaImageCacheCore, MediaImageCacheEntry},
     clipped_preview_image,
     decode::{MediaImageDecodeJob, MediaImageDecodeKey},
-    query_image_picker,
+    picker_font_size, query_image_picker,
 };
 
 pub(super) const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 16;
@@ -62,15 +63,26 @@ pub(super) enum ImagePreviewEntry {
 }
 
 impl ImagePreviewCache {
+    #[cfg(test)]
     pub(in crate::tui) fn new() -> Self {
+        Self::new_with_protocol_preference(ImageProtocolPreference::Auto)
+    }
+
+    pub(in crate::tui) fn new_with_protocol_preference(
+        protocol_preference: ImageProtocolPreference,
+    ) -> Self {
         Self {
-            picker: query_image_picker("preview", "inline image picker unavailable"),
+            picker: query_image_picker(
+                "preview",
+                "inline image picker unavailable",
+                protocol_preference,
+            ),
             cache: MediaImageCacheCore::new(),
         }
     }
 
     pub(in crate::tui) fn font_size(&self) -> Option<(u16, u16)> {
-        self.picker.as_ref().map(Picker::font_size)
+        self.picker.as_ref().map(picker_font_size)
     }
 
     pub(in crate::tui) fn render_state(
@@ -423,7 +435,7 @@ fn clipped_preview_stateful_protocol(
     image: &DynamicImage,
     render_info: ImagePreviewRenderInfo,
 ) -> Option<Box<StatefulProtocol>> {
-    let image = clipped_preview_image(image, picker.font_size(), render_info)?;
+    let image = clipped_preview_image(image, picker_font_size(picker), render_info)?;
     Some(Box::new(picker.new_resize_protocol(image)))
 }
 
