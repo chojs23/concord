@@ -85,6 +85,83 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                 Err(error) => publish_app_error(&client, "set channel mute failed", &error).await,
             }
         }
+        AppCommand::SetThreadMuted {
+            guild_id,
+            channel_id,
+            muted,
+            duration,
+            label: _,
+        } => {
+            let mute_end_time = mute_end_time_from_duration(duration, muted);
+            let selected_time_window = selected_time_window_from_duration(duration, muted);
+            match client
+                .set_thread_muted(channel_id, muted, mute_end_time, selected_time_window)
+                .await
+            {
+                Ok(()) => {
+                    // The real mute lives on the thread member, but the unread
+                    // logic reads channel_overrides, so mirror the same optimistic
+                    // override locally to flip the label immediately.
+                    client
+                        .publish_event(AppEvent::UserGuildSettingsUpdate {
+                            settings: UserGuildSettingsInfo {
+                                notification_settings: guild_notification_settings_update(
+                                    &client,
+                                    guild_id,
+                                    None,
+                                    Some((channel_id, muted, mute_end_time)),
+                                ),
+                                extra_fields: BTreeMap::new(),
+                            },
+                        })
+                        .await;
+                }
+                Err(error) => publish_app_error(&client, "set post mute failed", &error).await,
+            }
+        }
+        AppCommand::SetThreadNotificationLevel {
+            channel_id,
+            flags,
+            label: _,
+        } => {
+            match client
+                .set_thread_notification_level(channel_id, flags)
+                .await
+            {
+                Ok(()) => {
+                    client
+                        .publish_event(AppEvent::ThreadNotificationLevelUpdate {
+                            channel_id,
+                            flags,
+                        })
+                        .await;
+                }
+                Err(error) => {
+                    publish_app_error(&client, "set post notifications failed", &error).await;
+                }
+            }
+        }
+        AppCommand::SetThreadFollowed {
+            channel_id,
+            followed,
+            label: _,
+        } => {
+            let result = if followed {
+                client.follow_thread(channel_id).await
+            } else {
+                client.unfollow_thread(channel_id).await
+            };
+            // Discord echoes a THREAD_MEMBERS_UPDATE for the join/leave, which
+            // updates `current_user_joined_thread`, so no optimistic event here.
+            if let Err(error) = result {
+                let context = if followed {
+                    "follow post failed"
+                } else {
+                    "unfollow post failed"
+                };
+                publish_app_error(&client, context, &error).await;
+            }
+        }
         _ => unreachable!("non-notification command routed to notification handler"),
     }
 }

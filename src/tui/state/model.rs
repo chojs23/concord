@@ -235,6 +235,49 @@ pub struct ForumPostComposerView {
     pub status: Option<String>,
 }
 
+/// Focusable cells in the forum post edit popup. A leaner mirror of
+/// [`ForumPostComposerField`]: there is no body or attachments, and the
+/// slow-mode and auto-archive selectors replace them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ForumPostEditField {
+    Title,
+    Tags,
+    SlowMode,
+    AutoArchive,
+    Submit,
+    Cancel,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumPostEditTagView {
+    pub name: String,
+    pub emoji: Option<String>,
+    pub selected: bool,
+    pub active: bool,
+    /// Whether this tag can still be toggled on. `false` for unselected tags
+    /// once the five-tag cap is reached, so the renderer can dim them.
+    pub selectable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumPostEditView {
+    pub channel_label: String,
+    pub active_field: ForumPostEditField,
+    pub editing_title: bool,
+    pub editing_tags: bool,
+    pub title: String,
+    pub title_cursor: usize,
+    pub tags: Vec<ForumPostEditTagView>,
+    pub requires_tag: bool,
+    /// Display label for the current slow-mode option, e.g. "5s" or "Off".
+    pub slow_mode_label: String,
+    /// Whether the slow-mode selector can be changed (manage-channel permission).
+    pub can_set_slow_mode: bool,
+    /// Display label for the current auto-archive option, e.g. "1 day".
+    pub auto_archive_label: String,
+    pub status: Option<String>,
+}
+
 pub enum LocalUploadPreviewView<'a> {
     Loading { filename: String },
     Ready { protocol: &'a Protocol },
@@ -280,6 +323,26 @@ pub enum ChannelActionKind {
 
 pub type ChannelActionItem = ActionItem<ChannelActionKind>;
 
+/// Actions on a forum post (a thread). Mirrors Discord's forum post right-click
+/// menu. Only a subset is wired up so far. The rest render dimmed until their
+/// backend exists (see `selected_forum_post_action_items`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ForumPostActionKind {
+    MarkAsRead,
+    ToggleFollow,
+    Close,
+    Lock,
+    Edit,
+    CopyLink,
+    ToggleMute,
+    NotificationSettings,
+    Pin,
+    Delete,
+    CopyId,
+}
+
+pub type ForumPostActionItem = ActionItem<ForumPostActionKind>;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GuildActionKind {
     NoActionsYet,
@@ -295,6 +358,28 @@ pub type GuildActionItem = ActionItem<GuildActionKind>;
 pub struct MuteActionDurationItem {
     pub label: &'static str,
     pub duration: MuteDuration,
+}
+
+/// A single row in the thread notification-settings submenu. The label already
+/// includes the `[x]`/`[ ]` radio prefix so the renderer needs no extra logic.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumPostNotificationItem {
+    pub label: String,
+    pub flags: u64,
+}
+
+impl ForumPostNotificationItem {
+    pub(crate) fn new(raw_label: &str, flags: u64, current_flags: u64) -> Self {
+        let prefix = if flags == current_flags {
+            "[x] "
+        } else {
+            "[ ] "
+        };
+        Self {
+            label: format!("{prefix}{raw_label}"),
+            flags,
+        }
+    }
 }
 
 pub const MUTE_ACTION_DURATIONS: [MuteActionDurationItem; 6] = [

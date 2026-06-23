@@ -38,9 +38,14 @@ pub struct ChannelState {
     pub total_message_sent: Option<u64>,
     pub thread_metadata: Option<crate::discord::ThreadMetadataInfo>,
     pub flags: Option<u64>,
+    /// Slow-mode cooldown in seconds (Discord's `rate_limit_per_user`).
+    pub rate_limit_per_user: Option<u64>,
     pub available_tags: Vec<ForumTagInfo>,
     pub applied_tags: Vec<Id<ForumTagMarker>>,
     pub current_user_joined_thread: bool,
+    /// Current user's notification level for this thread (2=all, 4=mentions,
+    /// 8=none). Optimistic only; `None` is unknown (treated as 4).
+    pub current_user_thread_notification_flags: Option<u64>,
     pub recipients: Vec<ChannelRecipientState>,
     /// Channel-level permission overrides used by `can_view_channel`. Threads
     /// inherit from their parent channel, so this stays empty for threads
@@ -312,13 +317,30 @@ impl DiscordState {
                 total_message_sent: channel.total_message_sent,
                 thread_metadata: channel.thread_metadata.clone(),
                 flags: channel.flags,
+                rate_limit_per_user: channel
+                    .rate_limit_per_user
+                    .or_else(|| existing.and_then(|existing| existing.rate_limit_per_user)),
                 available_tags: channel.available_tags.clone(),
                 applied_tags: channel.applied_tags.clone(),
                 current_user_joined_thread,
+                // Never comes from the gateway; preserved across upserts so an
+                // optimistic update from the command handler is not lost.
+                current_user_thread_notification_flags: existing
+                    .and_then(|e| e.current_user_thread_notification_flags),
                 recipients,
                 permission_overwrites,
             },
         );
+    }
+
+    pub(in crate::discord) fn set_thread_notification_flags(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        flags: u64,
+    ) {
+        if let Some(channel) = self.navigation.channels.get_mut(&channel_id) {
+            channel.current_user_thread_notification_flags = Some(flags);
+        }
     }
 
     pub(in crate::discord) fn set_current_user_thread_membership(

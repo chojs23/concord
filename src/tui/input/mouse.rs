@@ -306,6 +306,7 @@ fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
                 | ActiveModalPopupKind::AttachmentViewer
                 | ActiveModalPopupKind::ChannelSwitcher
                 | ActiveModalPopupKind::ForumPostComposer
+                | ActiveModalPopupKind::ForumPostEdit
         )
     ) || state.is_guild_leader_action_active()
         || state.is_channel_leader_action_active()

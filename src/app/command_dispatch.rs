@@ -89,6 +89,11 @@ impl CommandDispatcher {
             }
             command @ (AppCommand::SendMessage { .. }
             | AppCommand::CreateForumPost { .. }
+            | AppCommand::SetForumPostArchived { .. }
+            | AppCommand::SetForumPostLocked { .. }
+            | AppCommand::SetForumPostPinned { .. }
+            | AppCommand::DeleteForumPost { .. }
+            | AppCommand::EditForumPost { .. }
             | AppCommand::SendTtsMessage { .. }
             | AppCommand::LoadApplicationCommands { .. }
             | AppCommand::RunApplicationCommand { .. }
@@ -117,7 +122,11 @@ impl CommandDispatcher {
             | AppCommand::AckChannels { .. }) => {
                 read_state_commands::handle(self.client.clone(), command).await;
             }
-            command @ (AppCommand::SetGuildMuted { .. } | AppCommand::SetChannelMuted { .. }) => {
+            command @ (AppCommand::SetGuildMuted { .. }
+            | AppCommand::SetChannelMuted { .. }
+            | AppCommand::SetThreadMuted { .. }
+            | AppCommand::SetThreadFollowed { .. }
+            | AppCommand::SetThreadNotificationLevel { .. }) => {
                 notification_commands::handle(self.client.clone(), command).await;
             }
             command @ AppCommand::SignOut => {

@@ -415,6 +415,74 @@ fn message_action_menu_lines_with_key_bindings(
         .collect()
 }
 
+pub(in crate::tui::ui) fn render_forum_post_action_menu(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::ForumPostActionMenu) {
+        return;
+    }
+
+    let selected = state.selected_forum_post_action_index().unwrap_or(0);
+    let (title, lines) = if state.is_forum_post_action_mute_duration_phase() {
+        let items = state.selected_forum_post_mute_duration_items();
+        let lines = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| forum_post_action_line(item.label, index == selected, true))
+            .collect::<Vec<_>>();
+        ("Mute post", lines)
+    } else if state.is_forum_post_action_notification_phase() {
+        let items = state.selected_forum_post_notification_items();
+        if items.is_empty() {
+            return;
+        }
+        let lines = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| forum_post_action_line(&item.label, index == selected, true))
+            .collect::<Vec<_>>();
+        ("Notification settings", lines)
+    } else {
+        let items = state.selected_forum_post_action_items();
+        if items.is_empty() {
+            return;
+        }
+        let lines = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                forum_post_action_line(&item.label, index == selected, item.enabled)
+            })
+            .collect::<Vec<_>>();
+        ("Post actions", lines)
+    };
+
+    let popup = message_action_menu_area(area, lines.len());
+    let lines = truncate_action_menu_lines(lines, popup.width.saturating_sub(2) as usize);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block(title, true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+fn forum_post_action_line(label: &str, selected: bool, enabled: bool) -> Line<'static> {
+    let label = if enabled {
+        label.to_owned()
+    } else {
+        format!("{label} (unavailable)")
+    };
+    let style = selectable_popup_label_style(selected, enabled);
+    Line::from(vec![
+        selectable_popup_marker(selected),
+        Span::styled(label, style),
+    ])
+}
+
 fn shortcut_label_prefix(label: &str) -> String {
     if label.is_empty() {
         return "    ".to_owned();

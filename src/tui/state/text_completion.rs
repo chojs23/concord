@@ -38,7 +38,10 @@ impl EmojiCompletionState {
     }
 
     pub(in crate::tui::state) fn selected(&self) -> usize {
-        self.active.as_ref().map(|active| active.selected).unwrap_or(0)
+        self.active
+            .as_ref()
+            .map(|active| active.selected)
+            .unwrap_or(0)
     }
 
     pub(in crate::tui::state) fn candidates(&self) -> &[EmojiPickerEntry] {
@@ -84,7 +87,8 @@ impl EmojiCompletionState {
         }
         let current = active.selected.min(len - 1) as isize;
         active.selected = (current + delta).clamp(0, len as isize - 1) as usize;
-        active.scroll = clamp_list_scroll(active.selected, active.scroll, EMOJI_PICKER_VISIBLE, len);
+        active.scroll =
+            clamp_list_scroll(active.selected, active.scroll, EMOJI_PICKER_VISIBLE, len);
     }
 
     /// Detect a `:shortcode` query ending at `cursor`. Returns the byte offset

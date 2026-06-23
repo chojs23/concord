@@ -42,6 +42,84 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             }
             Err(error) => publish_app_error(&client, "create forum post failed", &error).await,
         },
+        // The archive/lock/pin/delete results arrive over the gateway
+        // (THREAD_UPDATE / THREAD_DELETE), which updates the cached thread, so
+        // these only need to report failures.
+        AppCommand::SetForumPostArchived {
+            channel_id,
+            archived,
+            label: _,
+        } => {
+            if let Err(error) = client.set_forum_post_archived(channel_id, archived).await {
+                let context = if archived {
+                    "close post failed"
+                } else {
+                    "reopen post failed"
+                };
+                publish_app_error(&client, context, &error).await;
+            }
+        }
+        AppCommand::SetForumPostLocked {
+            channel_id,
+            locked,
+            label: _,
+        } => {
+            if let Err(error) = client.set_forum_post_locked(channel_id, locked).await {
+                let context = if locked {
+                    "lock post failed"
+                } else {
+                    "unlock post failed"
+                };
+                publish_app_error(&client, context, &error).await;
+            }
+        }
+        AppCommand::SetForumPostPinned {
+            channel_id,
+            pinned,
+            current_flags,
+            label: _,
+        } => {
+            if let Err(error) = client
+                .set_forum_post_pinned(channel_id, pinned, current_flags)
+                .await
+            {
+                let context = if pinned {
+                    "pin post failed"
+                } else {
+                    "unpin post failed"
+                };
+                publish_app_error(&client, context, &error).await;
+            }
+        }
+        AppCommand::DeleteForumPost {
+            channel_id,
+            label: _,
+        } => {
+            if let Err(error) = client.delete_forum_post(channel_id).await {
+                publish_app_error(&client, "delete post failed", &error).await;
+            }
+        }
+        AppCommand::EditForumPost {
+            channel_id,
+            name,
+            applied_tags,
+            rate_limit_per_user,
+            auto_archive_duration,
+            label: _,
+        } => {
+            if let Err(error) = client
+                .edit_forum_post_settings(
+                    channel_id,
+                    &name,
+                    &applied_tags,
+                    rate_limit_per_user,
+                    auto_archive_duration,
+                )
+                .await
+            {
+                publish_app_error(&client, "edit post failed", &error).await;
+            }
+        }
         AppCommand::LoadApplicationCommands { guild_id } => {
             match client.load_application_commands(guild_id).await {
                 Ok(Some(commands)) => {

@@ -8,11 +8,11 @@ use crate::discord::{
 use crate::tui::keybindings::ScrollAction;
 use ratatui_image::protocol::Protocol;
 
+use super::super::composer::expand_emoji_shortcodes;
 use super::super::local_upload_preview::{
     LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
     local_upload_preview_view,
 };
-use super::super::composer::expand_emoji_shortcodes;
 use super::super::{
     DashboardState, FocusPane, ForumPostComposerAttachmentView, ForumPostComposerField,
     ForumPostComposerTagView, ForumPostComposerView, LocalUploadPreviewView,

@@ -18,6 +18,37 @@ fn composer_requires_selected_channel() {
 }
 
 #[test]
+fn forum_post_edit_selector_cycles_with_h_and_l() {
+    let mut state = state_with_forum_channel_posts();
+    state.open_forum_post_edit(Id::new(31));
+
+    // Focus the auto-archive selector: Title -> Tags -> SlowMode -> AutoArchive.
+    handle_key(&mut state, key(KeyCode::Tab));
+    handle_key(&mut state, key(KeyCode::Tab));
+    handle_key(&mut state, key(KeyCode::Tab));
+
+    let initial = state
+        .forum_post_edit_view()
+        .expect("edit view")
+        .auto_archive_label;
+
+    // `l` cycles the value forward and `h` back, matching the arrow keys.
+    handle_key(&mut state, char_key('l'));
+    let forward = state
+        .forum_post_edit_view()
+        .expect("edit view")
+        .auto_archive_label;
+    assert_ne!(initial, forward);
+
+    handle_key(&mut state, char_key('h'));
+    let back = state
+        .forum_post_edit_view()
+        .expect("edit view")
+        .auto_archive_label;
+    assert_eq!(initial, back);
+}
+
+#[test]
 fn forum_parent_composer_key_opens_post_overlay() {
     let mut state = state_with_forum_channel_posts();
 

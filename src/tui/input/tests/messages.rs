@@ -425,8 +425,8 @@ fn message_pane_copy_shortcut_requests_selected_message_content() {
     handle_key(&mut state, char_key('y'));
 
     assert_eq!(
-        state.take_copy_message_content_request(),
-        Some("msg 1".to_owned())
+        state.take_copy_text_request(),
+        Some(("msg 1".to_owned(), "Message copied"))
     );
 }
 
@@ -449,8 +449,8 @@ fn message_action_popup_q_runs_configured_action_before_close_popup() {
     handle_key(&mut state, char_key('q'));
 
     assert_eq!(
-        state.take_copy_message_content_request(),
-        Some("msg 1".to_owned())
+        state.take_copy_text_request(),
+        Some(("msg 1".to_owned(), "Message copied"))
     );
     assert!(!state.is_message_action_context_active());
 }

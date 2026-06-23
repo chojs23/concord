@@ -954,6 +954,9 @@ impl DiscordState {
             AppEvent::UserGuildSettingsUpdate { settings } => {
                 self.upsert_notification_settings(&settings.notification_settings);
             }
+            AppEvent::ThreadNotificationLevelUpdate { channel_id, flags } => {
+                self.set_thread_notification_flags(*channel_id, *flags);
+            }
             AppEvent::GatewayDispatchReceived { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::SignedOut

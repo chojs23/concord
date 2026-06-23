@@ -33,6 +33,9 @@ pub struct ChannelInfo {
     /// Discord's raw `flags` channel bitfield. For thread channels in forum or
     /// media parents, `PINNED = 1 << 1` means this one thread is pinned.
     pub flags: Option<u64>,
+    /// Discord's `rate_limit_per_user` channel field, the slow-mode cooldown in
+    /// seconds. Present on text channels and forum post threads.
+    pub rate_limit_per_user: Option<u64>,
     /// Tags the user can apply to posts in a forum or media parent channel.
     pub available_tags: Vec<ForumTagInfo>,
     /// Tags currently applied to a forum or media post thread.
@@ -116,6 +119,7 @@ impl ChannelInfo {
             total_message_sent: None,
             thread_metadata: None,
             flags: None,
+            rate_limit_per_user: None,
             available_tags: Vec::new(),
             applied_tags: Vec::new(),
             current_user_joined_thread: None,

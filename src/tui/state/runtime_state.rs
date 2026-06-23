@@ -46,7 +46,9 @@ pub(super) struct RuntimeUiState {
     pub(super) open_forum_post_body_in_editor_requested: bool,
     pub(super) paste_clipboard_requested: bool,
     pub(super) clipboard_paste_pending: bool,
-    pub(super) copy_message_content_requested: Option<String>,
+    /// Pending clipboard copy: the text plus the success toast to show. Used by
+    /// message copy, forum post link/id copy, and similar one-shot copies.
+    pub(super) copy_text_requested: Option<(String, &'static str)>,
     pub(super) attachment_downloads: Vec<AttachmentDownloadUiState>,
     pub(super) next_attachment_download_id: u64,
     pub(super) next_media_playback_request_id: u64,

@@ -630,6 +630,65 @@ pub enum AppCommand {
         duration: Option<MuteDuration>,
         label: String,
     },
+    /// Mute a forum post (thread). Uses the thread-member settings endpoint
+    /// rather than the guild `channel_overrides`, which rejects thread types.
+    SetThreadMuted {
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+        muted: bool,
+        duration: Option<MuteDuration>,
+        label: String,
+    },
+    /// Follow (join) or unfollow (leave) a forum post thread.
+    SetThreadFollowed {
+        channel_id: Id<ChannelMarker>,
+        followed: bool,
+        label: String,
+    },
+    /// Set the notification level for a thread. Flags: 2 = All messages,
+    /// 4 = Only @mentions (Discord default), 8 = Nothing.
+    SetThreadNotificationLevel {
+        channel_id: Id<ChannelMarker>,
+        flags: u64,
+        label: String,
+    },
+    /// Archive ("close") or reopen a forum post thread.
+    SetForumPostArchived {
+        channel_id: Id<ChannelMarker>,
+        archived: bool,
+        label: String,
+    },
+    /// Lock or unlock a forum post thread.
+    SetForumPostLocked {
+        channel_id: Id<ChannelMarker>,
+        locked: bool,
+        label: String,
+    },
+    /// Pin or unpin a forum post within its parent forum. `current_flags` is the
+    /// thread's present channel flags so the handler can flip just the PINNED
+    /// bit without clobbering the others.
+    SetForumPostPinned {
+        channel_id: Id<ChannelMarker>,
+        pinned: bool,
+        current_flags: u64,
+        label: String,
+    },
+    /// Permanently delete a forum post (its thread channel).
+    DeleteForumPost {
+        channel_id: Id<ChannelMarker>,
+        label: String,
+    },
+    /// Edit a forum post thread's general settings (title, applied tags,
+    /// slow-mode cooldown, auto-archive duration) in one PATCH. The result
+    /// arrives over the gateway THREAD_UPDATE, so there is no optimistic event.
+    EditForumPost {
+        channel_id: Id<ChannelMarker>,
+        name: String,
+        applied_tags: Vec<Id<ForumTagMarker>>,
+        rate_limit_per_user: u64,
+        auto_archive_duration: u64,
+        label: String,
+    },
     AckChannels {
         targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
     },

@@ -19,6 +19,7 @@ use super::super::local_upload_preview::{
     local_upload_preview_view,
 };
 use super::super::scroll::clamp_list_scroll;
+use super::super::text_completion::EmojiCompletionState;
 use super::super::{
     ActiveModalPopupKind, CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane,
     LocalUploadPreviewView, MentionPickerEntry,
@@ -31,7 +32,6 @@ use super::completions::{
     expand_emoji_shortcodes, is_command_query_char, is_mention_query_char, move_picker_selection,
     should_start_completion_query,
 };
-use super::super::text_completion::EmojiCompletionState;
 use crate::discord::AppCommand;
 use crate::tui::text_cursor::{previous_char_boundary, previous_word_boundary};
 use crate::tui::text_input::TextInputState;
@@ -420,7 +420,8 @@ impl DashboardState {
 
     pub fn open_composer_reaction_picker_from_plus_colon(&mut self) -> bool {
         let cursor = self.composer.composer_input.cursor_byte_index();
-        if !composer_plus_colon_trigger_before_cursor(self.composer.composer_input.value(), cursor) {
+        if !composer_plus_colon_trigger_before_cursor(self.composer.composer_input.value(), cursor)
+        {
             return false;
         }
 
@@ -969,8 +970,16 @@ impl DashboardState {
     fn replace_composer_range(&mut self, range: Range<usize>, replacement: &str) {
         if range.start > range.end
             || range.end > self.composer.composer_input.value().len()
-            || !self.composer.composer_input.value().is_char_boundary(range.start)
-            || !self.composer.composer_input.value().is_char_boundary(range.end)
+            || !self
+                .composer
+                .composer_input
+                .value()
+                .is_char_boundary(range.start)
+            || !self
+                .composer
+                .composer_input
+                .value()
+                .is_char_boundary(range.end)
         {
             return;
         }

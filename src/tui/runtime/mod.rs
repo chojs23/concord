@@ -189,13 +189,13 @@ pub(super) async fn run_dashboard(
                                 let _ = clipboard_paste_tx.send(result);
                             });
                         }
-                        if let Some(content) = state.take_copy_message_content_request() {
+                        if let Some((content, toast)) = state.take_copy_text_request() {
                             let now = std::time::Instant::now();
                             match clipboard.copy_text(&content) {
-                                Ok(_) => state.show_success_toast("Message copied", now),
+                                Ok(_) => state.show_success_toast(toast, now),
                                 Err(error) => {
-                                    logging::error("tui", format!("copy message failed: {error}"));
-                                    state.show_error_toast("Failed to copy message", now);
+                                    logging::error("tui", format!("copy text failed: {error}"));
+                                    state.show_error_toast("Failed to copy", now);
                                 }
                             }
                             dirty = true;
@@ -500,6 +500,12 @@ fn apply_clipboard_paste_data(state: &mut DashboardState, data: ClipboardPasteDa
                     .is_some_and(|text| input::handle_paste(state, text));
             }
             return false;
+        }
+        if state.is_forum_post_edit_title_editing() {
+            return data
+                .text
+                .as_deref()
+                .is_some_and(|text| input::handle_paste(state, text));
         }
         return false;
     }

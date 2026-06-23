@@ -587,9 +587,7 @@ fn forum_post_tag_selection_caps_at_five() {
     // At the cap, selected tags stay toggleable but the rest are marked
     // unselectable so the picker dims them.
     assert!(
-        view.tags
-            .iter()
-            .all(|tag| tag.selectable == tag.selected),
+        view.tags.iter().all(|tag| tag.selectable == tag.selected),
         "only selected tags remain selectable once the cap is reached"
     );
 

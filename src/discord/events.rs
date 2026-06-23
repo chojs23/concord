@@ -495,6 +495,12 @@ pub enum AppEvent {
     GatewayResumed,
     GatewayReidentified,
     GatewayClosed,
+    /// Optimistic update for the current user's notification level on a thread,
+    /// published by the `SetThreadNotificationLevel` command handler on success.
+    ThreadNotificationLevelUpdate {
+        channel_id: Id<ChannelMarker>,
+        flags: u64,
+    },
 }
 
 macro_rules! define_app_event_kinds {
@@ -577,6 +583,7 @@ define_app_event_kinds! {
     UserGuildSettingsInit: AppEvent::UserGuildSettingsInit { .. },
     UserGuildSettingsUpdate: AppEvent::UserGuildSettingsUpdate { .. },
     GatewayError: AppEvent::GatewayError { .. },
+    ThreadNotificationLevelUpdate: AppEvent::ThreadNotificationLevelUpdate { .. },
     MediaPlaybackWindowReady: AppEvent::MediaPlaybackWindowReady { .. },
     AttachmentDownloadStarted: AppEvent::AttachmentDownloadStarted { .. },
     AttachmentDownloadProgress: AppEvent::AttachmentDownloadProgress { .. },
@@ -863,6 +870,10 @@ impl AppEventKind {
             | AppEventKind::GatewayClosed => AppEventMetadata::effect_only(),
 
             AppEventKind::VoiceServerUpdate => AppEventMetadata::inert(),
+
+            AppEventKind::ThreadNotificationLevelUpdate => {
+                AppEventMetadata::mutating(SnapshotAreas::navigation())
+            }
         }
     }
 }

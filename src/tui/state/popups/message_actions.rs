@@ -464,11 +464,11 @@ impl DashboardState {
         else {
             return;
         };
-        self.runtime.copy_message_content_requested = Some(content.clone());
+        self.runtime.copy_text_requested = Some((content.clone(), "Message copied"));
     }
 
-    pub(in crate::tui) fn take_copy_message_content_request(&mut self) -> Option<String> {
-        self.runtime.copy_message_content_requested.take()
+    pub(in crate::tui) fn take_copy_text_request(&mut self) -> Option<(String, &'static str)> {
+        self.runtime.copy_text_requested.take()
     }
 
     pub fn direct_open_selected_message_reaction_picker(&mut self) {

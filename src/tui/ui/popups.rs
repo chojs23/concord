@@ -13,6 +13,7 @@ mod debug_log;
 mod downloads;
 mod folder_settings;
 mod forum_post;
+mod forum_post_edit;
 mod keymap;
 mod options;
 mod polls;
@@ -25,8 +26,8 @@ mod url_picker;
 #[cfg(test)]
 pub(super) use action_menu::{leader_action_lines_for_test, message_action_menu_lines};
 pub(super) use action_menu::{
-    leader_popup_area_for_state, message_action_menu_area, render_leader_popup,
-    render_message_action_menu,
+    leader_popup_area_for_state, message_action_menu_area, render_forum_post_action_menu,
+    render_leader_popup, render_message_action_menu,
 };
 #[cfg(test)]
 pub(super) use attachment_viewer::centered_viewer_preview_area;
@@ -37,9 +38,10 @@ pub(super) use channel_switcher::{
     channel_switcher_item_index_at, channel_switcher_popup_area, render_channel_switcher_popup,
 };
 pub(super) use confirmation::{
+    forum_post_delete_confirmation_popup_area_for_state,
     guild_leave_confirmation_popup_area_for_state, message_confirmation_popup_area_for_state,
-    quit_confirmation_popup_area, render_guild_leave_confirmation, render_message_confirmation,
-    render_quit_confirmation,
+    quit_confirmation_popup_area, render_forum_post_delete_confirmation,
+    render_guild_leave_confirmation, render_message_confirmation, render_quit_confirmation,
 };
 #[cfg(test)]
 pub(super) use confirmation::{
@@ -58,6 +60,10 @@ pub(super) use folder_settings::{folder_settings_popup_area, render_folder_setti
 pub(super) use forum_post::{
     forum_post_composer_metrics, forum_post_composer_popup_area, render_forum_post_composer,
     render_forum_post_tag_picker,
+};
+pub(super) use forum_post_edit::{
+    forum_post_edit_metrics, forum_post_edit_popup_area, render_forum_post_edit,
+    render_forum_post_edit_tag_picker,
 };
 #[cfg(test)]
 pub(super) use keymap::keymap_help_popup_lines;
@@ -142,6 +148,9 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
         ActiveModalPopupKind::GuildLeaveConfirmation => {
             guild_leave_confirmation_popup_area_for_state(frame_area, state)
         }
+        ActiveModalPopupKind::ForumPostDeleteConfirmation => {
+            forum_post_delete_confirmation_popup_area_for_state(frame_area, state)
+        }
         ActiveModalPopupKind::Options => Some(options_popup_area(frame_area, state)),
         // The attachment viewer centers on the whole frame; default and large
         // zoom take a percentage of it, fullscreen uses all of it.
@@ -166,6 +175,17 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
         ActiveModalPopupKind::ChannelSwitcher => Some(channel_switcher_popup_area(frame_area)),
         ActiveModalPopupKind::Search => search_popup_area_for_state(frame_area, state),
         ActiveModalPopupKind::ForumPostComposer => Some(forum_post_composer_popup_area(frame_area)),
+        ActiveModalPopupKind::ForumPostEdit => Some(forum_post_edit_popup_area(frame_area)),
+        ActiveModalPopupKind::ForumPostActionMenu => {
+            let count = if state.is_forum_post_action_mute_duration_phase() {
+                state.selected_forum_post_mute_duration_items().len()
+            } else if state.is_forum_post_action_notification_phase() {
+                state.selected_forum_post_notification_items().len()
+            } else {
+                state.selected_forum_post_action_items().len()
+            };
+            (count > 0).then(|| message_action_menu_area(frame_area, count))
+        }
     }
 }
 

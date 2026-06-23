@@ -109,6 +109,7 @@ pub(crate) fn parse_channel_info(
         total_message_sent: value.get("total_message_sent").and_then(Value::as_u64),
         thread_metadata: value.get("thread_metadata").and_then(parse_thread_metadata),
         flags: value.get("flags").and_then(Value::as_u64),
+        rate_limit_per_user: value.get("rate_limit_per_user").and_then(Value::as_u64),
         available_tags: parse_forum_tags(value.get("available_tags")),
         applied_tags: parse_id_array(value.get("applied_tags")),
         current_user_joined_thread,

@@ -7,7 +7,7 @@ use crate::discord::{
     commands::ForumPostArchiveState,
     ids::{
         Id,
-        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+        marker::{ChannelMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker},
     },
     rest::{CreatedForumPost, ForumPostPage, MessageEditRequest},
 };
@@ -252,6 +252,86 @@ impl DiscordClient {
                 muted,
                 mute_end_time,
                 selected_time_window,
+            )
+            .await
+    }
+
+    pub async fn set_thread_notification_level(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        flags: u64,
+    ) -> Result<()> {
+        self.rest
+            .set_thread_notification_level(thread_id, flags)
+            .await
+    }
+
+    pub async fn set_thread_muted(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        muted: bool,
+        mute_end_time: Option<DateTime<Utc>>,
+        selected_time_window: Option<i64>,
+    ) -> Result<()> {
+        self.rest
+            .set_thread_muted(thread_id, muted, mute_end_time, selected_time_window)
+            .await
+    }
+
+    pub async fn follow_thread(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
+        self.rest.follow_thread(thread_id).await
+    }
+
+    pub async fn unfollow_thread(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
+        self.rest.unfollow_thread(thread_id).await
+    }
+
+    pub async fn set_forum_post_archived(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        archived: bool,
+    ) -> Result<()> {
+        self.rest.set_forum_post_archived(thread_id, archived).await
+    }
+
+    pub async fn set_forum_post_locked(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        locked: bool,
+    ) -> Result<()> {
+        self.rest.set_forum_post_locked(thread_id, locked).await
+    }
+
+    pub async fn set_forum_post_pinned(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        pinned: bool,
+        current_flags: u64,
+    ) -> Result<()> {
+        self.rest
+            .set_forum_post_pinned(thread_id, pinned, current_flags)
+            .await
+    }
+
+    pub async fn delete_forum_post(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
+        self.rest.delete_forum_post(thread_id).await
+    }
+
+    pub async fn edit_forum_post_settings(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        name: &str,
+        applied_tags: &[Id<ForumTagMarker>],
+        rate_limit_per_user: u64,
+        auto_archive_duration: u64,
+    ) -> Result<()> {
+        self.rest
+            .edit_forum_post_settings(
+                thread_id,
+                name,
+                applied_tags,
+                rate_limit_per_user,
+                auto_archive_duration,
             )
             .await
     }

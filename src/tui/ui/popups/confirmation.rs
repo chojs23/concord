@@ -54,6 +54,25 @@ pub(in crate::tui::ui) fn render_guild_leave_confirmation(
     render_modal_paragraph(frame, popup, "Leave server?", lines);
 }
 
+pub(in crate::tui::ui) fn render_forum_post_delete_confirmation(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::ForumPostDeleteConfirmation) {
+        return;
+    }
+
+    let Some(name) = state.forum_post_delete_confirmation_name() else {
+        return;
+    };
+
+    let lines = forum_post_delete_confirmation_lines(&name, 56);
+    let popup = forum_post_delete_confirmation_popup_area(area, lines.len());
+    frame.render_widget(Clear, popup);
+    render_modal_paragraph(frame, popup, "Delete post?", lines);
+}
+
 pub(in crate::tui::ui) fn message_confirmation_popup_area(area: Rect, line_count: usize) -> Rect {
     centered_rect(area, 60, (line_count as u16).saturating_add(2))
 }
@@ -89,6 +108,22 @@ pub(in crate::tui::ui) fn guild_leave_confirmation_popup_area_for_state(
     let name = state.guild_leave_confirmation_name()?;
     let lines = guild_leave_confirmation_lines(&name, 56);
     Some(guild_leave_confirmation_popup_area(area, lines.len()))
+}
+
+pub(in crate::tui::ui) fn forum_post_delete_confirmation_popup_area(
+    area: Rect,
+    line_count: usize,
+) -> Rect {
+    centered_rect(area, 60, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn forum_post_delete_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let name = state.forum_post_delete_confirmation_name()?;
+    let lines = forum_post_delete_confirmation_lines(&name, 56);
+    Some(forum_post_delete_confirmation_popup_area(area, lines.len()))
 }
 
 #[cfg(test)]
@@ -156,6 +191,22 @@ fn guild_leave_confirmation_lines(name: &str, width: usize) -> Vec<Line<'static>
         Line::from(Span::raw(String::new())),
         Line::from(Span::styled(
             popup_shortcut_help_text(&[("Enter/y", "leave server"), ("Esc/n", "cancel")]),
+            Style::default().fg(DIM),
+        )),
+    ]
+}
+
+fn forum_post_delete_confirmation_lines(name: &str, width: usize) -> Vec<Line<'static>> {
+    let name = truncate_display_width(name, width.max(1).saturating_sub(2));
+    vec![
+        Line::from(Span::raw("Permanently delete this post?")),
+        Line::from(Span::styled(
+            format!("Post: {name}"),
+            Style::default().fg(Color::Red),
+        )),
+        Line::from(Span::raw(String::new())),
+        Line::from(Span::styled(
+            popup_shortcut_help_text(&[("Enter/y", "delete post"), ("Esc/n", "cancel")]),
             Style::default().fg(DIM),
         )),
     ]

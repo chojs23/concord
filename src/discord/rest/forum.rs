@@ -41,6 +41,122 @@ pub struct CreatedForumPost {
 }
 
 impl DiscordRest {
+    /// Follow a forum post by joining its thread, so the current user receives
+    /// notifications (and can then mute it).
+    pub async fn follow_thread(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
+        self.send_unit(
+            self.raw_http.put(format!(
+                "https://discord.com/api/v9/channels/{}/thread-members/@me",
+                thread_id.get()
+            )),
+            "follow post",
+        )
+        .await
+    }
+
+    /// Unfollow a forum post by leaving its thread.
+    pub async fn unfollow_thread(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
+        self.send_unit(
+            self.raw_http.delete(format!(
+                "https://discord.com/api/v9/channels/{}/thread-members/@me",
+                thread_id.get()
+            )),
+            "unfollow post",
+        )
+        .await
+    }
+
+    /// Archive ("close") or unarchive a forum post thread.
+    pub async fn set_forum_post_archived(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        archived: bool,
+    ) -> Result<()> {
+        self.edit_forum_post(thread_id, &json!({ "archived": archived }))
+            .await
+    }
+
+    /// Lock or unlock a forum post thread. While locked, members without manage
+    /// permissions can no longer reply.
+    pub async fn set_forum_post_locked(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        locked: bool,
+    ) -> Result<()> {
+        self.edit_forum_post(thread_id, &json!({ "locked": locked }))
+            .await
+    }
+
+    /// Pin or unpin a forum post within its parent forum. The pin lives in the
+    /// channel `flags` bitfield, so we flip only the PINNED bit and preserve the
+    /// other flags (for example REQUIRE_TAG).
+    pub async fn set_forum_post_pinned(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        pinned: bool,
+        current_flags: u64,
+    ) -> Result<()> {
+        const THREAD_FLAG_PINNED: u64 = 1 << 1;
+        let flags = if pinned {
+            current_flags | THREAD_FLAG_PINNED
+        } else {
+            current_flags & !THREAD_FLAG_PINNED
+        };
+        self.edit_forum_post(thread_id, &json!({ "flags": flags }))
+            .await
+    }
+
+    /// Edit a forum post thread's general settings in one `PATCH` call: the
+    /// title, applied tags, slow-mode cooldown, and auto-archive duration. This
+    /// is the popup-driven counterpart to the single-field archive/lock/pin
+    /// helpers above.
+    pub async fn edit_forum_post_settings(
+        &self,
+        thread_id: Id<ChannelMarker>,
+        name: &str,
+        applied_tags: &[Id<ForumTagMarker>],
+        rate_limit_per_user: u64,
+        auto_archive_duration: u64,
+    ) -> Result<()> {
+        let body = json!({
+            "name": name,
+            "applied_tags": applied_tags
+                .iter()
+                .map(|tag_id| Value::String(tag_id.to_string()))
+                .collect::<Vec<_>>(),
+            "rate_limit_per_user": rate_limit_per_user,
+            "auto_archive_duration": auto_archive_duration,
+        });
+        self.edit_forum_post(thread_id, &body).await
+    }
+
+    /// Permanently delete a forum post by deleting its underlying thread channel.
+    pub async fn delete_forum_post(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
+        self.send_unit(
+            self.raw_http.delete(format!(
+                "https://discord.com/api/v9/channels/{}",
+                thread_id.get()
+            )),
+            "delete forum post",
+        )
+        .await
+    }
+
+    /// Apply a partial `PATCH /channels/{id}` edit to a forum post thread.
+    /// Shared by the archive/lock/pin actions, which each send one field.
+    async fn edit_forum_post(&self, thread_id: Id<ChannelMarker>, body: &Value) -> Result<()> {
+        self.send_unit(
+            self.raw_http
+                .patch(format!(
+                    "https://discord.com/api/v9/channels/{}",
+                    thread_id.get()
+                ))
+                .json(body),
+            "edit forum post",
+        )
+        .await
+    }
+
     pub async fn create_forum_post(
         &self,
         channel_id: Id<ChannelMarker>,

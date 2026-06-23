@@ -1390,13 +1390,30 @@ impl DashboardState {
             return;
         };
         let id = channel.channel_id;
-        if list.active_post_ids.contains(&id) || list.archived_post_ids.contains(&id) {
-            return;
-        }
-        if channel.thread_archived() == Some(true) {
-            list.archived_post_ids.insert(0, id);
-        } else {
-            list.active_post_ids.insert(0, id);
+        // Re-section the post when its archive state changes (our Archive action
+        // or someone else's THREAD_UPDATE), so an existing post moves between the
+        // active and archived sections instead of staying put. A payload without
+        // `thread_metadata` carries no archive info, so we only insert-if-new.
+        match channel.thread_archived() {
+            Some(true) => {
+                if list.archived_post_ids.contains(&id) {
+                    return;
+                }
+                list.active_post_ids.retain(|existing| *existing != id);
+                list.archived_post_ids.insert(0, id);
+            }
+            Some(false) => {
+                if list.active_post_ids.contains(&id) {
+                    return;
+                }
+                list.archived_post_ids.retain(|existing| *existing != id);
+                list.active_post_ids.insert(0, id);
+            }
+            None => {
+                if !list.active_post_ids.contains(&id) && !list.archived_post_ids.contains(&id) {
+                    list.active_post_ids.insert(0, id);
+                }
+            }
         }
     }
 

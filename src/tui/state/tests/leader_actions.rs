@@ -16,8 +16,8 @@ fn leader_message_action_copy_closes_action_popup() {
     assert!(!state.is_leader_active());
     assert!(!state.is_message_action_context_active());
     assert_eq!(
-        state.take_copy_message_content_request(),
-        Some("msg 1".to_owned())
+        state.take_copy_text_request(),
+        Some(("msg 1".to_owned(), "Message copied"))
     );
 }
 

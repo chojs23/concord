@@ -20,6 +20,8 @@ mod channel_actions;
 mod channel_switcher;
 mod diagnostics;
 mod forum_post;
+mod forum_post_actions;
+mod forum_post_edit;
 mod guild_actions;
 mod message_actions;
 mod options;
@@ -28,7 +30,10 @@ mod reactions;
 mod search;
 mod user;
 
-use super::{DashboardState, EmojiReactionItem, FocusPane, MessageUrlItem, PollVotePickerItem};
+use super::{
+    DashboardState, EmojiReactionItem, FocusPane, ForumPostEditField, MessageUrlItem,
+    PollVotePickerItem,
+};
 use channel_switcher::ChannelSwitcherState;
 use search::SearchPopupState;
 
@@ -70,6 +75,9 @@ pub(super) enum ModalPopup {
     ChannelSwitcher(ChannelSwitcherState),
     Search(SearchPopupState),
     ForumPostComposer(ForumPostComposerState),
+    ForumPostEdit(ForumPostEditState),
+    ForumPostActionMenu(ForumPostActionMenuState),
+    ForumPostDeleteConfirmation(ForumPostDeleteConfirmationState),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,6 +99,9 @@ pub(in crate::tui) enum ActiveModalPopupKind {
     ChannelSwitcher,
     Search,
     ForumPostComposer,
+    ForumPostEdit,
+    ForumPostActionMenu,
+    ForumPostDeleteConfirmation,
 }
 
 impl ModalPopup {
@@ -113,6 +124,11 @@ impl ModalPopup {
             Self::ChannelSwitcher(_) => ActiveModalPopupKind::ChannelSwitcher,
             Self::Search(_) => ActiveModalPopupKind::Search,
             Self::ForumPostComposer(_) => ActiveModalPopupKind::ForumPostComposer,
+            Self::ForumPostEdit(_) => ActiveModalPopupKind::ForumPostEdit,
+            Self::ForumPostActionMenu(_) => ActiveModalPopupKind::ForumPostActionMenu,
+            Self::ForumPostDeleteConfirmation(_) => {
+                ActiveModalPopupKind::ForumPostDeleteConfirmation
+            }
         }
     }
 }
@@ -174,6 +190,65 @@ impl ForumPostComposerState {
             pending_scroll_reveal: true,
         }
     }
+}
+
+/// Settings popup for editing an existing forum post (thread). A leaner mirror
+/// of [`ForumPostComposerState`]: there is no body or attachments, and the
+/// slow-mode and auto-archive selectors replace them. The title edits inline
+/// through `edit_input` (like the composer's title), the tag picker reuses the
+/// same snapshot-on-entry order, and the two selectors cycle their option index
+/// with the arrow keys.
+#[derive(Debug)]
+pub(super) struct ForumPostEditState {
+    pub(super) channel_id: Id<ChannelMarker>,
+    pub(super) title: TextInputState,
+    pub(super) editing_title: bool,
+    pub(super) edit_input: TextInputState,
+    pub(super) selected_tag_ids: Vec<Id<ForumTagMarker>>,
+    /// Display order of tags while the tag picker is open. Captured on entry
+    /// (selected tags first) so the cursor does not jump as tags are toggled.
+    /// Indexed by `selected_tag_index`.
+    pub(super) tag_order: Vec<Id<ForumTagMarker>>,
+    pub(super) selected_tag_index: usize,
+    pub(super) editing_tags: bool,
+    /// Index into [`SLOW_MODE_OPTIONS`] for the current slow-mode value.
+    pub(super) rate_limit_index: usize,
+    /// Index into [`AUTO_ARCHIVE_OPTIONS`] for the current auto-archive value.
+    pub(super) auto_archive_index: usize,
+    /// Whether the slow-mode selector may be changed. Gated on the
+    /// manage-channel permission, mirroring Discord's General settings panel.
+    pub(super) can_set_slow_mode: bool,
+    pub(super) active_field: ForumPostEditField,
+    pub(super) status: Option<String>,
+    /// Viewport scroll for the (possibly overflowing) settings form, driven by
+    /// the scroll keys. `pending_scroll_reveal` asks the next render to bring
+    /// the focused field or text cursor back into view after a focus/edit
+    /// change.
+    pub(super) scroll: ScrollablePopupState,
+    pub(super) pending_scroll_reveal: bool,
+}
+
+/// Standalone action menu for a focused forum post (a thread). `Actions` is the
+/// top-level list; `MuteDuration` is the mute submenu; `NotificationSettings`
+/// is the notification-level submenu. All phases carry `channel_id` and
+/// `guild_id` so the actions can act on the thread directly.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ForumPostActionMenuState {
+    Actions {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        selection: SelectablePopupState,
+    },
+    MuteDuration {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        selection: SelectablePopupState,
+    },
+    NotificationSettings {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        selection: SelectablePopupState,
+    },
 }
 
 #[derive(Debug)]
@@ -413,6 +488,14 @@ impl MessageConfirmationKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuildLeaveConfirmationState {
     pub(super) guild_id: Id<GuildMarker>,
+    pub(super) name: String,
+}
+
+/// Confirmation gate before permanently deleting a forum post. Carries the
+/// thread id to delete and its display name for the prompt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumPostDeleteConfirmationState {
+    pub(super) channel_id: Id<ChannelMarker>,
     pub(super) name: String,
 }
 
@@ -836,6 +919,27 @@ impl PopupUiState {
         }
     }
 
+    pub(super) fn forum_post_delete_confirmation(
+        &self,
+    ) -> Option<&ForumPostDeleteConfirmationState> {
+        match &self.modal {
+            Some(ModalPopup::ForumPostDeleteConfirmation(confirmation)) => Some(confirmation),
+            _ => None,
+        }
+    }
+
+    pub(super) fn take_forum_post_delete_confirmation(
+        &mut self,
+    ) -> Option<ForumPostDeleteConfirmationState> {
+        match self.modal.take() {
+            Some(ModalPopup::ForumPostDeleteConfirmation(confirmation)) => Some(confirmation),
+            other => {
+                self.modal = other;
+                None
+            }
+        }
+    }
+
     modal_popup_accessors!(
         options_popup,
         options_popup_mut,
@@ -961,6 +1065,20 @@ impl PopupUiState {
         ForumPostComposerState,
         composer
     );
+    modal_popup_accessors!(
+        forum_post_edit,
+        forum_post_edit_mut,
+        ForumPostEdit,
+        ForumPostEditState,
+        popup
+    );
+    modal_popup_accessors!(
+        forum_post_action_menu,
+        forum_post_action_menu_mut,
+        ForumPostActionMenu,
+        ForumPostActionMenuState,
+        menu
+    );
 }
 
 impl DashboardState {
@@ -1035,6 +1153,12 @@ impl DashboardState {
 
     pub fn open_leader_actions_for_focused_target(&mut self) {
         self.close_all_action_contexts();
+        // A focused forum post opens its own standalone action menu instead of
+        // the (empty) message action context, since the messages pane is then
+        // showing forum post cards rather than messages.
+        if self.open_selected_forum_post_actions() {
+            return;
+        }
         let action = match self.navigation.focus {
             FocusPane::Guilds => self
                 .selected_guild_action_context()
@@ -1154,6 +1278,9 @@ impl DashboardState {
             | Some(ActiveModalPopupKind::DebugLog)
             | Some(ActiveModalPopupKind::Search)
             | Some(ActiveModalPopupKind::ForumPostComposer)
+            | Some(ActiveModalPopupKind::ForumPostEdit)
+            | Some(ActiveModalPopupKind::ForumPostActionMenu)
+            | Some(ActiveModalPopupKind::ForumPostDeleteConfirmation)
             | None => false,
         }
     }

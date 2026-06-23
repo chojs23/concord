@@ -46,11 +46,16 @@ pub(super) fn handle_popup_key(
         ActiveModalPopupKind::GuildLeaveConfirmation => {
             handle_guild_leave_confirmation_key(state, key)
         }
+        ActiveModalPopupKind::ForumPostDeleteConfirmation => {
+            handle_forum_post_delete_confirmation_key(state, key)
+        }
         ActiveModalPopupKind::PollVotePicker => handle_poll_vote_picker_key(state, key),
         ActiveModalPopupKind::EmojiReactionPicker => handle_emoji_reaction_picker_key(state, key),
         ActiveModalPopupKind::ChannelSwitcher => handle_channel_switcher_key(state, key),
         ActiveModalPopupKind::Search => handle_search_popup_key(state, key),
         ActiveModalPopupKind::ForumPostComposer => handle_forum_post_composer_key(state, key),
+        ActiveModalPopupKind::ForumPostEdit => handle_forum_post_edit_key(state, key),
+        ActiveModalPopupKind::ForumPostActionMenu => handle_forum_post_action_menu_key(state, key),
         ActiveModalPopupKind::Leader => super::leader::handle_leader_key(state, key),
         ActiveModalPopupKind::MessageUrlPicker => handle_message_url_picker_key(state, key),
         ActiveModalPopupKind::MessageActionMenu => handle_message_action_menu_key(state, key),
@@ -68,6 +73,7 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::ReactionUsers
         | ActiveModalPopupKind::MessageConfirmation
         | ActiveModalPopupKind::GuildLeaveConfirmation
+        | ActiveModalPopupKind::ForumPostDeleteConfirmation
         | ActiveModalPopupKind::PollVotePicker
         | ActiveModalPopupKind::EmojiReactionPicker => PopupKeyPhase::Priority,
         ActiveModalPopupKind::MessageActionMenu
@@ -77,7 +83,9 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::UserProfile
         | ActiveModalPopupKind::ChannelSwitcher
         | ActiveModalPopupKind::Search
-        | ActiveModalPopupKind::ForumPostComposer => PopupKeyPhase::Deferred,
+        | ActiveModalPopupKind::ForumPostComposer
+        | ActiveModalPopupKind::ForumPostEdit
+        | ActiveModalPopupKind::ForumPostActionMenu => PopupKeyPhase::Deferred,
     }
 }
 
@@ -214,6 +222,190 @@ fn handle_forum_post_composer_edit_key(
         ComposerAction::RemoveLastAttachment => state.pop_pending_forum_post_attachment(),
         ComposerAction::OpenInEditor => state.request_open_forum_post_body_in_editor(),
         ComposerAction::Ignore => {}
+    }
+    None
+}
+
+pub(super) fn handle_forum_post_edit_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    if state.is_forum_post_edit_tag_picker_active() {
+        return handle_forum_post_edit_tag_picker_key(state, key);
+    }
+    if state.is_forum_post_edit_title_editing() {
+        // Keep the text cursor on screen as the user types or moves it.
+        state.request_forum_post_edit_scroll_reveal();
+        return handle_forum_post_edit_title_key(state, key);
+    }
+
+    // The scroll keys (J/K and the arrows) pan the viewport without moving the
+    // field selection. The selectors claim Left/Right and h/l below before this
+    // runs.
+    if !matches!(
+        key.code,
+        KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l')
+    ) && let Some(action) = state.key_bindings().scroll_action(key)
+    {
+        state.scroll_forum_post_edit(action);
+        return None;
+    }
+
+    // Anything else changes the focused field, so re-reveal it after handling.
+    state.request_forum_post_edit_scroll_reveal();
+
+    // Left/Right (or h/l) cycle the focused selector (slow mode / auto-archive).
+    // These are no-ops on the non-selector fields.
+    match key.code {
+        KeyCode::Left | KeyCode::Char('h') => {
+            state.cycle_forum_post_edit_selector(false);
+            return None;
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            state.cycle_forum_post_edit_selector(true);
+            return None;
+        }
+        _ => {}
+    }
+
+    if let Some(action) = state
+        .key_bindings()
+        .selection_action(key, SelectionKeySet::Navigation)
+    {
+        match action {
+            SelectionAction::Next => state.move_forum_post_edit_selection_down(),
+            SelectionAction::Previous => state.move_forum_post_edit_selection_up(),
+        }
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Tab => {
+            state.cycle_forum_post_edit_field_next();
+            return None;
+        }
+        KeyCode::BackTab => {
+            state.cycle_forum_post_edit_field_previous();
+            return None;
+        }
+        _ => {}
+    }
+
+    match state.key_bindings().composer_action(key) {
+        ComposerAction::Submit => return state.activate_forum_post_edit(),
+        ComposerAction::Close => state.close_or_cancel_forum_post_edit(),
+        ComposerAction::ClearInput => state.clear_forum_post_edit_active_field(),
+        ComposerAction::OpenInEditor
+        | ComposerAction::PasteClipboard
+        | ComposerAction::InsertNewline
+        | ComposerAction::DeletePreviousChar
+        | ComposerAction::DeletePreviousWord
+        | ComposerAction::RemoveLastAttachment
+        | ComposerAction::MoveCursorUp
+        | ComposerAction::MoveCursorDown
+        | ComposerAction::MoveCursorWordLeft
+        | ComposerAction::MoveCursorLeft
+        | ComposerAction::MoveCursorWordRight
+        | ComposerAction::MoveCursorRight
+        | ComposerAction::MoveCursorHome
+        | ComposerAction::MoveCursorEnd
+        | ComposerAction::InsertChar(_)
+        | ComposerAction::Ignore => {}
+    }
+    None
+}
+
+fn handle_forum_post_edit_tag_picker_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    if let Some(action) = state
+        .key_bindings()
+        .selection_action(key, SelectionKeySet::Navigation)
+    {
+        match action {
+            SelectionAction::Next => state.move_forum_post_edit_selection_down(),
+            SelectionAction::Previous => state.move_forum_post_edit_selection_up(),
+        }
+        return None;
+    }
+
+    match state.key_bindings().composer_action(key) {
+        ComposerAction::Submit => return state.activate_forum_post_edit(),
+        ComposerAction::Close => state.close_or_cancel_forum_post_edit(),
+        ComposerAction::ClearInput => state.clear_forum_post_edit_active_field(),
+        ComposerAction::OpenInEditor
+        | ComposerAction::PasteClipboard
+        | ComposerAction::InsertNewline
+        | ComposerAction::DeletePreviousChar
+        | ComposerAction::DeletePreviousWord
+        | ComposerAction::RemoveLastAttachment
+        | ComposerAction::MoveCursorUp
+        | ComposerAction::MoveCursorDown
+        | ComposerAction::MoveCursorWordLeft
+        | ComposerAction::MoveCursorLeft
+        | ComposerAction::MoveCursorWordRight
+        | ComposerAction::MoveCursorRight
+        | ComposerAction::MoveCursorHome
+        | ComposerAction::MoveCursorEnd
+        | ComposerAction::InsertChar(_)
+        | ComposerAction::Ignore => {}
+    }
+    None
+}
+
+fn handle_forum_post_edit_title_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match state.key_bindings().composer_action(key) {
+        ComposerAction::PasteClipboard => state.request_paste_clipboard(),
+        ComposerAction::Submit => return state.activate_forum_post_edit(),
+        ComposerAction::Close => state.close_or_cancel_forum_post_edit(),
+        ComposerAction::ClearInput => state.clear_forum_post_edit_active_field(),
+        ComposerAction::DeletePreviousChar => state.delete_forum_post_edit_previous_char(),
+        ComposerAction::DeletePreviousWord => state.delete_forum_post_edit_previous_word(),
+        ComposerAction::MoveCursorWordLeft => state.move_forum_post_edit_cursor_word_left(),
+        ComposerAction::MoveCursorLeft => state.move_forum_post_edit_cursor_left(),
+        ComposerAction::MoveCursorWordRight => state.move_forum_post_edit_cursor_word_right(),
+        ComposerAction::MoveCursorRight => state.move_forum_post_edit_cursor_right(),
+        ComposerAction::MoveCursorHome => state.move_forum_post_edit_cursor_home(),
+        ComposerAction::MoveCursorEnd => state.move_forum_post_edit_cursor_end(),
+        ComposerAction::InsertChar(value) => state.push_forum_post_edit_char(value),
+        // The title is a single line, so newline and the vertical/editor moves
+        // and attachment shortcut do nothing here.
+        ComposerAction::InsertNewline
+        | ComposerAction::MoveCursorUp
+        | ComposerAction::MoveCursorDown
+        | ComposerAction::RemoveLastAttachment
+        | ComposerAction::OpenInEditor
+        | ComposerAction::Ignore => {}
+    }
+    None
+}
+
+pub(super) fn handle_forum_post_action_menu_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    if state.key_bindings().is_popup_close_key(key) {
+        // Esc backs out of the mute submenu first, then closes the menu.
+        if !state.back_forum_post_action_menu() {
+            state.close_forum_post_action_menu();
+        }
+        return None;
+    }
+    if key.code == KeyCode::Enter {
+        return state.activate_selected_forum_post_action();
+    }
+    if let Some(action) = state
+        .key_bindings()
+        .selection_action(key, SelectionKeySet::Navigation)
+    {
+        match action {
+            SelectionAction::Next => state.move_forum_post_action_down(),
+            SelectionAction::Previous => state.move_forum_post_action_up(),
+        }
     }
     None
 }
@@ -409,6 +601,18 @@ pub(super) fn handle_guild_leave_confirmation_key(
         key,
         DashboardState::confirm_guild_leave,
         DashboardState::close_guild_leave_confirmation,
+    )
+}
+
+pub(super) fn handle_forum_post_delete_confirmation_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    handle_confirmation_key(
+        state,
+        key,
+        DashboardState::confirm_forum_post_delete,
+        DashboardState::close_forum_post_delete_confirmation,
     )
 }
 
