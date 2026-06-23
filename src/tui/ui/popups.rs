@@ -92,16 +92,15 @@ pub(super) use url_picker::message_url_picker_lines_for_width;
 pub(super) use url_picker::{message_url_picker_popup_area, render_message_url_picker};
 
 pub(super) fn background_media_occlusion_areas(
-    messages_area: Rect,
     frame_area: Rect,
     state: &DashboardState,
 ) -> Vec<Rect> {
     let mut areas = Vec::new();
 
     if state.is_folder_settings_open() {
-        areas.push(folder_settings_popup_area(messages_area));
+        areas.push(folder_settings_popup_area(frame_area));
     }
-    if let Some(area) = active_modal_popup_area(messages_area, frame_area, state) {
+    if let Some(area) = active_modal_popup_area(frame_area, state) {
         areas.push(area);
     }
 
@@ -119,11 +118,7 @@ pub(super) fn background_media_occlusion_areas(
     areas.into_iter().filter(|area| !area.is_empty()).collect()
 }
 
-fn active_modal_popup_area(
-    messages_area: Rect,
-    frame_area: Rect,
-    state: &DashboardState,
-) -> Option<Rect> {
+fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<Rect> {
     let kind = state.active_modal_popup_kind()?;
     match kind {
         ActiveModalPopupKind::MessageActionMenu => {
@@ -131,45 +126,43 @@ fn active_modal_popup_area(
                 return None;
             }
             let actions = state.selected_message_action_items();
-            (!actions.is_empty()).then(|| message_action_menu_area(messages_area, actions.len()))
+            (!actions.is_empty()).then(|| message_action_menu_area(frame_area, actions.len()))
         }
         ActiveModalPopupKind::MessageUrlPicker => {
             let urls = state.selected_message_url_items();
-            (!urls.is_empty()).then(|| message_url_picker_popup_area(messages_area, urls.len()))
+            (!urls.is_empty()).then(|| message_url_picker_popup_area(frame_area, urls.len()))
         }
         ActiveModalPopupKind::MessageConfirmation => {
-            message_confirmation_popup_area_for_state(messages_area, state)
+            message_confirmation_popup_area_for_state(frame_area, state)
         }
-        ActiveModalPopupKind::QuitConfirmation => Some(quit_confirmation_popup_area(messages_area)),
+        ActiveModalPopupKind::QuitConfirmation => Some(quit_confirmation_popup_area(frame_area)),
         ActiveModalPopupKind::GuildLeaveConfirmation => {
-            guild_leave_confirmation_popup_area_for_state(messages_area, state)
+            guild_leave_confirmation_popup_area_for_state(frame_area, state)
         }
-        ActiveModalPopupKind::Options => Some(options_popup_area(messages_area, state)),
-        ActiveModalPopupKind::AttachmentViewer => Some(attachment_viewer_popup(
-            messages_area,
-            frame_area,
-            state.attachment_viewer_zoom(),
-        )),
-        ActiveModalPopupKind::Leader => Some(leader_popup_area_for_state(messages_area, state)),
-        ActiveModalPopupKind::UserProfile => Some(user_profile_popup_area(messages_area)),
+        ActiveModalPopupKind::Options => Some(options_popup_area(frame_area, state)),
+        // The attachment viewer centers on the whole frame; default and large
+        // zoom take a percentage of it, fullscreen uses all of it.
+        ActiveModalPopupKind::AttachmentViewer => {
+            Some(attachment_viewer_popup(frame_area, state.attachment_viewer_zoom()))
+        }
+        ActiveModalPopupKind::Leader => Some(leader_popup_area_for_state(frame_area, state)),
+        ActiveModalPopupKind::UserProfile => Some(user_profile_popup_area(frame_area)),
         ActiveModalPopupKind::EmojiReactionPicker => {
-            emoji_reaction_picker_popup_area_for_state(messages_area, state)
+            emoji_reaction_picker_popup_area_for_state(frame_area, state)
         }
         ActiveModalPopupKind::PollVotePicker => state
             .poll_vote_picker_items()
             .filter(|answers| !answers.is_empty())
-            .map(|answers| poll_vote_picker_popup_area(messages_area, answers.len())),
+            .map(|answers| poll_vote_picker_popup_area(frame_area, answers.len())),
         ActiveModalPopupKind::ReactionUsers => {
-            reaction_users_popup_area_for_state(messages_area, state)
+            reaction_users_popup_area_for_state(frame_area, state)
         }
-        ActiveModalPopupKind::DebugLog => {
-            Some(debug_log_popup_area_for_state(messages_area, state))
-        }
-        ActiveModalPopupKind::KeymapHelp => Some(keymap_popup_area(messages_area)),
-        ActiveModalPopupKind::ChannelSwitcher => Some(channel_switcher_popup_area(messages_area)),
-        ActiveModalPopupKind::Search => search_popup_area_for_state(messages_area, state),
+        ActiveModalPopupKind::DebugLog => Some(debug_log_popup_area_for_state(frame_area, state)),
+        ActiveModalPopupKind::KeymapHelp => Some(keymap_popup_area(frame_area)),
+        ActiveModalPopupKind::ChannelSwitcher => Some(channel_switcher_popup_area(frame_area)),
+        ActiveModalPopupKind::Search => search_popup_area_for_state(frame_area, state),
         ActiveModalPopupKind::ForumPostComposer => {
-            Some(forum_post_composer_popup_area(messages_area))
+            Some(forum_post_composer_popup_area(frame_area))
         }
     }
 }

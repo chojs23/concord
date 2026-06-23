@@ -35,10 +35,10 @@ pub(crate) fn mouse_target_at(
     row: u16,
 ) -> Option<MouseTarget> {
     let areas = dashboard_areas(area, state);
-    if let Some(target) = channel_switcher_mouse_target(areas.messages, state, column, row) {
+    if let Some(target) = channel_switcher_mouse_target(area, state, column, row) {
         return Some(target);
     }
-    if let Some(target) = popup_list_mouse_target(areas.messages, state, column, row) {
+    if let Some(target) = popup_list_mouse_target(area, state, column, row) {
         return Some(target);
     }
     if state.is_pane_visible(FocusPane::Guilds)
@@ -95,14 +95,8 @@ fn channel_switcher_mouse_target(
         .or(Some(MouseTarget::ModalBackdrop))
 }
 
-pub(crate) fn user_profile_popup_contains(
-    area: Rect,
-    state: &DashboardState,
-    column: u16,
-    row: u16,
-) -> bool {
-    let areas = dashboard_areas(area, state);
-    rect_contains(user_profile_popup_area(areas.messages), column, row)
+pub(crate) fn user_profile_popup_contains(area: Rect, column: u16, row: u16) -> bool {
+    rect_contains(user_profile_popup_area(area), column, row)
 }
 
 fn popup_list_mouse_target(

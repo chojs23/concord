@@ -286,7 +286,8 @@ fn mouse_target_at_maps_visible_message_action_rows() {
         .checked_sub(1)
         .expect("message action menu has actions");
     let popup_height = action_count as u16 + 2;
-    let first_action_y = 1 + (19 - popup_height) / 2 + 1;
+    // The action menu now centers on the whole frame, not the message pane.
+    let first_action_y = area.y + (area.height - popup_height) / 2 + 1;
 
     assert_eq!(
         mouse_target_at(area, &state, 46, first_action_y - 1),

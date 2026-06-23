@@ -154,23 +154,22 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         "Members",
         state.is_pane_visible(FocusPane::Members),
     ));
-    state.set_reaction_users_popup_view_height(reaction_users_visible_line_count(areas.messages));
+    state.set_reaction_users_popup_view_height(reaction_users_visible_line_count(area));
     if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
         // The popup body shrinks when the avatar slot is in use, so use
         // the same has-avatar predicate the renderer uses to keep the
         // total-line / view-height pair consistent with what gets drawn.
         let has_avatar = user_profile_popup_has_avatar(
-            areas.messages,
+            area,
             state.show_avatars() && state.user_profile_popup_has_avatar_preview(),
         );
-        let (text_width, text_height) =
-            user_profile_popup_text_geometry(areas.messages, has_avatar);
+        let (text_width, text_height) = user_profile_popup_text_geometry(area, has_avatar);
         let total_lines = user_profile_popup_total_lines(state, text_width);
         state.set_user_profile_popup_view_height(text_height as usize);
         state.set_user_profile_popup_total_lines(total_lines);
     }
     if state.is_active_modal_popup(ActiveModalPopupKind::KeymapHelp) {
-        let inner = keymap_popup_text_area(areas.messages);
+        let inner = keymap_popup_text_area(area);
         let total_lines = keymap_popup_total_lines(state);
         state.set_keymap_popup_view_height(inner.height as usize);
         state.set_keymap_popup_total_lines(total_lines);
@@ -181,7 +180,7 @@ pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewL
     let areas = dashboard_areas(area, state);
     let list = message_list_area(areas.messages, state);
     let viewer_image_area =
-        attachment_viewer_image_area(areas.messages, area, state.attachment_viewer_zoom());
+        attachment_viewer_image_area(area, state.attachment_viewer_zoom());
     ImagePreviewLayout {
         list_height: list.height as usize,
         content_width: message_content_width(list),
@@ -223,6 +222,9 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     message_viewport_plan: Option<&MessageViewportPlan<'_>>,
 ) {
     let areas = dashboard_areas(frame.area(), state);
+    // Modal popups and menus center on the whole terminal rather than the
+    // message pane, so they are not clipped to the chat column.
+    let popup_area = frame.area();
     let mut inline_image_previews = Vec::new();
     let mut viewer_image_preview = None;
     for image_preview in image_previews {
@@ -240,8 +242,7 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     if state.is_pane_visible(FocusPane::Channels) {
         render_channels(frame, areas.channels, state);
     }
-    let media_occlusion_areas =
-        background_media_occlusion_areas(areas.messages, frame.area(), state);
+    let media_occlusion_areas = background_media_occlusion_areas(frame.area(), state);
     render_messages(
         frame,
         areas.messages,
@@ -257,49 +258,38 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     if state.is_pane_visible(FocusPane::Members) {
         render_members(frame, areas.members, state, &emoji_images);
     }
-    render_leader_popup(frame, areas.messages, state);
-    render_channel_switcher_popup(frame, areas.messages, state);
-    render_message_action_menu(frame, areas.messages, state);
-    render_message_url_picker(frame, areas.messages, state);
-    render_message_confirmation(frame, areas.messages, state);
-    render_quit_confirmation(frame, areas.messages, state);
-    render_guild_leave_confirmation(frame, areas.messages, state);
-    render_folder_settings_popup(frame, areas.messages, state);
-    render_options_popup(frame, areas.messages, state);
-    render_poll_vote_picker(frame, areas.messages, state);
-    render_user_profile_popup(frame, areas.messages, state, profile_avatar, &emoji_images);
-    render_emoji_reaction_picker(frame, areas.messages, state, emoji_images);
-    render_reaction_users_popup(frame, areas.messages, state);
-    render_attachment_viewer(
-        frame,
-        areas.messages,
-        frame.area(),
-        state,
-        viewer_image_preview,
-    );
-    render_debug_log_popup(frame, areas.messages, state);
-    render_keymap_help_popup(frame, areas.messages, state);
-    render_search_popup(frame, areas.messages, state);
-    render_forum_post_composer(frame, areas.messages, state);
+    render_leader_popup(frame, popup_area, state);
+    render_channel_switcher_popup(frame, popup_area, state);
+    render_message_action_menu(frame, popup_area, state);
+    render_message_url_picker(frame, popup_area, state);
+    render_message_confirmation(frame, popup_area, state);
+    render_quit_confirmation(frame, popup_area, state);
+    render_guild_leave_confirmation(frame, popup_area, state);
+    render_folder_settings_popup(frame, popup_area, state);
+    render_options_popup(frame, popup_area, state);
+    render_poll_vote_picker(frame, popup_area, state);
+    render_user_profile_popup(frame, popup_area, state, profile_avatar, &emoji_images);
+    render_emoji_reaction_picker(frame, popup_area, state, emoji_images);
+    render_reaction_users_popup(frame, popup_area, state);
+    render_attachment_viewer(frame, frame.area(), state, viewer_image_preview);
+    render_debug_log_popup(frame, popup_area, state);
+    render_keymap_help_popup(frame, popup_area, state);
+    render_search_popup(frame, popup_area, state);
+    render_forum_post_composer(frame, popup_area, state);
     render_downloads_popup(frame, frame.area(), state);
     render_toast(frame, frame.area(), state);
 }
 
 pub(in crate::tui) fn background_media_occlusion_areas(
-    messages_area: Rect,
     frame_area: Rect,
     state: &DashboardState,
 ) -> Vec<Rect> {
-    self::popups::background_media_occlusion_areas(messages_area, frame_area, state)
+    self::popups::background_media_occlusion_areas(frame_area, state)
 }
 
 pub(in crate::tui) fn image_preview_list_area(area: Rect, state: &DashboardState) -> Rect {
     let areas = dashboard_areas(area, state);
     message_list_area(areas.messages, state)
-}
-
-pub(in crate::tui) fn dashboard_message_area(area: Rect, state: &DashboardState) -> Rect {
-    dashboard_areas(area, state).messages
 }
 
 pub(in crate::tui) fn inline_image_preview_screen_area(

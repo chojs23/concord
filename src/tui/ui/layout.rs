@@ -51,35 +51,24 @@ fn pane_width(visible: bool, width: u16) -> Constraint {
     Constraint::Length(if visible { width } else { 0 })
 }
 
-pub(super) fn attachment_viewer_popup(
-    messages_area: Rect,
-    frame_area: Rect,
-    zoom: AttachmentViewerZoom,
-) -> Rect {
+pub(super) fn attachment_viewer_popup(frame_area: Rect, zoom: AttachmentViewerZoom) -> Rect {
     match zoom {
         AttachmentViewerZoom::Fullscreen => frame_area,
         AttachmentViewerZoom::Default => centered_rect(
-            messages_area,
-            percentage_of(messages_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT),
-            percentage_of(
-                messages_area.height,
-                ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT,
-            ),
+            frame_area,
+            percentage_of(frame_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT),
+            percentage_of(frame_area.height, ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT),
         ),
         AttachmentViewerZoom::Large => centered_rect(
-            messages_area,
-            percentage_of(messages_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
-            percentage_of(messages_area.height, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
+            frame_area,
+            percentage_of(frame_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
+            percentage_of(frame_area.height, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
         ),
     }
 }
 
-pub(super) fn attachment_viewer_image_area(
-    messages_area: Rect,
-    frame_area: Rect,
-    zoom: AttachmentViewerZoom,
-) -> Rect {
-    let inner = attachment_viewer_popup(messages_area, frame_area, zoom).inner(Margin {
+pub(super) fn attachment_viewer_image_area(frame_area: Rect, zoom: AttachmentViewerZoom) -> Rect {
+    let inner = attachment_viewer_popup(frame_area, zoom).inner(Margin {
         vertical: 1,
         horizontal: 1,
     });

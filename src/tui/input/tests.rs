@@ -91,8 +91,11 @@ fn message_row_point(row: u16) -> (u16, u16) {
     (50, 2 + row)
 }
 
-fn message_action_row_point(row: u16) -> (u16, u16) {
-    (46, 3 + row)
+fn message_action_row_point(item_count: u16, row: u16) -> (u16, u16) {
+    // The action menu centers on the whole frame (dashboard_area, height 20);
+    // its first selectable row sits one row below the popup's top border.
+    let popup_top = dashboard_area().height.saturating_sub(item_count + 2) / 2;
+    (46, popup_top + 1 + row)
 }
 
 fn dashboard_area() -> Rect {

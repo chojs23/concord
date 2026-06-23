@@ -244,7 +244,6 @@ fn inline_image_preview_area_returns_none_when_preview_ends_above_list() {
 #[test]
 fn modal_overlay_registry_occludes_different_popup_kinds() {
     let frame_area = Rect::new(0, 0, 120, 50);
-    let messages_area = Rect::new(10, 5, 100, 40);
     let mut options_state = DashboardState::new();
     options_state.open_options_popup();
     let mut keymap_state = DashboardState::new();
@@ -253,7 +252,7 @@ fn modal_overlay_registry_occludes_different_popup_kinds() {
     search_state.open_search_popup_for_focus(FocusPane::Messages);
 
     for state in [&options_state, &keymap_state, &search_state] {
-        let areas = background_media_occlusion_areas(messages_area, frame_area, state);
+        let areas = background_media_occlusion_areas(frame_area, state);
 
         assert_eq!(areas.len(), 1, "{areas:?}");
         assert!(!areas[0].is_empty(), "{areas:?}");
@@ -263,10 +262,9 @@ fn modal_overlay_registry_occludes_different_popup_kinds() {
 #[test]
 fn non_modal_overlay_registry_occludes_folder_settings() {
     let frame_area = Rect::new(0, 0, 120, 50);
-    let messages_area = Rect::new(10, 5, 100, 40);
     let state = state_with_folder_settings();
 
-    let areas = background_media_occlusion_areas(messages_area, frame_area, &state);
+    let areas = background_media_occlusion_areas(frame_area, &state);
 
     assert_eq!(areas.len(), 1, "{areas:?}");
     assert!(!areas[0].is_empty(), "{areas:?}");

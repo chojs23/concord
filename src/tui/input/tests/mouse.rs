@@ -160,7 +160,7 @@ fn left_click_selects_channel_switcher_row() {
 
     assert!(handle_mouse(
         &mut state,
-        mouse(MouseEventKind::Down(MouseButton::Left), 50, 7),
+        mouse(MouseEventKind::Down(MouseButton::Left), 50, 6),
         dashboard_area(),
     ));
 
@@ -174,7 +174,7 @@ fn double_click_activates_channel_switcher_row() {
     let mut state = state_with_channel_tree();
     state.open_channel_switcher();
     let mut clicks = MouseClickTracker::default();
-    let event = mouse(MouseEventKind::Down(MouseButton::Left), 50, 7);
+    let event = mouse(MouseEventKind::Down(MouseButton::Left), 50, 6);
 
     let first = handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
     let second = handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
@@ -504,7 +504,8 @@ fn mouse_click_selects_message_action_row() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, key(KeyCode::Enter));
-    let (column, row) = message_action_row_point(0);
+    let count = state.selected_message_action_items().len() as u16;
+    let (column, row) = message_action_row_point(count, 0);
 
     assert!(handle_mouse(
         &mut state,
@@ -526,7 +527,9 @@ fn mouse_double_click_activates_message_action_row_like_enter() {
         .iter()
         .position(|action| action.kind == MessageActionKind::OpenPollVotePicker)
         .expect("poll action should exist");
+    let count = state.selected_message_action_items().len() as u16;
     let (column, row) = message_action_row_point(
+        count,
         u16::try_from(poll_row).expect("message action row fits in test area"),
     );
 
@@ -559,7 +562,8 @@ fn mouse_wheel_moves_message_action_selection() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, key(KeyCode::Enter));
-    let (column, row) = message_action_row_point(0);
+    let count = state.selected_message_action_items().len() as u16;
+    let (column, row) = message_action_row_point(count, 0);
 
     assert!(handle_mouse(
         &mut state,

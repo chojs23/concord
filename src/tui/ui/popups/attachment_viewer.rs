@@ -2,7 +2,6 @@ use super::*;
 
 pub(in crate::tui::ui) fn render_attachment_viewer(
     frame: &mut Frame,
-    messages_area: Rect,
     frame_area: Rect,
     state: &DashboardState,
     image_preview: Option<ImagePreview<'_>>,
@@ -16,7 +15,7 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
     };
 
     let zoom = state.attachment_viewer_zoom();
-    let popup = attachment_viewer_popup(messages_area, frame_area, zoom);
+    let popup = attachment_viewer_popup(frame_area, zoom);
     let title_width = usize::from(popup.width.saturating_sub(4)).max(1);
     let title = truncate_display_width(&attachment_viewer_title(&item), title_width);
     frame.render_widget(Clear, popup);

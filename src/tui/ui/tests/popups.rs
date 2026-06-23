@@ -246,32 +246,30 @@ fn attachment_viewer_render_shows_download_hint_inside_popup() {
 }
 
 #[test]
-fn attachment_viewer_popup_uses_eighty_percent_of_message_area() {
+fn attachment_viewer_popup_uses_eighty_percent_of_frame_area() {
     let area = Rect::new(10, 5, 100, 40);
 
-    let popup = attachment_viewer_popup(area, area, AttachmentViewerZoom::Default);
-    let image_area = attachment_viewer_image_area(area, area, AttachmentViewerZoom::Default);
+    let popup = attachment_viewer_popup(area, AttachmentViewerZoom::Default);
+    let image_area = attachment_viewer_image_area(area, AttachmentViewerZoom::Default);
 
     assert_eq!(popup, Rect::new(20, 9, 80, 32));
     assert_eq!(image_area, Rect::new(21, 10, 78, 29));
 }
 
 #[test]
-fn attachment_viewer_popup_large_uses_ninety_five_percent_of_message_area() {
+fn attachment_viewer_popup_large_uses_ninety_five_percent_of_frame_area() {
     let area = Rect::new(10, 5, 100, 40);
 
-    let popup = attachment_viewer_popup(area, area, AttachmentViewerZoom::Large);
+    let popup = attachment_viewer_popup(area, AttachmentViewerZoom::Large);
 
     assert_eq!(popup, Rect::new(12, 6, 95, 38));
 }
 
 #[test]
 fn attachment_viewer_popup_fullscreen_uses_full_frame_area() {
-    let messages_area = Rect::new(10, 5, 100, 40);
     let frame_area = Rect::new(0, 0, 200, 60);
 
-    let popup =
-        attachment_viewer_popup(messages_area, frame_area, AttachmentViewerZoom::Fullscreen);
+    let popup = attachment_viewer_popup(frame_area, AttachmentViewerZoom::Fullscreen);
 
     assert_eq!(popup, frame_area);
 }

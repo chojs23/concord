@@ -88,7 +88,7 @@ pub fn handle_mouse_event(
             // rectangle. Clicks outside the popup should still reach the
             // dashboard instead of making the whole screen inert.
             if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile)
-                && ui::user_profile_popup_contains(area, state, mouse.column, mouse.row)
+                && ui::user_profile_popup_contains(area, mouse.column, mouse.row)
             {
                 clicks.clear();
                 return MouseOutcome::handled(None);

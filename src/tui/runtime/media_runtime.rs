@@ -188,8 +188,7 @@ impl DashboardMediaRuntime {
     ) {
         self.image_targets = visible_image_preview_targets_from_plan(state, layout, plan);
         let list = ui::image_preview_list_area(area, state);
-        let messages_area = ui::dashboard_message_area(area, state);
-        let occlusion_areas = ui::background_media_occlusion_areas(messages_area, area, state);
+        let occlusion_areas = ui::background_media_occlusion_areas(area, state);
         self.image_targets = clip_image_preview_targets_for_occlusions(
             std::mem::take(&mut self.image_targets),
             list,
