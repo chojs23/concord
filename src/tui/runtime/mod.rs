@@ -167,6 +167,11 @@ pub(super) async fn run_dashboard(
                                 logging::error("tui", format!("editor failed: {error}"));
                             }
                         }
+                        if state.take_open_forum_post_body_in_editor_request() {
+                            if let Err(error) = open_forum_post_body_in_editor(terminal, &mut state) {
+                                logging::error("tui", format!("editor failed: {error}"));
+                            }
+                        }
                         if state.take_paste_clipboard_request()
                             && state.accepts_clipboard_paste()
                             && !clipboard_paste_in_flight
@@ -522,6 +527,34 @@ fn open_composer_in_editor(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut DashboardState,
 ) -> crate::Result<()> {
+    if let Some(content) = edit_text_in_external_editor(terminal, state.composer_input())? {
+        state.replace_composer_input_from_editor(content);
+    }
+    Ok(())
+}
+
+fn open_forum_post_body_in_editor(
+    terminal: &mut ratatui::DefaultTerminal,
+    state: &mut DashboardState,
+) -> crate::Result<()> {
+    let Some(initial) = state.forum_post_body_for_editor() else {
+        return Ok(());
+    };
+    if let Some(content) = edit_text_in_external_editor(terminal, &initial)? {
+        state.replace_forum_post_body_from_editor(content);
+    }
+    Ok(())
+}
+
+/// Suspend the TUI, hand the terminal to `$EDITOR` seeded with `initial`, then
+/// restore the TUI. Returns the edited text when the editor exits successfully,
+/// or `None` when it was cancelled or failed (so the caller keeps the buffer
+/// untouched). Shared by the message composer and the forum post body so both
+/// restore the same terminal modes.
+fn edit_text_in_external_editor(
+    terminal: &mut ratatui::DefaultTerminal,
+    initial: &str,
+) -> crate::Result<Option<String>> {
     use crossterm::event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -535,7 +568,7 @@ fn open_composer_in_editor(
         .prefix("concord-message-")
         .suffix(".txt")
         .tempfile()?;
-    std::io::Write::write_all(&mut temp, state.composer_input().as_bytes())?;
+    std::io::Write::write_all(&mut temp, initial.as_bytes())?;
     let path = temp.path().to_path_buf();
 
     let _ = execute!(
@@ -567,7 +600,7 @@ fn open_composer_in_editor(
         && status.success()
         && let Ok(content) = std::fs::read_to_string(&path)
     {
-        state.replace_composer_input_from_editor(content);
+        return Ok(Some(content));
     }
-    Ok(())
+    Ok(None)
 }

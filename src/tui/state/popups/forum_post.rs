@@ -1,19 +1,28 @@
-use crate::discord::ids::{Id, marker::ChannelMarker};
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, ForumTagMarker},
+};
 use crate::discord::{
     AppCommand, ForumPostCreate, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload,
 };
+use crate::tui::keybindings::ScrollAction;
 use ratatui_image::protocol::Protocol;
 
 use super::super::local_upload_preview::{
-    LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_view,
+    LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
+    local_upload_preview_view,
 };
+use super::super::composer::expand_emoji_shortcodes;
 use super::super::{
-    DashboardState, FocusPane, ForumPostAttachmentPreviewView, ForumPostComposerAttachmentView,
-    ForumPostComposerField, ForumPostComposerTagView, ForumPostComposerView,
+    DashboardState, FocusPane, ForumPostComposerAttachmentView, ForumPostComposerField,
+    ForumPostComposerTagView, ForumPostComposerView, LocalUploadPreviewView,
 };
 use super::{
     ActiveModalPopupKind, ForumPostComposerFieldState, ForumPostComposerState, ModalPopup,
 };
+
+/// Discord allows at most five tags applied to a single forum post.
+const MAX_FORUM_POST_TAGS: usize = 5;
 
 impl DashboardState {
     pub fn open_forum_post_composer(&mut self, channel_id: Id<ChannelMarker>) {
@@ -46,31 +55,136 @@ impl DashboardState {
         self.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer)
     }
 
+    /// Ask the runtime loop to open `$EDITOR` for the post body. Only honored
+    /// while the body field is being edited so the title and other fields keep
+    /// their inline editing.
+    pub fn request_open_forum_post_body_in_editor(&mut self) {
+        if self
+            .popups
+            .forum_post_composer()
+            .is_some_and(|popup| popup.editing == Some(ForumPostComposerFieldState::Body))
+        {
+            self.runtime.open_forum_post_body_in_editor_requested = true;
+        }
+    }
+
+    pub fn take_open_forum_post_body_in_editor_request(&mut self) -> bool {
+        std::mem::take(&mut self.runtime.open_forum_post_body_in_editor_requested)
+    }
+
+    /// Current body text to seed the external editor with, or `None` when the
+    /// body is not being edited. The body lives in `edit_input` while editing.
+    pub fn forum_post_body_for_editor(&self) -> Option<String> {
+        self.popups
+            .forum_post_composer()
+            .filter(|popup| popup.editing == Some(ForumPostComposerFieldState::Body))
+            .map(|popup| popup.edit_input.value().to_owned())
+    }
+
+    /// Apply the text returned by the external editor back into the body edit
+    /// buffer, keeping the user in body editing mode.
+    pub fn replace_forum_post_body_from_editor(&mut self, content: String) {
+        if let Some(popup) = self.popups.forum_post_composer_mut()
+            && popup.editing == Some(ForumPostComposerFieldState::Body)
+        {
+            popup.edit_input.set_value(content);
+            popup.status = None;
+        }
+    }
+
+    /// Top-of-viewport row for the scrolling composer body. Used by the renderer.
+    pub fn forum_post_composer_scroll(&self) -> usize {
+        self.popups
+            .forum_post_composer()
+            .map(|popup| popup.scroll.scroll())
+            .unwrap_or(0)
+    }
+
+    pub fn scroll_forum_post_composer(&mut self, action: ScrollAction) {
+        if let Some(popup) = self.popups.forum_post_composer_mut() {
+            match action {
+                ScrollAction::Down => popup.scroll.scroll_down(),
+                ScrollAction::Up => popup.scroll.scroll_up(),
+            }
+        }
+    }
+
+    /// Ask the next render to scroll the focused field or text cursor back into
+    /// view. Called after any focus/edit change, but not after a manual scroll.
+    pub fn request_forum_post_scroll_reveal(&mut self) {
+        if let Some(popup) = self.popups.forum_post_composer_mut() {
+            popup.pending_scroll_reveal = true;
+        }
+    }
+
+    /// Renderer hook: stash the viewport height and laid-out content height so
+    /// scroll clamping stays in sync with what is actually drawn.
+    pub fn set_forum_post_composer_metrics(&mut self, view_height: usize, total_lines: usize) {
+        if let Some(popup) = self.popups.forum_post_composer_mut() {
+            popup.scroll.set_view_height(view_height);
+            popup.scroll.set_total_lines(total_lines);
+        }
+    }
+
+    /// Renderer hook: when a reveal is pending, scroll just enough to show rows
+    /// `[start, end)` (the focused field or cursor), then clear the request.
+    pub fn reveal_forum_post_composer_rows(&mut self, start: usize, end: usize) {
+        if let Some(popup) = self.popups.forum_post_composer_mut()
+            && popup.pending_scroll_reveal
+        {
+            popup.scroll.reveal(start, end);
+            popup.pending_scroll_reveal = false;
+        }
+    }
+
     pub fn forum_post_composer_view(&self) -> Option<ForumPostComposerView> {
         let popup = self.popups.forum_post_composer()?;
         let channel = self.discord.cache.channel(popup.channel_id)?;
-        let tags = channel
-            .available_tags
+        let editing_tags = popup.editing == Some(ForumPostComposerFieldState::Tags);
+        // While the picker is open we render the snapshot order captured on
+        // entry so toggling a tag does not reshuffle the list under the cursor.
+        // Otherwise (collapsed summary) we sort selected tags to the top live.
+        let display_ids: Vec<Id<ForumTagMarker>> = if editing_tags && !popup.tag_order.is_empty() {
+            popup.tag_order.clone()
+        } else {
+            channel
+                .available_tags
+                .iter()
+                .map(|tag| tag.id)
+                .filter(|id| popup.selected_tag_ids.contains(id))
+                .chain(
+                    channel
+                        .available_tags
+                        .iter()
+                        .map(|tag| tag.id)
+                        .filter(|id| !popup.selected_tag_ids.contains(id)),
+                )
+                .collect()
+        };
+        // Once the cap is hit only the already-selected tags stay toggleable.
+        // The rest are reported as not selectable so the picker can dim them.
+        let cap_reached = popup.selected_tag_ids.len() >= MAX_FORUM_POST_TAGS;
+        let tags = display_ids
             .iter()
             .enumerate()
-            .map(|(index, tag)| ForumPostComposerTagView {
-                name: tag.name.clone(),
-                emoji: forum_tag_emoji_label(tag.emoji_id.is_some(), tag.emoji_name.as_deref()),
-                selected: popup.selected_tag_ids.contains(&tag.id),
-                active: popup.editing == Some(ForumPostComposerFieldState::Tags)
-                    && index == popup.selected_tag_index,
+            .filter_map(|(index, id)| {
+                let tag = channel.available_tags.iter().find(|tag| tag.id == *id)?;
+                let selected = popup.selected_tag_ids.contains(&tag.id);
+                Some(ForumPostComposerTagView {
+                    name: tag.name.clone(),
+                    emoji: forum_tag_emoji_label(tag.emoji_id.is_some(), tag.emoji_name.as_deref()),
+                    selected,
+                    active: editing_tags && index == popup.selected_tag_index,
+                    selectable: selected || !cap_reached,
+                })
             })
             .collect();
         let attachments = popup
             .attachments
             .iter()
-            .enumerate()
             .map(|attachment| ForumPostComposerAttachmentView {
-                filename: attachment.1.filename.clone(),
-                size_bytes: attachment.1.size_bytes,
-                active: popup.editing == Some(ForumPostComposerFieldState::Attachments)
-                    && attachment.0 == popup.selected_attachment_index,
-                preview: forum_post_attachment_preview(attachment.1),
+                filename: attachment.filename.clone(),
+                size_bytes: attachment.size_bytes,
             })
             .collect();
         Some(ForumPostComposerView {
@@ -99,7 +213,10 @@ impl DashboardState {
                 ForumPostComposerFieldState::Title => ForumPostComposerFieldState::Body,
                 ForumPostComposerFieldState::Body => ForumPostComposerFieldState::Attachments,
                 ForumPostComposerFieldState::Attachments => ForumPostComposerFieldState::Tags,
-                ForumPostComposerFieldState::Tags => ForumPostComposerFieldState::Title,
+                ForumPostComposerFieldState::Tags => ForumPostComposerFieldState::Submit,
+                ForumPostComposerFieldState::Submit => ForumPostComposerFieldState::Cancel,
+                // Selection stops at the last field instead of wrapping around.
+                ForumPostComposerFieldState::Cancel => ForumPostComposerFieldState::Cancel,
             };
         }
     }
@@ -110,10 +227,13 @@ impl DashboardState {
                 return;
             }
             popup.active_field = match popup.active_field {
-                ForumPostComposerFieldState::Title => ForumPostComposerFieldState::Tags,
+                // Selection stops at the first field instead of wrapping around.
+                ForumPostComposerFieldState::Title => ForumPostComposerFieldState::Title,
                 ForumPostComposerFieldState::Body => ForumPostComposerFieldState::Title,
                 ForumPostComposerFieldState::Attachments => ForumPostComposerFieldState::Body,
                 ForumPostComposerFieldState::Tags => ForumPostComposerFieldState::Attachments,
+                ForumPostComposerFieldState::Submit => ForumPostComposerFieldState::Tags,
+                ForumPostComposerFieldState::Cancel => ForumPostComposerFieldState::Submit,
             };
         }
     }
@@ -132,6 +252,8 @@ impl DashboardState {
                 Some(ForumPostComposerFieldState::Title)
                 | Some(ForumPostComposerFieldState::Attachments)
                 | Some(ForumPostComposerFieldState::Tags)
+                | Some(ForumPostComposerFieldState::Submit)
+                | Some(ForumPostComposerFieldState::Cancel)
                 | None => {}
             }
         }
@@ -156,6 +278,8 @@ impl DashboardState {
             Some(ForumPostComposerFieldState::Body) => popup.edit_input.insert_str(&pasted),
             Some(ForumPostComposerFieldState::Attachments)
             | Some(ForumPostComposerFieldState::Tags)
+            | Some(ForumPostComposerFieldState::Submit)
+            | Some(ForumPostComposerFieldState::Cancel)
             | None => {
                 return false;
             }
@@ -171,7 +295,10 @@ impl DashboardState {
                     popup.edit_input.delete_previous_grapheme()
                 }
                 Some(
-                    ForumPostComposerFieldState::Attachments | ForumPostComposerFieldState::Tags,
+                    ForumPostComposerFieldState::Attachments
+                    | ForumPostComposerFieldState::Tags
+                    | ForumPostComposerFieldState::Submit
+                    | ForumPostComposerFieldState::Cancel,
                 )
                 | None => false,
             };
@@ -188,7 +315,10 @@ impl DashboardState {
                     popup.edit_input.delete_previous_word()
                 }
                 Some(
-                    ForumPostComposerFieldState::Attachments | ForumPostComposerFieldState::Tags,
+                    ForumPostComposerFieldState::Attachments
+                    | ForumPostComposerFieldState::Tags
+                    | ForumPostComposerFieldState::Submit
+                    | ForumPostComposerFieldState::Cancel,
                 )
                 | None => false,
             };
@@ -214,6 +344,14 @@ impl DashboardState {
         self.with_forum_post_active_text_input(|input| input.move_word_right());
     }
 
+    pub fn move_forum_post_cursor_up(&mut self) {
+        self.with_forum_post_active_text_input(|input| input.move_up());
+    }
+
+    pub fn move_forum_post_cursor_down(&mut self) {
+        self.with_forum_post_active_text_input(|input| input.move_down());
+    }
+
     pub fn move_forum_post_cursor_home(&mut self) {
         self.with_forum_post_active_text_input(|input| input.move_home());
     }
@@ -233,40 +371,25 @@ impl DashboardState {
             Some(ForumPostComposerFieldState::Title | ForumPostComposerFieldState::Body) => {
                 action(&mut popup.edit_input)
             }
-            Some(ForumPostComposerFieldState::Attachments | ForumPostComposerFieldState::Tags)
+            Some(
+                ForumPostComposerFieldState::Attachments
+                | ForumPostComposerFieldState::Tags
+                | ForumPostComposerFieldState::Submit
+                | ForumPostComposerFieldState::Cancel,
+            )
             | None => {}
         }
     }
 
     pub fn move_forum_post_selection_down(&mut self) {
-        let Some((channel_id, editing)) = self
+        let Some((editing, tag_count)) = self
             .popups
             .forum_post_composer()
-            .map(|popup| (popup.channel_id, popup.editing))
+            .map(|popup| (popup.editing, popup.tag_order.len()))
         else {
             return;
         };
-        let (attachment_count, tag_count) = self
-            .discord
-            .cache
-            .channel(channel_id)
-            .map(|channel| {
-                let attachment_count = self
-                    .popups
-                    .forum_post_composer()
-                    .map(|popup| popup.attachments.len())
-                    .unwrap_or_default();
-                (attachment_count, channel.available_tags.len())
-            })
-            .unwrap_or_default();
         match editing {
-            Some(ForumPostComposerFieldState::Attachments) if attachment_count > 0 => {
-                if let Some(popup) = self.popups.forum_post_composer_mut() {
-                    popup.selected_attachment_index = (popup.selected_attachment_index + 1)
-                        .min(attachment_count.saturating_sub(1));
-                }
-                self.refresh_forum_post_attachment_preview();
-            }
             Some(ForumPostComposerFieldState::Tags) if tag_count > 0 => {
                 if let Some(popup) = self.popups.forum_post_composer_mut() {
                     popup.selected_tag_index =
@@ -284,13 +407,6 @@ impl DashboardState {
             .forum_post_composer()
             .and_then(|popup| popup.editing)
         {
-            Some(ForumPostComposerFieldState::Attachments) => {
-                if let Some(popup) = self.popups.forum_post_composer_mut() {
-                    popup.selected_attachment_index =
-                        popup.selected_attachment_index.saturating_sub(1);
-                }
-                self.refresh_forum_post_attachment_preview();
-            }
             Some(ForumPostComposerFieldState::Tags) => {
                 if let Some(popup) = self.popups.forum_post_composer_mut() {
                     popup.selected_tag_index = popup.selected_tag_index.saturating_sub(1);
@@ -302,29 +418,22 @@ impl DashboardState {
     }
 
     pub fn toggle_selected_forum_post_tag(&mut self) {
-        let Some((channel_id, selected_tag_index)) = self
+        let Some(tag_id) = self
             .popups
             .forum_post_composer()
-            .map(|popup| (popup.channel_id, popup.selected_tag_index))
-        else {
-            return;
-        };
-        let Some(tag_id) = self
-            .discord
-            .cache
-            .channel(channel_id)
-            .and_then(|channel| channel.available_tags.get(selected_tag_index))
-            .map(|tag| tag.id)
+            .and_then(|popup| popup.tag_order.get(popup.selected_tag_index).copied())
         else {
             return;
         };
         if let Some(popup) = self.popups.forum_post_composer_mut() {
             if let Some(position) = popup.selected_tag_ids.iter().position(|id| *id == tag_id) {
                 popup.selected_tag_ids.remove(position);
-            } else {
+                popup.status = None;
+            } else if popup.selected_tag_ids.len() < MAX_FORUM_POST_TAGS {
+                // Discord caps applied tags at five, so extra selections are ignored.
                 popup.selected_tag_ids.push(tag_id);
+                popup.status = None;
             }
-            popup.status = None;
         }
     }
 
@@ -344,10 +453,8 @@ impl DashboardState {
         let Some(popup) = self.popups.forum_post_composer() else {
             return false;
         };
-        matches!(
-            popup.editing,
-            Some(ForumPostComposerFieldState::Body | ForumPostComposerFieldState::Attachments)
-        ) && self.forum_post_composer_accepts_attachments()
+        popup.editing == Some(ForumPostComposerFieldState::Body)
+            && self.forum_post_composer_accepts_attachments()
     }
 
     pub fn add_pending_forum_post_attachments(
@@ -362,32 +469,19 @@ impl DashboardState {
             popup
                 .attachments
                 .extend(attachments.into_iter().take(available));
-            if !popup.attachments.is_empty() {
-                popup.selected_attachment_index = popup
-                    .selected_attachment_index
-                    .min(popup.attachments.len().saturating_sub(1));
-            }
             popup.status = None;
         }
-        self.refresh_forum_post_attachment_preview();
+        self.refresh_forum_post_attachment_previews();
     }
 
     pub fn pop_pending_forum_post_attachment(&mut self) {
         if let Some(popup) = self.popups.forum_post_composer_mut() {
-            if popup.attachments.is_empty() {
+            if popup.attachments.pop().is_none() {
                 return;
             }
-            let index = popup
-                .selected_attachment_index
-                .min(popup.attachments.len().saturating_sub(1));
-            popup.attachments.remove(index);
-            popup.selected_attachment_index = popup
-                .selected_attachment_index
-                .min(popup.attachments.len().saturating_sub(1));
-            popup.attachment_preview = None;
             popup.status = None;
         }
-        self.refresh_forum_post_attachment_preview();
+        self.refresh_forum_post_attachment_previews();
     }
 
     pub fn clear_forum_post_active_field(&mut self) {
@@ -400,12 +494,12 @@ impl DashboardState {
             match popup.active_field {
                 ForumPostComposerFieldState::Title => popup.title.clear(),
                 ForumPostComposerFieldState::Body => popup.body.clear(),
+                ForumPostComposerFieldState::Tags => popup.selected_tag_ids.clear(),
                 ForumPostComposerFieldState::Attachments => {
                     popup.attachments.clear();
-                    popup.selected_attachment_index = 0;
-                    popup.attachment_preview = None;
+                    popup.attachment_previews.clear();
                 }
-                ForumPostComposerFieldState::Tags => popup.selected_tag_ids.clear(),
+                ForumPostComposerFieldState::Submit | ForumPostComposerFieldState::Cancel => {}
             }
             popup.status = None;
         }
@@ -434,10 +528,12 @@ impl DashboardState {
             ForumPostComposerFieldState::Title | ForumPostComposerFieldState::Body => {
                 self.start_forum_post_edit(active_field);
             }
-            ForumPostComposerFieldState::Attachments => {
-                self.start_forum_post_attachment_selection();
-            }
             ForumPostComposerFieldState::Tags => self.start_forum_post_tag_selection(),
+            ForumPostComposerFieldState::Submit => return self.save_forum_post_composer(),
+            ForumPostComposerFieldState::Cancel => self.close_forum_post_composer(),
+            // The attachments cell only displays previews; uploads come from
+            // pasting into the body, like the main composer.
+            ForumPostComposerFieldState::Attachments => {}
         }
         None
     }
@@ -452,7 +548,12 @@ impl DashboardState {
                 self.commit_forum_post_edit();
                 return;
             }
-            Some(ForumPostComposerFieldState::Attachments | ForumPostComposerFieldState::Tags) => {
+            Some(
+                ForumPostComposerFieldState::Attachments
+                | ForumPostComposerFieldState::Tags
+                | ForumPostComposerFieldState::Submit
+                | ForumPostComposerFieldState::Cancel,
+            ) => {
                 if let Some(popup) = self.popups.forum_post_composer_mut() {
                     popup.editing = None;
                     popup.edit_input.clear();
@@ -471,34 +572,30 @@ impl DashboardState {
             .is_some_and(|popup| popup.editing.is_some())
     }
 
-    pub fn is_forum_post_attachment_picker_active(&self) -> bool {
+    pub fn forum_post_attachment_previews(&self) -> Vec<LocalUploadPreviewView<'_>> {
         self.popups
             .forum_post_composer()
-            .is_some_and(|popup| popup.editing == Some(ForumPostComposerFieldState::Attachments))
-    }
-
-    pub fn forum_post_attachment_preview(&self) -> Option<ForumPostAttachmentPreviewView<'_>> {
-        let popup = self.popups.forum_post_composer()?;
-        let preview = popup.attachment_preview.as_ref()?;
-        if popup.editing != Some(ForumPostComposerFieldState::Attachments)
-            || preview.attachment_index != popup.selected_attachment_index
-        {
-            return None;
-        }
-        Some(local_upload_preview_view(preview))
+            .map(|popup| {
+                popup
+                    .attachment_previews
+                    .iter()
+                    .map(local_upload_preview_view)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(in crate::tui) fn take_pending_forum_post_attachment_preview(
         &mut self,
     ) -> Option<(usize, u64, String, MessageAttachmentUpload)> {
+        if !self.show_images() {
+            return None;
+        }
         let popup = self.popups.forum_post_composer_mut()?;
-        if popup.editing != Some(ForumPostComposerFieldState::Attachments) {
-            return None;
-        }
-        let preview = popup.attachment_preview.as_mut()?;
-        if !matches!(preview.state, LocalUploadPreviewStatus::Pending) {
-            return None;
-        }
+        let preview = popup
+            .attachment_previews
+            .iter_mut()
+            .find(|preview| matches!(preview.state, LocalUploadPreviewStatus::Pending))?;
         let attachment = popup.attachments.get(preview.attachment_index)?.clone();
         preview.state = LocalUploadPreviewStatus::Loading;
         Some((
@@ -519,12 +616,11 @@ impl DashboardState {
         let Some(popup) = self.popups.forum_post_composer_mut() else {
             return;
         };
-        let Some(preview) = popup.attachment_preview.as_mut() else {
+        let Some(preview) = popup.attachment_previews.iter_mut().find(|preview| {
+            preview.attachment_index == attachment_index && preview.generation == generation
+        }) else {
             return;
         };
-        if preview.attachment_index != attachment_index || preview.generation != generation {
-            return;
-        }
         preview.filename = filename;
         preview.state = match result {
             Ok(protocol) => LocalUploadPreviewStatus::Ready(protocol),
@@ -560,28 +656,14 @@ impl DashboardState {
         let value = match field {
             ForumPostComposerFieldState::Title => popup.title.value().to_owned(),
             ForumPostComposerFieldState::Body => popup.body.value().to_owned(),
-            ForumPostComposerFieldState::Attachments | ForumPostComposerFieldState::Tags => return,
+            ForumPostComposerFieldState::Attachments
+            | ForumPostComposerFieldState::Tags
+            | ForumPostComposerFieldState::Submit
+            | ForumPostComposerFieldState::Cancel => return,
         };
         popup.editing = Some(field);
         popup.edit_input.set_value(value);
         popup.status = None;
-    }
-
-    fn start_forum_post_attachment_selection(&mut self) {
-        let Some(popup) = self.popups.forum_post_composer_mut() else {
-            return;
-        };
-        if popup.attachments.is_empty() {
-            popup.status = Some("no attachments pasted yet".to_owned());
-            return;
-        }
-        popup.selected_attachment_index = popup
-            .selected_attachment_index
-            .min(popup.attachments.len().saturating_sub(1));
-        popup.editing = Some(ForumPostComposerFieldState::Attachments);
-        popup.edit_input.clear();
-        popup.status = None;
-        self.refresh_forum_post_attachment_preview();
     }
 
     fn start_forum_post_tag_selection(&mut self) {
@@ -592,54 +674,83 @@ impl DashboardState {
         else {
             return;
         };
-        let tag_count = self
+        // Snapshot the display order once on entry: selected tags first (in the
+        // channel's tag order), then the rest. Keeping this fixed while the
+        // picker is open stops the cursor from jumping as tags are toggled.
+        let selected_ids = self
+            .popups
+            .forum_post_composer()
+            .map(|popup| popup.selected_tag_ids.clone())
+            .unwrap_or_default();
+        let ordered: Vec<Id<ForumTagMarker>> = self
             .discord
             .cache
             .channel(channel_id)
-            .map(|channel| channel.available_tags.len())
+            .map(|channel| {
+                channel
+                    .available_tags
+                    .iter()
+                    .map(|tag| tag.id)
+                    .filter(|id| selected_ids.contains(id))
+                    .chain(
+                        channel
+                            .available_tags
+                            .iter()
+                            .map(|tag| tag.id)
+                            .filter(|id| !selected_ids.contains(id)),
+                    )
+                    .collect()
+            })
             .unwrap_or_default();
         let Some(popup) = self.popups.forum_post_composer_mut() else {
             return;
         };
-        if tag_count == 0 {
+        if ordered.is_empty() {
             popup.status = Some("no tags available".to_owned());
             return;
         }
-        popup.selected_tag_index = popup.selected_tag_index.min(tag_count - 1);
+        popup.tag_order = ordered;
+        popup.selected_tag_index = 0;
         popup.editing = Some(ForumPostComposerFieldState::Tags);
         popup.edit_input.clear();
         popup.status = None;
     }
 
-    fn refresh_forum_post_attachment_preview(&mut self) {
+    fn refresh_forum_post_attachment_previews(&mut self) {
         let show_images = self.show_images();
         let Some(popup) = self.popups.forum_post_composer_mut() else {
             return;
         };
-        if popup.editing != Some(ForumPostComposerFieldState::Attachments) || !show_images {
-            popup.attachment_preview = None;
+        if !show_images {
+            popup.attachment_previews.clear();
             return;
         }
-        let index = popup
-            .selected_attachment_index
-            .min(popup.attachments.len().saturating_sub(1));
-        if popup.attachment_preview.as_ref().is_some_and(|preview| {
-            preview.attachment_index == index
-                && !matches!(preview.state, LocalUploadPreviewStatus::Failed(_))
-        }) {
-            return;
+        // Keep already-resolved previews when their attachment stays in place;
+        // only newly added image attachments schedule fresh preview work.
+        let mut previous = std::mem::take(&mut popup.attachment_previews);
+        let mut previews = Vec::new();
+        for (index, attachment) in popup
+            .attachments
+            .iter()
+            .enumerate()
+            .filter(|(_, attachment)| local_upload_preview_candidate(attachment))
+        {
+            if let Some(previous_index) = previous.iter().position(|preview| {
+                preview.attachment_index == index && preview.filename == attachment.filename
+            }) {
+                previews.push(previous.remove(previous_index));
+                continue;
+            }
+            popup.attachment_preview_generation =
+                popup.attachment_preview_generation.saturating_add(1);
+            previews.push(LocalUploadPreviewState {
+                attachment_index: index,
+                generation: popup.attachment_preview_generation,
+                filename: attachment.filename.clone(),
+                state: LocalUploadPreviewStatus::Pending,
+            });
         }
-        let Some(attachment) = popup.attachments.get(index) else {
-            popup.attachment_preview = None;
-            return;
-        };
-        popup.attachment_preview_generation = popup.attachment_preview_generation.saturating_add(1);
-        popup.attachment_preview = Some(LocalUploadPreviewState {
-            attachment_index: index,
-            generation: popup.attachment_preview_generation,
-            filename: attachment.filename.clone(),
-            state: LocalUploadPreviewStatus::Pending,
-        });
+        popup.attachment_previews = previews;
     }
 
     fn commit_forum_post_edit(&mut self) {
@@ -653,7 +764,10 @@ impl DashboardState {
         match field {
             ForumPostComposerFieldState::Title => popup.title.set_value(value),
             ForumPostComposerFieldState::Body => popup.body.set_value(value),
-            ForumPostComposerFieldState::Attachments | ForumPostComposerFieldState::Tags => {}
+            ForumPostComposerFieldState::Attachments
+            | ForumPostComposerFieldState::Tags
+            | ForumPostComposerFieldState::Submit
+            | ForumPostComposerFieldState::Cancel => {}
         }
         popup.editing = None;
         popup.edit_input.clear();
@@ -682,7 +796,11 @@ impl DashboardState {
         };
         let channel_id = popup.channel_id;
         let title = popup.title.value().trim().to_owned();
-        let content = popup.body.value().trim().to_owned();
+        // Forum bodies have no mentions or commands, so only `:shortcode:` emoji
+        // are expanded on submit.
+        let content = expand_emoji_shortcodes(popup.body.value())
+            .trim()
+            .to_owned();
         let applied_tags = popup.selected_tag_ids.clone();
 
         if title.is_empty() {
@@ -729,6 +847,8 @@ impl From<ForumPostComposerFieldState> for ForumPostComposerField {
             ForumPostComposerFieldState::Body => Self::Body,
             ForumPostComposerFieldState::Attachments => Self::Attachments,
             ForumPostComposerFieldState::Tags => Self::Tags,
+            ForumPostComposerFieldState::Submit => Self::Submit,
+            ForumPostComposerFieldState::Cancel => Self::Cancel,
         }
     }
 }
@@ -743,7 +863,10 @@ fn forum_post_text_field_value(
     match field {
         ForumPostComposerFieldState::Title => popup.title.value(),
         ForumPostComposerFieldState::Body => popup.body.value(),
-        ForumPostComposerFieldState::Attachments | ForumPostComposerFieldState::Tags => "",
+        ForumPostComposerFieldState::Attachments
+        | ForumPostComposerFieldState::Tags
+        | ForumPostComposerFieldState::Submit
+        | ForumPostComposerFieldState::Cancel => "",
     }
 }
 
@@ -757,7 +880,10 @@ fn forum_post_text_field_cursor(
     match field {
         ForumPostComposerFieldState::Title => popup.title.cursor_byte_index(),
         ForumPostComposerFieldState::Body => popup.body.cursor_byte_index(),
-        ForumPostComposerFieldState::Attachments | ForumPostComposerFieldState::Tags => 0,
+        ForumPostComposerFieldState::Attachments
+        | ForumPostComposerFieldState::Tags
+        | ForumPostComposerFieldState::Submit
+        | ForumPostComposerFieldState::Cancel => 0,
     }
 }
 
@@ -771,14 +897,4 @@ fn forum_tag_emoji_label(custom: bool, name: Option<&str>) -> Option<String> {
     } else {
         Some(name.to_owned())
     }
-}
-
-fn forum_post_attachment_preview(attachment: &MessageAttachmentUpload) -> String {
-    if let Some(path) = attachment.path() {
-        return path.display().to_string();
-    }
-    if attachment.bytes().is_some() {
-        return "clipboard image or in-memory upload".to_owned();
-    }
-    "pending upload".to_owned()
 }

@@ -361,7 +361,7 @@ pub(super) fn move_picker_selection(selected: usize, len: usize, delta: isize) -
     (current + delta).clamp(0, len as isize - 1) as usize
 }
 
-pub(super) fn build_emoji_candidates<'a>(
+pub(in crate::tui::state) fn build_emoji_candidates<'a>(
     query: &str,
     foreign_emojis: impl Iterator<Item = &'a CustomEmojiInfo>,
     guild_emojis: impl Iterator<Item = &'a CustomEmojiInfo>,
@@ -457,7 +457,7 @@ fn custom_emoji_image_url(id: Id<EmojiMarker>, animated: bool) -> String {
     format!("https://cdn.discordapp.com/emojis/{}.{extension}", id.get())
 }
 
-pub(super) fn should_start_completion_query(input: &str) -> bool {
+pub(in crate::tui::state) fn should_start_completion_query(input: &str) -> bool {
     input.chars().last().is_none_or(char::is_whitespace)
 }
 
@@ -465,7 +465,7 @@ pub(super) fn is_mention_query_char(value: char) -> bool {
     value.is_alphanumeric() || matches!(value, '_' | '.' | '-')
 }
 
-pub(super) fn is_emoji_query_char(value: char) -> bool {
+pub(in crate::tui::state) fn is_emoji_query_char(value: char) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, '_' | '-' | '+')
 }
 
@@ -473,7 +473,7 @@ pub(super) fn is_command_query_char(value: char) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, '_' | '-')
 }
 
-pub(super) fn expand_emoji_shortcodes(input: &str) -> String {
+pub(in crate::tui::state) fn expand_emoji_shortcodes(input: &str) -> String {
     let mut rest = input;
     let mut output = String::with_capacity(input.len());
 

@@ -55,7 +55,10 @@ pub(super) use downloads::{
     downloads_popup_area, downloads_popup_line_count, render_downloads_popup,
 };
 pub(super) use folder_settings::{folder_settings_popup_area, render_folder_settings_popup};
-pub(super) use forum_post::{forum_post_composer_popup_area, render_forum_post_composer};
+pub(super) use forum_post::{
+    forum_post_composer_metrics, forum_post_composer_popup_area, render_forum_post_composer,
+    render_forum_post_tag_picker,
+};
 #[cfg(test)]
 pub(super) use keymap::keymap_help_popup_lines;
 pub(super) use keymap::{
@@ -142,9 +145,10 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
         ActiveModalPopupKind::Options => Some(options_popup_area(frame_area, state)),
         // The attachment viewer centers on the whole frame; default and large
         // zoom take a percentage of it, fullscreen uses all of it.
-        ActiveModalPopupKind::AttachmentViewer => {
-            Some(attachment_viewer_popup(frame_area, state.attachment_viewer_zoom()))
-        }
+        ActiveModalPopupKind::AttachmentViewer => Some(attachment_viewer_popup(
+            frame_area,
+            state.attachment_viewer_zoom(),
+        )),
         ActiveModalPopupKind::Leader => Some(leader_popup_area_for_state(frame_area, state)),
         ActiveModalPopupKind::UserProfile => Some(user_profile_popup_area(frame_area)),
         ActiveModalPopupKind::EmojiReactionPicker => {
@@ -161,9 +165,7 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
         ActiveModalPopupKind::KeymapHelp => Some(keymap_popup_area(frame_area)),
         ActiveModalPopupKind::ChannelSwitcher => Some(channel_switcher_popup_area(frame_area)),
         ActiveModalPopupKind::Search => search_popup_area_for_state(frame_area, state),
-        ActiveModalPopupKind::ForumPostComposer => {
-            Some(forum_post_composer_popup_area(frame_area))
-        }
+        ActiveModalPopupKind::ForumPostComposer => Some(forum_post_composer_popup_area(frame_area)),
     }
 }
 

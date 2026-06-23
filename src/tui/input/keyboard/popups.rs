@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::discord::AppCommand;
 use crate::tui::keybindings::{
@@ -85,15 +85,24 @@ pub(super) fn handle_forum_post_composer_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    if state.is_forum_post_attachment_picker_active() {
-        return handle_forum_post_attachment_picker_key(state, key);
-    }
     if state.is_forum_post_tag_picker_active() {
         return handle_forum_post_tag_picker_key(state, key);
     }
     if state.is_forum_post_composer_editing() {
+        // Keep the text cursor on screen as the user types or moves it.
+        state.request_forum_post_scroll_reveal();
         return handle_forum_post_composer_edit_key(state, key);
     }
+
+    // The scroll keys (J/K and the arrows) pan the viewport without moving the
+    // field selection, so long bodies stay readable.
+    if let Some(action) = state.key_bindings().scroll_action(key) {
+        state.scroll_forum_post_composer(action);
+        return None;
+    }
+
+    // Anything else changes the focused field, so re-reveal it after handling.
+    state.request_forum_post_scroll_reveal();
 
     if let Some(action) = state
         .key_bindings()
@@ -115,9 +124,6 @@ pub(super) fn handle_forum_post_composer_key(
             state.cycle_forum_post_field_previous();
             return None;
         }
-        KeyCode::Char('s') if key.modifiers == KeyModifiers::NONE => {
-            return state.save_forum_post_composer();
-        }
         _ => {}
     }
 
@@ -130,46 +136,6 @@ pub(super) fn handle_forum_post_composer_key(
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
         | ComposerAction::DeletePreviousChar
-        | ComposerAction::DeletePreviousWord
-        | ComposerAction::MoveCursorUp
-        | ComposerAction::MoveCursorDown
-        | ComposerAction::MoveCursorWordLeft
-        | ComposerAction::MoveCursorLeft
-        | ComposerAction::MoveCursorWordRight
-        | ComposerAction::MoveCursorRight
-        | ComposerAction::MoveCursorHome
-        | ComposerAction::MoveCursorEnd
-        | ComposerAction::InsertChar(_)
-        | ComposerAction::Ignore => {}
-    }
-    None
-}
-
-fn handle_forum_post_attachment_picker_key(
-    state: &mut DashboardState,
-    key: KeyEvent,
-) -> Option<AppCommand> {
-    if let Some(action) = state
-        .key_bindings()
-        .selection_action(key, SelectionKeySet::Navigation)
-    {
-        match action {
-            SelectionAction::Next => state.move_forum_post_selection_down(),
-            SelectionAction::Previous => state.move_forum_post_selection_up(),
-        }
-        return None;
-    }
-
-    match state.key_bindings().composer_action(key) {
-        ComposerAction::Submit => {}
-        ComposerAction::Close => state.close_or_cancel_forum_post_composer(),
-        ComposerAction::RemoveLastAttachment | ComposerAction::DeletePreviousChar => {
-            state.pop_pending_forum_post_attachment()
-        }
-        ComposerAction::ClearInput => state.clear_forum_post_active_field(),
-        ComposerAction::PasteClipboard => state.request_paste_clipboard(),
-        ComposerAction::OpenInEditor
-        | ComposerAction::InsertNewline
         | ComposerAction::DeletePreviousWord
         | ComposerAction::MoveCursorUp
         | ComposerAction::MoveCursorDown
@@ -242,12 +208,12 @@ fn handle_forum_post_composer_edit_key(
         ComposerAction::MoveCursorRight => state.move_forum_post_cursor_right(),
         ComposerAction::MoveCursorHome => state.move_forum_post_cursor_home(),
         ComposerAction::MoveCursorEnd => state.move_forum_post_cursor_end(),
+        ComposerAction::MoveCursorUp => state.move_forum_post_cursor_up(),
+        ComposerAction::MoveCursorDown => state.move_forum_post_cursor_down(),
         ComposerAction::InsertChar(value) => state.push_forum_post_char(value),
-        ComposerAction::OpenInEditor
-        | ComposerAction::RemoveLastAttachment
-        | ComposerAction::MoveCursorUp
-        | ComposerAction::MoveCursorDown
-        | ComposerAction::Ignore => {}
+        ComposerAction::RemoveLastAttachment => state.pop_pending_forum_post_attachment(),
+        ComposerAction::OpenInEditor => state.request_open_forum_post_body_in_editor(),
+        ComposerAction::Ignore => {}
     }
     None
 }

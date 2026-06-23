@@ -3,10 +3,8 @@ use crate::discord::AppCommand;
 use crate::discord::{
     ApplicationCommandInfo, ApplicationCommandOptionInfo, MessageAttachmentUpload,
 };
-use crate::tui::state::{
-    ActiveModalPopupKind, ForumPostAttachmentPreviewView, ForumPostComposerField,
-    LocalUploadPreviewView,
-};
+use crate::tui::keybindings::ScrollAction;
+use crate::tui::state::{ActiveModalPopupKind, ForumPostComposerField, LocalUploadPreviewView};
 use serde_json::json;
 
 const PERM_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
@@ -57,6 +55,61 @@ fn state_with_application_command(command: ApplicationCommandInfo) -> DashboardS
 
 fn state_with_forum_post_channel(required_tag: bool) -> DashboardState {
     state_with_post_parent_channel("forum", required_tag)
+}
+
+fn state_with_forum_post_tags(tag_names: &[&str]) -> DashboardState {
+    let me: Id<UserMarker> = Id::new(10);
+    let guild: Id<GuildMarker> = Id::new(1);
+    let channel: Id<ChannelMarker> = Id::new(20);
+    let available_tags = tag_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| ForumTagInfo {
+            id: Id::<ForumTagMarker>::new(101 + index as u64),
+            name: (*name).to_owned(),
+            moderated: false,
+            emoji_id: None,
+            emoji_name: None,
+        })
+        .collect();
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.push_event(AppEvent::GuildCreate {
+        guild_id: guild,
+        name: "guild".to_owned(),
+        member_count: Some(1),
+        owner_id: Some(me),
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild),
+            name: "support".to_owned(),
+            position: Some(0),
+            flags: None,
+            available_tags,
+            ..ChannelInfo::test(channel, "forum")
+        }],
+        members: vec![member_with_username(me, "me", "me")],
+        presences: Vec::new(),
+        roles: vec![role_info(
+            Id::new(guild.get()),
+            "@everyone",
+            PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES,
+        )],
+        emojis: Vec::new(),
+    });
+    state.activate_guild(ActiveGuildScope::Guild(guild));
+    state.activate_channel(channel);
+    state
+}
+
+fn enter_forum_post_tag_picker(state: &mut DashboardState) {
+    state.start_composer();
+    state.cycle_forum_post_field_next(); // Title -> Body
+    state.cycle_forum_post_field_next(); // Body -> Attachments
+    state.cycle_forum_post_field_next(); // Attachments -> Tags
+    state.activate_forum_post_composer(); // open the tag picker
 }
 
 fn state_with_post_parent_channel(kind: &str, required_tag: bool) -> DashboardState {
@@ -242,10 +295,10 @@ fn submit_forum_post_overlay_uses_fields_tags_and_attachments() {
         "panic.txt".to_owned(),
         b"stack trace".to_vec(),
     )]);
-    state.cycle_forum_post_field_next();
-    state.cycle_forum_post_field_next();
-    assert_eq!(state.activate_forum_post_composer(), None);
-    assert_eq!(state.activate_forum_post_composer(), None);
+    state.cycle_forum_post_field_next(); // Body -> Attachments
+    state.cycle_forum_post_field_next(); // Attachments -> Tags
+    assert_eq!(state.activate_forum_post_composer(), None); // open the tag picker
+    assert_eq!(state.activate_forum_post_composer(), None); // toggle the tag
     state.close_or_cancel_forum_post_composer();
 
     let Some(AppCommand::CreateForumPost { post }) = state.save_forum_post_composer() else {
@@ -263,6 +316,8 @@ fn submit_forum_post_overlay_uses_fields_tags_and_attachments() {
 
 #[test]
 fn forum_post_attachment_preview_waits_for_runtime_result() {
+    // Attachments are previewed inline with the body, just like the main
+    // composer: adding an image schedules preview work immediately.
     let mut state = state_with_forum_post_channel(false);
     state.start_composer();
     state.add_pending_forum_post_attachments(vec![MessageAttachmentUpload::from_bytes(
@@ -270,15 +325,9 @@ fn forum_post_attachment_preview_waits_for_runtime_result() {
         b"not an image".to_vec(),
     )]);
 
-    assert!(state.forum_post_attachment_preview().is_none());
-
-    state.cycle_forum_post_field_next();
-    state.cycle_forum_post_field_next();
-    assert_eq!(state.activate_forum_post_composer(), None);
-
     assert!(matches!(
-        state.forum_post_attachment_preview(),
-        Some(ForumPostAttachmentPreviewView::Loading { filename }) if filename == "screenshot.png"
+        state.forum_post_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Loading { filename }) if filename == "screenshot.png"
     ));
     let (attachment_index, generation, filename, upload) = state
         .take_pending_forum_post_attachment_preview()
@@ -294,10 +343,164 @@ fn forum_post_attachment_preview_waits_for_runtime_result() {
         Err("decode failed".to_owned()),
     );
     assert!(matches!(
-        state.forum_post_attachment_preview(),
-        Some(ForumPostAttachmentPreviewView::Failed { filename, message })
+        state.forum_post_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Failed { filename, message })
             if filename == "screenshot.png" && message == "decode failed"
     ));
+}
+
+#[test]
+fn forum_post_field_selection_stops_at_the_ends() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+
+    // Selecting forward past the last field stays on Cancel (no wrap-around).
+    for _ in 0..10 {
+        state.cycle_forum_post_field_next();
+    }
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.active_field),
+        Some(ForumPostComposerField::Cancel)
+    );
+
+    // Selecting backward past the first field stays on Title.
+    for _ in 0..10 {
+        state.cycle_forum_post_field_previous();
+    }
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.active_field),
+        Some(ForumPostComposerField::Title)
+    );
+}
+
+#[test]
+fn forum_post_composer_scroll_keys_pan_and_reveal() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+    // Pretend the laid-out content overflows a five-row viewport.
+    state.set_forum_post_composer_metrics(5, 20);
+
+    state.scroll_forum_post_composer(ScrollAction::Down);
+    state.scroll_forum_post_composer(ScrollAction::Down);
+    assert_eq!(state.forum_post_composer_scroll(), 2);
+    state.scroll_forum_post_composer(ScrollAction::Up);
+    assert_eq!(state.forum_post_composer_scroll(), 1);
+
+    // A pending reveal pulls an off-screen row back into view; a consumed reveal
+    // leaves the manual scroll position alone.
+    for _ in 0..10 {
+        state.scroll_forum_post_composer(ScrollAction::Down);
+    }
+    assert_eq!(state.forum_post_composer_scroll(), 11);
+    state.request_forum_post_scroll_reveal();
+    state.reveal_forum_post_composer_rows(0, 1);
+    assert_eq!(state.forum_post_composer_scroll(), 0);
+    state.reveal_forum_post_composer_rows(15, 16);
+    assert_eq!(state.forum_post_composer_scroll(), 0);
+}
+
+#[test]
+fn forum_post_body_cursor_moves_up_and_down_across_lines() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+    state.cycle_forum_post_field_next(); // Title -> Body
+    assert_eq!(state.activate_forum_post_composer(), None); // start editing the body
+    state.insert_forum_post_text("line one\nline two");
+
+    let end = state
+        .forum_post_composer_view()
+        .map(|view| view.body_cursor)
+        .unwrap();
+    state.move_forum_post_cursor_up();
+    let up = state
+        .forum_post_composer_view()
+        .map(|view| view.body_cursor)
+        .unwrap();
+    assert!(up < end, "moving up should land on the first line");
+
+    state.move_forum_post_cursor_down();
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.body_cursor),
+        Some(end),
+        "moving back down should return to the original column"
+    );
+}
+
+/// Drives the forum overlay into body editing with `title` already committed,
+/// so emoji/editor tests can focus on the body buffer.
+fn forum_post_editing_body(state: &mut DashboardState, title: &str) {
+    state.start_composer();
+    state.activate_forum_post_composer(); // start editing Title
+    state.insert_forum_post_text(title);
+    state.activate_forum_post_composer(); // commit Title
+    state.cycle_forum_post_field_next(); // Title -> Body
+    state.activate_forum_post_composer(); // start editing Body
+}
+
+#[test]
+fn forum_post_body_expands_emoji_shortcodes_on_submit() {
+    // The forum body has no `:` autocomplete popup, but typed `:shortcode:`
+    // unicode emoji are still expanded on submit, like the main composer.
+    let mut state = state_with_forum_post_channel(false);
+    forum_post_editing_body(&mut state, "Title");
+    state.insert_forum_post_text("love :heart:");
+
+    state.activate_forum_post_composer(); // commit Body
+    let Some(AppCommand::CreateForumPost { post }) = state.save_forum_post_composer() else {
+        panic!("forum post modal should create a forum post command");
+    };
+    let heart = emojis::get_by_shortcode("heart")
+        .expect("heart shortcode exists")
+        .as_str();
+    assert_eq!(post.content, format!("love {heart}"));
+}
+
+#[test]
+fn forum_post_body_external_editor_replaces_body_only_while_editing() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+
+    // Outside body editing the request is ignored and there is nothing to seed.
+    state.request_open_forum_post_body_in_editor();
+    assert!(!state.take_open_forum_post_body_in_editor_request());
+    assert_eq!(state.forum_post_body_for_editor(), None);
+
+    forum_post_editing_body(&mut state, "Title");
+    state.insert_forum_post_text("rough draft");
+
+    state.request_open_forum_post_body_in_editor();
+    assert!(state.take_open_forum_post_body_in_editor_request());
+    assert_eq!(
+        state.forum_post_body_for_editor().as_deref(),
+        Some("rough draft")
+    );
+
+    state.replace_forum_post_body_from_editor("edited in $EDITOR".to_owned());
+    assert_eq!(
+        state.forum_post_body_for_editor().as_deref(),
+        Some("edited in $EDITOR")
+    );
+}
+
+#[test]
+fn forum_post_cancel_button_closes_the_composer() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+
+    // Title -> Body -> Attachments -> Tags -> Submit -> Cancel.
+    for _ in 0..5 {
+        state.cycle_forum_post_field_next();
+    }
+    assert_eq!(state.activate_forum_post_composer(), None);
+
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
 }
 
 #[test]
@@ -319,6 +522,89 @@ fn submit_forum_post_overlay_blocks_missing_required_tag() {
             .forum_post_composer_view()
             .and_then(|view| view.status),
         Some("at least one tag is required".to_owned())
+    );
+}
+
+#[test]
+fn forum_post_tag_picker_sorts_selected_tags_to_top_on_entry() {
+    let mut state = state_with_forum_post_tags(&["Alpha", "Beta", "Gamma", "Delta"]);
+    enter_forum_post_tag_picker(&mut state);
+
+    // Select "Gamma" (row 2) and "Delta" (row 3) from the original order.
+    state.move_forum_post_selection_down();
+    state.move_forum_post_selection_down();
+    state.toggle_selected_forum_post_tag();
+    state.move_forum_post_selection_down();
+    state.toggle_selected_forum_post_tag();
+
+    // The list must not reshuffle while the picker stays open.
+    let open_order: Vec<_> = state
+        .forum_post_composer_view()
+        .expect("tag picker should expose a view")
+        .tags
+        .iter()
+        .map(|tag| tag.name.clone())
+        .collect();
+    assert_eq!(open_order, vec!["Alpha", "Beta", "Gamma", "Delta"]);
+
+    // Re-opening the picker snapshots the selected tags to the top.
+    state.close_or_cancel_forum_post_composer();
+    state.activate_forum_post_composer();
+
+    let view = state
+        .forum_post_composer_view()
+        .expect("tag picker should expose a view");
+    let names: Vec<_> = view.tags.iter().map(|tag| tag.name.clone()).collect();
+    assert_eq!(names, vec!["Gamma", "Delta", "Alpha", "Beta"]);
+    assert!(
+        view.tags[0].selected && view.tags[1].selected,
+        "selected tags should lead the list"
+    );
+    assert!(
+        !view.tags[2].selected && !view.tags[3].selected,
+        "unselected tags should follow"
+    );
+}
+
+#[test]
+fn forum_post_tag_selection_caps_at_five() {
+    let mut state = state_with_forum_post_tags(&["a", "b", "c", "d", "e", "f"]);
+    enter_forum_post_tag_picker(&mut state);
+
+    // Select the first five tags, advancing one row after each.
+    for _ in 0..5 {
+        state.toggle_selected_forum_post_tag();
+        state.move_forum_post_selection_down();
+    }
+    // The cursor now sits on the sixth tag; selecting it is silently ignored
+    // instead of growing the selection past the cap.
+    state.toggle_selected_forum_post_tag();
+
+    let view = state
+        .forum_post_composer_view()
+        .expect("tag picker should expose a view");
+    assert_eq!(view.tags.iter().filter(|tag| tag.selected).count(), 5);
+    // At the cap, selected tags stay toggleable but the rest are marked
+    // unselectable so the picker dims them.
+    assert!(
+        view.tags
+            .iter()
+            .all(|tag| tag.selectable == tag.selected),
+        "only selected tags remain selectable once the cap is reached"
+    );
+
+    // Deselecting still works while at the cap.
+    state.move_forum_post_selection_up();
+    state.toggle_selected_forum_post_tag();
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .expect("tag picker should expose a view")
+            .tags
+            .iter()
+            .filter(|tag| tag.selected)
+            .count(),
+        4
     );
 }
 

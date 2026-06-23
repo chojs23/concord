@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use super::text_cursor::{
     clamp_cursor_index, next_char_boundary, next_word_boundary, previous_char_boundary,
-    previous_word_boundary,
+    previous_word_boundary, vertical_cursor_target,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -96,6 +96,18 @@ impl TextInputState {
         self.cursor_byte_index = next_word_boundary(&self.value, cursor);
     }
 
+    pub(in crate::tui) fn move_up(&mut self) {
+        if let Some(target) = vertical_cursor_target(&self.value, self.cursor_byte_index(), -1) {
+            self.cursor_byte_index = target;
+        }
+    }
+
+    pub(in crate::tui) fn move_down(&mut self) {
+        if let Some(target) = vertical_cursor_target(&self.value, self.cursor_byte_index(), 1) {
+            self.cursor_byte_index = target;
+        }
+    }
+
     pub(in crate::tui) fn move_home(&mut self) {
         self.cursor_byte_index = 0;
     }
@@ -118,6 +130,23 @@ mod tests {
 
         assert_eq!(input.value(), "가나");
         assert_eq!(input.cursor_byte_index(), "가".len());
+    }
+
+    #[test]
+    fn vertical_movement_moves_across_lines() {
+        let mut input = TextInputState::default();
+        input.set_value("hello\nworld".to_owned());
+
+        // Cursor starts at the end of "world" (column 5).
+        input.move_up();
+        assert_eq!(input.cursor_byte_index(), "hello".len());
+        input.move_down();
+        assert_eq!(input.cursor_byte_index(), "hello\nworld".len());
+
+        // No line above the first one, so up is a no-op there.
+        input.move_up();
+        input.move_up();
+        assert_eq!(input.cursor_byte_index(), "hello".len());
     }
 
     #[test]

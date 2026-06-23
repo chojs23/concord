@@ -123,6 +123,8 @@ pub(in crate::tui::state) enum ForumPostComposerFieldState {
     Body,
     Attachments,
     Tags,
+    Submit,
+    Cancel,
 }
 
 #[derive(Debug)]
@@ -133,13 +135,23 @@ pub(super) struct ForumPostComposerState {
     pub(super) edit_input: TextInputState,
     pub(super) active_field: ForumPostComposerFieldState,
     pub(super) editing: Option<ForumPostComposerFieldState>,
-    pub(super) selected_attachment_index: usize,
     pub(super) selected_tag_index: usize,
+    /// Display order of tags while the tag picker is open. Captured on entry
+    /// (selected tags first) so the cursor does not jump as tags are toggled.
+    /// Indexed by `selected_tag_index`.
+    pub(super) tag_order: Vec<Id<ForumTagMarker>>,
     pub(super) selected_tag_ids: Vec<Id<ForumTagMarker>>,
+    /// Attachments uploaded with the post. Pasted and previewed inline with the
+    /// body, mirroring the main message composer.
     pub(super) attachments: Vec<MessageAttachmentUpload>,
-    pub(super) attachment_preview: Option<super::local_upload_preview::LocalUploadPreviewState>,
+    pub(super) attachment_previews: Vec<super::local_upload_preview::LocalUploadPreviewState>,
     pub(super) attachment_preview_generation: u64,
     pub(super) status: Option<String>,
+    /// Viewport scroll for the (possibly overflowing) composer body, driven by
+    /// the scroll keys. `pending_scroll_reveal` asks the next render to bring the
+    /// focused field or text cursor back into view after a focus/edit change.
+    pub(super) scroll: ScrollablePopupState,
+    pub(super) pending_scroll_reveal: bool,
 }
 
 impl ForumPostComposerState {
@@ -151,13 +163,15 @@ impl ForumPostComposerState {
             edit_input: TextInputState::default(),
             active_field: ForumPostComposerFieldState::Title,
             editing: None,
-            selected_attachment_index: 0,
             selected_tag_index: 0,
+            tag_order: Vec::new(),
             selected_tag_ids: Vec::new(),
             attachments: Vec::new(),
-            attachment_preview: None,
+            attachment_previews: Vec::new(),
             attachment_preview_generation: 0,
             status: None,
+            scroll: ScrollablePopupState::default(),
+            pending_scroll_reveal: true,
         }
     }
 }
@@ -268,6 +282,17 @@ impl ScrollablePopupState {
             SelectionAction::Next => self.page_down(),
             SelectionAction::Previous => self.page_up(),
         }
+    }
+
+    /// Adjust the scroll offset just enough to bring rows `[start, end)` into
+    /// the viewport, without recentering when the range is already visible.
+    pub(super) fn reveal(&mut self, start: usize, end: usize) {
+        if start < self.scroll {
+            self.scroll = start;
+        } else if self.view_height > 0 && end > self.scroll + self.view_height {
+            self.scroll = end.saturating_sub(self.view_height);
+        }
+        self.clamp_scroll();
     }
 
     fn clamp_scroll(&mut self) {

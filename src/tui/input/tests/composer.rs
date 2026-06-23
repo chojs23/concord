@@ -80,8 +80,13 @@ fn forum_post_overlay_keys_submit_with_pasted_attachment() {
     ));
     handle_key(&mut state, key(KeyCode::Enter));
 
-    let Some(AppCommand::CreateForumPost { post }) = handle_key(&mut state, char_key('s')) else {
-        panic!("forum post overlay should submit create command");
+    // Tab from Body past Attachments and Tags to the submit button, then Enter.
+    handle_key(&mut state, key(KeyCode::Tab));
+    handle_key(&mut state, key(KeyCode::Tab));
+    handle_key(&mut state, key(KeyCode::Tab));
+    let Some(AppCommand::CreateForumPost { post }) = handle_key(&mut state, key(KeyCode::Enter))
+    else {
+        panic!("forum post overlay should submit create command from the Create Post button");
     };
 
     assert_eq!(post.channel_id, Id::new(20));

@@ -198,6 +198,8 @@ pub enum ForumPostComposerField {
     Body,
     Attachments,
     Tags,
+    Submit,
+    Cancel,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -206,14 +208,15 @@ pub struct ForumPostComposerTagView {
     pub emoji: Option<String>,
     pub selected: bool,
     pub active: bool,
+    /// Whether this tag can still be toggled on. `false` for unselected tags
+    /// once the five-tag cap is reached, so the renderer can dim them.
+    pub selectable: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForumPostComposerAttachmentView {
     pub filename: String,
     pub size_bytes: u64,
-    pub active: bool,
-    pub preview: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -237,8 +240,6 @@ pub enum LocalUploadPreviewView<'a> {
     Ready { protocol: &'a Protocol },
     Failed { filename: String, message: String },
 }
-
-pub type ForumPostAttachmentPreviewView<'a> = LocalUploadPreviewView<'a>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttachmentViewerItem {
