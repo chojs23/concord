@@ -2,7 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.2.6] - 2026-06-21
+## [2.2.7] - 2026-06-24
+
+### Bug Fixes
+
+- Render overlay popups within the full frame area by @chojs23
+
+### Features
+
+- Update post create ui by @chojs23
+- Add post actions by @chojs23
+- Add thread actions (#215) in [#215](https://github.com/chojs23/concord/pull/215) by @chojs23
+- Add threads and forums to channel switcher (#216) in [#216](https://github.com/chojs23/concord/pull/216) by @chojs23
+- Add notification inbox (#217) in [#217](https://github.com/chojs23/concord/pull/217) by @chojs23
+
+### Miscellaneous Tasks
+
+- Fmt by @chojs23
+
+### Performance
+
+- Implement per-image placement-diff rendering by @chojs23
+
+## [2.2.6] - 2026-06-22
 
 ### Features
 
