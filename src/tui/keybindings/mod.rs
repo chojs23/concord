@@ -23,9 +23,10 @@ pub(in crate::tui) use actions::{
     DashboardAction, DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction,
     LeaderActionMenuAction, LoginBusyAction, LoginGlobalAction, LoginMfaSelectAction,
     LoginModeSelectAction, LoginPasswordInputAction, LoginTextInputAction,
-    MessageConfirmationAction, OptionsPopupAction, PaneFilterAction, PollVotePickerAction,
-    PopupListAction, ProfilePopupAction, ProfilePopupTabAction, ReactionUsersPopupAction,
-    ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet, UiAction,
+    MessageConfirmationAction, NotificationInboxAction, OptionsPopupAction, PaneFilterAction,
+    PollVotePickerAction, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
+    ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
+    UiAction,
 };
 pub(in crate::tui) use chord::KeyChord;
 #[cfg(test)]
@@ -975,6 +976,10 @@ const DEFAULT_KEYMAP_DESCRIPTORS: &[DefaultKeymapDescriptor] = &[
     DefaultKeymapDescriptor {
         action: UiAction::ChannelSwitcher,
         sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Leader]],
+    },
+    DefaultKeymapDescriptor {
+        action: UiAction::OpenNotificationInbox,
+        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Char('n')]],
     },
     DefaultKeymapDescriptor {
         action: UiAction::VoiceDeafen,

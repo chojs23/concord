@@ -176,6 +176,43 @@ impl KeyBindings {
         }
     }
 
+    pub(in crate::tui) fn notification_inbox_action(
+        &self,
+        key: KeyEvent,
+    ) -> Option<NotificationInboxAction> {
+        if self.is_popup_close_key(key) {
+            return Some(NotificationInboxAction::Close);
+        }
+        if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
+            return Some(NotificationInboxAction::Select(action));
+        }
+        match key.code {
+            KeyCode::Enter => Some(NotificationInboxAction::ActivateSelected),
+            // Left/Right (and h/l) flip between the Unreads and Mentions tabs.
+            KeyCode::Left => Some(NotificationInboxAction::SwitchTab(
+                SelectionAction::Previous,
+            )),
+            KeyCode::Right => Some(NotificationInboxAction::SwitchTab(SelectionAction::Next)),
+            KeyCode::Tab => Some(NotificationInboxAction::SwitchTab(SelectionAction::Next)),
+            KeyCode::BackTab => Some(NotificationInboxAction::SwitchTab(
+                SelectionAction::Previous,
+            )),
+            KeyCode::Char('h') | KeyCode::Char('H') if is_shortcut_key(key) => Some(
+                NotificationInboxAction::SwitchTab(SelectionAction::Previous),
+            ),
+            KeyCode::Char('l') | KeyCode::Char('L') if is_shortcut_key(key) => {
+                Some(NotificationInboxAction::SwitchTab(SelectionAction::Next))
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') if is_shortcut_key(key) => {
+                Some(NotificationInboxAction::MarkSelectedRead)
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') if is_shortcut_key(key) => {
+                Some(NotificationInboxAction::MarkAllRead)
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::tui) fn search_popup_action(&self, key: KeyEvent) -> Option<SearchPopupAction> {
         if self.is_text_entry_popup_close_key(key) {
             return Some(SearchPopupAction::Close);

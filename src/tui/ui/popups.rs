@@ -14,6 +14,7 @@ mod downloads;
 mod folder_settings;
 mod forum_post;
 mod keymap;
+mod notification_inbox;
 mod options;
 mod polls;
 mod profile;
@@ -65,6 +66,9 @@ pub(super) use forum_post::{
 pub(super) use keymap::keymap_help_popup_lines;
 pub(super) use keymap::{
     keymap_popup_area, keymap_popup_text_area, keymap_popup_total_lines, render_keymap_help_popup,
+};
+pub(super) use notification_inbox::{
+    notification_inbox_popup_area, render_notification_inbox_popup,
 };
 #[cfg(test)]
 pub(super) use options::options_popup_lines;
@@ -173,6 +177,7 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
         ActiveModalPopupKind::DebugLog => Some(debug_log_popup_area_for_state(frame_area, state)),
         ActiveModalPopupKind::KeymapHelp => Some(keymap_popup_area(frame_area)),
         ActiveModalPopupKind::ChannelSwitcher => Some(channel_switcher_popup_area(frame_area)),
+        ActiveModalPopupKind::NotificationInbox => Some(notification_inbox_popup_area(frame_area)),
         ActiveModalPopupKind::Search => search_popup_area_for_state(frame_area, state),
         ActiveModalPopupKind::ForumPostComposer => Some(forum_post_composer_popup_area(frame_area)),
         ActiveModalPopupKind::ThreadEdit => Some(thread_edit_popup_area(frame_area)),

@@ -267,6 +267,22 @@ pub enum AppEvent {
         query: MessageSearchQuery,
         message: String,
     },
+    InboxMentionsLoaded {
+        request_id: u64,
+        messages: Vec<MessageInfo>,
+    },
+    InboxMentionsLoadFailed {
+        request_id: u64,
+    },
+    InboxChannelMessagesLoaded {
+        request_id: u64,
+        channel_id: Id<ChannelMarker>,
+        messages: Vec<MessageInfo>,
+    },
+    InboxChannelMessagesLoadFailed {
+        request_id: u64,
+        channel_id: Id<ChannelMarker>,
+    },
     MessageHistoryLoadFailed {
         channel_id: Id<ChannelMarker>,
         target: MessageHistoryLoadTarget,
@@ -551,6 +567,10 @@ define_app_event_kinds! {
     ForumPostsLoadFailed: AppEvent::ForumPostsLoadFailed { .. },
     MessageSearchLoaded: AppEvent::MessageSearchLoaded { .. },
     MessageSearchLoadFailed: AppEvent::MessageSearchLoadFailed { .. },
+    InboxMentionsLoaded: AppEvent::InboxMentionsLoaded { .. },
+    InboxMentionsLoadFailed: AppEvent::InboxMentionsLoadFailed { .. },
+    InboxChannelMessagesLoaded: AppEvent::InboxChannelMessagesLoaded { .. },
+    InboxChannelMessagesLoadFailed: AppEvent::InboxChannelMessagesLoadFailed { .. },
     MessageHistoryLoadFailed: AppEvent::MessageHistoryLoadFailed { .. },
     MessageUpdateDispatch: AppEvent::MessageUpdateDispatch { .. },
     MessageDelete: AppEvent::MessageDelete { .. },
@@ -859,6 +879,10 @@ impl AppEventKind {
             | AppEventKind::ForumPostsLoadFailed
             | AppEventKind::MessageSearchLoadFailed
             | AppEventKind::MessageHistoryLoadFailed
+            | AppEventKind::InboxMentionsLoaded
+            | AppEventKind::InboxMentionsLoadFailed
+            | AppEventKind::InboxChannelMessagesLoaded
+            | AppEventKind::InboxChannelMessagesLoadFailed
             | AppEventKind::PinnedMessagesLoadFailed
             | AppEventKind::UserProfileLoadFailed
             | AppEventKind::UserProfileUpdateFailed

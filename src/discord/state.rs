@@ -709,6 +709,12 @@ impl DiscordState {
             } => {
                 self.merge_message_history(*channel_id, None, std::slice::from_ref(message));
             }
+            // Inbox loads keep their own snapshot (see notification_inbox) and
+            // never touch the shared cache; they are handled as UI effects.
+            AppEvent::InboxMentionsLoaded { .. }
+            | AppEvent::InboxMentionsLoadFailed { .. }
+            | AppEvent::InboxChannelMessagesLoaded { .. }
+            | AppEvent::InboxChannelMessagesLoadFailed { .. } => {}
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::MessageSearchLoadFailed { .. } => {}
             AppEvent::MessageUpdateDispatch { update } => self.update_message(

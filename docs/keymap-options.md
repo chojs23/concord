@@ -155,6 +155,7 @@ Pane, options, and voice actions:
 | `OpenCurrentUserProfile`  | `"<leader>p"`                      | Open your profile settings popup.            |
 | `OpenOptions`             | `"<leader>o"`                      | Open the options category picker.            |
 | `ChannelSwitcher`         | `"<leader><leader>"`               | Open channel switcher.                       |
+| `OpenNotificationInbox`   | `"<leader>n"`                      | Open the notification inbox.                 |
 | `OpenDisplayOptions`      | Contextual `d` after `OpenOptions` | Open Display options.                        |
 | `OpenComposerOptions`     | Contextual `c` after `OpenOptions` | Open Composer options.                       |
 | `OpenNotificationOptions` | Contextual `n` after `OpenOptions` | Open Notification options.                   |

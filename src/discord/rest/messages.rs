@@ -125,6 +125,24 @@ impl DiscordRest {
             .map(|response| response.messages)
     }
 
+    /// Recent messages that mention the current user across all guilds, in one
+    /// request. This is the endpoint Discord's own inbox uses for its Mentions
+    /// tab, so no per-channel fetching is needed. `roles`/`everyone` include
+    /// role and @everyone mentions, matching the client default.
+    pub async fn load_recent_mentions(&self, limit: u16) -> Result<Vec<MessageInfo>> {
+        let request = self
+            .raw_http
+            .get("https://discord.com/api/v9/users/@me/mentions")
+            .query(&[
+                ("limit", limit.to_string()),
+                ("roles", "true".to_owned()),
+                ("everyone", "true".to_owned()),
+            ]);
+        let raw_messages: Vec<Value> = self.send_json(request, "recent mentions").await?;
+        parse_message_list_response(raw_messages, "recent mentions response")
+            .map(|response| response.messages)
+    }
+
     pub async fn load_message_history_around(
         &self,
         channel_id: Id<ChannelMarker>,

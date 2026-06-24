@@ -301,6 +301,7 @@ Press `Space` to open the leader shortcut window.
 | `Space`, `a`     | Open actions for the focused pane |
 | `Space`, `p`     | Open my profile settings          |
 | `Space`, `o`     | Choose concord option category    |
+| `Space`, `n`     | Open the notification inbox       |
 | `Space`, `v`     | Voice command prefix              |
 | `Space`, `Space` | Open the fuzzy channel switcher   |
 
@@ -584,6 +585,7 @@ ToggleMemberPane = "<leader>4"
 OpenFocusedPaneAction = "<leader>a"
 OpenCurrentUserProfile = "<leader>p"
 OpenOptions = "<leader>o"
+OpenNotificationInbox = "<leader>n"
 ChannelSwitcher = "<leader><leader>"
 VoiceDeafen = "<leader>vd"
 VoiceMute = "<leader>vm"

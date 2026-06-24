@@ -80,6 +80,7 @@ define_ui_actions! {
     OpenCurrentUserProfile => ("OpenCurrentUserProfile", "My profile"),
     OpenOptions => ("OpenOptions", "Options"),
     ChannelSwitcher => ("ChannelSwitcher", "Switch channels"),
+    OpenNotificationInbox => ("OpenNotificationInbox", "Notification inbox"),
     OpenDisplayOptions => ("OpenDisplayOptions", "Display options"),
     OpenComposerOptions => ("OpenComposerOptions", "Composer options"),
     OpenNotificationOptions => ("OpenNotificationOptions", "Notification options"),
@@ -216,6 +217,16 @@ pub(in crate::tui) enum ChannelSwitcherAction {
     MoveQueryCursorRight,
     DeleteQueryChar,
     InsertQueryChar(char),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum NotificationInboxAction {
+    Select(SelectionAction),
+    SwitchTab(SelectionAction),
+    Close,
+    ActivateSelected,
+    MarkSelectedRead,
+    MarkAllRead,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

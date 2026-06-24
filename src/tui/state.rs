@@ -77,7 +77,9 @@ pub use options::DisplayOptionItem;
 pub(in crate::tui) use popups::{ActiveModalPopupKind, MessageConfirmationKind};
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,
-    PollVotePickerState, ReactionUsersPopupState, UserProfileSettingsField, UserProfileSettingsTab,
+    NotificationInboxChannelLoad, NotificationInboxItem, NotificationInboxLoad,
+    NotificationInboxMessage, NotificationInboxTab, PollVotePickerState, ReactionUsersPopupState,
+    UserProfileSettingsField, UserProfileSettingsTab,
 };
 pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
 
