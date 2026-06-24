@@ -1320,6 +1320,30 @@ fn thread_action_copies_link_and_thread_id() {
 }
 
 #[test]
+fn thread_action_shortcut_jumps_to_matching_row() {
+    let mut state = thread_action_menu_state();
+    state.open_selected_thread_actions();
+
+    // The default "Copy thread ID" shortcut activates that row directly, even
+    // though the selection still sits on the first row.
+    let items = state.selected_thread_action_items();
+    let copy_id_index = items
+        .iter()
+        .position(|item| item.kind == ThreadActionKind::CopyId)
+        .expect("copy id row is present");
+    let chord = state
+        .key_bindings()
+        .thread_action_shortcuts(&items, copy_id_index)[0];
+
+    assert_eq!(state.activate_thread_action_shortcut(chord), None);
+    assert_eq!(
+        state.take_copy_text_request(),
+        Some(("31".to_owned(), "Thread ID copied"))
+    );
+    assert!(!state.is_thread_action_menu_active());
+}
+
+#[test]
 fn thread_action_mute_uses_duration_submenu() {
     let mut state = thread_action_menu_state();
     follow_selected_forum_post(&mut state);

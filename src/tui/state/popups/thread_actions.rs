@@ -3,6 +3,7 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker},
 };
 use crate::discord::{AppCommand, MuteDuration};
+use crate::tui::keybindings::KeyChord;
 
 use super::super::model::{FocusPane, MUTE_ACTION_DURATIONS};
 use super::super::{
@@ -231,6 +232,35 @@ impl DashboardState {
             true,
         ));
         items
+    }
+
+    /// Move the highlight to `row` within the top-level action list. Returns
+    /// `false` when the menu sits in a submenu or the row is out of range.
+    fn select_thread_action_row(&mut self, row: usize) -> bool {
+        if row >= self.selected_thread_action_items().len() {
+            return false;
+        }
+        if let Some(ThreadActionMenuState::Actions { selection, .. }) =
+            self.popups.thread_action_menu_mut()
+        {
+            selection.select(row);
+            return true;
+        }
+        false
+    }
+
+    /// Activate the action bound to `shortcut`, if an enabled row in the
+    /// top-level list claims it. Mirrors the message action menu's shortcuts.
+    pub fn activate_thread_action_shortcut(&mut self, shortcut: KeyChord) -> Option<AppCommand> {
+        let actions = self.selected_thread_action_items();
+        let index = self.key_bindings().matching_action_shortcut_index(
+            &actions,
+            shortcut,
+            |key_bindings, actions, index| key_bindings.thread_action_shortcuts(actions, index),
+            |action| action.enabled,
+        )?;
+        self.select_thread_action_row(index);
+        self.activate_selected_thread_action()
     }
 
     pub fn selected_thread_mute_duration_items(&self) -> &'static [MuteActionDurationItem] {

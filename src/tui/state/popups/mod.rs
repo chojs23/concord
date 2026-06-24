@@ -1337,6 +1337,25 @@ impl DashboardState {
         )
     }
 
+    pub(in crate::tui) fn thread_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
+        // Shortcuts only act on the top-level action list; the mute-duration and
+        // notification submenus navigate by selection only.
+        if !matches!(
+            self.popups.thread_action_menu(),
+            Some(ThreadActionMenuState::Actions { .. })
+        ) {
+            return false;
+        }
+        let actions = self.selected_thread_action_items();
+        action_shortcut_matches(
+            self.key_bindings(),
+            &actions,
+            shortcut,
+            |key_bindings, actions, index| key_bindings.thread_action_shortcuts(actions, index),
+            |action| action.enabled,
+        )
+    }
+
     fn channel_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
         if !self.is_channel_leader_action_active() {
             return false;

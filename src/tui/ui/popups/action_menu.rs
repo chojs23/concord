@@ -398,6 +398,42 @@ fn message_action_menu_lines_with_key_bindings(
         .collect()
 }
 
+fn thread_action_menu_lines(
+    actions: &[ThreadActionItem],
+    selected: usize,
+    key_bindings: &crate::tui::keybindings::KeyBindings,
+) -> Vec<Line<'static>> {
+    let prefixes: Vec<String> = (0..actions.len())
+        .map(|index| {
+            shortcut_label_prefix(&key_bindings.thread_action_shortcut_label(actions, index))
+        })
+        .collect();
+    let prefix_width = prefixes
+        .iter()
+        .map(|prefix| prefix.width())
+        .max()
+        .unwrap_or(0);
+    actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let selected = index == selected;
+            let shortcut = format!("{:<prefix_width$}", prefixes[index]);
+            let label = if action.enabled {
+                key_bindings.thread_action_label(action)
+            } else {
+                format!("{} (unavailable)", key_bindings.thread_action_label(action))
+            };
+            let style = selectable_popup_label_style(selected, action.enabled);
+            Line::from(vec![
+                selectable_popup_marker(selected),
+                selectable_popup_shortcut_span(shortcut),
+                Span::styled(label, style),
+            ])
+        })
+        .collect()
+}
+
 pub(in crate::tui::ui) fn render_thread_action_menu(
     frame: &mut Frame,
     area: Rect,
@@ -433,11 +469,7 @@ pub(in crate::tui::ui) fn render_thread_action_menu(
         if items.is_empty() {
             return;
         }
-        let lines = items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| thread_action_line(&item.label, index == selected, item.enabled))
-            .collect::<Vec<_>>();
+        let lines = thread_action_menu_lines(&items, selected, state.key_bindings());
         // Title-case the noun: "Post actions" / "Thread actions".
         let title = format!("{}{} actions", noun[..1].to_uppercase(), &noun[1..]);
         (title, lines)

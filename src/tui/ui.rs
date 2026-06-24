@@ -28,7 +28,7 @@ use super::{
         AttachmentViewerItem, ChannelSwitcherItem, ChannelThreadItem, DashboardState,
         DisplayOptionItem, EmojiReactionItem, FocusPane, MessageActionItem, MessageUrlItem,
         PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
-        discord_color, presence_color, presence_marker,
+        ThreadActionItem, discord_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{

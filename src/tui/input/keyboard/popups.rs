@@ -385,26 +385,32 @@ pub(super) fn handle_thread_action_menu_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    if state.key_bindings().is_popup_close_key(key) {
-        // Esc backs out of the mute submenu first, then closes the menu.
+    fn activate_thread_action_shortcut(
+        state: &mut DashboardState,
+        shortcut: KeyChord,
+    ) -> Option<AppCommand> {
+        state
+            .thread_action_shortcut_matches(shortcut)
+            .then(|| state.activate_thread_action_shortcut(shortcut))?
+    }
+
+    // Esc (or a close key) backs out of the mute/notification submenu first,
+    // then closes the menu.
+    fn close_or_back(state: &mut DashboardState) {
         if !state.back_thread_action_menu() {
             state.close_thread_action_menu();
         }
-        return None;
     }
-    if key.code == KeyCode::Enter {
-        return state.activate_selected_thread_action();
-    }
-    if let Some(action) = state
-        .key_bindings()
-        .selection_action(key, SelectionKeySet::Navigation)
-    {
-        match action {
-            SelectionAction::Next => state.move_thread_action_down(),
-            SelectionAction::Previous => state.move_thread_action_up(),
-        }
-    }
-    None
+
+    handle_popup_list_key(
+        state,
+        key,
+        close_or_back,
+        DashboardState::move_thread_action_down,
+        DashboardState::move_thread_action_up,
+        DashboardState::activate_selected_thread_action,
+        activate_thread_action_shortcut,
+    )
 }
 
 pub(super) fn handle_channel_switcher_key(

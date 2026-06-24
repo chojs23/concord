@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::state::{
     ChannelActionItem, ChannelActionKind, EmojiReactionItem, FocusPane, GuildActionItem,
     GuildActionKind, MemberActionItem, MemberActionKind, MessageActionItem, MessageActionKind,
+    ThreadActionItem, ThreadActionKind,
 };
 use crate::{
     config::{KeymapBinding, KeymapOptions},
@@ -81,6 +82,7 @@ struct ActionShortcutBindings {
     channel: Vec<ActionShortcutBinding<ChannelActionKind>>,
     message: Vec<ActionShortcutBinding<MessageActionKind>>,
     member: Vec<ActionShortcutBinding<MemberActionKind>>,
+    thread: Vec<ActionShortcutBinding<ThreadActionKind>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -154,6 +156,10 @@ impl ActionShortcutBindings {
                 &options.member_actions,
                 MemberActionKind::from_keymap_name,
             ),
+            thread: parse_action_scope_lossy(
+                &options.thread_actions,
+                ThreadActionKind::from_keymap_name,
+            ),
         }
     }
 
@@ -179,6 +185,11 @@ impl ActionShortcutBindings {
                 &options.member_actions,
                 MemberActionKind::from_keymap_name,
             )?,
+            thread: parse_action_scope(
+                "keymap.thread_actions",
+                &options.thread_actions,
+                ThreadActionKind::from_keymap_name,
+            )?,
         })
     }
 
@@ -201,6 +212,11 @@ impl ActionShortcutBindings {
         }));
         summaries.extend(self.member.iter().map(|binding| KeymapBindingSummary {
             scope: "keymap.member_actions",
+            action: binding.kind.name().to_owned(),
+            keys: key_labels(&binding.shortcuts),
+        }));
+        summaries.extend(self.thread.iter().map(|binding| KeymapBindingSummary {
+            scope: "keymap.thread_actions",
             action: binding.kind.name().to_owned(),
             keys: key_labels(&binding.shortcuts),
         }));
@@ -721,6 +737,41 @@ impl MemberActionKind {
     fn name(self) -> &'static str {
         match self {
             Self::ShowProfile => "ShowProfile",
+        }
+    }
+}
+
+impl ThreadActionKind {
+    fn from_keymap_name(name: &str) -> Option<Self> {
+        match name {
+            "MarkAsRead" => Some(Self::MarkAsRead),
+            "ToggleFollow" => Some(Self::ToggleFollow),
+            "Close" => Some(Self::Close),
+            "Lock" => Some(Self::Lock),
+            "Edit" => Some(Self::Edit),
+            "CopyLink" => Some(Self::CopyLink),
+            "ToggleMute" => Some(Self::ToggleMute),
+            "NotificationSettings" => Some(Self::NotificationSettings),
+            "Pin" => Some(Self::Pin),
+            "Delete" => Some(Self::Delete),
+            "CopyId" => Some(Self::CopyId),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::MarkAsRead => "MarkAsRead",
+            Self::ToggleFollow => "ToggleFollow",
+            Self::Close => "Close",
+            Self::Lock => "Lock",
+            Self::Edit => "Edit",
+            Self::CopyLink => "CopyLink",
+            Self::ToggleMute => "ToggleMute",
+            Self::NotificationSettings => "NotificationSettings",
+            Self::Pin => "Pin",
+            Self::Delete => "Delete",
+            Self::CopyId => "CopyId",
         }
     }
 }
@@ -1361,6 +1412,15 @@ mod tests {
             member_actions: [("ShowProfile".to_owned(), KeymapBinding::one("s"))]
                 .into_iter()
                 .collect(),
+            thread_actions: [(
+                "Close".to_owned(),
+                KeymapBinding {
+                    keys: vec!["x".to_owned()],
+                    description: Some("close post".to_owned()),
+                },
+            )]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
         let key_bindings =
@@ -1409,6 +1469,40 @@ mod tests {
             key_bindings.member_action_shortcuts(&member_actions, 0),
             char_chords(&['s'])
         );
+
+        let thread_actions = [ThreadActionItem {
+            kind: ThreadActionKind::Close,
+            label: "Close post".to_owned(),
+            enabled: true,
+        }];
+        assert_eq!(
+            key_bindings.thread_action_shortcuts(&thread_actions, 0),
+            char_chords(&['x'])
+        );
+        assert_eq!(
+            key_bindings.thread_action_label(&thread_actions[0]),
+            "close post"
+        );
+    }
+
+    #[test]
+    fn thread_action_shortcuts_default_to_mnemonic_keys() {
+        let key_bindings = KeyBindings::default();
+        let actions = [
+            ThreadActionItem {
+                kind: ThreadActionKind::MarkAsRead,
+                label: "Mark as read".to_owned(),
+                enabled: true,
+            },
+            ThreadActionItem {
+                kind: ThreadActionKind::Delete,
+                label: "Delete post".to_owned(),
+                enabled: true,
+            },
+        ];
+
+        assert_eq!(key_bindings.thread_action_shortcut_label(&actions, 0), "m");
+        assert_eq!(key_bindings.thread_action_shortcut_label(&actions, 1), "d");
     }
 
     #[test]

@@ -837,6 +837,51 @@ impl KeyBindings {
         })]
     }
 
+    pub fn thread_action_shortcuts(
+        &self,
+        actions: &[ThreadActionItem],
+        index: usize,
+    ) -> Vec<KeyChord> {
+        scoped_action_shortcuts(
+            index,
+            actions.iter().map(|item| item.kind),
+            &self.action_shortcuts.thread,
+            |kind| self.default_thread_action_shortcut(kind),
+        )
+    }
+
+    pub fn thread_action_label(&self, action: &ThreadActionItem) -> String {
+        action_label(&self.action_shortcuts.thread, action.kind, &action.label)
+    }
+
+    fn default_thread_action_shortcut(&self, kind: ThreadActionKind) -> Vec<KeyChord> {
+        vec![char_chord(match kind {
+            ThreadActionKind::MarkAsRead => 'm',
+            ThreadActionKind::ToggleFollow => 'f',
+            ThreadActionKind::Close => 'c',
+            ThreadActionKind::Lock => 'l',
+            ThreadActionKind::Edit => 'e',
+            ThreadActionKind::CopyLink => 'y',
+            ThreadActionKind::ToggleMute => 'u',
+            ThreadActionKind::NotificationSettings => 'n',
+            ThreadActionKind::Pin => 'P',
+            ThreadActionKind::Delete => 'd',
+            ThreadActionKind::CopyId => 'i',
+        })]
+    }
+
+    pub fn thread_action_shortcut_label(
+        &self,
+        actions: &[ThreadActionItem],
+        index: usize,
+    ) -> String {
+        let activation_shortcuts = self.thread_action_shortcuts(actions, index);
+        if !activation_shortcuts.is_empty() {
+            return key_chord_list_label(&activation_shortcuts);
+        }
+        String::new()
+    }
+
     pub fn message_action_shortcuts(
         &self,
         actions: &[MessageActionItem],

@@ -40,7 +40,7 @@ There are several kinds of keymap settings:
 | `[keymap] leader`                                                                                           | The key that opens the leader popup. Defaults to `Space`.                                               |
 | `[keymap] <ActionName>`                                                                                     | Directly assignable UI actions such as `StartComposer`, `ClosePopup`, `ReplyMessage`, and `OpenThread`. |
 | `[keymap.groups]`                                                                                           | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                               |
-| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]` | Shortcuts shown inside focused-pane action menus opened by `OpenFocusedPaneAction`.                     |
+| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]`, `[keymap.thread_actions]` | Shortcuts shown inside focused-pane and thread/post action menus.                     |
 | `[keymap.composer]`                                                                                         | Shortcuts used while the message composer is open, such as editor and cursor commands.                  |
 
 `[keymap]` action values can be either a string or an object with `keys` and an
@@ -62,8 +62,8 @@ the action after `d`.
 Scoped action tables use the same string or object shape, but each `keys` entry
 must be a single key chord. Multi-key sequences such as `gt` are only supported
 by direct `[keymap]` actions, not by `[keymap.guild_actions]`,
-`[keymap.channel_actions]`, `[keymap.message_actions]`, or
-`[keymap.member_actions]`.
+`[keymap.channel_actions]`, `[keymap.message_actions]`,
+`[keymap.member_actions]`, or `[keymap.thread_actions]`.
 
 ```toml
 [keymap.channel_actions]
@@ -304,8 +304,42 @@ Direct `[keymap]` message action bindings are separate. For example,
 Messages pane, while `[keymap.message_actions] GoToReferencedMessage = "g"`
 controls the action menu shortcut.
 
-Scoped action `description` changes the label shown in server, channel, and
-message, and member action menus. Multiple configured `keys` work as aliases
+Thread and post actions:
+
+The thread action menu opens for a focused thread in the Channels pane or a
+forum post selected in the thread/post list. `Pin` only appears for forum posts.
+
+```toml
+[keymap.thread_actions]
+MarkAsRead = "m"
+ToggleFollow = "f"
+Close = "c"
+Lock = "l"
+Edit = "e"
+CopyLink = "y"
+ToggleMute = "u"
+NotificationSettings = "n"
+Pin = "P"
+Delete = "d"
+CopyId = "i"
+```
+
+| Scoped action          | Default | Action                                                        |
+| ---------------------- | ------- | ------------------------------------------------------------- |
+| `MarkAsRead`           | `m`     | Mark the thread or post read.                                 |
+| `ToggleFollow`         | `f`     | Follow or unfollow the thread or post.                        |
+| `Close`                | `c`     | Close or reopen the thread or post. Needs author or moderator. |
+| `Lock`                 | `l`     | Lock or unlock the thread or post. Moderator only.            |
+| `Edit`                 | `e`     | Edit title, tags, slow mode, and auto-archive.               |
+| `CopyLink`             | `y`     | Copy a link to the thread or post.                            |
+| `ToggleMute`           | `u`     | Mute or unmute the thread or post. Needs following first.     |
+| `NotificationSettings` | `n`     | Choose the notification level for the thread or post.         |
+| `Pin`                  | `P`     | Pin or unpin the post. Forum posts only, moderator only.      |
+| `Delete`               | `d`     | Delete the whole thread or post. Moderator only.              |
+| `CopyId`               | `i`     | Copy the thread or post ID.                                   |
+
+Scoped action `description` changes the label shown in server, channel,
+message, member, and thread action menus. Multiple configured `keys` work as aliases
 when they are unique in the current action menu, and the popup shows them
 together, such as `[x/u]`. If two actions in the same menu use the same
 configured key, that key is ignored for both actions. If

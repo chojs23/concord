@@ -83,6 +83,7 @@ pub struct KeymapOptions {
     pub channel_actions: BTreeMap<String, KeymapBinding>,
     pub message_actions: BTreeMap<String, KeymapBinding>,
     pub member_actions: BTreeMap<String, KeymapBinding>,
+    pub thread_actions: BTreeMap<String, KeymapBinding>,
     pub composer: BTreeMap<String, KeymapBinding>,
     #[serde(flatten)]
     pub mappings: BTreeMap<String, KeymapBinding>,
