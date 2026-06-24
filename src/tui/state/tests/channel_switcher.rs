@@ -76,6 +76,52 @@ fn channel_switcher_groups_channels_and_filters_by_fuzzy_name() {
 }
 
 #[test]
+fn channel_switcher_includes_threads_and_forums_with_type_icons() {
+    let guild_id = Id::new(1);
+    let general_id = Id::new(11);
+    let forum_id = Id::new(20);
+    let forum_post_id = Id::new(30);
+    let thread_id = Id::new(31);
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::ChannelUpsert(forum_channel_info(
+        guild_id, forum_id,
+    )));
+    // A forum post is a thread parented to a forum; it must stay out.
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..forum_thread_info(guild_id, forum_id, forum_post_id.get(), "a post", Some(300), false)
+    }));
+    // A joined, non-archived thread under a text channel must appear.
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..thread_channel_info(guild_id, general_id, thread_id, "a thread")
+    }));
+
+    state.open_channel_switcher();
+    let items = state.channel_switcher_items();
+    let label = |id: Id<ChannelMarker>| {
+        items
+            .iter()
+            .find(|item| item.channel_id == id)
+            .map(|item| item.channel_label.as_str())
+    };
+
+    assert_eq!(label(general_id), Some("# general"));
+    assert_eq!(label(forum_id), Some("📝 announcements"));
+    assert_eq!(label(thread_id), Some("🧵 a thread"));
+    assert_eq!(label(forum_post_id), None);
+
+    let thread = items
+        .iter()
+        .find(|item| item.channel_id == thread_id)
+        .expect("joined thread should be listed");
+    assert_eq!(
+        thread.parent_label.as_deref(),
+        Some("Text Channels / general")
+    );
+}
+
+#[test]
 fn channel_switcher_items_carry_unread_metadata() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {

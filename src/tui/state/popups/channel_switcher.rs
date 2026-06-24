@@ -12,7 +12,7 @@ use crate::tui::keybindings::SelectionAction;
 
 use super::super::{
     ActiveGuildScope, DashboardState, channel_tree,
-    model::{ChannelBranch, ChannelSwitcherItem, GuildPaneEntry},
+    model::{ChannelSwitcherItem, GuildPaneEntry},
     presentation::{is_direct_message_channel, sort_direct_message_channels},
 };
 use crate::discord::AppCommand;
@@ -262,7 +262,7 @@ impl DashboardState {
                     group_label: "Direct Messages",
                     parent_label: None,
                     channel,
-                    branch: ChannelBranch::None,
+                    depth: 0,
                     group_order,
                     unread: self.channel_unread(channel.id),
                     unread_message_count: self.channel_unread_message_count(channel.id),
@@ -277,50 +277,100 @@ impl DashboardState {
         guild_id: Id<GuildMarker>,
         guild_name: &str,
     ) {
-        let mut channels = self
+        // Threads stay in the list: the tree helpers skip them, so they only
+        // surface as nested entries under their parent in the loop below.
+        let channels = self
             .discord
             .cache
             .viewable_channels_for_guild(Some(guild_id));
-        channels.retain(|channel| !channel.is_thread());
         let group_order = items.len();
         for root in channel_tree::sorted_channel_tree_roots(&channels) {
             if !root.is_category() {
-                push_channel_switcher_item(
+                self.push_channel_and_child_threads(
                     items,
-                    ChannelSwitcherItemInput {
-                        guild_id: Some(guild_id),
-                        guild_name: Some(guild_name),
-                        group_label: guild_name,
-                        parent_label: None,
-                        channel: root,
-                        branch: ChannelBranch::None,
-                        group_order,
-                        unread: self.channel_unread(root.id),
-                        unread_message_count: self.channel_unread_message_count(root.id),
-                    },
+                    &channels,
+                    guild_id,
+                    guild_name,
+                    root,
+                    None,
+                    0,
+                    group_order,
                 );
                 continue;
             }
 
-            let children = channel_tree::sorted_category_children(&channels, root.id);
-            let child_count = children.len();
-            for (index, child) in children.into_iter().enumerate() {
-                let branch = channel_tree::child_branch(index, child_count);
-                push_channel_switcher_item(
+            for child in channel_tree::sorted_category_children(&channels, root.id) {
+                self.push_channel_and_child_threads(
                     items,
-                    ChannelSwitcherItemInput {
-                        guild_id: Some(guild_id),
-                        guild_name: Some(guild_name),
-                        group_label: guild_name,
-                        parent_label: Some(root.name.as_str()),
-                        channel: child,
-                        branch,
-                        group_order,
-                        unread: self.channel_unread(child.id),
-                        unread_message_count: self.channel_unread_message_count(child.id),
-                    },
+                    &channels,
+                    guild_id,
+                    guild_name,
+                    child,
+                    Some(root.name.as_str()),
+                    1,
+                    group_order,
                 );
             }
+        }
+    }
+
+    /// Push a channel followed by its joined, non-archived threads. Forum posts
+    /// are threads parented to a forum; the switcher lists forum channels but
+    /// not their posts, so we stop before descending into forums.
+    #[allow(clippy::too_many_arguments)]
+    fn push_channel_and_child_threads(
+        &self,
+        items: &mut Vec<ChannelSwitcherItem>,
+        channels: &[&ChannelState],
+        guild_id: Id<GuildMarker>,
+        guild_name: &str,
+        channel: &ChannelState,
+        parent_label: Option<&str>,
+        depth: usize,
+        group_order: usize,
+    ) {
+        push_channel_switcher_item(
+            items,
+            ChannelSwitcherItemInput {
+                guild_id: Some(guild_id),
+                guild_name: Some(guild_name),
+                group_label: guild_name,
+                parent_label,
+                channel,
+                depth,
+                group_order,
+                unread: self.channel_unread(channel.id),
+                unread_message_count: self.channel_unread_message_count(channel.id),
+            },
+        );
+
+        if channel.is_forum() {
+            return;
+        }
+
+        let thread_parent_label = match parent_label {
+            Some(category) => format!("{category} / {}", channel.name),
+            None => channel.name.clone(),
+        };
+        for thread in channel_tree::sorted_child_threads(channels.iter().copied(), channel.id) {
+            // Match the channel pane: only joined, non-archived threads appear.
+            if !thread.current_user_joined_thread || thread.thread_archived().unwrap_or(false) {
+                continue;
+            }
+            push_channel_switcher_item(
+                items,
+                ChannelSwitcherItemInput {
+                    guild_id: Some(guild_id),
+                    guild_name: Some(guild_name),
+                    group_label: guild_name,
+                    parent_label: Some(thread_parent_label.as_str()),
+                    channel: thread,
+                    depth: depth.saturating_add(1),
+                    group_order,
+                    unread: self.channel_unread(thread.id),
+                    unread_message_count: self.channel_unread_message_count(thread.id),
+                },
+            );
         }
     }
 }
@@ -331,7 +381,7 @@ struct ChannelSwitcherItemInput<'a> {
     group_label: &'a str,
     parent_label: Option<&'a str>,
     channel: &'a ChannelState,
-    branch: ChannelBranch,
+    depth: usize,
     group_order: usize,
     unread: ChannelUnreadState,
     unread_message_count: usize,
@@ -347,16 +397,15 @@ fn push_channel_switcher_item(
         group_label,
         parent_label,
         channel,
-        branch,
+        depth,
         group_order,
         unread,
         unread_message_count,
     } = input;
-    if channel.is_category() || channel.is_thread() {
+    if channel.is_category() {
         return;
     }
     let original_index = items.len();
-    let depth = usize::from(parent_label.is_some() || branch != ChannelBranch::None);
     items.push(ChannelSwitcherItem {
         channel_id: channel.id,
         guild_id,
@@ -410,6 +459,14 @@ fn filter_channel_switcher_items(
 }
 
 fn channel_switcher_search_channel_name(channel_label: &str) -> &str {
+    // Match known icon tokens rather than splitting on the first space, since
+    // thread and forum names can themselves contain spaces.
+    for prefix in CHANNEL_SWITCHER_ICON_PREFIXES {
+        if let Some(rest) = channel_label.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    // A typed query has no trailing space (e.g. "#general", "@alice").
     channel_label
         .strip_prefix('#')
         .or_else(|| channel_label.strip_prefix('@'))
@@ -423,13 +480,21 @@ fn channel_switcher_query_label_prefix(query: &str) -> Option<char> {
         .filter(|prefix| matches!(prefix, '#' | '@'))
 }
 
+/// Must stay in sync with the prefixes emitted by
+/// `channel_switcher_channel_label` so the search helper can strip them back off.
+const CHANNEL_SWITCHER_ICON_PREFIXES: [&str; 4] = ["# ", "@ ", "🧵 ", "📝 "];
+
 fn channel_switcher_channel_label(channel: &ChannelState) -> String {
     if is_direct_message_channel(channel) {
         match channel.kind.as_str() {
-            "dm" | "Private" => format!("@{}", channel.name),
+            "dm" | "Private" => format!("@ {}", channel.name),
             _ => channel.name.clone(),
         }
+    } else if channel.is_thread() {
+        format!("🧵 {}", channel.name)
+    } else if channel.is_forum() {
+        format!("📝 {}", channel.name)
     } else {
-        format!("#{}", channel.name)
+        format!("# {}", channel.name)
     }
 }
