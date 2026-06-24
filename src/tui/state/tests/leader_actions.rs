@@ -49,9 +49,7 @@ fn channel_leader_action_show_threads_opens_thread_list_view() {
     assert_eq!(actions[5].kind, ChannelActionKind::ToggleMute);
     assert_eq!(actions[5].label, "Mute channel");
 
-    // "Show threads" now opens the channel's threads as cards in the message
-    // pane, the same way a forum channel shows its post list, instead of a
-    // submenu popup.
+    // "Show threads" opens the thread-list view in the message pane, not a submenu.
     let command = state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
     assert_eq!(command, None);
     assert!(!state.is_channel_leader_action_active());
@@ -120,8 +118,6 @@ fn channel_thread_list_card_opens_thread_and_subscribes() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
-    // "Show threads" opens the thread-list view; selecting a card then opens
-    // that thread as the active channel, exactly like a forum post.
     state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
     assert!(state.is_channel_thread_list_view());
 

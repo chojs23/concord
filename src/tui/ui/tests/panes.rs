@@ -955,7 +955,10 @@ fn forum_post_lines_render_title_author_and_preview() {
         preview_author: Some("neo".to_owned()),
         preview_author_color: Some(0x3366CC),
         preview_content: Some("This crate solves a small but annoying problem".to_owned()),
-        applied_tags: vec!["question".to_owned(), "rust".to_owned()],
+        applied_tags: vec![
+            AppliedForumTag::test("question"),
+            AppliedForumTag::test("rust"),
+        ],
         preview_reactions: vec![ReactionInfo {
             count: 2,
             me: true,
@@ -1005,6 +1008,51 @@ fn forum_post_lines_render_title_author_and_preview() {
             .flat_map(|line| line.spans.iter())
             .all(|span| span.style.bg.is_none())
     );
+}
+
+#[test]
+fn forum_post_tag_line_renders_unicode_emoji_and_reserves_custom_image_slot() {
+    let unicode_tag = AppliedForumTag {
+        name: "fire".to_owned(),
+        unicode_emoji: Some("🔥".to_owned()),
+        custom_emoji_url: None,
+    };
+    let custom_tag = AppliedForumTag {
+        name: "bug".to_owned(),
+        unicode_emoji: None,
+        custom_emoji_url: Some("https://cdn.discordapp.com/emojis/77.png".to_owned()),
+    };
+    let post = ChannelThreadItem {
+        label: "tagged post".to_owned(),
+        preview_author: Some("neo".to_owned()),
+        preview_content: Some("body".to_owned()),
+        applied_tags: vec![unicode_tag, custom_tag],
+        comment_count: Some(1),
+        last_activity_message_id: Some(Id::new(30)),
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+
+    let lines = forum_post_viewport_lines(std::slice::from_ref(&post), Some(0), 80, false);
+    let texts = line_texts_from_ratatui(&lines);
+
+    // The tags row (card row 3: border, title, preview, tags) shows the unicode
+    // emoji inline and the names, with a blank gap held for the custom emoji.
+    let tag_text = &texts[3];
+    assert!(tag_text.contains("🔥 fire"));
+    assert!(tag_text.contains("bug"));
+    // The custom tag never renders its `:name:` text on the card; its slot is
+    // reserved for the overlaid image instead.
+    assert!(!tag_text.contains(':'));
+
+    // The custom-emoji image slot lands on the tags row (offset 3 from the card
+    // top) at the reserved gap two columns into its `# ` prefixed chip.
+    let rows = forum_post_tag_rows_for_test(&[post], 80, 20);
+    assert_eq!(rows.len(), 1);
+    let (row, cols) = &rows[0];
+    assert_eq!(*row, 3);
+    assert_eq!(cols.len(), 1);
+    // `# 🔥 fire`(9) + ` · `(3) + `# `(2) = column 14 within the card content.
+    assert_eq!(cols[0], 14);
 }
 
 #[test]

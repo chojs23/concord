@@ -313,14 +313,15 @@ fn button_line(label: &str, active: bool) -> Line<'static> {
     ])
 }
 
-fn tag_line(tag: &ForumPostComposerTagView, width: usize) -> Line<'static> {
+fn tag_line(tag: &ForumPostComposerTagView, width: usize, thumbnail_ready: bool) -> Line<'static> {
     let marker = if tag.active { "▸" } else { " " };
     let checkbox = if tag.selected { "[x]" } else { "[ ]" };
-    let emoji = tag
-        .emoji
-        .as_deref()
-        .map(|emoji| format!(" {emoji}"))
-        .unwrap_or_default();
+    let emoji = super::thread_edit::tag_emoji_text(
+        tag.unicode_emoji.as_deref(),
+        tag.custom_emoji_url.as_deref(),
+        tag.custom_emoji_label.as_deref(),
+        thumbnail_ready,
+    );
     // Unselectable tags (the cap is reached and this one is not yet selected)
     // are dimmed. The active row keeps its highlight so the cursor stays visible
     // even while sitting on a dimmed tag.
@@ -356,11 +357,14 @@ fn push_tag_summary(
     let shown = selected_count.max(TAG_SUMMARY_MIN_VISIBLE).min(tags.len());
     for tag in tags.iter().take(shown) {
         let checkbox = if tag.selected { "[x]" } else { "[ ]" };
-        let emoji = tag
-            .emoji
-            .as_deref()
-            .map(|emoji| format!(" {emoji}"))
-            .unwrap_or_default();
+        // The collapsed summary is part of the static composer form (no image
+        // overlay), so custom emoji fall back to their `:name:` label here.
+        let emoji = super::thread_edit::tag_emoji_text(
+            tag.unicode_emoji.as_deref(),
+            tag.custom_emoji_url.as_deref(),
+            tag.custom_emoji_label.as_deref(),
+            false,
+        );
         let style = if tag.selected {
             Style::default().fg(ACCENT)
         } else {
@@ -387,6 +391,7 @@ pub(in crate::tui::ui) fn render_forum_post_tag_picker(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if !state.is_forum_post_tag_picker_active() {
         return;
@@ -407,15 +412,35 @@ pub(in crate::tui::ui) fn render_forum_post_tag_picker(
         .min(tags.len())
         .max(1);
     let visible_range = selection::visible_item_range(tags.len(), selected, visible_items);
+    let ready_urls = super::thread_edit::ready_emoji_urls(emoji_images);
     frame.render_widget(Clear, popup);
     let rows: Vec<Line<'static>> = tags[visible_range.clone()]
         .iter()
-        .map(|tag| tag_line(tag, usize::from(content.width)))
+        .map(|tag| {
+            tag_line(
+                tag,
+                usize::from(content.width),
+                super::thread_edit::tag_custom_emoji_ready(
+                    tag.custom_emoji_url.as_deref(),
+                    &ready_urls,
+                ),
+            )
+        })
         .collect();
     frame.render_widget(
         Paragraph::new(rows).block(block).wrap(Wrap { trim: false }),
         popup,
     );
+    if state.show_custom_emoji() {
+        super::thread_edit::render_tag_picker_emojis(
+            frame,
+            content,
+            tags[visible_range.clone()]
+                .iter()
+                .map(|tag| tag.custom_emoji_url.as_deref()),
+            emoji_images,
+        );
+    }
     render_vertical_scrollbar(
         frame,
         Rect {
@@ -634,7 +659,9 @@ mod tests {
     fn tag(name: &str, selected: bool) -> ForumPostComposerTagView {
         ForumPostComposerTagView {
             name: name.to_owned(),
-            emoji: None,
+            unicode_emoji: None,
+            custom_emoji_url: None,
+            custom_emoji_label: None,
             selected,
             active: false,
             selectable: true,

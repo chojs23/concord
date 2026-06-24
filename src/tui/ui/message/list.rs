@@ -111,6 +111,14 @@ pub(in crate::tui::ui) fn render_messages(
                 media.emoji_images,
                 media_occlusion_areas,
             );
+            forum::render_forum_post_tag_emojis(
+                frame,
+                message_areas.list,
+                &posts,
+                forum_card_width,
+                media.emoji_images,
+                media_occlusion_areas,
+            );
         }
         render_vertical_scrollbar(
             frame,

@@ -181,8 +181,7 @@ impl DashboardState {
         self.discord.cache.channel_unread_message_count(channel_id)
     }
 
-    /// Whether `channel_id` is a forum post, i.e. a thread whose parent is a
-    /// forum channel (as opposed to a regular thread under a text channel).
+    /// Whether `channel_id` is a thread whose parent is a forum channel.
     pub fn is_forum_post_thread(&self, channel_id: Id<ChannelMarker>) -> bool {
         self.discord
             .cache

@@ -5,7 +5,7 @@ use crate::discord::ids::{
 };
 use crate::tui::keybindings::ScrollAction;
 
-use super::super::{ThreadEditField, ThreadEditTagView, ThreadEditView};
+use super::super::{DashboardState, ThreadEditField, ThreadEditTagView, ThreadEditView};
 use super::{ActiveModalPopupKind, ModalPopup, ThreadEditState};
 
 /// Discord allows at most five tags applied to a single forum post.
@@ -186,15 +186,19 @@ impl super::super::DashboardState {
                     .collect()
             };
         let cap_reached = popup.selected_tag_ids.len() >= MAX_FORUM_POST_TAGS;
+        let guild_id = channel.guild_id;
         let tags = display_ids
             .iter()
             .enumerate()
             .filter_map(|(index, id)| {
                 let tag = available_tags.iter().find(|tag| tag.id == *id)?;
                 let selected = popup.selected_tag_ids.contains(&tag.id);
+                let emoji = self.forum_tag_emoji_fields(tag, guild_id);
                 Some(ThreadEditTagView {
                     name: tag.name.clone(),
-                    emoji: forum_tag_emoji_label(tag.emoji_id.is_some(), tag.emoji_name.as_deref()),
+                    unicode_emoji: emoji.unicode_emoji,
+                    custom_emoji_url: emoji.custom_emoji_url,
+                    custom_emoji_label: emoji.custom_emoji_label,
                     selected,
                     active: popup.editing_tags && index == popup.selected_tag_index,
                     selectable: selected || !cap_reached,
@@ -628,14 +632,51 @@ fn cycle_index(index: usize, len: usize, forward: bool) -> usize {
     }
 }
 
-fn forum_tag_emoji_label(custom: bool, name: Option<&str>) -> Option<String> {
-    let name = name?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    if custom {
-        Some(format!(":{name}:"))
-    } else {
-        Some(name.to_owned())
+/// Display-ready emoji fields for one forum tag, resolved for the tag picker.
+pub(in crate::tui::state) struct ForumTagEmojiFields {
+    pub unicode_emoji: Option<String>,
+    pub custom_emoji_url: Option<String>,
+    pub custom_emoji_label: Option<String>,
+}
+
+impl DashboardState {
+    pub(in crate::tui::state) fn forum_tag_emoji_fields(
+        &self,
+        tag: &crate::discord::ForumTagInfo,
+        guild_id: Option<Id<crate::discord::ids::marker::GuildMarker>>,
+    ) -> ForumTagEmojiFields {
+        if let Some(emoji_id) = tag.emoji_id {
+            // The tag payload omits the custom emoji name, so the `:name:`
+            // fallback is resolved from the guild emoji cache.
+            let url = format!("https://cdn.discordapp.com/emojis/{}.png", emoji_id.get());
+            let resolved_name = guild_id.and_then(|guild_id| {
+                self.discord
+                    .cache
+                    .custom_emojis_for_guild(guild_id)
+                    .iter()
+                    .find(|emoji| emoji.id == emoji_id)
+                    .map(|emoji| emoji.name.clone())
+            });
+            let label = resolved_name
+                .map(|name| format!(":{name}:"))
+                .unwrap_or_else(|| ":custom:".to_owned());
+            return ForumTagEmojiFields {
+                unicode_emoji: None,
+                custom_emoji_url: Some(url),
+                custom_emoji_label: Some(label),
+            };
+        }
+
+        let unicode = tag
+            .emoji_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+        ForumTagEmojiFields {
+            unicode_emoji: unicode,
+            custom_emoji_url: None,
+            custom_emoji_label: None,
+        }
     }
 }

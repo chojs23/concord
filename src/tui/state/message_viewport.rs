@@ -53,11 +53,8 @@ impl MessagePaneSource {
         matches!(self, Self::ForumPosts { .. })
     }
 
-    /// Both forum posts and a channel's thread list render the same
-    /// `ChannelThreadItem` cards and share the message pane's card-list
-    /// navigation/scroll/selection. The forum-specific bits (loading state,
-    /// active/archived sections, "load more") gate on `uses_forum_posts`
-    /// instead.
+    /// Sources that render `ChannelThreadItem` cards. Forum-only bits (loading,
+    /// sections, "load more") gate on the narrower `uses_forum_posts` instead.
     fn uses_thread_cards(self) -> bool {
         matches!(self, Self::ForumPosts { .. } | Self::ChannelThreads { .. })
     }
@@ -1215,11 +1212,9 @@ impl DashboardState {
 }
 
 impl DashboardState {
-    /// Locate the thread a THREAD_CREATED (kind 18) message started, if it is
-    /// still cached and viewable. We prefer the explicit reference channel id and
-    /// fall back to matching a child thread by name (older system messages did
-    /// not carry a reference). Shared by [`Self::thread_summary_for_message`] and
-    /// [`Self::thread_card_item_for_message`].
+    /// Locate the thread a THREAD_CREATED (kind 18) message started. Prefers the
+    /// reference channel id, falling back to a child thread matched by name
+    /// (older system messages carried no reference).
     fn started_thread_channel(&self, message: &MessageState) -> Option<&ChannelState> {
         if message.message_kind.code() != 18 {
             return None;
@@ -1247,12 +1242,9 @@ impl DashboardState {
         })
     }
 
-    /// Build the forum-post card item for a THREAD_CREATED message so the
-    /// "started a thread" box renders with the same card UI as a forum post.
-    /// When the thread channel is cached we reuse [`Self::forum_thread_item`];
-    /// otherwise we synthesize a minimal item from the [`ThreadSummary`] (and
-    /// finally the message itself) so the card always renders for a kind-18
-    /// message.
+    /// Build the card item for a THREAD_CREATED message so the "started a thread"
+    /// box reuses the forum-post card UI. Synthesizes a placeholder item from the
+    /// [`ThreadSummary`] (then the message) when the thread channel is uncached.
     pub(crate) fn thread_card_item_for_message(
         &self,
         message: &MessageState,
@@ -1265,9 +1257,6 @@ impl DashboardState {
             return Some(self.forum_thread_item(channel, None, archived));
         }
 
-        // The thread channel is not cached. Fall back to whatever the thread
-        // summary captured, and finally to the message content as the thread
-        // name, so the card still renders with sensible placeholders.
         let summary = self.thread_summary_for_message(message);
         let preview = summary
             .as_ref()
@@ -1689,10 +1678,9 @@ impl DashboardState {
         self.is_pinned_message_view_active()
     }
 
-    /// Open the channel's threads as cards in the message pane, mirroring how a
-    /// forum channel shows its post list. Forum channels already show their own
-    /// post list, so this view is only for non-forum channels with child
-    /// threads. Captures a return target so Esc restores the prior channel view.
+    /// Open a non-forum channel's threads as cards in the message pane (forum
+    /// channels already show their own post list). Captures a return target so
+    /// Esc restores the prior channel view.
     pub fn enter_channel_thread_list_view(&mut self, channel_id: Id<ChannelMarker>) {
         if self
             .discord

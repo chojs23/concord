@@ -142,7 +142,13 @@ fn forum_post_items_resolve_applied_tag_names() {
         .into_iter()
         .next()
         .expect("forum post should be visible");
-    assert_eq!(post.applied_tags, vec!["rust", "question"]);
+    assert_eq!(
+        post.applied_tags
+            .iter()
+            .map(|tag| tag.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["rust", "question"]
+    );
 }
 
 #[test]
@@ -1735,6 +1741,89 @@ fn thread_edit_tag_picker_lists_parent_forum_tags() {
             .iter()
             .any(|tag| tag.name == "rust" && tag.selected)
     );
+}
+
+#[test]
+fn thread_edit_tag_picker_keeps_custom_emoji_tags() {
+    // Regression: a custom-emoji tag has `emoji_id` set and `emoji_name` null;
+    // it must surface a CDN url plus a `:name:` fallback, not be dropped.
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let mut state = DashboardState::new();
+    let mut forum = forum_channel_info(guild_id, forum_id);
+    forum.available_tags = vec![
+        ForumTagInfo {
+            id: Id::new(101),
+            name: "sparkles".to_owned(),
+            moderated: false,
+            emoji_id: Some(Id::new(77)),
+            emoji_name: None,
+        },
+        ForumTagInfo {
+            id: Id::new(102),
+            name: "fire".to_owned(),
+            moderated: false,
+            emoji_id: None,
+            emoji_name: Some("🔥".to_owned()),
+        },
+    ];
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        owner_id: Some(Id::new(10)),
+        channels: vec![forum],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        // The tag payload omits the custom emoji name, so it is resolved from
+        // the guild emoji cache by `emoji_id`.
+        emojis: vec![CustomEmojiInfo::test(Id::new(77), "sparkle")],
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    let mut thread = forum_thread_info(guild_id, forum_id, 31, "release notes", Some(301), false);
+    thread.applied_tags = vec![Id::new(101)];
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
+        offset: 0,
+        next_offset: 1,
+        threads: vec![thread],
+        first_messages: Vec::new(),
+        has_more: false,
+    });
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.set_message_view_height(10);
+    state.focus_pane(FocusPane::Messages);
+
+    state.open_thread_edit(Id::new(31));
+    let view = state
+        .thread_edit_view()
+        .expect("edit popup should expose a view");
+
+    let custom = view
+        .tags
+        .iter()
+        .find(|tag| tag.name == "sparkles")
+        .expect("custom-emoji tag should not be dropped");
+    assert_eq!(custom.unicode_emoji, None);
+    assert_eq!(
+        custom.custom_emoji_url.as_deref(),
+        Some("https://cdn.discordapp.com/emojis/77.png")
+    );
+    assert_eq!(custom.custom_emoji_label.as_deref(), Some(":sparkle:"));
+
+    let unicode = view
+        .tags
+        .iter()
+        .find(|tag| tag.name == "fire")
+        .expect("unicode-emoji tag should be present");
+    assert_eq!(unicode.unicode_emoji.as_deref(), Some("🔥"));
+    assert_eq!(unicode.custom_emoji_url, None);
 }
 
 #[test]

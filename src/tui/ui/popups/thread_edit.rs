@@ -231,6 +231,7 @@ pub(in crate::tui::ui) fn render_thread_edit_tag_picker(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if !state.is_thread_edit_tag_picker_active() {
         return;
@@ -251,15 +252,32 @@ pub(in crate::tui::ui) fn render_thread_edit_tag_picker(
         .min(tags.len())
         .max(1);
     let visible_range = selection::visible_item_range(tags.len(), selected, visible_items);
+    let ready_urls = ready_emoji_urls(emoji_images);
     frame.render_widget(Clear, popup);
     let rows: Vec<Line<'static>> = tags[visible_range.clone()]
         .iter()
-        .map(|tag| tag_line(tag, usize::from(content.width)))
+        .map(|tag| {
+            tag_line(
+                tag,
+                usize::from(content.width),
+                tag_custom_emoji_ready(tag.custom_emoji_url.as_deref(), &ready_urls),
+            )
+        })
         .collect();
     frame.render_widget(
         Paragraph::new(rows).block(block).wrap(Wrap { trim: false }),
         popup,
     );
+    if state.show_custom_emoji() {
+        render_tag_picker_emojis(
+            frame,
+            content,
+            tags[visible_range.clone()]
+                .iter()
+                .map(|tag| tag.custom_emoji_url.as_deref()),
+            emoji_images,
+        );
+    }
     render_vertical_scrollbar(
         frame,
         Rect {
@@ -270,6 +288,42 @@ pub(in crate::tui::ui) fn render_thread_edit_tag_picker(
         visible_items,
         tags.len(),
     );
+}
+
+/// Overlays custom tag-emoji images in a tag picker, one per visible row, at the
+/// fixed column where `tag_line` reserves the blank emoji gap. Shared by the
+/// thread-edit and composer pickers (each passes its own urls per row).
+pub(super) fn render_tag_picker_emojis<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    row_custom_emoji_urls: impl IntoIterator<Item = Option<&'a str>>,
+    emoji_images: &[EmojiImage<'_>],
+) {
+    let emoji_col = tag_line_emoji_column();
+    if area.width <= emoji_col || area.height == 0 {
+        return;
+    }
+    for (offset, url) in row_custom_emoji_urls.into_iter().enumerate() {
+        let Some(url) = url else {
+            continue;
+        };
+        let Some(image) = emoji_images.iter().find(|image| image.url == url) else {
+            continue;
+        };
+        let y = area
+            .y
+            .saturating_add(u16::try_from(offset).unwrap_or(u16::MAX));
+        if y >= area.y.saturating_add(area.height) {
+            continue;
+        }
+        let image_area = Rect::new(
+            area.x.saturating_add(emoji_col),
+            y,
+            EMOJI_REACTION_IMAGE_WIDTH.min(area.width.saturating_sub(emoji_col)),
+            1,
+        );
+        frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+    }
 }
 
 fn thread_edit_tag_picker_popup_area(area: Rect, tag_count: usize) -> Rect {
@@ -289,14 +343,15 @@ fn button_line(label: &str, active: bool) -> Line<'static> {
     ])
 }
 
-fn tag_line(tag: &ThreadEditTagView, width: usize) -> Line<'static> {
+fn tag_line(tag: &ThreadEditTagView, width: usize, thumbnail_ready: bool) -> Line<'static> {
     let marker = if tag.active { "▸" } else { " " };
     let checkbox = if tag.selected { "[x]" } else { "[ ]" };
-    let emoji = tag
-        .emoji
-        .as_deref()
-        .map(|emoji| format!(" {emoji}"))
-        .unwrap_or_default();
+    let emoji = tag_emoji_text(
+        tag.unicode_emoji.as_deref(),
+        tag.custom_emoji_url.as_deref(),
+        tag.custom_emoji_label.as_deref(),
+        thumbnail_ready,
+    );
     let style = if tag.active {
         highlight_style()
     } else if !tag.selectable {
@@ -308,6 +363,46 @@ fn tag_line(tag: &ThreadEditTagView, width: usize) -> Line<'static> {
         truncate_display_width(&format!("{marker} {checkbox}{emoji} {}", tag.name), width),
         style,
     ))
+}
+
+/// The emoji portion of a tag row (with a leading space). A custom emoji reserves
+/// a blank gap for the overlaid image once ready, else its `:name:` label.
+pub(super) fn tag_emoji_text(
+    unicode_emoji: Option<&str>,
+    custom_emoji_url: Option<&str>,
+    custom_emoji_label: Option<&str>,
+    thumbnail_ready: bool,
+) -> String {
+    if let Some(emoji) = unicode_emoji {
+        return format!(" {emoji}");
+    }
+    if custom_emoji_url.is_some() {
+        if thumbnail_ready {
+            return format!(" {}", " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH)));
+        }
+        if let Some(label) = custom_emoji_label {
+            return format!(" {label}");
+        }
+    }
+    String::new()
+}
+
+/// Column of the reserved custom-emoji gap within a picker row, measured from
+/// the row start: marker + space + `[x]` + space.
+fn tag_line_emoji_column() -> u16 {
+    "  [x] ".width() as u16
+}
+
+pub(super) fn ready_emoji_urls(emoji_images: &[EmojiImage<'_>]) -> Vec<String> {
+    emoji_images.iter().map(|image| image.url.clone()).collect()
+}
+
+/// Whether a custom tag emoji's image has loaded (so the row reserves the gap).
+pub(super) fn tag_custom_emoji_ready(
+    custom_emoji_url: Option<&str>,
+    ready_urls: &[String],
+) -> bool {
+    custom_emoji_url.is_some_and(|url| ready_urls.iter().any(|ready| ready == url))
 }
 
 fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], width: usize) {
@@ -322,11 +417,14 @@ fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], 
     let shown = selected_count.max(TAG_SUMMARY_MIN_VISIBLE).min(tags.len());
     for tag in tags.iter().take(shown) {
         let checkbox = if tag.selected { "[x]" } else { "[ ]" };
-        let emoji = tag
-            .emoji
-            .as_deref()
-            .map(|emoji| format!(" {emoji}"))
-            .unwrap_or_default();
+        // The collapsed summary is part of the static form (no image overlay),
+        // so custom emoji fall back to their `:name:` label here.
+        let emoji = tag_emoji_text(
+            tag.unicode_emoji.as_deref(),
+            tag.custom_emoji_url.as_deref(),
+            tag.custom_emoji_label.as_deref(),
+            false,
+        );
         let style = if tag.selected {
             Style::default().fg(ACCENT)
         } else {

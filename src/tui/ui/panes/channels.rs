@@ -179,8 +179,6 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                     } => {
                         let parent_prefix = parent_branch.participant_prefix();
                         let branch_prefix = branch.prefix();
-                        // Forum posts (threads under a forum) get the post icon;
-                        // regular threads get the thread icon.
                         let thread_prefix = if dashboard.is_forum_post_thread(state.id) {
                             "💬 "
                         } else {

@@ -118,11 +118,9 @@ impl MessageContentLine {
         }
     }
 
-    /// Wrap a pre-styled [`Line`] (for example a forum-post card line) as a
-    /// [`MessageContentLine`]. The visible text is the concatenation of the span
-    /// contents so width and text-based assertions keep working, while each
-    /// span's style is preserved as a byte-range prefix so [`Self::spans`]
-    /// reproduces the original styling.
+    /// Wrap a pre-styled [`Line`] as a [`MessageContentLine`], concatenating the
+    /// span text and preserving each span's style as a byte-range prefix so
+    /// [`Self::spans`] reproduces the original styling.
     pub(in crate::tui) fn from_line(line: Line<'static>) -> Self {
         let mut content = Self::plain(String::new());
         for span in line.spans {
@@ -1908,12 +1906,9 @@ fn format_thread_created_lines(
         width,
     )];
 
-    // A thread and a forum post are the same kind of object, so reuse the
-    // forum-post card UI rather than maintaining a second bordered-box layout.
-    // The card is never the selection target in the message stream. The card
-    // reserves a two-column marker gutter of its own, so we cap the box body at
-    // 72 columns (the historical thread-box maximum) and add that gutter back to
-    // keep the same on-screen width.
+    // Reuse the forum-post card UI for the thread box. The card owns a two-column
+    // marker gutter, so cap the body at 72 columns (the historical thread-box
+    // maximum) and add the gutter back to keep the same on-screen width.
     let card_width = width.saturating_sub(2).clamp(4, 72).saturating_add(2);
     if let Some(item) = state.thread_card_item_for_message(message) {
         lines.extend(

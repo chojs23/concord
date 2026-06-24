@@ -205,7 +205,12 @@ pub enum ForumPostComposerField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForumPostComposerTagView {
     pub name: String,
-    pub emoji: Option<String>,
+    /// Unicode emoji shown inline; `None` for a custom or emoji-less tag.
+    pub unicode_emoji: Option<String>,
+    /// CDN url of a custom tag emoji, overlaid as an image on a reserved gap.
+    pub custom_emoji_url: Option<String>,
+    /// Resolved `:name:` text fallback shown until the custom emoji image loads.
+    pub custom_emoji_label: Option<String>,
     pub selected: bool,
     pub active: bool,
     /// Whether this tag can still be toggled on. `false` for unselected tags
@@ -252,7 +257,12 @@ pub enum ThreadEditField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ThreadEditTagView {
     pub name: String,
-    pub emoji: Option<String>,
+    /// Unicode emoji shown inline; `None` for a custom or emoji-less tag.
+    pub unicode_emoji: Option<String>,
+    /// CDN url of a custom tag emoji, overlaid as an image on a reserved gap.
+    pub custom_emoji_url: Option<String>,
+    /// Resolved `:name:` text fallback shown until the custom emoji image loads.
+    pub custom_emoji_label: Option<String>,
     pub selected: bool,
     pub active: bool,
     /// Whether this tag can still be toggled on. `false` for unselected tags
@@ -422,6 +432,27 @@ pub type MemberActionItem = ActionItem<MemberActionKind>;
 
 const FORUM_POST_CARD_HEIGHT: usize = 6;
 
+/// A forum tag applied to a post, resolved into display-ready form. At most one
+/// emoji field is set: a unicode character, or a custom emoji's CDN image url.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppliedForumTag {
+    pub name: String,
+    pub unicode_emoji: Option<String>,
+    pub custom_emoji_url: Option<String>,
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+impl AppliedForumTag {
+    pub(crate) fn test(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            unicode_emoji: None,
+            custom_emoji_url: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelThreadItem {
     pub channel_id: Id<ChannelMarker>,
@@ -434,7 +465,7 @@ pub struct ChannelThreadItem {
     pub preview_author: Option<String>,
     pub preview_author_color: Option<u32>,
     pub preview_content: Option<String>,
-    pub applied_tags: Vec<String>,
+    pub applied_tags: Vec<AppliedForumTag>,
     pub preview_reactions: Vec<ReactionInfo>,
     pub comment_count: Option<u64>,
     pub new_message_count: usize,

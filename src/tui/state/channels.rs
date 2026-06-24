@@ -9,7 +9,7 @@ use crate::discord::{ChannelState, ChannelUnreadState, TypingUserState, VoicePar
 use super::{ActiveGuildScope, DashboardState, MessagePaneSource, ThreadReturnTarget};
 use super::{
     channel_tree,
-    model::{ChannelBranch, ChannelPaneEntry, ChannelThreadItem, FocusPane},
+    model::{AppliedForumTag, ChannelBranch, ChannelPaneEntry, ChannelThreadItem, FocusPane},
     presentation::{is_direct_message_channel, sort_direct_message_channels},
     scroll::{clamp_selected_index, toggle_collapsed_key},
 };
@@ -52,10 +52,8 @@ impl DashboardState {
         !self.requests.forum_post_lists.contains_key(&channel_id)
     }
 
-    /// The card items shown in the message pane, for both forum posts
-    /// (`ForumPosts`) and a channel's thread list (`ChannelThreads`). Both
-    /// sources render the identical `ChannelThreadItem` cards. Returns an empty
-    /// list for any other source.
+    /// Card items for the message pane (forum posts or a channel's thread list);
+    /// empty for any other source.
     pub fn selected_thread_card_items(&self) -> Vec<ChannelThreadItem> {
         match self.message_pane_source() {
             Some(MessagePaneSource::ForumPosts { .. }) => self.selected_forum_post_items(),
@@ -215,9 +213,7 @@ impl DashboardState {
         ))
     }
 
-    /// Open the selected card as the active channel. A channel thread and a
-    /// forum post are both threads, so opening one mirrors opening the other:
-    /// remember where to return, switch to the thread, and subscribe to it.
+    /// Open the selected card (a thread or forum post) as the active channel.
     pub fn activate_selected_thread_card(&mut self) -> Option<AppCommand> {
         let item = self
             .selected_thread_card_items()
@@ -307,7 +303,7 @@ impl DashboardState {
             .parent_id
             .and_then(|parent_id| self.discord.cache.channel(parent_id))
             .is_some_and(|parent| parent.is_forum());
-        let applied_tags = self.forum_thread_tag_labels(channel);
+        let applied_tags = self.forum_thread_applied_tags(channel);
         let preview = if is_forum_post {
             messages
                 .into_iter()
@@ -378,7 +374,7 @@ impl DashboardState {
         }
     }
 
-    fn forum_thread_tag_labels(&self, channel: &ChannelState) -> Vec<String> {
+    fn forum_thread_applied_tags(&self, channel: &ChannelState) -> Vec<AppliedForumTag> {
         let Some(parent) = channel
             .parent_id
             .and_then(|parent_id| self.discord.cache.channel(parent_id))
@@ -389,11 +385,27 @@ impl DashboardState {
             .applied_tags
             .iter()
             .filter_map(|tag_id| {
-                parent
-                    .available_tags
-                    .iter()
-                    .find(|tag| tag.id == *tag_id)
-                    .map(|tag| tag.name.clone())
+                let tag = parent.available_tags.iter().find(|tag| tag.id == *tag_id)?;
+                // Discord sends exactly one of the two: a custom tag carries an
+                // `emoji_id` (its `emoji_name` is null) and a unicode tag carries
+                // the character in `emoji_name` (its `emoji_id` is null).
+                let custom_emoji_url = tag.emoji_id.map(|emoji_id| {
+                    format!("https://cdn.discordapp.com/emojis/{}.png", emoji_id.get())
+                });
+                let unicode_emoji = if custom_emoji_url.is_some() {
+                    None
+                } else {
+                    tag.emoji_name
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned)
+                };
+                Some(AppliedForumTag {
+                    name: tag.name.clone(),
+                    unicode_emoji,
+                    custom_emoji_url,
+                })
             })
             .collect()
     }

@@ -24,11 +24,11 @@ use super::{
     },
     message::layout::MessageViewportPlan,
     state::{
-        ActiveModalPopupKind, AttachmentDownloadProgressView, AttachmentViewerItem,
-        ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
-        EmojiReactionItem, FocusPane, MessageActionItem, MessageUrlItem, PollVotePickerItem,
-        SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem, discord_color,
-        presence_color, presence_marker,
+        ActiveModalPopupKind, AppliedForumTag, AttachmentDownloadProgressView,
+        AttachmentViewerItem, ChannelSwitcherItem, ChannelThreadItem, DashboardState,
+        DisplayOptionItem, EmojiReactionItem, FocusPane, MessageActionItem, MessageUrlItem,
+        PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
+        discord_color, presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -103,7 +103,8 @@ pub(crate) use self::types::{MouseTarget, PopupListTarget};
 use self::{
     forum::{
         forum_post_reaction_rows_for_test, forum_post_reaction_summary,
-        forum_post_scrollbar_visible_count, forum_post_viewport_lines,
+        forum_post_scrollbar_visible_count, forum_post_tag_rows_for_test,
+        forum_post_viewport_lines,
     },
     message::list::{
         date_separator_line, format_message_sent_time, inline_image_preview_row,
@@ -300,16 +301,16 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     render_options_popup(frame, popup_area, state);
     render_poll_vote_picker(frame, popup_area, state);
     render_user_profile_popup(frame, popup_area, state, profile_avatar, &emoji_images);
-    render_emoji_reaction_picker(frame, popup_area, state, emoji_images);
+    render_emoji_reaction_picker(frame, popup_area, state, &emoji_images);
     render_reaction_users_popup(frame, popup_area, state);
     render_attachment_viewer(frame, frame.area(), state, viewer_image_preview);
     render_debug_log_popup(frame, popup_area, state);
     render_keymap_help_popup(frame, popup_area, state);
     render_search_popup(frame, popup_area, state);
     render_forum_post_composer(frame, popup_area, state);
-    render_forum_post_tag_picker(frame, popup_area, state);
+    render_forum_post_tag_picker(frame, popup_area, state, &emoji_images);
     render_thread_edit(frame, popup_area, state);
-    render_thread_edit_tag_picker(frame, popup_area, state);
+    render_thread_edit_tag_picker(frame, popup_area, state, &emoji_images);
     render_downloads_popup(frame, frame.area(), state);
     render_toast(frame, frame.area(), state);
 }

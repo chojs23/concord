@@ -357,8 +357,6 @@ fn is_forum_post_thread_distinguishes_posts_from_regular_threads() {
         ..thread_channel_info(guild_id, text_id, thread_id, "a thread")
     }));
 
-    // Thread under a forum is a post; under a text channel it is a regular
-    // thread; a non-thread channel is neither.
     assert!(state.is_forum_post_thread(post_id));
     assert!(!state.is_forum_post_thread(thread_id));
     assert!(!state.is_forum_post_thread(text_id));

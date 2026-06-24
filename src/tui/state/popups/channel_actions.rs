@@ -225,10 +225,7 @@ impl DashboardState {
                         None
                     }
                     ChannelActionKind::ShowThreads => {
-                        // Show the channel's threads as cards in the message
-                        // pane, the same way a forum channel shows its post
-                        // list. Close the action menu and move focus to the
-                        // messages pane, like opening a channel.
+                        // Open the channel's threads as a card list in the message pane.
                         self.close_channel_leader_action();
                         self.enter_channel_thread_list_view(channel_id);
                         self.focus_pane(FocusPane::Messages);
