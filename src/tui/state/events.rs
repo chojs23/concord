@@ -241,6 +241,28 @@ impl DashboardState {
                 self.record_search_event(event);
             }
             AppEvent::MessageHistoryLoaded { .. } | AppEvent::MessageHistoryAfterLoaded { .. } => {}
+            AppEvent::InboxMentionsLoaded {
+                request_id,
+                messages,
+            } => {
+                self.apply_inbox_mentions_loaded(*request_id, messages);
+            }
+            AppEvent::InboxMentionsLoadFailed { request_id } => {
+                self.apply_inbox_mentions_load_failed(*request_id);
+            }
+            AppEvent::InboxChannelMessagesLoaded {
+                request_id,
+                channel_id,
+                messages,
+            } => {
+                self.apply_inbox_channel_messages_loaded(*request_id, *channel_id, messages);
+            }
+            AppEvent::InboxChannelMessagesLoadFailed {
+                request_id,
+                channel_id,
+            } => {
+                self.apply_inbox_channel_messages_load_failed(*request_id, *channel_id);
+            }
             AppEvent::MessageHistoryRefreshed { channel_id, .. } => {
                 self.record_message_history_refreshed(*channel_id);
             }

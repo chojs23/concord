@@ -3,9 +3,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::discord::AppCommand;
 use crate::tui::keybindings::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, DebugLogPopupAction,
-    EmojiReactionPickerAction, KeyChord, MessageConfirmationAction, OptionsPopupAction,
-    PollVotePickerAction, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
-    ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
+    EmojiReactionPickerAction, KeyChord, MessageConfirmationAction, NotificationInboxAction,
+    OptionsPopupAction, PollVotePickerAction, PopupListAction, ProfilePopupAction,
+    ProfilePopupTabAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction,
+    SelectionAction, SelectionKeySet,
 };
 use crate::tui::state::{ActiveModalPopupKind, DashboardState};
 
@@ -52,6 +53,7 @@ pub(super) fn handle_popup_key(
         ActiveModalPopupKind::PollVotePicker => handle_poll_vote_picker_key(state, key),
         ActiveModalPopupKind::EmojiReactionPicker => handle_emoji_reaction_picker_key(state, key),
         ActiveModalPopupKind::ChannelSwitcher => handle_channel_switcher_key(state, key),
+        ActiveModalPopupKind::NotificationInbox => handle_notification_inbox_key(state, key),
         ActiveModalPopupKind::Search => handle_search_popup_key(state, key),
         ActiveModalPopupKind::ForumPostComposer => handle_forum_post_composer_key(state, key),
         ActiveModalPopupKind::ThreadEdit => handle_thread_edit_key(state, key),
@@ -82,6 +84,7 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::Leader
         | ActiveModalPopupKind::UserProfile
         | ActiveModalPopupKind::ChannelSwitcher
+        | ActiveModalPopupKind::NotificationInbox
         | ActiveModalPopupKind::Search
         | ActiveModalPopupKind::ForumPostComposer
         | ActiveModalPopupKind::ThreadEdit
@@ -447,6 +450,55 @@ pub(super) fn handle_channel_switcher_key(
         }
         Some(ChannelSwitcherAction::InsertQueryChar(value)) => {
             state.push_channel_switcher_char(value);
+            None
+        }
+        None => None,
+    }
+}
+
+pub(super) fn handle_notification_inbox_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    // While the "mark all read" prompt is up, keys answer it instead of driving
+    // the list: confirm on Enter/y, cancel on anything else.
+    if state.notification_inbox_is_confirming_mark_all() {
+        return match key.code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                state.confirm_mark_all_notification_inbox_read()
+            }
+            _ => {
+                state.cancel_mark_all_notification_inbox_read();
+                None
+            }
+        };
+    }
+
+    match state.key_bindings().notification_inbox_action(key) {
+        Some(NotificationInboxAction::Select(SelectionAction::Next)) => {
+            state.move_notification_inbox_down();
+            None
+        }
+        Some(NotificationInboxAction::Select(SelectionAction::Previous)) => {
+            state.move_notification_inbox_up();
+            None
+        }
+        Some(NotificationInboxAction::SwitchTab(action)) => {
+            state.switch_notification_inbox_tab(action);
+            None
+        }
+        Some(NotificationInboxAction::Close) => {
+            state.close_notification_inbox();
+            None
+        }
+        Some(NotificationInboxAction::ActivateSelected) => {
+            state.activate_selected_notification_inbox_item()
+        }
+        Some(NotificationInboxAction::MarkSelectedRead) => {
+            state.mark_selected_notification_inbox_item_read()
+        }
+        Some(NotificationInboxAction::MarkAllRead) => {
+            state.begin_mark_all_notification_inbox_read();
             None
         }
         None => None,

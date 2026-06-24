@@ -56,6 +56,15 @@ impl DiscordState {
             .collect()
     }
 
+    /// Total unread mentions across channels, from the server read state.
+    pub fn total_mention_count(&self) -> u32 {
+        self.notifications
+            .read_states
+            .values()
+            .map(|state| state.mention_count)
+            .fold(0u32, u32::saturating_add)
+    }
+
     pub fn channel_last_acked_message_id(
         &self,
         channel_id: Id<ChannelMarker>,

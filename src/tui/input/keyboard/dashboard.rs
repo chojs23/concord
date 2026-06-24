@@ -140,6 +140,7 @@ pub(super) fn execute_ui_action(
         UiAction::OpenCurrentUserProfile => return state.open_current_user_profile_popup(),
         UiAction::OpenOptions => state.open_options_category_picker(),
         UiAction::ChannelSwitcher => state.open_channel_switcher(),
+        UiAction::OpenNotificationInbox => state.open_notification_inbox(),
         UiAction::OpenDisplayOptions => {
             state.open_options_category_from_shortcut(OptionsCategoryShortcut::Display)
         }

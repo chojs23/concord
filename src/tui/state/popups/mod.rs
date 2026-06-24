@@ -22,6 +22,7 @@ mod diagnostics;
 mod forum_post;
 mod guild_actions;
 mod message_actions;
+mod notification_inbox;
 mod options;
 mod polls;
 mod reactions;
@@ -35,6 +36,11 @@ use super::{
     ThreadEditField,
 };
 use channel_switcher::ChannelSwitcherState;
+use notification_inbox::NotificationInboxState;
+pub use notification_inbox::{
+    NotificationInboxChannelLoad, NotificationInboxItem, NotificationInboxLoad,
+    NotificationInboxMessage, NotificationInboxTab,
+};
 use search::SearchPopupState;
 
 const SELECTABLE_POPUP_PAGE_STEP: usize = 10;
@@ -48,6 +54,8 @@ pub(super) enum LeaderMode {
 #[derive(Debug, Default)]
 pub(super) struct PopupUiState {
     pub(super) modal: Option<ModalPopup>,
+    /// Bumped per inbox open so a previous open's late responses are ignored.
+    pub(super) inbox_request_generation: u64,
 }
 
 #[derive(Debug)]
@@ -73,6 +81,7 @@ pub(super) enum ModalPopup {
     DebugLog,
     Keymap(KeymapPopupState),
     ChannelSwitcher(ChannelSwitcherState),
+    NotificationInbox(NotificationInboxState),
     Search(SearchPopupState),
     ForumPostComposer(ForumPostComposerState),
     ThreadEdit(ThreadEditState),
@@ -97,6 +106,7 @@ pub(in crate::tui) enum ActiveModalPopupKind {
     DebugLog,
     KeymapHelp,
     ChannelSwitcher,
+    NotificationInbox,
     Search,
     ForumPostComposer,
     ThreadEdit,
@@ -122,6 +132,7 @@ impl ModalPopup {
             Self::DebugLog => ActiveModalPopupKind::DebugLog,
             Self::Keymap(_) => ActiveModalPopupKind::KeymapHelp,
             Self::ChannelSwitcher(_) => ActiveModalPopupKind::ChannelSwitcher,
+            Self::NotificationInbox(_) => ActiveModalPopupKind::NotificationInbox,
             Self::Search(_) => ActiveModalPopupKind::Search,
             Self::ForumPostComposer(_) => ActiveModalPopupKind::ForumPostComposer,
             Self::ThreadEdit(_) => ActiveModalPopupKind::ThreadEdit,
@@ -1049,6 +1060,13 @@ impl PopupUiState {
         switcher
     );
     modal_popup_accessors!(
+        notification_inbox,
+        notification_inbox_mut,
+        NotificationInbox,
+        NotificationInboxState,
+        inbox
+    );
+    modal_popup_accessors!(
         search_popup,
         search_popup_mut,
         Search,
@@ -1237,6 +1255,10 @@ impl DashboardState {
             }
             Some(ActiveModalPopupKind::ChannelSwitcher) => {
                 self.page_channel_switcher_selection(action);
+                true
+            }
+            Some(ActiveModalPopupKind::NotificationInbox) => {
+                self.page_notification_inbox_selection(action);
                 true
             }
             Some(ActiveModalPopupKind::PollVotePicker) => {

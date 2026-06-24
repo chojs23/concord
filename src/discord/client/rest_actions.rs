@@ -365,6 +365,10 @@ impl DiscordClient {
             .await
     }
 
+    pub async fn load_recent_mentions(&self, limit: u16) -> Result<Vec<MessageInfo>> {
+        self.rest.load_recent_mentions(limit).await
+    }
+
     pub async fn load_message_history_after(
         &self,
         channel_id: Id<ChannelMarker>,

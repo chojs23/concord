@@ -116,6 +116,12 @@ pub(super) fn view_signature(state: &DashboardState) -> u64 {
     hash_dbg(&mut hasher, &state.composer_emoji_candidates());
     hash_dbg(&mut hasher, &state.composer_command_candidates());
 
+    // Notification inbox: its messages stream in from background REST responses.
+    hash_dbg(&mut hasher, &state.notification_inbox_items());
+    hash_dbg(&mut hasher, &state.notification_inbox_mentions_status());
+    state.notification_inbox_unread_count().hash(&mut hasher);
+    state.notification_inbox_mention_count().hash(&mut hasher);
+
     hasher.finish()
 }
 

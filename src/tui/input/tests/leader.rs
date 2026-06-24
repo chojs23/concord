@@ -245,6 +245,90 @@ fn keymap_can_execute_leader_and_options_actions() {
 }
 
 #[test]
+fn keymap_leader_n_opens_notification_inbox_and_switches_tabs() {
+    use crate::tui::state::{ActiveModalPopupKind, NotificationInboxTab};
+
+    let mut state = state_with_channel_tree();
+
+    handle_key(&mut state, char_key(' '));
+    assert!(
+        state
+            .leader_keymap_shortcuts()
+            .iter()
+            .any(|item| item.key == "n" && item.label == "Notification inbox")
+    );
+    handle_key(&mut state, char_key('n'));
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::NotificationInbox));
+    assert_eq!(
+        state.notification_inbox_tab(),
+        Some(NotificationInboxTab::Unreads)
+    );
+
+    // Opening fetches the Mentions tab in one request.
+    assert!(
+        state
+            .drain_pending_commands()
+            .iter()
+            .any(|command| matches!(
+                command,
+                crate::discord::AppCommand::LoadInboxMentions { .. }
+            ))
+    );
+
+    // Right (or Tab) flips to the Mentions tab; Esc closes the popup.
+    handle_key(&mut state, key(KeyCode::Right));
+    assert_eq!(
+        state.notification_inbox_tab(),
+        Some(NotificationInboxTab::Mentions)
+    );
+    handle_key(&mut state, key(KeyCode::Esc));
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::NotificationInbox));
+}
+
+#[test]
+fn notification_inbox_mentions_snapshot_respects_request_id() {
+    use crate::discord::{AppCommand, AppEvent};
+    use crate::tui::state::NotificationInboxLoad;
+
+    let mut state = state_with_channel_tree();
+    state.open_notification_inbox();
+
+    // The mentions fetch carries the current open's request id.
+    let request_id = state
+        .drain_pending_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            AppCommand::LoadInboxMentions { request_id } => Some(request_id),
+            _ => None,
+        })
+        .expect("mentions request is enqueued on open");
+    assert_eq!(
+        state.notification_inbox_mentions_status(),
+        Some(NotificationInboxLoad::Loading)
+    );
+
+    // A stale response from a different open is ignored.
+    state.push_event(AppEvent::InboxMentionsLoaded {
+        request_id: request_id.wrapping_add(1),
+        messages: Vec::new(),
+    });
+    assert_eq!(
+        state.notification_inbox_mentions_status(),
+        Some(NotificationInboxLoad::Loading)
+    );
+
+    // The matching response settles the tab.
+    state.push_event(AppEvent::InboxMentionsLoaded {
+        request_id,
+        messages: Vec::new(),
+    });
+    assert_eq!(
+        state.notification_inbox_mentions_status(),
+        Some(NotificationInboxLoad::Loaded)
+    );
+}
+
+#[test]
 fn keymap_leader_ctrl_w_opens_channel_switcher() {
     let mut mappings = BTreeMap::new();
     mappings.insert(

@@ -55,6 +55,8 @@ impl CommandDispatcher {
             | AppCommand::LoadMessageHistoryAround { .. }
             | AppCommand::LoadThreadPreview { .. }
             | AppCommand::LoadForumPosts { .. }
+            | AppCommand::LoadInboxMentions { .. }
+            | AppCommand::LoadInboxChannelHistory { .. }
             | AppCommand::SearchMessages { .. }) => {
                 history_commands::handle(self.client.clone(), command).await;
             }

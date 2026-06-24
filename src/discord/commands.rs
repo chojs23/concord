@@ -692,6 +692,15 @@ pub enum AppCommand {
     AckChannels {
         targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
     },
+    /// Fetch recent mentions for the inbox Mentions tab in one request.
+    LoadInboxMentions {
+        request_id: u64,
+    },
+    /// Fetch a small slice of a channel's latest messages for the inbox Unreads tab.
+    LoadInboxChannelHistory {
+        channel_id: Id<ChannelMarker>,
+        request_id: u64,
+    },
 }
 
 fn normalized_search_token(value: &str) -> String {
