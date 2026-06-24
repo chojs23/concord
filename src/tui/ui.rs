@@ -26,9 +26,9 @@ use super::{
     state::{
         ActiveModalPopupKind, AttachmentDownloadProgressView, AttachmentViewerItem,
         ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
-        EmojiReactionItem, FORUM_POST_CARD_HEIGHT, FocusPane, MessageActionItem, MessageUrlItem,
-        PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
-        discord_color, presence_color, presence_marker,
+        EmojiReactionItem, FocusPane, MessageActionItem, MessageUrlItem, PollVotePickerItem,
+        SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem, discord_color,
+        presence_color, presence_marker,
     },
 };
 use crate::discord::{
@@ -51,7 +51,7 @@ pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_HEIGHT: u16 = 6;
 pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_WIDTH: u16 = 32;
 
 mod activity;
-mod forum;
+pub(in crate::tui) mod forum;
 mod hit_test;
 mod layout;
 mod message;
@@ -425,7 +425,7 @@ fn channel_prefix(kind: &str) -> &'static str {
         "group-dm" | "Group" => "● ",
         "voice" | "GuildVoice" => "🔈 ",
         "category" | "GuildCategory" => "▾ ",
-        "forum" | "GuildForum" => "☁️ ",
+        "forum" | "GuildForum" => "📝 ",
         kind if is_thread_kind(kind) => "» ",
         _ => "# ",
     }

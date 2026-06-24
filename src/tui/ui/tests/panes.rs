@@ -1036,7 +1036,8 @@ fn forum_post_lines_can_reserve_scrollbar_column() {
     assert!(texts[0].starts_with("› ╭"));
     assert!(texts[0].ends_with("╮"));
     assert!(texts[1].ends_with("│"));
-    assert!(texts[5].ends_with("╯"));
+    // The untagged post has no tags row, so the card is five rows.
+    assert!(texts[4].ends_with("╯"));
     assert!(texts.iter().all(|text| text.width() == 79));
 }
 
@@ -1056,9 +1057,11 @@ fn forum_post_reaction_overlay_rows_skip_no_reaction_cards() {
         ..ChannelThreadItem::test(Id::new(31))
     };
 
+    // Each tagless card is five rows; the reaction (metadata) row is the
+    // second-to-last, so the second card's reactions render at row 5 + 3 = 8.
     assert_eq!(
         forum_post_reaction_rows_for_test(&[first, second], 80, 20),
-        vec![10]
+        vec![8]
     );
 }
 

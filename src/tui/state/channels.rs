@@ -9,9 +9,7 @@ use crate::discord::{ChannelState, ChannelUnreadState, TypingUserState, VoicePar
 use super::{ActiveGuildScope, DashboardState, MessagePaneSource, ThreadReturnTarget};
 use super::{
     channel_tree,
-    model::{
-        ChannelBranch, ChannelPaneEntry, ChannelThreadItem, FORUM_POST_CARD_HEIGHT, FocusPane,
-    },
+    model::{ChannelBranch, ChannelPaneEntry, ChannelThreadItem, FocusPane},
     presentation::{is_direct_message_channel, sort_direct_message_channels},
     scroll::{clamp_selected_index, toggle_collapsed_key},
 };
@@ -52,10 +50,6 @@ impl DashboardState {
             return false;
         };
         !self.requests.forum_post_lists.contains_key(&channel_id)
-    }
-
-    pub fn visible_forum_post_items(&self) -> Vec<ChannelThreadItem> {
-        self.visible_thread_card_items_from(&self.selected_forum_post_items())
     }
 
     /// The card items shown in the message pane, for both forum posts
@@ -141,7 +135,7 @@ impl DashboardState {
                 }
                 rendered_row = rendered_row.saturating_add(1);
             }
-            if row < rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT) {
+            if row < rendered_row.saturating_add(post.card_height()) {
                 let index = self.messages.message_scroll.saturating_add(visible_index);
                 if index >= items.len() {
                     return false;
@@ -151,7 +145,7 @@ impl DashboardState {
                 self.messages.message_keep_selection_visible = false;
                 return true;
             }
-            rendered_row = rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT);
+            rendered_row = rendered_row.saturating_add(post.card_height());
         }
         false
     }
@@ -302,7 +296,7 @@ impl DashboardState {
             .collect()
     }
 
-    fn forum_thread_item(
+    pub(super) fn forum_thread_item(
         &self,
         channel: &ChannelState,
         section_label: Option<String>,
@@ -443,7 +437,7 @@ impl DashboardState {
         let visible_bottom = self
             .messages
             .message_scroll
-            .saturating_add(self.visible_forum_post_items().len().max(1))
+            .saturating_add(self.visible_thread_card_items().len().max(1))
             .saturating_add(5);
         let selected_bottom = self.selected_forum_post().saturating_add(5);
         let len = list

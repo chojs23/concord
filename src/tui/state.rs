@@ -62,12 +62,12 @@ pub use message_viewport::MessagePaneSource;
 pub use model::{
     AttachmentDownloadProgressView, AttachmentViewerItem, ChannelActionItem, ChannelPaneEntry,
     ChannelSearchSuggestionItem, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
-    FORUM_POST_CARD_HEIGHT, FocusPane, ForumPostComposerAttachmentView, ForumPostComposerField,
-    ForumPostComposerTagView, ForumPostComposerView, GuildActionItem, GuildPaneEntry,
-    LocalUploadPreviewView, MemberActionItem, MemberSearchResultItem, MessageActionItem,
-    MessageActionKind, MessageSearchResultItem, MuteActionDurationItem, PollVotePickerItem,
-    SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem, SearchSuggestionItem,
-    ThreadActionItem, ThreadEditField, ThreadEditTagView, ThreadEditView, ThreadMessagePreview,
+    FocusPane, ForumPostComposerAttachmentView, ForumPostComposerField, ForumPostComposerTagView,
+    ForumPostComposerView, GuildActionItem, GuildPaneEntry, LocalUploadPreviewView,
+    MemberActionItem, MemberSearchResultItem, MessageActionItem, MessageActionKind,
+    MessageSearchResultItem, MuteActionDurationItem, PollVotePickerItem, SearchFieldView,
+    SearchPopupMode, SearchPopupView, SearchResultItem, SearchSuggestionItem, ThreadActionItem,
+    ThreadEditField, ThreadEditTagView, ThreadEditView, ThreadMessagePreview,
     ThreadNotificationItem, ThreadSummary,
 };
 pub use model::{

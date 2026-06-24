@@ -1107,15 +1107,17 @@ fn forum_post_bottom_scroll_uses_last_full_page() {
 
     state.jump_bottom();
 
+    // Untagged posts are five rows each, so a height-10 viewport fits two cards
+    // and the last full page shows the final two posts.
     assert_eq!(state.selected_forum_post(), 9);
-    assert_eq!(state.message_scroll(), 9);
+    assert_eq!(state.message_scroll(), 8);
     assert_eq!(
         state
-            .visible_forum_post_items()
+            .visible_thread_card_items()
             .iter()
             .map(|post| post.label.as_str())
             .collect::<Vec<_>>(),
-        vec!["post 1"]
+        vec!["post 2", "post 1"]
     );
 }
 

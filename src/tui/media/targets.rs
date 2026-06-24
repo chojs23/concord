@@ -670,11 +670,11 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
         }
     }
 
-    // Forum post cards render preview-message reactions through a separate
-    // card pipeline, so they do not appear in `visible_messages()` while a
-    // forum channel is selected. Collect those URLs here so the shared emoji
-    // image cache can still load and render them.
-    for post in state.visible_forum_post_items() {
+    // Thread cards (forum posts and a channel's thread list) render preview
+    // reactions through a separate card pipeline, so they never appear in
+    // `visible_messages()`. Collect those URLs here so the shared emoji image
+    // cache can still load and render them.
+    for post in state.visible_thread_card_items() {
         for reaction in &post.preview_reactions {
             if reaction.count == 0 {
                 continue;

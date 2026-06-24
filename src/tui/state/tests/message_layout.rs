@@ -262,7 +262,9 @@ fn thread_created_message_reserves_system_card_rows() {
     let mut message = height_test_message("release notes");
     message.message_kind = MessageKind::new(18);
 
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
+    // Header row + starter line + the five forum-post card rows (no tags row
+    // for a tagless thread) + bottom gap.
+    assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
 }
 
 #[test]

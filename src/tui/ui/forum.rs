@@ -47,18 +47,18 @@ pub(super) fn forum_post_scrollbar_visible_count(list_height: u16) -> usize {
     usize::from(list_height).max(1)
 }
 
-fn forum_post_card_lines(
+pub(in crate::tui) fn forum_post_card_lines(
     post: &ChannelThreadItem,
     selected: bool,
     width: usize,
     show_custom_emoji: bool,
-) -> [Line<'static>; FORUM_POST_CARD_HEIGHT] {
+) -> Vec<Line<'static>> {
     let marker = if selected { "› " } else { "  " };
     let card_width = width.saturating_sub(marker.width()).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
     let border_style = forum_post_accent_style(selected);
 
-    [
+    let mut lines = vec![
         Line::from(vec![
             Span::styled(marker, forum_post_accent_style(selected)),
             Span::styled(
@@ -78,26 +78,31 @@ fn forum_post_card_lines(
             inner_width,
             selected,
         ),
-        forum_post_inner_line(
+    ];
+    // The tags row is shown only when the post actually has tags; an untagged
+    // post (and every regular thread) drops the row instead of showing "No tags".
+    if !post.applied_tags.is_empty() {
+        lines.push(forum_post_inner_line(
             "  ",
             forum_post_tag_spans(post, inner_width),
             inner_width,
             selected,
+        ));
+    }
+    lines.push(forum_post_inner_line(
+        "  ",
+        forum_post_metadata_spans(post, inner_width, show_custom_emoji),
+        inner_width,
+        selected,
+    ));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
+            border_style,
         ),
-        forum_post_inner_line(
-            "  ",
-            forum_post_metadata_spans(post, inner_width, show_custom_emoji),
-            inner_width,
-            selected,
-        ),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
-                border_style,
-            ),
-        ]),
-    ]
+    ]));
+    lines
 }
 
 fn forum_post_section_header_line(label: &str, width: usize) -> Line<'static> {
@@ -133,10 +138,9 @@ fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<S
 }
 
 fn forum_post_tag_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
-    let muted_style = Style::default().fg(DIM);
-    if post.applied_tags.is_empty() {
-        return vec![Span::styled("No tags", muted_style)];
-    }
+    // The tags row is only rendered for tagged posts, so this never runs with an
+    // empty tag set (a tagless post drops the row entirely).
+    debug_assert!(!post.applied_tags.is_empty());
     let mut spans = Vec::new();
     let mut used_width = 0usize;
     for tag in &post.applied_tags {
@@ -148,11 +152,7 @@ fn forum_post_tag_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Spa
             Style::default().fg(ACCENT),
         );
     }
-    if spans.is_empty() {
-        vec![Span::styled("No tags", muted_style)]
-    } else {
-        spans
-    }
+    spans
 }
 
 fn forum_post_preview_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
@@ -477,14 +477,16 @@ fn forum_post_reaction_render_layouts(
         if post.section_label.is_some() {
             rendered_row = rendered_row.saturating_add(1);
         }
-        let row = rendered_row.saturating_add(4);
+        // Reactions render on the metadata line, which is the second-to-last
+        // card row (its offset shifts up by one when the tags row is absent).
+        let row = rendered_row.saturating_add(post.card_height().saturating_sub(2));
         if row >= list_height {
             break;
         }
         if let Some((reaction_start_col, layout)) = forum_post_reaction_layout(post, inner_width) {
             layouts.push((row, reaction_start_col, layout));
         }
-        rendered_row = rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT);
+        rendered_row = rendered_row.saturating_add(post.card_height());
     }
     layouts
 }

@@ -420,7 +420,7 @@ pub enum MemberActionKind {
 
 pub type MemberActionItem = ActionItem<MemberActionKind>;
 
-pub const FORUM_POST_CARD_HEIGHT: usize = 6;
+const FORUM_POST_CARD_HEIGHT: usize = 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelThreadItem {
@@ -443,7 +443,13 @@ pub struct ChannelThreadItem {
 
 impl ChannelThreadItem {
     pub fn rendered_height(&self) -> usize {
-        FORUM_POST_CARD_HEIGHT + usize::from(self.section_label.is_some())
+        self.card_height() + usize::from(self.section_label.is_some())
+    }
+
+    /// Card body height. The tags row is dropped entirely when the post has no
+    /// tags, so an untagged post (and every regular thread) is one row shorter.
+    pub fn card_height(&self) -> usize {
+        FORUM_POST_CARD_HEIGHT - usize::from(self.applied_tags.is_empty())
     }
 }
 

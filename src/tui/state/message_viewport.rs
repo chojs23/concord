@@ -4,7 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker, RoleMarker},
 };
-use crate::discord::{MessageHistoryAfterMode, MessageState, is_thread_kind};
+use crate::discord::{ChannelState, MessageHistoryAfterMode, MessageState, is_thread_kind};
 use crate::tui::format;
 use crate::tui::format::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
@@ -1215,10 +1215,12 @@ impl DashboardState {
 }
 
 impl DashboardState {
-    pub(crate) fn thread_summary_for_message(
-        &self,
-        message: &MessageState,
-    ) -> Option<ThreadSummary> {
+    /// Locate the thread a THREAD_CREATED (kind 18) message started, if it is
+    /// still cached and viewable. We prefer the explicit reference channel id and
+    /// fall back to matching a child thread by name (older system messages did
+    /// not carry a reference). Shared by [`Self::thread_summary_for_message`] and
+    /// [`Self::thread_card_item_for_message`].
+    fn started_thread_channel(&self, message: &MessageState) -> Option<&ChannelState> {
         if message.message_kind.code() != 18 {
             return None;
         }
@@ -1228,7 +1230,7 @@ impl DashboardState {
             .and_then(|reference| reference.channel_id)
             .and_then(|channel_id| self.discord.cache.channel(channel_id))
             .filter(|channel| channel.is_thread() && self.discord.cache.can_view_channel(channel));
-        let thread = referenced_thread.or_else(|| {
+        referenced_thread.or_else(|| {
             let thread_name = message.content.as_deref()?.trim();
             if thread_name.is_empty() {
                 return None;
@@ -1242,7 +1244,82 @@ impl DashboardState {
                         && channel.parent_id == Some(message.channel_id)
                         && channel.name == thread_name
                 })
-        });
+        })
+    }
+
+    /// Build the forum-post card item for a THREAD_CREATED message so the
+    /// "started a thread" box renders with the same card UI as a forum post.
+    /// When the thread channel is cached we reuse [`Self::forum_thread_item`];
+    /// otherwise we synthesize a minimal item from the [`ThreadSummary`] (and
+    /// finally the message itself) so the card always renders for a kind-18
+    /// message.
+    pub(crate) fn thread_card_item_for_message(
+        &self,
+        message: &MessageState,
+    ) -> Option<ChannelThreadItem> {
+        if message.message_kind.code() != 18 {
+            return None;
+        }
+        if let Some(channel) = self.started_thread_channel(message) {
+            let archived = channel.thread_archived().unwrap_or(false);
+            return Some(self.forum_thread_item(channel, None, archived));
+        }
+
+        // The thread channel is not cached. Fall back to whatever the thread
+        // summary captured, and finally to the message content as the thread
+        // name, so the card still renders with sensible placeholders.
+        let summary = self.thread_summary_for_message(message);
+        let preview = summary
+            .as_ref()
+            .and_then(|summary| summary.latest_message_preview.as_ref());
+        let label = summary
+            .as_ref()
+            .map(|summary| summary.name.clone())
+            .or_else(|| {
+                message
+                    .content
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "thread".to_owned());
+        Some(ChannelThreadItem {
+            channel_id: summary
+                .as_ref()
+                .map_or(message.channel_id, |summary| summary.channel_id),
+            section_label: None,
+            label,
+            archived: summary
+                .as_ref()
+                .and_then(|summary| summary.archived)
+                .unwrap_or(false),
+            locked: summary
+                .as_ref()
+                .and_then(|summary| summary.locked)
+                .unwrap_or(false),
+            pinned: false,
+            preview_author_id: None,
+            preview_author: preview.map(|preview| preview.author.clone()),
+            preview_author_color: None,
+            preview_content: preview.map(|preview| preview.content.clone()),
+            applied_tags: Vec::new(),
+            preview_reactions: Vec::new(),
+            comment_count: summary
+                .as_ref()
+                .and_then(|summary| summary.message_count.or(summary.total_message_sent)),
+            new_message_count: 0,
+            last_activity_message_id: summary
+                .as_ref()
+                .and_then(|summary| summary.latest_message_id),
+        })
+    }
+
+    pub(crate) fn thread_summary_for_message(
+        &self,
+        message: &MessageState,
+    ) -> Option<ThreadSummary> {
+        let thread = self.started_thread_channel(message);
         thread.map(|channel| {
             let latest_cached_message = self
                 .discord
