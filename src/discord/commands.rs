@@ -652,36 +652,36 @@ pub enum AppCommand {
         flags: u64,
         label: String,
     },
-    /// Archive ("close") or reopen a forum post thread.
-    SetForumPostArchived {
+    /// Archive ("close") or reopen a thread (regular thread or forum post).
+    SetThreadArchived {
         channel_id: Id<ChannelMarker>,
         archived: bool,
         label: String,
     },
-    /// Lock or unlock a forum post thread.
-    SetForumPostLocked {
+    /// Lock or unlock a thread.
+    SetThreadLocked {
         channel_id: Id<ChannelMarker>,
         locked: bool,
         label: String,
     },
-    /// Pin or unpin a forum post within its parent forum. `current_flags` is the
-    /// thread's present channel flags so the handler can flip just the PINNED
-    /// bit without clobbering the others.
-    SetForumPostPinned {
+    /// Pin or unpin a forum post within its parent forum (pinning is forum-only).
+    /// `current_flags` is the thread's present channel flags so the handler can
+    /// flip just the PINNED bit without clobbering the others.
+    SetThreadPinned {
         channel_id: Id<ChannelMarker>,
         pinned: bool,
         current_flags: u64,
         label: String,
     },
-    /// Permanently delete a forum post (its thread channel).
-    DeleteForumPost {
+    /// Permanently delete a thread (its channel).
+    DeleteThread {
         channel_id: Id<ChannelMarker>,
         label: String,
     },
-    /// Edit a forum post thread's general settings (title, applied tags,
+    /// Edit a thread's general settings (title, applied tags for forum posts,
     /// slow-mode cooldown, auto-archive duration) in one PATCH. The result
     /// arrives over the gateway THREAD_UPDATE, so there is no optimistic event.
-    EditForumPost {
+    EditThread {
         channel_id: Id<ChannelMarker>,
         name: String,
         applied_tags: Vec<Id<ForumTagMarker>>,

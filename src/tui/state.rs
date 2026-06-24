@@ -62,16 +62,16 @@ pub use message_viewport::MessagePaneSource;
 pub use model::{
     AttachmentDownloadProgressView, AttachmentViewerItem, ChannelActionItem, ChannelPaneEntry,
     ChannelSearchSuggestionItem, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
-    FORUM_POST_CARD_HEIGHT, FocusPane, ForumPostActionItem, ForumPostComposerAttachmentView,
-    ForumPostComposerField, ForumPostComposerTagView, ForumPostComposerView, ForumPostEditField,
-    ForumPostEditTagView, ForumPostEditView, ForumPostNotificationItem, GuildActionItem,
-    GuildPaneEntry, LocalUploadPreviewView, MemberActionItem, MemberSearchResultItem,
-    MessageActionItem, MessageActionKind, MessageSearchResultItem, MuteActionDurationItem,
-    PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
-    SearchSuggestionItem, ThreadMessagePreview, ThreadSummary,
+    FORUM_POST_CARD_HEIGHT, FocusPane, ForumPostComposerAttachmentView, ForumPostComposerField,
+    ForumPostComposerTagView, ForumPostComposerView, GuildActionItem, GuildPaneEntry,
+    LocalUploadPreviewView, MemberActionItem, MemberSearchResultItem, MessageActionItem,
+    MessageActionKind, MessageSearchResultItem, MuteActionDurationItem, PollVotePickerItem,
+    SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem, SearchSuggestionItem,
+    ThreadActionItem, ThreadEditField, ThreadEditTagView, ThreadEditView, ThreadMessagePreview,
+    ThreadNotificationItem, ThreadSummary,
 };
 pub use model::{
-    ChannelActionKind, ForumPostActionKind, GuildActionKind, MemberActionKind, MessageUrlItem,
+    ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem, ThreadActionKind,
 };
 pub use options::DisplayOptionItem;
 pub(in crate::tui) use popups::{ActiveModalPopupKind, MessageConfirmationKind};

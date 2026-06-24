@@ -66,31 +66,31 @@ impl DiscordRest {
         .await
     }
 
-    /// Archive ("close") or unarchive a forum post thread.
-    pub async fn set_forum_post_archived(
+    /// Archive ("close") or unarchive a thread (regular thread or forum post).
+    pub async fn set_thread_archived(
         &self,
         thread_id: Id<ChannelMarker>,
         archived: bool,
     ) -> Result<()> {
-        self.edit_forum_post(thread_id, &json!({ "archived": archived }))
+        self.edit_thread(thread_id, &json!({ "archived": archived }))
             .await
     }
 
-    /// Lock or unlock a forum post thread. While locked, members without manage
-    /// permissions can no longer reply.
-    pub async fn set_forum_post_locked(
+    /// Lock or unlock a thread. While locked, members without manage permissions
+    /// can no longer reply.
+    pub async fn set_thread_locked(
         &self,
         thread_id: Id<ChannelMarker>,
         locked: bool,
     ) -> Result<()> {
-        self.edit_forum_post(thread_id, &json!({ "locked": locked }))
+        self.edit_thread(thread_id, &json!({ "locked": locked }))
             .await
     }
 
     /// Pin or unpin a forum post within its parent forum. The pin lives in the
     /// channel `flags` bitfield, so we flip only the PINNED bit and preserve the
     /// other flags (for example REQUIRE_TAG).
-    pub async fn set_forum_post_pinned(
+    pub async fn set_thread_pinned(
         &self,
         thread_id: Id<ChannelMarker>,
         pinned: bool,
@@ -102,15 +102,15 @@ impl DiscordRest {
         } else {
             current_flags & !THREAD_FLAG_PINNED
         };
-        self.edit_forum_post(thread_id, &json!({ "flags": flags }))
+        self.edit_thread(thread_id, &json!({ "flags": flags }))
             .await
     }
 
-    /// Edit a forum post thread's general settings in one `PATCH` call: the
-    /// title, applied tags, slow-mode cooldown, and auto-archive duration. This
-    /// is the popup-driven counterpart to the single-field archive/lock/pin
+    /// Edit a thread's general settings in one `PATCH` call: the title, applied
+    /// tags (forum posts only), slow-mode cooldown, and auto-archive duration.
+    /// This is the popup-driven counterpart to the single-field archive/lock/pin
     /// helpers above.
-    pub async fn edit_forum_post_settings(
+    pub async fn edit_thread_settings(
         &self,
         thread_id: Id<ChannelMarker>,
         name: &str,
@@ -127,24 +127,24 @@ impl DiscordRest {
             "rate_limit_per_user": rate_limit_per_user,
             "auto_archive_duration": auto_archive_duration,
         });
-        self.edit_forum_post(thread_id, &body).await
+        self.edit_thread(thread_id, &body).await
     }
 
-    /// Permanently delete a forum post by deleting its underlying thread channel.
-    pub async fn delete_forum_post(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
+    /// Permanently delete a thread by deleting its underlying channel.
+    pub async fn delete_thread(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
         self.send_unit(
             self.raw_http.delete(format!(
                 "https://discord.com/api/v9/channels/{}",
                 thread_id.get()
             )),
-            "delete forum post",
+            "delete thread",
         )
         .await
     }
 
-    /// Apply a partial `PATCH /channels/{id}` edit to a forum post thread.
-    /// Shared by the archive/lock/pin actions, which each send one field.
-    async fn edit_forum_post(&self, thread_id: Id<ChannelMarker>, body: &Value) -> Result<()> {
+    /// Apply a partial `PATCH /channels/{id}` edit to a thread. Shared by the
+    /// archive/lock/pin actions, which each send one field.
+    async fn edit_thread(&self, thread_id: Id<ChannelMarker>, body: &Value) -> Result<()> {
         self.send_unit(
             self.raw_http
                 .patch(format!(
@@ -152,7 +152,7 @@ impl DiscordRest {
                     thread_id.get()
                 ))
                 .json(body),
-            "edit forum post",
+            "edit thread",
         )
         .await
     }

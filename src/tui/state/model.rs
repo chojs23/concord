@@ -235,11 +235,12 @@ pub struct ForumPostComposerView {
     pub status: Option<String>,
 }
 
-/// Focusable cells in the forum post edit popup. A leaner mirror of
+/// Focusable cells in the thread edit popup. A leaner mirror of
 /// [`ForumPostComposerField`]: there is no body or attachments, and the
-/// slow-mode and auto-archive selectors replace them.
+/// slow-mode and auto-archive selectors replace them. The Tags cell only
+/// applies to forum posts and is hidden for regular threads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ForumPostEditField {
+pub enum ThreadEditField {
     Title,
     Tags,
     SlowMode,
@@ -249,7 +250,7 @@ pub enum ForumPostEditField {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ForumPostEditTagView {
+pub struct ThreadEditTagView {
     pub name: String,
     pub emoji: Option<String>,
     pub selected: bool,
@@ -260,14 +261,17 @@ pub struct ForumPostEditTagView {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ForumPostEditView {
+pub struct ThreadEditView {
     pub channel_label: String,
-    pub active_field: ForumPostEditField,
+    pub active_field: ThreadEditField,
     pub editing_title: bool,
     pub editing_tags: bool,
     pub title: String,
     pub title_cursor: usize,
-    pub tags: Vec<ForumPostEditTagView>,
+    /// Whether the edited thread is a forum post. Only forum posts have tags, so
+    /// the renderer omits the Tags row entirely when this is `false`.
+    pub is_forum_post: bool,
+    pub tags: Vec<ThreadEditTagView>,
     pub requires_tag: bool,
     /// Display label for the current slow-mode option, e.g. "5s" or "Off".
     pub slow_mode_label: String,
@@ -323,11 +327,11 @@ pub enum ChannelActionKind {
 
 pub type ChannelActionItem = ActionItem<ChannelActionKind>;
 
-/// Actions on a forum post (a thread). Mirrors Discord's forum post right-click
-/// menu. Only a subset is wired up so far. The rest render dimmed until their
-/// backend exists (see `selected_forum_post_action_items`).
+/// Actions on a thread (a regular thread or a forum post). Mirrors Discord's
+/// thread/forum-post right-click menu. `Pin` only applies to forum posts; the
+/// rest apply to every thread (see `selected_thread_action_items`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ForumPostActionKind {
+pub enum ThreadActionKind {
     MarkAsRead,
     ToggleFollow,
     Close,
@@ -341,7 +345,7 @@ pub enum ForumPostActionKind {
     CopyId,
 }
 
-pub type ForumPostActionItem = ActionItem<ForumPostActionKind>;
+pub type ThreadActionItem = ActionItem<ThreadActionKind>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GuildActionKind {
@@ -363,12 +367,12 @@ pub struct MuteActionDurationItem {
 /// A single row in the thread notification-settings submenu. The label already
 /// includes the `[x]`/`[ ]` radio prefix so the renderer needs no extra logic.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ForumPostNotificationItem {
+pub struct ThreadNotificationItem {
     pub label: String,
     pub flags: u64,
 }
 
-impl ForumPostNotificationItem {
+impl ThreadNotificationItem {
     pub(crate) fn new(raw_label: &str, flags: u64, current_flags: u64) -> Self {
         let prefix = if flags == current_flags {
             "[x] "

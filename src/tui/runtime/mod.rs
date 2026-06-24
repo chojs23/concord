@@ -501,7 +501,7 @@ fn apply_clipboard_paste_data(state: &mut DashboardState, data: ClipboardPasteDa
             }
             return false;
         }
-        if state.is_forum_post_edit_title_editing() {
+        if state.is_thread_edit_title_editing() {
             return data
                 .text
                 .as_deref()

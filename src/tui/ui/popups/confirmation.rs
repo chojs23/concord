@@ -54,23 +54,28 @@ pub(in crate::tui::ui) fn render_guild_leave_confirmation(
     render_modal_paragraph(frame, popup, "Leave server?", lines);
 }
 
-pub(in crate::tui::ui) fn render_forum_post_delete_confirmation(
+pub(in crate::tui::ui) fn render_thread_delete_confirmation(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::ForumPostDeleteConfirmation) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::ThreadDeleteConfirmation) {
         return;
     }
 
-    let Some(name) = state.forum_post_delete_confirmation_name() else {
+    let Some((name, noun)) = state.thread_delete_confirmation_target() else {
         return;
     };
 
-    let lines = forum_post_delete_confirmation_lines(&name, 56);
-    let popup = forum_post_delete_confirmation_popup_area(area, lines.len());
+    let lines = thread_delete_confirmation_lines(&name, noun, 56);
+    let popup = thread_delete_confirmation_popup_area(area, lines.len());
     frame.render_widget(Clear, popup);
-    render_modal_paragraph(frame, popup, "Delete post?", lines);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block_owned(format!("Delete {noun}?"), true))
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
 }
 
 pub(in crate::tui::ui) fn message_confirmation_popup_area(area: Rect, line_count: usize) -> Rect {
@@ -110,20 +115,20 @@ pub(in crate::tui::ui) fn guild_leave_confirmation_popup_area_for_state(
     Some(guild_leave_confirmation_popup_area(area, lines.len()))
 }
 
-pub(in crate::tui::ui) fn forum_post_delete_confirmation_popup_area(
+pub(in crate::tui::ui) fn thread_delete_confirmation_popup_area(
     area: Rect,
     line_count: usize,
 ) -> Rect {
     centered_rect(area, 60, (line_count as u16).saturating_add(2))
 }
 
-pub(in crate::tui::ui) fn forum_post_delete_confirmation_popup_area_for_state(
+pub(in crate::tui::ui) fn thread_delete_confirmation_popup_area_for_state(
     area: Rect,
     state: &DashboardState,
 ) -> Option<Rect> {
-    let name = state.forum_post_delete_confirmation_name()?;
-    let lines = forum_post_delete_confirmation_lines(&name, 56);
-    Some(forum_post_delete_confirmation_popup_area(area, lines.len()))
+    let (name, noun) = state.thread_delete_confirmation_target()?;
+    let lines = thread_delete_confirmation_lines(&name, noun, 56);
+    Some(thread_delete_confirmation_popup_area(area, lines.len()))
 }
 
 #[cfg(test)]
@@ -196,20 +201,32 @@ fn guild_leave_confirmation_lines(name: &str, width: usize) -> Vec<Line<'static>
     ]
 }
 
-fn forum_post_delete_confirmation_lines(name: &str, width: usize) -> Vec<Line<'static>> {
+fn thread_delete_confirmation_lines(name: &str, noun: &str, width: usize) -> Vec<Line<'static>> {
     let name = truncate_display_width(name, width.max(1).saturating_sub(2));
+    let label = capitalize_first(noun);
+    let delete_help = format!("delete {noun}");
     vec![
-        Line::from(Span::raw("Permanently delete this post?")),
+        Line::from(Span::raw(format!("Permanently delete this {noun}?"))),
         Line::from(Span::styled(
-            format!("Post: {name}"),
+            format!("{label}: {name}"),
             Style::default().fg(Color::Red),
         )),
         Line::from(Span::raw(String::new())),
         Line::from(Span::styled(
-            popup_shortcut_help_text(&[("Enter/y", "delete post"), ("Esc/n", "cancel")]),
+            popup_shortcut_help_text(&[("Enter/y", &delete_help), ("Esc/n", "cancel")]),
             Style::default().fg(DIM),
         )),
     ]
+}
+
+/// Uppercase the first ASCII letter so a noun like "post" renders as "Post:" in
+/// the confirmation body. The nouns are known ASCII words, so this is sufficient.
+fn capitalize_first(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn message_confirmation_lines(
