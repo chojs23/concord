@@ -46,8 +46,15 @@ impl DashboardState {
     }
 
     pub fn selected_forum_posts_loading(&self) -> bool {
-        let Some(MessagePaneSource::ForumPosts { channel_id }) = self.message_pane_source() else {
-            return false;
+        // Both the forum post list and a channel's thread list fetch through the
+        // same `/threads/search` request, so the "loading" placeholder applies
+        // to either until the first page lands.
+        let channel_id = match self.message_pane_source() {
+            Some(
+                MessagePaneSource::ForumPosts { channel_id }
+                | MessagePaneSource::ChannelThreads { channel_id },
+            ) => channel_id,
+            _ => return false,
         };
         !self.requests.forum_post_lists.contains_key(&channel_id)
     }
@@ -58,7 +65,7 @@ impl DashboardState {
         match self.message_pane_source() {
             Some(MessagePaneSource::ForumPosts { .. }) => self.selected_forum_post_items(),
             Some(MessagePaneSource::ChannelThreads { channel_id }) => {
-                self.child_thread_items(channel_id)
+                self.channel_thread_card_items(channel_id)
             }
             _ => Vec::new(),
         }
@@ -202,10 +209,23 @@ impl DashboardState {
         Some((channel.guild_id?, channel_id))
     }
 
+    /// The `(guild, channel)` whose threads should be fetched via
+    /// `/threads/search`: a forum showing its posts, or any non-forum channel
+    /// whose thread-list view is open. `None` for every other pane source.
+    fn thread_card_fetch_channel(&self) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
+        let channel_id = match self.message_pane_source()? {
+            MessagePaneSource::ForumPosts { channel_id }
+            | MessagePaneSource::ChannelThreads { channel_id } => channel_id,
+            _ => return None,
+        };
+        let channel = self.discord.cache.channel(channel_id)?;
+        Some((channel.guild_id?, channel_id))
+    }
+
     pub fn selected_forum_channel_with_load_more(
         &self,
     ) -> Option<(Id<GuildMarker>, Id<ChannelMarker>, bool)> {
-        let (guild_id, channel_id) = self.selected_forum_channel()?;
+        let (guild_id, channel_id) = self.thread_card_fetch_channel()?;
         Some((
             guild_id,
             channel_id,
@@ -235,16 +255,41 @@ impl DashboardState {
         })
     }
 
-    pub(super) fn child_thread_items(
+    /// Cards for a non-forum channel's thread list. Mirrors the forum post list:
+    /// the active and archived sections come from the `/threads/search` fetch
+    /// (`forum_post_lists`). Gateway-cached child threads the search has not
+    /// returned yet are merged in so joined or freshly created threads show
+    /// immediately, even before the fetch lands or if the search endpoint is
+    /// unavailable for this channel.
+    pub(super) fn channel_thread_card_items(
         &self,
         channel_id: Id<ChannelMarker>,
     ) -> Vec<ChannelThreadItem> {
-        channel_tree::sorted_child_threads(self.channels(), channel_id)
-            .into_iter()
-            .map(|thread| {
-                self.forum_thread_item(thread, None, thread.thread_archived().unwrap_or(false))
-            })
-            .collect()
+        let (mut active_ids, mut archived_ids) = self
+            .requests
+            .forum_post_lists
+            .get(&channel_id)
+            .map(|list| (list.active_post_ids.clone(), list.archived_post_ids.clone()))
+            .unwrap_or_default();
+        for thread in channel_tree::sorted_child_threads(self.channels(), channel_id) {
+            if active_ids.contains(&thread.id) || archived_ids.contains(&thread.id) {
+                continue;
+            }
+            if thread.thread_archived().unwrap_or(false) {
+                archived_ids.push(thread.id);
+            } else {
+                active_ids.push(thread.id);
+            }
+        }
+        let mut items =
+            self.forum_post_section_items(&active_ids, channel_id, "Active threads", false);
+        items.extend(self.forum_post_section_items(
+            &archived_ids,
+            channel_id,
+            "Archived threads",
+            true,
+        ));
+        items
     }
 
     fn forum_post_section_items(
@@ -505,8 +550,13 @@ impl DashboardState {
         let mut joined_threads_by_parent: BTreeMap<Id<ChannelMarker>, Vec<&ChannelState>> =
             BTreeMap::new();
         for channel in &channels {
+            // Archived threads stay out of the sidebar even when joined; they
+            // live in the thread-list view's "Archived" section instead. The
+            // `/threads/search` fetch pulls archived joined threads into the
+            // cache, so without this filter they would leak into the pane.
             if channel.is_thread()
                 && channel.current_user_joined_thread
+                && !channel.thread_archived().unwrap_or(false)
                 && let Some(parent_id) = channel.parent_id
             {
                 joined_threads_by_parent

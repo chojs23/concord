@@ -5,7 +5,7 @@ use crate::tui::keybindings::KeyChord;
 use super::super::model::{
     ChannelActionItem, ChannelActionKind, ChannelPaneEntry, FocusPane, MUTE_ACTION_DURATIONS,
 };
-use super::super::{DashboardState, MuteActionDurationItem, channel_tree};
+use super::super::{DashboardState, MuteActionDurationItem};
 use super::ChannelLeaderActionState;
 #[cfg(test)]
 use super::{LeaderActionState, LeaderMode, LeaderPopupState, ModalPopup};
@@ -84,12 +84,12 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(channel_id) else {
             return Vec::new();
         };
-        let thread_count = channel_tree::child_thread_count(self.channels(), channel_id);
-        let thread_label = if thread_count == 0 {
-            "Show threads (none)".to_owned()
-        } else {
-            format!("Show threads ({thread_count})")
-        };
+        // Threads live under text-like channels. Forums already show their posts
+        // as the channel view, and categories and voice channels cannot host
+        // threads, so the action is offered everywhere else. The list itself is
+        // filled by the `/threads/search` fetch once the view opens, so this no
+        // longer depends on threads already sitting in the gateway cache.
+        let can_show_threads = !channel.is_category() && !channel.is_forum() && !channel.is_voice();
         let active_channel_has_unread_snapshot = self.navigation.channels.active_channel_id
             == Some(channel_id)
             && (self.messages.unread_divider_last_acked_id.is_some()
@@ -131,8 +131,8 @@ impl DashboardState {
             ),
             ChannelActionItem::new(
                 ChannelActionKind::ShowThreads,
-                thread_label,
-                thread_count > 0,
+                "Show threads",
+                can_show_threads,
             ),
             ChannelActionItem::new(
                 ChannelActionKind::MarkAsRead,
@@ -169,6 +169,17 @@ impl DashboardState {
             return true;
         }
         false
+    }
+
+    /// Make `channel_id` the active channel so the message pane, which always
+    /// follows the active channel, can render a pinned-message or thread-list
+    /// view for it. Without this a never-opened channel keeps showing the
+    /// previously active channel, so the view silently fails to switch.
+    /// Skipped when the channel is already open so its viewport is not reset.
+    fn open_channel_for_pane_view(&mut self, channel_id: Id<ChannelMarker>) {
+        if self.selected_channel_id() != Some(channel_id) {
+            self.activate_channel(channel_id);
+        }
     }
 
     pub fn activate_selected_channel_action(&mut self) -> Option<AppCommand> {
@@ -220,13 +231,18 @@ impl DashboardState {
                             })
                     }
                     ChannelActionKind::LoadPinnedMessages => {
-                        self.enter_pinned_message_view(channel_id);
                         self.close_channel_leader_action();
+                        self.open_channel_for_pane_view(channel_id);
+                        self.enter_pinned_message_view(channel_id);
+                        // Move focus into the message pane like the thread list
+                        // does, so the pinned list is immediately navigable.
+                        self.focus_pane(FocusPane::Messages);
                         None
                     }
                     ChannelActionKind::ShowThreads => {
                         // Open the channel's threads as a card list in the message pane.
                         self.close_channel_leader_action();
+                        self.open_channel_for_pane_view(channel_id);
                         self.enter_channel_thread_list_view(channel_id);
                         self.focus_pane(FocusPane::Messages);
                         None

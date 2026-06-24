@@ -20,10 +20,12 @@ pub(super) fn forum_post_viewport_lines_with_custom_emoji_images(
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     if posts.is_empty() {
+        // Shared by the forum post list and a channel's thread list; "threads"
+        // reads correctly for both since forum posts are themselves threads.
         let message = if is_loading {
-            "Loading posts…"
+            "Loading threads…"
         } else {
-            "No forum posts."
+            "No threads yet."
         };
         return vec![Line::from(Span::styled(message, Style::default().fg(DIM)))];
     }

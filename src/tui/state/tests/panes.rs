@@ -298,6 +298,32 @@ fn channel_tree_shows_joined_threads_under_parent_channel() {
 }
 
 #[test]
+fn channel_tree_hides_archived_joined_threads() {
+    let guild_id = Id::new(1);
+    let parent_id = Id::new(11);
+    let active_thread_id = Id::new(30);
+    let archived_thread_id = Id::new(31);
+    let mut state = state_with_channel_tree();
+
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..thread_channel_info(guild_id, parent_id, active_thread_id, "active thread")
+    }));
+    // Joined but archived: the `/threads/search` fetch for the thread-list view
+    // caches these, but they must stay out of the sidebar.
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(true, false)),
+        ..thread_channel_info(guild_id, parent_id, archived_thread_id, "archived thread")
+    }));
+
+    assert_eq!(
+        channel_entry_names(&state),
+        vec!["general", "active thread", "random"]
+    );
+}
+
+#[test]
 fn channel_thread_list_view_lists_joined_threads_as_cards() {
     use crate::tui::state::MessagePaneSource;
 
@@ -321,8 +347,9 @@ fn channel_thread_list_view_lists_joined_threads_as_cards() {
             channel_id: parent_id
         })
     );
+    // Before the `/threads/search` fetch lands, the gateway-cached joined thread
+    // is shown straight away.
     let cards = state.selected_thread_card_items();
-    assert_eq!(cards, state.child_thread_items(parent_id));
     assert_eq!(
         cards.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
         vec!["joined thread"]
