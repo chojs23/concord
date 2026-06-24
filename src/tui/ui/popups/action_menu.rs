@@ -58,9 +58,6 @@ fn leader_popup_title(state: &DashboardState) -> String {
         if state.is_guild_leader_action_active() {
             return "Server Actions".to_owned();
         }
-        if state.is_channel_action_threads_phase() {
-            return "Threads".to_owned();
-        }
         if state.is_channel_leader_action_active() {
             return "Channel Actions".to_owned();
         }
@@ -181,20 +178,6 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                 })
                 .collect(),
         );
-    }
-    if state.is_channel_action_threads_phase() {
-        return state
-            .channel_action_thread_items()
-            .into_iter()
-            .enumerate()
-            .map(|(index, thread)| {
-                leader_shortcut_line(
-                    state.key_bindings().indexed_shortcut(index).unwrap_or(' '),
-                    &thread.label,
-                    true,
-                )
-            })
-            .collect();
     }
     if state.is_channel_leader_action_active() {
         if state.is_channel_action_mute_duration_phase() {
@@ -415,48 +398,81 @@ fn message_action_menu_lines_with_key_bindings(
         .collect()
 }
 
-pub(in crate::tui::ui) fn render_forum_post_action_menu(
+fn thread_action_menu_lines(
+    actions: &[ThreadActionItem],
+    selected: usize,
+    key_bindings: &crate::tui::keybindings::KeyBindings,
+) -> Vec<Line<'static>> {
+    let prefixes: Vec<String> = (0..actions.len())
+        .map(|index| {
+            shortcut_label_prefix(&key_bindings.thread_action_shortcut_label(actions, index))
+        })
+        .collect();
+    let prefix_width = prefixes
+        .iter()
+        .map(|prefix| prefix.width())
+        .max()
+        .unwrap_or(0);
+    actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let selected = index == selected;
+            let shortcut = format!("{:<prefix_width$}", prefixes[index]);
+            let label = if action.enabled {
+                key_bindings.thread_action_label(action)
+            } else {
+                format!("{} (unavailable)", key_bindings.thread_action_label(action))
+            };
+            let style = selectable_popup_label_style(selected, action.enabled);
+            Line::from(vec![
+                selectable_popup_marker(selected),
+                selectable_popup_shortcut_span(shortcut),
+                Span::styled(label, style),
+            ])
+        })
+        .collect()
+}
+
+pub(in crate::tui::ui) fn render_thread_action_menu(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::ForumPostActionMenu) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::ThreadActionMenu) {
         return;
     }
 
-    let selected = state.selected_forum_post_action_index().unwrap_or(0);
-    let (title, lines) = if state.is_forum_post_action_mute_duration_phase() {
-        let items = state.selected_forum_post_mute_duration_items();
+    let selected = state.selected_thread_action_index().unwrap_or(0);
+    let noun = state.thread_action_menu_noun();
+    let (title, lines) = if state.is_thread_action_mute_duration_phase() {
+        let items = state.selected_thread_mute_duration_items();
         let lines = items
             .iter()
             .enumerate()
-            .map(|(index, item)| forum_post_action_line(item.label, index == selected, true))
+            .map(|(index, item)| thread_action_line(item.label, index == selected, true))
             .collect::<Vec<_>>();
-        ("Mute post", lines)
-    } else if state.is_forum_post_action_notification_phase() {
-        let items = state.selected_forum_post_notification_items();
+        (format!("Mute {noun}"), lines)
+    } else if state.is_thread_action_notification_phase() {
+        let items = state.selected_thread_notification_items();
         if items.is_empty() {
             return;
         }
         let lines = items
             .iter()
             .enumerate()
-            .map(|(index, item)| forum_post_action_line(&item.label, index == selected, true))
+            .map(|(index, item)| thread_action_line(&item.label, index == selected, true))
             .collect::<Vec<_>>();
-        ("Notification settings", lines)
+        ("Notification settings".to_owned(), lines)
     } else {
-        let items = state.selected_forum_post_action_items();
+        let items = state.selected_thread_action_items();
         if items.is_empty() {
             return;
         }
-        let lines = items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
-                forum_post_action_line(&item.label, index == selected, item.enabled)
-            })
-            .collect::<Vec<_>>();
-        ("Post actions", lines)
+        let lines = thread_action_menu_lines(&items, selected, state.key_bindings());
+        // Title-case the noun: "Post actions" / "Thread actions".
+        let title = format!("{}{} actions", noun[..1].to_uppercase(), &noun[1..]);
+        (title, lines)
     };
 
     let popup = message_action_menu_area(area, lines.len());
@@ -464,13 +480,13 @@ pub(in crate::tui::ui) fn render_forum_post_action_menu(
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines)
-            .block(panel_block(title, true))
+            .block(panel_block_owned(title, true))
             .wrap(Wrap { trim: false }),
         popup,
     );
 }
 
-fn forum_post_action_line(label: &str, selected: bool, enabled: bool) -> Line<'static> {
+fn thread_action_line(label: &str, selected: bool, enabled: bool) -> Line<'static> {
     let label = if enabled {
         label.to_owned()
     } else {

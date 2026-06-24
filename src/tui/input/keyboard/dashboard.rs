@@ -23,7 +23,9 @@ pub(super) fn handle_dashboard_action(
         }
         DashboardAction::MessageShortcut(kind) => state.activate_message_action_kind(kind),
         DashboardAction::Back => {
-            if !state.return_from_pinned_message_view() {
+            if !state.return_from_pinned_message_view()
+                && !state.return_from_channel_thread_list_view()
+            {
                 state.return_from_opened_thread();
             }
             None

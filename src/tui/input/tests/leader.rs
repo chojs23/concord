@@ -966,14 +966,28 @@ fn leader_channel_subphase_esc_returns_to_channel_actions() {
     state.focus_pane(FocusPane::Channels);
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
-    handle_key(&mut state, char_key('t'));
-    assert!(state.is_channel_action_threads_phase());
+    handle_key(&mut state, char_key('u'));
+    assert!(state.is_channel_action_mute_duration_phase());
 
     handle_key(&mut state, key(KeyCode::Esc));
 
     assert!(state.is_leader_action_mode());
     assert!(state.is_channel_leader_action_active());
-    assert!(!state.is_channel_action_threads_phase());
+    assert!(!state.is_channel_action_mute_duration_phase());
+}
+
+#[test]
+fn leader_a_t_opens_channel_thread_list_view() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, char_key(' '));
+    handle_key(&mut state, char_key('a'));
+
+    let command = handle_key(&mut state, char_key('t'));
+
+    assert_eq!(command, None);
+    assert!(!state.is_leader_active());
+    assert!(state.is_channel_thread_list_view());
 }
 
 #[test]

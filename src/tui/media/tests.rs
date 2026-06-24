@@ -1843,6 +1843,81 @@ fn emoji_image_targets_include_visible_forum_preview_custom_reactions() {
 }
 
 #[test]
+fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let thread_id = Id::new(30);
+    let mut state = DashboardState::new();
+
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            name: "forum".to_owned(),
+            // A custom-emoji tag carries `emoji_id` (its `emoji_name` is null);
+            // a unicode tag carries the character in `emoji_name`.
+            available_tags: vec![
+                crate::discord::ForumTagInfo {
+                    id: Id::new(101),
+                    name: "bug".to_owned(),
+                    moderated: false,
+                    emoji_id: Some(Id::new(77)),
+                    emoji_name: None,
+                },
+                crate::discord::ForumTagInfo {
+                    id: Id::new(102),
+                    name: "fire".to_owned(),
+                    moderated: false,
+                    emoji_id: None,
+                    emoji_name: Some("🔥".to_owned()),
+                },
+            ],
+            ..ChannelInfo::test(forum_id, "GuildForum")
+        }],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        emojis: Vec::new(),
+        owner_id: None,
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: crate::discord::ForumPostArchiveState::Active,
+        offset: 0,
+        next_offset: 1,
+        threads: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            parent_id: Some(forum_id),
+            last_message_id: Some(Id::new(300)),
+            name: "welcome".to_owned(),
+            message_count: Some(1),
+            total_message_sent: Some(1),
+            thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
+            flags: Some(0),
+            applied_tags: vec![Id::new(101), Id::new(102)],
+            ..ChannelInfo::test(thread_id, "GuildPublicThread")
+        }],
+        first_messages: Vec::new(),
+        has_more: false,
+    });
+
+    let targets = visible_emoji_image_targets(&state);
+
+    // Only the custom-emoji tag contributes a CDN url; the unicode tag renders
+    // inline and needs no image fetch.
+    assert_eq!(
+        targets,
+        vec![EmojiImageTarget {
+            url: "https://cdn.discordapp.com/emojis/77.png".to_owned(),
+        }]
+    );
+}
+
+#[test]
 fn emoji_image_request_is_created_for_visible_target() {
     let mut cache = EmojiImageCache::new();
     let target = EmojiImageTarget {

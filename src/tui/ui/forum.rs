@@ -20,10 +20,12 @@ pub(super) fn forum_post_viewport_lines_with_custom_emoji_images(
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     if posts.is_empty() {
+        // Shared by the forum post list and a channel's thread list; "threads"
+        // reads correctly for both since forum posts are themselves threads.
         let message = if is_loading {
-            "Loading posts…"
+            "Loading threads…"
         } else {
-            "No forum posts."
+            "No threads yet."
         };
         return vec![Line::from(Span::styled(message, Style::default().fg(DIM)))];
     }
@@ -47,18 +49,18 @@ pub(super) fn forum_post_scrollbar_visible_count(list_height: u16) -> usize {
     usize::from(list_height).max(1)
 }
 
-fn forum_post_card_lines(
+pub(in crate::tui) fn forum_post_card_lines(
     post: &ChannelThreadItem,
     selected: bool,
     width: usize,
     show_custom_emoji: bool,
-) -> [Line<'static>; FORUM_POST_CARD_HEIGHT] {
+) -> Vec<Line<'static>> {
     let marker = if selected { "› " } else { "  " };
     let card_width = width.saturating_sub(marker.width()).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
     let border_style = forum_post_accent_style(selected);
 
-    [
+    let mut lines = vec![
         Line::from(vec![
             Span::styled(marker, forum_post_accent_style(selected)),
             Span::styled(
@@ -78,26 +80,30 @@ fn forum_post_card_lines(
             inner_width,
             selected,
         ),
-        forum_post_inner_line(
+    ];
+    // Untagged posts drop the tags row entirely (shrinking `card_height` by one).
+    if !post.applied_tags.is_empty() {
+        lines.push(forum_post_inner_line(
             "  ",
             forum_post_tag_spans(post, inner_width),
             inner_width,
             selected,
+        ));
+    }
+    lines.push(forum_post_inner_line(
+        "  ",
+        forum_post_metadata_spans(post, inner_width, show_custom_emoji),
+        inner_width,
+        selected,
+    ));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
+            border_style,
         ),
-        forum_post_inner_line(
-            "  ",
-            forum_post_metadata_spans(post, inner_width, show_custom_emoji),
-            inner_width,
-            selected,
-        ),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
-                border_style,
-            ),
-        ]),
-    ]
+    ]));
+    lines
 }
 
 fn forum_post_section_header_line(label: &str, width: usize) -> Line<'static> {
@@ -133,10 +139,8 @@ fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<S
 }
 
 fn forum_post_tag_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
-    let muted_style = Style::default().fg(DIM);
-    if post.applied_tags.is_empty() {
-        return vec![Span::styled("No tags", muted_style)];
-    }
+    // The tags row is only rendered for tagged posts.
+    debug_assert!(!post.applied_tags.is_empty());
     let mut spans = Vec::new();
     let mut used_width = 0usize;
     for tag in &post.applied_tags {
@@ -144,14 +148,23 @@ fn forum_post_tag_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Spa
             &mut spans,
             &mut used_width,
             inner_width,
-            format!("# {tag}"),
+            forum_post_tag_text(tag),
             Style::default().fg(ACCENT),
         );
     }
-    if spans.is_empty() {
-        vec![Span::styled("No tags", muted_style)]
+    spans
+}
+
+/// Text for one tag chip (`# name`). A custom emoji reserves a fixed-width blank
+/// gap so the overlaid image does not reflow the row when it loads.
+fn forum_post_tag_text(tag: &AppliedForumTag) -> String {
+    if let Some(emoji) = tag.unicode_emoji.as_deref() {
+        format!("# {emoji} {}", tag.name)
+    } else if tag.custom_emoji_url.is_some() {
+        let placeholder = " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH));
+        format!("# {placeholder} {}", tag.name)
     } else {
-        spans
+        format!("# {}", tag.name)
     }
 }
 
@@ -445,6 +458,147 @@ pub(super) fn render_forum_post_reaction_emojis(
     }
 }
 
+/// Column offsets (from the card's inner content start) and urls of each
+/// custom-emoji placeholder on a post's tag row. Mirrors the width accounting of
+/// `forum_post_tag_spans` so the overlay lands on the reserved gap after
+/// truncation.
+fn forum_post_tag_image_slots(
+    post: &ChannelThreadItem,
+    inner_width: usize,
+) -> Vec<(usize, String)> {
+    let mut slots = Vec::new();
+    let mut used_width = 0usize;
+    for tag in &post.applied_tags {
+        let text = forum_post_tag_text(tag);
+        if used_width >= inner_width {
+            break;
+        }
+        if used_width > 0 {
+            let separator = " · ";
+            let remaining = inner_width.saturating_sub(used_width);
+            if remaining == 0 {
+                break;
+            }
+            let separator = truncate_display_width(separator, remaining);
+            used_width = used_width.saturating_add(separator.width());
+        }
+        let remaining = inner_width.saturating_sub(used_width);
+        if remaining == 0 {
+            break;
+        }
+        let truncated = truncate_display_width(&text, remaining);
+        let chip_start = used_width;
+        used_width = used_width.saturating_add(truncated.width());
+        // The placeholder gap sits at `# ` (two columns) into the chip. Only
+        // record it when the truncated chip still includes that gap.
+        if let Some(url) = tag.custom_emoji_url.as_deref() {
+            let emoji_col = chip_start.saturating_add("# ".width());
+            if emoji_col + usize::from(EMOJI_REACTION_IMAGE_WIDTH) <= used_width {
+                slots.push((emoji_col, url.to_owned()));
+            }
+        }
+    }
+    slots
+}
+
+/// Overlays custom tag-emoji images on each visible card's tags row, which sits
+/// at `card_height() - 3` from the card top (it only exists for tagged posts).
+pub(super) fn render_forum_post_tag_emojis(
+    frame: &mut Frame,
+    list: Rect,
+    posts: &[ChannelThreadItem],
+    width: usize,
+    emoji_images: &[EmojiImage<'_>],
+    occlusion_areas: &[Rect],
+) {
+    if emoji_images.is_empty() || list.height == 0 || list.width == 0 {
+        return;
+    }
+
+    let list_left = list.x as isize;
+    let list_right = list_left + list.width as isize;
+    let content_start = 4isize;
+    let inner_width = forum_post_inner_width_for_reactions(width);
+    let list_height = usize::from(list.height);
+
+    let mut rendered_row = 0usize;
+    for post in posts {
+        if post.section_label.is_some() {
+            rendered_row = rendered_row.saturating_add(1);
+        }
+        if post.applied_tags.is_empty() {
+            rendered_row = rendered_row.saturating_add(post.card_height());
+            continue;
+        }
+        let row = rendered_row.saturating_add(post.card_height().saturating_sub(3));
+        if row >= list_height {
+            break;
+        }
+        for (slot_col, url) in forum_post_tag_image_slots(post, inner_width) {
+            if slot_col >= inner_width {
+                continue;
+            }
+            let Some(image) = emoji_images.iter().find(|img| img.url == url) else {
+                continue;
+            };
+            let absolute_col = list_left + content_start + slot_col as isize;
+            if absolute_col >= list_right {
+                continue;
+            }
+            let remaining_content_width = inner_width.saturating_sub(slot_col) as u16;
+            let remaining_list_width = (list_right - absolute_col).max(0) as u16;
+            let image_width = EMOJI_REACTION_IMAGE_WIDTH
+                .min(remaining_content_width)
+                .min(remaining_list_width);
+            if image_width == 0 {
+                continue;
+            }
+            let image_area = Rect {
+                x: absolute_col as u16,
+                y: list.y.saturating_add(row as u16),
+                width: image_width,
+                height: 1,
+            };
+            if intersects_any(image_area, occlusion_areas) {
+                continue;
+            }
+            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+        }
+        rendered_row = rendered_row.saturating_add(post.card_height());
+    }
+}
+
+#[cfg(test)]
+pub(super) fn forum_post_tag_rows_for_test(
+    posts: &[ChannelThreadItem],
+    width: usize,
+    list_height: usize,
+) -> Vec<(usize, Vec<usize>)> {
+    let inner_width = forum_post_inner_width_for_reactions(width);
+    let mut rendered_row = 0usize;
+    let mut result = Vec::new();
+    for post in posts {
+        if post.section_label.is_some() {
+            rendered_row = rendered_row.saturating_add(1);
+        }
+        if post.applied_tags.is_empty() {
+            rendered_row = rendered_row.saturating_add(post.card_height());
+            continue;
+        }
+        let row = rendered_row.saturating_add(post.card_height().saturating_sub(3));
+        if row >= list_height {
+            break;
+        }
+        let cols = forum_post_tag_image_slots(post, inner_width)
+            .into_iter()
+            .map(|(col, _)| col)
+            .collect();
+        result.push((row, cols));
+        rendered_row = rendered_row.saturating_add(post.card_height());
+    }
+    result
+}
+
 fn intersects_any(area: Rect, occlusion_areas: &[Rect]) -> bool {
     occlusion_areas
         .iter()
@@ -477,14 +631,16 @@ fn forum_post_reaction_render_layouts(
         if post.section_label.is_some() {
             rendered_row = rendered_row.saturating_add(1);
         }
-        let row = rendered_row.saturating_add(4);
+        // Reactions render on the metadata line, which is the second-to-last
+        // card row (its offset shifts up by one when the tags row is absent).
+        let row = rendered_row.saturating_add(post.card_height().saturating_sub(2));
         if row >= list_height {
             break;
         }
         if let Some((reaction_start_col, layout)) = forum_post_reaction_layout(post, inner_width) {
             layouts.push((row, reaction_start_col, layout));
         }
-        rendered_row = rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT);
+        rendered_row = rendered_row.saturating_add(post.card_height());
     }
     layouts
 }

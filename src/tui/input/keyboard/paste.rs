@@ -29,8 +29,8 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
         return false;
     }
 
-    if state.is_forum_post_edit_title_editing() {
-        return state.insert_forum_post_edit_text(text);
+    if state.is_thread_edit_title_editing() {
+        return state.insert_thread_edit_text(text);
     }
 
     if !state.is_composing() {

@@ -89,11 +89,11 @@ impl CommandDispatcher {
             }
             command @ (AppCommand::SendMessage { .. }
             | AppCommand::CreateForumPost { .. }
-            | AppCommand::SetForumPostArchived { .. }
-            | AppCommand::SetForumPostLocked { .. }
-            | AppCommand::SetForumPostPinned { .. }
-            | AppCommand::DeleteForumPost { .. }
-            | AppCommand::EditForumPost { .. }
+            | AppCommand::SetThreadArchived { .. }
+            | AppCommand::SetThreadLocked { .. }
+            | AppCommand::SetThreadPinned { .. }
+            | AppCommand::DeleteThread { .. }
+            | AppCommand::EditThread { .. }
             | AppCommand::SendTtsMessage { .. }
             | AppCommand::LoadApplicationCommands { .. }
             | AppCommand::RunApplicationCommand { .. }

@@ -205,7 +205,12 @@ pub enum ForumPostComposerField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForumPostComposerTagView {
     pub name: String,
-    pub emoji: Option<String>,
+    /// Unicode emoji shown inline; `None` for a custom or emoji-less tag.
+    pub unicode_emoji: Option<String>,
+    /// CDN url of a custom tag emoji, overlaid as an image on a reserved gap.
+    pub custom_emoji_url: Option<String>,
+    /// Resolved `:name:` text fallback shown until the custom emoji image loads.
+    pub custom_emoji_label: Option<String>,
     pub selected: bool,
     pub active: bool,
     /// Whether this tag can still be toggled on. `false` for unselected tags
@@ -235,11 +240,12 @@ pub struct ForumPostComposerView {
     pub status: Option<String>,
 }
 
-/// Focusable cells in the forum post edit popup. A leaner mirror of
+/// Focusable cells in the thread edit popup. A leaner mirror of
 /// [`ForumPostComposerField`]: there is no body or attachments, and the
-/// slow-mode and auto-archive selectors replace them.
+/// slow-mode and auto-archive selectors replace them. The Tags cell only
+/// applies to forum posts and is hidden for regular threads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ForumPostEditField {
+pub enum ThreadEditField {
     Title,
     Tags,
     SlowMode,
@@ -249,9 +255,14 @@ pub enum ForumPostEditField {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ForumPostEditTagView {
+pub struct ThreadEditTagView {
     pub name: String,
-    pub emoji: Option<String>,
+    /// Unicode emoji shown inline; `None` for a custom or emoji-less tag.
+    pub unicode_emoji: Option<String>,
+    /// CDN url of a custom tag emoji, overlaid as an image on a reserved gap.
+    pub custom_emoji_url: Option<String>,
+    /// Resolved `:name:` text fallback shown until the custom emoji image loads.
+    pub custom_emoji_label: Option<String>,
     pub selected: bool,
     pub active: bool,
     /// Whether this tag can still be toggled on. `false` for unselected tags
@@ -260,14 +271,17 @@ pub struct ForumPostEditTagView {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ForumPostEditView {
+pub struct ThreadEditView {
     pub channel_label: String,
-    pub active_field: ForumPostEditField,
+    pub active_field: ThreadEditField,
     pub editing_title: bool,
     pub editing_tags: bool,
     pub title: String,
     pub title_cursor: usize,
-    pub tags: Vec<ForumPostEditTagView>,
+    /// Whether the edited thread is a forum post. Only forum posts have tags, so
+    /// the renderer omits the Tags row entirely when this is `false`.
+    pub is_forum_post: bool,
+    pub tags: Vec<ThreadEditTagView>,
     pub requires_tag: bool,
     /// Display label for the current slow-mode option, e.g. "5s" or "Off".
     pub slow_mode_label: String,
@@ -323,11 +337,11 @@ pub enum ChannelActionKind {
 
 pub type ChannelActionItem = ActionItem<ChannelActionKind>;
 
-/// Actions on a forum post (a thread). Mirrors Discord's forum post right-click
-/// menu. Only a subset is wired up so far. The rest render dimmed until their
-/// backend exists (see `selected_forum_post_action_items`).
+/// Actions on a thread (a regular thread or a forum post). Mirrors Discord's
+/// thread/forum-post right-click menu. `Pin` only applies to forum posts; the
+/// rest apply to every thread (see `selected_thread_action_items`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ForumPostActionKind {
+pub enum ThreadActionKind {
     MarkAsRead,
     ToggleFollow,
     Close,
@@ -341,7 +355,7 @@ pub enum ForumPostActionKind {
     CopyId,
 }
 
-pub type ForumPostActionItem = ActionItem<ForumPostActionKind>;
+pub type ThreadActionItem = ActionItem<ThreadActionKind>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GuildActionKind {
@@ -363,12 +377,12 @@ pub struct MuteActionDurationItem {
 /// A single row in the thread notification-settings submenu. The label already
 /// includes the `[x]`/`[ ]` radio prefix so the renderer needs no extra logic.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ForumPostNotificationItem {
+pub struct ThreadNotificationItem {
     pub label: String,
     pub flags: u64,
 }
 
-impl ForumPostNotificationItem {
+impl ThreadNotificationItem {
     pub(crate) fn new(raw_label: &str, flags: u64, current_flags: u64) -> Self {
         let prefix = if flags == current_flags {
             "[x] "
@@ -416,7 +430,28 @@ pub enum MemberActionKind {
 
 pub type MemberActionItem = ActionItem<MemberActionKind>;
 
-pub const FORUM_POST_CARD_HEIGHT: usize = 6;
+const FORUM_POST_CARD_HEIGHT: usize = 6;
+
+/// A forum tag applied to a post, resolved into display-ready form. At most one
+/// emoji field is set: a unicode character, or a custom emoji's CDN image url.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppliedForumTag {
+    pub name: String,
+    pub unicode_emoji: Option<String>,
+    pub custom_emoji_url: Option<String>,
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+impl AppliedForumTag {
+    pub(crate) fn test(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            unicode_emoji: None,
+            custom_emoji_url: None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelThreadItem {
@@ -430,7 +465,7 @@ pub struct ChannelThreadItem {
     pub preview_author: Option<String>,
     pub preview_author_color: Option<u32>,
     pub preview_content: Option<String>,
-    pub applied_tags: Vec<String>,
+    pub applied_tags: Vec<AppliedForumTag>,
     pub preview_reactions: Vec<ReactionInfo>,
     pub comment_count: Option<u64>,
     pub new_message_count: usize,
@@ -439,7 +474,13 @@ pub struct ChannelThreadItem {
 
 impl ChannelThreadItem {
     pub fn rendered_height(&self) -> usize {
-        FORUM_POST_CARD_HEIGHT + usize::from(self.section_label.is_some())
+        self.card_height() + usize::from(self.section_label.is_some())
+    }
+
+    /// Card body height. The tags row is dropped entirely when the post has no
+    /// tags, so an untagged post (and every regular thread) is one row shorter.
+    pub fn card_height(&self) -> usize {
+        FORUM_POST_CARD_HEIGHT - usize::from(self.applied_tags.is_empty())
     }
 }
 

@@ -55,7 +55,7 @@ pub(super) fn view_signature(state: &DashboardState) -> u64 {
 
     // Message pane: the live chat plus its footers.
     hash_dbg(&mut hasher, &state.visible_messages());
-    hash_dbg(&mut hasher, &state.visible_forum_post_items());
+    hash_dbg(&mut hasher, &state.visible_thread_card_items());
     hash_dbg(&mut hasher, &state.typing_footer_for_selected_channel());
     state.new_messages_count().hash(&mut hasher);
 
@@ -149,7 +149,7 @@ pub(super) fn image_layout_signature(state: &DashboardState, area: Rect) -> u64 
         .is_some()
         .hash(&mut hasher);
     hash_dbg(&mut hasher, &state.visible_messages());
-    hash_dbg(&mut hasher, &state.visible_forum_post_items());
+    hash_dbg(&mut hasher, &state.visible_thread_card_items());
 
     // Member pane and sidebars: scroll offsets, roster order, and entries all
     // move the avatars/emoji rendered in them.

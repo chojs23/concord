@@ -22,7 +22,10 @@ fn leader_message_action_copy_closes_action_popup() {
 }
 
 #[test]
-fn channel_leader_action_lists_threads_for_selected_channel() {
+fn channel_leader_action_show_threads_opens_thread_list_view() {
+    use crate::tui::state::MessagePaneSource;
+
+    let parent_id = Id::new(2);
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
@@ -46,14 +49,140 @@ fn channel_leader_action_lists_threads_for_selected_channel() {
     assert_eq!(actions[5].kind, ChannelActionKind::ToggleMute);
     assert_eq!(actions[5].label, "Mute channel");
 
+    // "Show threads" opens the thread-list view in the message pane, not a submenu.
     let command = state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
     assert_eq!(command, None);
-    assert!(state.is_channel_action_threads_phase());
+    assert!(!state.is_channel_leader_action_active());
+    assert!(state.is_channel_thread_list_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ChannelThreads {
+            channel_id: parent_id
+        })
+    );
 
-    let threads = state.channel_action_thread_items();
-    assert_eq!(threads.len(), 1);
-    assert_eq!(threads[0].channel_id, Id::new(10));
-    assert_eq!(threads[0].label, "release notes");
+    // The gateway-cached child thread shows immediately, before the
+    // `/threads/search` fetch for the channel completes.
+    let cards = state.selected_thread_card_items();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].channel_id, Id::new(10));
+    assert_eq!(cards[0].label, "release notes");
+}
+
+#[test]
+fn channel_thread_list_view_fetches_and_sections_active_and_archived_threads() {
+    use crate::discord::ForumPostArchiveState;
+    use crate::tui::state::MessagePaneSource;
+
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let mut state = state_with_messages(1);
+
+    // The action is offered even with no threads cached: opening the view is what
+    // triggers the fetch that fills the list.
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    let show_threads = state
+        .selected_channel_action_items()
+        .into_iter()
+        .find(|action| action.kind == ChannelActionKind::ShowThreads)
+        .expect("show threads action is present");
+    assert!(show_threads.enabled);
+
+    assert_eq!(
+        state.activate_channel_action_shortcut("t".parse().expect("t parses")),
+        None
+    );
+    assert!(state.is_channel_thread_list_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ChannelThreads { channel_id })
+    );
+    // The open view is now the fetch target, so the scheduler issues the
+    // `/threads/search` request for this non-forum channel.
+    assert_eq!(
+        state
+            .selected_forum_channel_with_load_more()
+            .map(|(guild, channel, _)| (guild, channel)),
+        Some((guild_id, channel_id))
+    );
+
+    for (archive_state, thread_id, name, archived) in [
+        (ForumPostArchiveState::Active, 30, "active thread", false),
+        (ForumPostArchiveState::Archived, 31, "archived thread", true),
+    ] {
+        state.push_event(AppEvent::ForumPostsLoaded {
+            channel_id,
+            archive_state,
+            offset: 0,
+            next_offset: 1,
+            threads: vec![forum_thread_info(
+                guild_id, channel_id, thread_id, name, None, archived,
+            )],
+            first_messages: Vec::new(),
+            has_more: false,
+        });
+    }
+
+    let cards = state.selected_thread_card_items();
+    assert_eq!(
+        cards
+            .iter()
+            .map(|card| (card.label.as_str(), card.section_label.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("active thread", Some("Active threads")),
+            ("archived thread", Some("Archived threads")),
+        ]
+    );
+}
+
+#[test]
+fn show_threads_opens_a_highlighted_but_unopened_channel() {
+    use crate::tui::state::MessagePaneSource;
+
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let opened: Id<ChannelMarker> = Id::new(2);
+    let highlighted: Id<ChannelMarker> = Id::new(3);
+    let mut state = DashboardState::new();
+
+    state.push_event(guild_create_event(
+        guild_id,
+        "guild",
+        vec![
+            ChannelInfo {
+                position: Some(0),
+                ..text_channel_info(guild_id, opened, "opened")
+            },
+            ChannelInfo {
+                position: Some(1),
+                ..text_channel_info(guild_id, highlighted, "highlighted")
+            },
+        ],
+    ));
+    state.activate_guild(super::ActiveGuildScope::Guild(guild_id));
+    state.activate_channel(opened);
+
+    // Highlight the second channel in the pane without opening it.
+    state.focus_pane(FocusPane::Channels);
+    state.move_down();
+    state.open_selected_channel_actions();
+
+    assert_eq!(
+        state.activate_channel_action_shortcut("t".parse().expect("t parses")),
+        None
+    );
+
+    // Show threads makes the highlighted channel active and switches the message
+    // pane to its thread list, rather than silently staying on `opened`.
+    assert_eq!(state.selected_channel_id(), Some(highlighted));
+    assert!(state.is_channel_thread_list_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ChannelThreads {
+            channel_id: highlighted
+        })
+    );
 }
 
 #[test]
@@ -102,20 +231,40 @@ fn mark_as_read_action_enablement_is_scoped_to_action_channel() {
 }
 
 #[test]
-fn channel_leader_action_open_thread_activates_and_subscribes() {
+fn channel_thread_list_card_opens_thread_and_subscribes() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
     state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
-    let command = state.activate_selected_channel_action();
+    assert!(state.is_channel_thread_list_view());
+
+    let command = state.activate_selected_message_pane_item();
 
     assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_channel_thread_list_view());
     assert_eq!(
         command,
         Some(AppCommand::SubscribeGuildChannel {
             guild_id: Id::new(1),
             channel_id: Id::new(10),
+        })
+    );
+}
+
+#[test]
+fn channel_thread_list_view_esc_restores_previous_channel_view() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
+    assert!(state.is_channel_thread_list_view());
+
+    assert!(state.return_from_channel_thread_list_view());
+    assert!(!state.is_channel_thread_list_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(crate::tui::state::MessagePaneSource::ChannelMessages {
+            channel_id: Id::new(2)
         })
     );
 }

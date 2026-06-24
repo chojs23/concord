@@ -81,9 +81,9 @@ pub(in crate::tui::ui) fn render_messages(
 
     render_unread_banner(frame, message_areas.unread_banner, state);
 
-    if state.message_pane_uses_forum_posts() {
-        let posts = state.visible_forum_post_items();
-        let selected = state.focused_forum_post_selection();
+    if state.message_pane_uses_thread_cards() {
+        let posts = state.visible_thread_card_items();
+        let selected = state.focused_thread_card_selection();
         let is_loading = state.selected_forum_posts_loading();
         let forum_viewport_len =
             forum::forum_post_scrollbar_visible_count(message_areas.list.height);
@@ -104,6 +104,14 @@ pub(in crate::tui::ui) fn render_messages(
         );
         if state.show_custom_emoji() {
             forum::render_forum_post_reaction_emojis(
+                frame,
+                message_areas.list,
+                &posts,
+                forum_card_width,
+                media.emoji_images,
+                media_occlusion_areas,
+            );
+            forum::render_forum_post_tag_emojis(
                 frame,
                 message_areas.list,
                 &posts,

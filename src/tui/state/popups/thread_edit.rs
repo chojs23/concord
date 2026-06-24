@@ -5,8 +5,8 @@ use crate::discord::ids::{
 };
 use crate::tui::keybindings::ScrollAction;
 
-use super::super::{ForumPostEditField, ForumPostEditTagView, ForumPostEditView};
-use super::{ActiveModalPopupKind, ForumPostEditState, ModalPopup};
+use super::super::{DashboardState, ThreadEditField, ThreadEditTagView, ThreadEditView};
+use super::{ActiveModalPopupKind, ModalPopup, ThreadEditState};
 
 /// Discord allows at most five tags applied to a single forum post.
 const MAX_FORUM_POST_TAGS: usize = 5;
@@ -50,11 +50,17 @@ fn nearest_option_index(options: &[(u64, &str)], value: u64) -> usize {
 }
 
 impl super::super::DashboardState {
-    pub fn open_forum_post_edit(&mut self, channel_id: Id<ChannelMarker>) {
+    pub fn open_thread_edit(&mut self, channel_id: Id<ChannelMarker>) {
         let Some(channel) = self.discord.cache.channel(channel_id) else {
             return;
         };
         let title = channel.name.clone();
+        // Tags live on the parent forum, so a thread under a non-forum parent has
+        // no Tags field at all.
+        let is_forum_post = channel
+            .parent_id
+            .and_then(|parent_id| self.discord.cache.channel(parent_id))
+            .is_some_and(|parent| parent.is_forum());
         let selected_tag_ids = channel.applied_tags.clone();
         let rate_limit_index =
             nearest_option_index(&SLOW_MODE_OPTIONS, channel.rate_limit_per_user.unwrap_or(0));
@@ -74,8 +80,9 @@ impl super::super::DashboardState {
         let mut edit_title = crate::tui::text_input::TextInputState::default();
         edit_title.set_value(title.clone());
 
-        self.popups.modal = Some(ModalPopup::ForumPostEdit(ForumPostEditState {
+        self.popups.modal = Some(ModalPopup::ThreadEdit(ThreadEditState {
             channel_id,
+            is_forum_post,
             title: edit_title,
             editing_title: false,
             edit_input: crate::tui::text_input::TextInputState::default(),
@@ -86,40 +93,40 @@ impl super::super::DashboardState {
             rate_limit_index,
             auto_archive_index,
             can_set_slow_mode,
-            active_field: ForumPostEditField::Title,
+            active_field: ThreadEditField::Title,
             status: None,
             scroll: super::ScrollablePopupState::default(),
             pending_scroll_reveal: true,
         }));
     }
 
-    pub fn close_forum_post_edit(&mut self) {
-        if self.is_active_modal_popup(ActiveModalPopupKind::ForumPostEdit) {
+    pub fn close_thread_edit(&mut self) {
+        if self.is_active_modal_popup(ActiveModalPopupKind::ThreadEdit) {
             self.popups.clear_modal();
         }
     }
 
-    pub fn is_forum_post_edit_tag_picker_active(&self) -> bool {
+    pub fn is_thread_edit_tag_picker_active(&self) -> bool {
         self.popups
-            .forum_post_edit()
+            .thread_edit()
             .is_some_and(|popup| popup.editing_tags)
     }
 
-    pub fn is_forum_post_edit_title_editing(&self) -> bool {
+    pub fn is_thread_edit_title_editing(&self) -> bool {
         self.popups
-            .forum_post_edit()
+            .thread_edit()
             .is_some_and(|popup| popup.editing_title)
     }
 
-    pub fn forum_post_edit_scroll(&self) -> usize {
+    pub fn thread_edit_scroll(&self) -> usize {
         self.popups
-            .forum_post_edit()
+            .thread_edit()
             .map(|popup| popup.scroll.scroll())
             .unwrap_or(0)
     }
 
-    pub fn scroll_forum_post_edit(&mut self, action: ScrollAction) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    pub fn scroll_thread_edit(&mut self, action: ScrollAction) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             match action {
                 ScrollAction::Down => popup.scroll.scroll_down(),
                 ScrollAction::Up => popup.scroll.scroll_up(),
@@ -127,21 +134,21 @@ impl super::super::DashboardState {
         }
     }
 
-    pub fn request_forum_post_edit_scroll_reveal(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    pub fn request_thread_edit_scroll_reveal(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             popup.pending_scroll_reveal = true;
         }
     }
 
-    pub fn set_forum_post_edit_metrics(&mut self, view_height: usize, total_lines: usize) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    pub fn set_thread_edit_metrics(&mut self, view_height: usize, total_lines: usize) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             popup.scroll.set_view_height(view_height);
             popup.scroll.set_total_lines(total_lines);
         }
     }
 
-    pub fn reveal_forum_post_edit_rows(&mut self, start: usize, end: usize) {
-        if let Some(popup) = self.popups.forum_post_edit_mut()
+    pub fn reveal_thread_edit_rows(&mut self, start: usize, end: usize) {
+        if let Some(popup) = self.popups.thread_edit_mut()
             && popup.pending_scroll_reveal
         {
             popup.scroll.reveal(start, end);
@@ -149,8 +156,8 @@ impl super::super::DashboardState {
         }
     }
 
-    pub fn forum_post_edit_view(&self) -> Option<ForumPostEditView> {
-        let popup = self.popups.forum_post_edit()?;
+    pub fn thread_edit_view(&self) -> Option<ThreadEditView> {
+        let popup = self.popups.thread_edit()?;
         let channel = self.discord.cache.channel(popup.channel_id)?;
         // The available tags and the require-tag rule live on the PARENT forum,
         // not on the post thread, so resolve them through `parent_id`.
@@ -179,15 +186,19 @@ impl super::super::DashboardState {
                     .collect()
             };
         let cap_reached = popup.selected_tag_ids.len() >= MAX_FORUM_POST_TAGS;
+        let guild_id = channel.guild_id;
         let tags = display_ids
             .iter()
             .enumerate()
             .filter_map(|(index, id)| {
                 let tag = available_tags.iter().find(|tag| tag.id == *id)?;
                 let selected = popup.selected_tag_ids.contains(&tag.id);
-                Some(ForumPostEditTagView {
+                let emoji = self.forum_tag_emoji_fields(tag, guild_id);
+                Some(ThreadEditTagView {
                     name: tag.name.clone(),
-                    emoji: forum_tag_emoji_label(tag.emoji_id.is_some(), tag.emoji_name.as_deref()),
+                    unicode_emoji: emoji.unicode_emoji,
+                    custom_emoji_url: emoji.custom_emoji_url,
+                    custom_emoji_label: emoji.custom_emoji_label,
                     selected,
                     active: popup.editing_tags && index == popup.selected_tag_index,
                     selectable: selected || !cap_reached,
@@ -206,13 +217,14 @@ impl super::super::DashboardState {
             popup.title.cursor_byte_index()
         };
 
-        Some(ForumPostEditView {
+        Some(ThreadEditView {
             channel_label: format!("#{}", channel.name),
             active_field: popup.active_field,
             editing_title: popup.editing_title,
             editing_tags: popup.editing_tags,
             title,
             title_cursor,
+            is_forum_post: popup.is_forum_post,
             tags,
             requires_tag,
             slow_mode_label: SLOW_MODE_OPTIONS[popup.rate_limit_index].1.to_owned(),
@@ -222,82 +234,88 @@ impl super::super::DashboardState {
         })
     }
 
-    pub fn cycle_forum_post_edit_field_next(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    pub fn cycle_thread_edit_field_next(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             if popup.editing_title || popup.editing_tags {
                 return;
             }
+            // Tags only exist on forum posts, so a regular thread steps straight
+            // from Title to SlowMode.
             popup.active_field = match popup.active_field {
-                ForumPostEditField::Title => ForumPostEditField::Tags,
-                ForumPostEditField::Tags => ForumPostEditField::SlowMode,
-                ForumPostEditField::SlowMode => ForumPostEditField::AutoArchive,
-                ForumPostEditField::AutoArchive => ForumPostEditField::Submit,
-                ForumPostEditField::Submit => ForumPostEditField::Cancel,
+                ThreadEditField::Title if popup.is_forum_post => ThreadEditField::Tags,
+                ThreadEditField::Title => ThreadEditField::SlowMode,
+                ThreadEditField::Tags => ThreadEditField::SlowMode,
+                ThreadEditField::SlowMode => ThreadEditField::AutoArchive,
+                ThreadEditField::AutoArchive => ThreadEditField::Submit,
+                ThreadEditField::Submit => ThreadEditField::Cancel,
                 // Selection stops at the last field instead of wrapping around.
-                ForumPostEditField::Cancel => ForumPostEditField::Cancel,
+                ThreadEditField::Cancel => ThreadEditField::Cancel,
             };
         }
     }
 
-    pub fn cycle_forum_post_edit_field_previous(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    pub fn cycle_thread_edit_field_previous(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             if popup.editing_title || popup.editing_tags {
                 return;
             }
+            // Mirror the forward direction: a regular thread has no Tags field, so
+            // SlowMode steps back to Title directly.
             popup.active_field = match popup.active_field {
                 // Selection stops at the first field instead of wrapping around.
-                ForumPostEditField::Title => ForumPostEditField::Title,
-                ForumPostEditField::Tags => ForumPostEditField::Title,
-                ForumPostEditField::SlowMode => ForumPostEditField::Tags,
-                ForumPostEditField::AutoArchive => ForumPostEditField::SlowMode,
-                ForumPostEditField::Submit => ForumPostEditField::AutoArchive,
-                ForumPostEditField::Cancel => ForumPostEditField::Submit,
+                ThreadEditField::Title => ThreadEditField::Title,
+                ThreadEditField::Tags => ThreadEditField::Title,
+                ThreadEditField::SlowMode if popup.is_forum_post => ThreadEditField::Tags,
+                ThreadEditField::SlowMode => ThreadEditField::Title,
+                ThreadEditField::AutoArchive => ThreadEditField::SlowMode,
+                ThreadEditField::Submit => ThreadEditField::AutoArchive,
+                ThreadEditField::Cancel => ThreadEditField::Submit,
             };
         }
     }
 
-    pub fn move_forum_post_edit_selection_down(&mut self) {
+    pub fn move_thread_edit_selection_down(&mut self) {
         let Some((editing_tags, tag_count)) = self
             .popups
-            .forum_post_edit()
+            .thread_edit()
             .map(|popup| (popup.editing_tags, popup.tag_order.len()))
         else {
             return;
         };
         if editing_tags {
             if tag_count > 0 {
-                if let Some(popup) = self.popups.forum_post_edit_mut() {
+                if let Some(popup) = self.popups.thread_edit_mut() {
                     popup.selected_tag_index =
                         (popup.selected_tag_index + 1).min(tag_count.saturating_sub(1));
                 }
             }
         } else {
-            self.cycle_forum_post_edit_field_next();
+            self.cycle_thread_edit_field_next();
         }
     }
 
-    pub fn move_forum_post_edit_selection_up(&mut self) {
+    pub fn move_thread_edit_selection_up(&mut self) {
         let editing_tags = self
             .popups
-            .forum_post_edit()
+            .thread_edit()
             .is_some_and(|popup| popup.editing_tags);
         if editing_tags {
-            if let Some(popup) = self.popups.forum_post_edit_mut() {
+            if let Some(popup) = self.popups.thread_edit_mut() {
                 popup.selected_tag_index = popup.selected_tag_index.saturating_sub(1);
             }
         } else {
-            self.cycle_forum_post_edit_field_previous();
+            self.cycle_thread_edit_field_previous();
         }
     }
 
     /// Cycle the focused selector (slow mode or auto-archive). Slow mode only
     /// moves with the manage-channel permission.
-    pub fn cycle_forum_post_edit_selector(&mut self, forward: bool) {
-        let Some(popup) = self.popups.forum_post_edit_mut() else {
+    pub fn cycle_thread_edit_selector(&mut self, forward: bool) {
+        let Some(popup) = self.popups.thread_edit_mut() else {
             return;
         };
         match popup.active_field {
-            ForumPostEditField::SlowMode => {
+            ThreadEditField::SlowMode => {
                 if !popup.can_set_slow_mode {
                     return;
                 }
@@ -305,7 +323,7 @@ impl super::super::DashboardState {
                     cycle_index(popup.rate_limit_index, SLOW_MODE_OPTIONS.len(), forward);
                 popup.status = None;
             }
-            ForumPostEditField::AutoArchive => {
+            ThreadEditField::AutoArchive => {
                 popup.auto_archive_index = cycle_index(
                     popup.auto_archive_index,
                     AUTO_ARCHIVE_OPTIONS.len(),
@@ -313,15 +331,15 @@ impl super::super::DashboardState {
                 );
                 popup.status = None;
             }
-            ForumPostEditField::Title
-            | ForumPostEditField::Tags
-            | ForumPostEditField::Submit
-            | ForumPostEditField::Cancel => {}
+            ThreadEditField::Title
+            | ThreadEditField::Tags
+            | ThreadEditField::Submit
+            | ThreadEditField::Cancel => {}
         }
     }
 
-    pub fn push_forum_post_edit_char(&mut self, value: char) {
-        if let Some(popup) = self.popups.forum_post_edit_mut()
+    pub fn push_thread_edit_char(&mut self, value: char) {
+        if let Some(popup) = self.popups.thread_edit_mut()
             && popup.editing_title
             && value != '\n'
         {
@@ -330,8 +348,8 @@ impl super::super::DashboardState {
         }
     }
 
-    pub fn insert_forum_post_edit_text(&mut self, value: &str) -> bool {
-        let Some(popup) = self.popups.forum_post_edit_mut() else {
+    pub fn insert_thread_edit_text(&mut self, value: &str) -> bool {
+        let Some(popup) = self.popups.thread_edit_mut() else {
             return false;
         };
         if !popup.editing_title {
@@ -347,8 +365,8 @@ impl super::super::DashboardState {
         true
     }
 
-    pub fn delete_forum_post_edit_previous_char(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut()
+    pub fn delete_thread_edit_previous_char(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut()
             && popup.editing_title
             && popup.edit_input.delete_previous_grapheme()
         {
@@ -356,8 +374,8 @@ impl super::super::DashboardState {
         }
     }
 
-    pub fn delete_forum_post_edit_previous_word(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut()
+    pub fn delete_thread_edit_previous_word(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut()
             && popup.editing_title
             && popup.edit_input.delete_previous_word()
         {
@@ -365,64 +383,64 @@ impl super::super::DashboardState {
         }
     }
 
-    pub fn move_forum_post_edit_cursor_left(&mut self) {
-        self.with_forum_post_edit_title_input(|input| input.move_left());
+    pub fn move_thread_edit_cursor_left(&mut self) {
+        self.with_thread_edit_title_input(|input| input.move_left());
     }
 
-    pub fn move_forum_post_edit_cursor_right(&mut self) {
-        self.with_forum_post_edit_title_input(|input| input.move_right());
+    pub fn move_thread_edit_cursor_right(&mut self) {
+        self.with_thread_edit_title_input(|input| input.move_right());
     }
 
-    pub fn move_forum_post_edit_cursor_word_left(&mut self) {
-        self.with_forum_post_edit_title_input(|input| input.move_word_left());
+    pub fn move_thread_edit_cursor_word_left(&mut self) {
+        self.with_thread_edit_title_input(|input| input.move_word_left());
     }
 
-    pub fn move_forum_post_edit_cursor_word_right(&mut self) {
-        self.with_forum_post_edit_title_input(|input| input.move_word_right());
+    pub fn move_thread_edit_cursor_word_right(&mut self) {
+        self.with_thread_edit_title_input(|input| input.move_word_right());
     }
 
-    pub fn move_forum_post_edit_cursor_home(&mut self) {
-        self.with_forum_post_edit_title_input(|input| input.move_home());
+    pub fn move_thread_edit_cursor_home(&mut self) {
+        self.with_thread_edit_title_input(|input| input.move_home());
     }
 
-    pub fn move_forum_post_edit_cursor_end(&mut self) {
-        self.with_forum_post_edit_title_input(|input| input.move_end());
+    pub fn move_thread_edit_cursor_end(&mut self) {
+        self.with_thread_edit_title_input(|input| input.move_end());
     }
 
-    fn with_forum_post_edit_title_input(
+    fn with_thread_edit_title_input(
         &mut self,
         action: impl FnOnce(&mut crate::tui::text_input::TextInputState),
     ) {
-        if let Some(popup) = self.popups.forum_post_edit_mut()
+        if let Some(popup) = self.popups.thread_edit_mut()
             && popup.editing_title
         {
             action(&mut popup.edit_input);
         }
     }
 
-    pub fn clear_forum_post_edit_active_field(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    pub fn clear_thread_edit_active_field(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             if popup.editing_title {
                 popup.edit_input.clear();
                 popup.status = None;
                 return;
             }
-            if popup.active_field == ForumPostEditField::Tags {
+            if popup.active_field == ThreadEditField::Tags {
                 popup.selected_tag_ids.clear();
                 popup.status = None;
             }
         }
     }
 
-    pub fn toggle_selected_forum_post_edit_tag(&mut self) {
+    pub fn toggle_selected_thread_edit_tag(&mut self) {
         let Some(tag_id) = self
             .popups
-            .forum_post_edit()
+            .thread_edit()
             .and_then(|popup| popup.tag_order.get(popup.selected_tag_index).copied())
         else {
             return;
         };
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             if let Some(position) = popup.selected_tag_ids.iter().position(|id| *id == tag_id) {
                 popup.selected_tag_ids.remove(position);
                 popup.status = None;
@@ -437,34 +455,34 @@ impl super::super::DashboardState {
     /// already editing); Tags opens the picker (or toggles inside it); the
     /// selectors do nothing on Enter (they cycle with the arrows); Submit saves;
     /// Cancel closes.
-    pub fn activate_forum_post_edit(&mut self) -> Option<AppCommand> {
+    pub fn activate_thread_edit(&mut self) -> Option<AppCommand> {
         let (active_field, editing_title, editing_tags) = self
             .popups
-            .forum_post_edit()
+            .thread_edit()
             .map(|popup| (popup.active_field, popup.editing_title, popup.editing_tags))?;
-        if editing_tags && active_field == ForumPostEditField::Tags {
-            self.toggle_selected_forum_post_edit_tag();
+        if editing_tags && active_field == ThreadEditField::Tags {
+            self.toggle_selected_thread_edit_tag();
             return None;
         }
-        if editing_title && active_field == ForumPostEditField::Title {
-            self.commit_forum_post_edit_title();
+        if editing_title && active_field == ThreadEditField::Title {
+            self.commit_thread_edit_title();
             return None;
         }
         match active_field {
-            ForumPostEditField::Title => self.start_forum_post_edit_title(),
-            ForumPostEditField::Tags => self.start_forum_post_edit_tag_selection(),
-            ForumPostEditField::Submit => return self.submit_forum_post_edit(),
-            ForumPostEditField::Cancel => self.close_forum_post_edit(),
+            ThreadEditField::Title => self.start_thread_edit_title(),
+            ThreadEditField::Tags => self.start_thread_edit_tag_selection(),
+            ThreadEditField::Submit => return self.submit_thread_edit(),
+            ThreadEditField::Cancel => self.close_thread_edit(),
             // The selectors only respond to the arrow keys.
-            ForumPostEditField::SlowMode | ForumPostEditField::AutoArchive => {}
+            ThreadEditField::SlowMode | ThreadEditField::AutoArchive => {}
         }
         None
     }
 
-    pub fn close_or_cancel_forum_post_edit(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    pub fn close_or_cancel_thread_edit(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             if popup.editing_title {
-                self.commit_forum_post_edit_title();
+                self.commit_thread_edit_title();
                 return;
             }
             if popup.editing_tags {
@@ -474,11 +492,11 @@ impl super::super::DashboardState {
                 return;
             }
         }
-        self.close_forum_post_edit();
+        self.close_thread_edit();
     }
 
-    fn start_forum_post_edit_title(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    fn start_thread_edit_title(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             let value = popup.title.value().to_owned();
             popup.editing_title = true;
             popup.edit_input.set_value(value);
@@ -486,8 +504,8 @@ impl super::super::DashboardState {
         }
     }
 
-    fn commit_forum_post_edit_title(&mut self) {
-        if let Some(popup) = self.popups.forum_post_edit_mut() {
+    fn commit_thread_edit_title(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
             let value = popup.edit_input.value().to_owned();
             popup.title.set_value(value);
             popup.editing_title = false;
@@ -498,7 +516,7 @@ impl super::super::DashboardState {
 
     /// Tags a post can apply are configured on the parent forum channel, not on
     /// the post thread, so resolve them through `parent_id`.
-    fn forum_post_edit_available_tags(
+    fn thread_edit_available_tags(
         &self,
         thread_id: Id<ChannelMarker>,
     ) -> Vec<crate::discord::ForumTagInfo> {
@@ -511,17 +529,23 @@ impl super::super::DashboardState {
             .unwrap_or_default()
     }
 
-    fn start_forum_post_edit_tag_selection(&mut self) {
-        let Some(channel_id) = self.popups.forum_post_edit().map(|popup| popup.channel_id) else {
+    fn start_thread_edit_tag_selection(&mut self) {
+        // A regular thread has no tags, so there is no picker to open.
+        let Some(channel_id) = self
+            .popups
+            .thread_edit()
+            .filter(|popup| popup.is_forum_post)
+            .map(|popup| popup.channel_id)
+        else {
             return;
         };
         let selected_ids = self
             .popups
-            .forum_post_edit()
+            .thread_edit()
             .map(|popup| popup.selected_tag_ids.clone())
             .unwrap_or_default();
         // Available tags come from the parent forum, not the post thread.
-        let available_tags = self.forum_post_edit_available_tags(channel_id);
+        let available_tags = self.thread_edit_available_tags(channel_id);
         let ordered: Vec<Id<ForumTagMarker>> = available_tags
             .iter()
             .map(|tag| tag.id)
@@ -533,7 +557,7 @@ impl super::super::DashboardState {
                     .filter(|id| !selected_ids.contains(id)),
             )
             .collect();
-        let Some(popup) = self.popups.forum_post_edit_mut() else {
+        let Some(popup) = self.popups.thread_edit_mut() else {
             return;
         };
         if ordered.is_empty() {
@@ -546,14 +570,14 @@ impl super::super::DashboardState {
         popup.status = None;
     }
 
-    pub fn submit_forum_post_edit(&mut self) -> Option<AppCommand> {
-        match self.build_forum_post_edit() {
+    pub fn submit_thread_edit(&mut self) -> Option<AppCommand> {
+        match self.build_thread_edit() {
             Ok(command) => {
-                self.close_forum_post_edit();
+                self.close_thread_edit();
                 Some(command)
             }
             Err(message) => {
-                if let Some(popup) = self.popups.forum_post_edit_mut() {
+                if let Some(popup) = self.popups.thread_edit_mut() {
                     popup.status = Some(message);
                 }
                 None
@@ -561,9 +585,9 @@ impl super::super::DashboardState {
         }
     }
 
-    fn build_forum_post_edit(&self) -> Result<AppCommand, String> {
-        let Some(popup) = self.popups.forum_post_edit() else {
-            return Err("forum post editor is not open".to_owned());
+    fn build_thread_edit(&self) -> Result<AppCommand, String> {
+        let Some(popup) = self.popups.thread_edit() else {
+            return Err("thread editor is not open".to_owned());
         };
         let channel_id = popup.channel_id;
         let name = popup.title.value().trim().to_owned();
@@ -574,7 +598,7 @@ impl super::super::DashboardState {
             return Err("title must be 100 characters or fewer".to_owned());
         }
         let Some(channel) = self.discord.cache.channel(channel_id) else {
-            return Err("forum post is no longer available".to_owned());
+            return Err("thread is no longer available".to_owned());
         };
         let applied_tags = popup.selected_tag_ids.clone();
         // The require-tag rule is a parent-forum setting, not a thread setting.
@@ -587,7 +611,7 @@ impl super::super::DashboardState {
         }
         let rate_limit_per_user = SLOW_MODE_OPTIONS[popup.rate_limit_index].0;
         let auto_archive_duration = AUTO_ARCHIVE_OPTIONS[popup.auto_archive_index].0;
-        Ok(AppCommand::EditForumPost {
+        Ok(AppCommand::EditThread {
             channel_id,
             name,
             applied_tags,
@@ -608,14 +632,51 @@ fn cycle_index(index: usize, len: usize, forward: bool) -> usize {
     }
 }
 
-fn forum_tag_emoji_label(custom: bool, name: Option<&str>) -> Option<String> {
-    let name = name?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    if custom {
-        Some(format!(":{name}:"))
-    } else {
-        Some(name.to_owned())
+/// Display-ready emoji fields for one forum tag, resolved for the tag picker.
+pub(in crate::tui::state) struct ForumTagEmojiFields {
+    pub unicode_emoji: Option<String>,
+    pub custom_emoji_url: Option<String>,
+    pub custom_emoji_label: Option<String>,
+}
+
+impl DashboardState {
+    pub(in crate::tui::state) fn forum_tag_emoji_fields(
+        &self,
+        tag: &crate::discord::ForumTagInfo,
+        guild_id: Option<Id<crate::discord::ids::marker::GuildMarker>>,
+    ) -> ForumTagEmojiFields {
+        if let Some(emoji_id) = tag.emoji_id {
+            // The tag payload omits the custom emoji name, so the `:name:`
+            // fallback is resolved from the guild emoji cache.
+            let url = format!("https://cdn.discordapp.com/emojis/{}.png", emoji_id.get());
+            let resolved_name = guild_id.and_then(|guild_id| {
+                self.discord
+                    .cache
+                    .custom_emojis_for_guild(guild_id)
+                    .iter()
+                    .find(|emoji| emoji.id == emoji_id)
+                    .map(|emoji| emoji.name.clone())
+            });
+            let label = resolved_name
+                .map(|name| format!(":{name}:"))
+                .unwrap_or_else(|| ":custom:".to_owned());
+            return ForumTagEmojiFields {
+                unicode_emoji: None,
+                custom_emoji_url: Some(url),
+                custom_emoji_label: Some(label),
+            };
+        }
+
+        let unicode = tag
+            .emoji_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+        ForumTagEmojiFields {
+            unicode_emoji: unicode,
+            custom_emoji_url: None,
+            custom_emoji_label: None,
+        }
     }
 }

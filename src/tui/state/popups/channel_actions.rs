@@ -3,10 +3,9 @@ use crate::discord::ids::{Id, marker::ChannelMarker};
 use crate::tui::keybindings::KeyChord;
 
 use super::super::model::{
-    ChannelActionItem, ChannelActionKind, ChannelPaneEntry, ChannelThreadItem, FocusPane,
-    MUTE_ACTION_DURATIONS,
+    ChannelActionItem, ChannelActionKind, ChannelPaneEntry, FocusPane, MUTE_ACTION_DURATIONS,
 };
-use super::super::{DashboardState, MuteActionDurationItem, channel_tree};
+use super::super::{DashboardState, MuteActionDurationItem};
 use super::ChannelLeaderActionState;
 #[cfg(test)]
 use super::{LeaderActionState, LeaderMode, LeaderPopupState, ModalPopup};
@@ -63,10 +62,7 @@ impl DashboardState {
 
     pub fn back_channel_leader_action(&mut self) -> bool {
         match self.popups.channel_leader_action() {
-            Some(
-                ChannelLeaderActionState::Threads { channel_id, .. }
-                | ChannelLeaderActionState::MuteDuration { channel_id, .. },
-            ) => {
+            Some(ChannelLeaderActionState::MuteDuration { channel_id, .. }) => {
                 let channel_id = *channel_id;
                 if let Some(action) = self.popups.channel_leader_action_mut() {
                     *action = ChannelLeaderActionState::Actions {
@@ -88,12 +84,12 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(channel_id) else {
             return Vec::new();
         };
-        let thread_count = channel_tree::child_thread_count(self.channels(), channel_id);
-        let thread_label = if thread_count == 0 {
-            "Show threads (none)".to_owned()
-        } else {
-            format!("Show threads ({thread_count})")
-        };
+        // Threads live under text-like channels. Forums already show their posts
+        // as the channel view, and categories and voice channels cannot host
+        // threads, so the action is offered everywhere else. The list itself is
+        // filled by the `/threads/search` fetch once the view opens, so this no
+        // longer depends on threads already sitting in the gateway cache.
+        let can_show_threads = !channel.is_category() && !channel.is_forum() && !channel.is_voice();
         let active_channel_has_unread_snapshot = self.navigation.channels.active_channel_id
             == Some(channel_id)
             && (self.messages.unread_divider_last_acked_id.is_some()
@@ -135,8 +131,8 @@ impl DashboardState {
             ),
             ChannelActionItem::new(
                 ChannelActionKind::ShowThreads,
-                thread_label,
-                thread_count > 0,
+                "Show threads",
+                can_show_threads,
             ),
             ChannelActionItem::new(
                 ChannelActionKind::MarkAsRead,
@@ -151,28 +147,6 @@ impl DashboardState {
         &MUTE_ACTION_DURATIONS
     }
 
-    pub fn channel_action_thread_items(&self) -> Vec<ChannelThreadItem> {
-        let channel_id = match self.popups.channel_leader_action() {
-            Some(ChannelLeaderActionState::Threads { channel_id, .. }) => *channel_id,
-            _ => return Vec::new(),
-        };
-        self.child_thread_items(channel_id)
-    }
-
-    pub fn selected_channel_action_index(&self) -> Option<usize> {
-        match self.popups.channel_leader_action()? {
-            ChannelLeaderActionState::Actions { selection, .. } => {
-                Some(selection.selected_for_len(self.selected_channel_action_items().len()))
-            }
-            ChannelLeaderActionState::MuteDuration { selection, .. } => {
-                Some(selection.selected_for_len(self.selected_channel_mute_duration_items().len()))
-            }
-            ChannelLeaderActionState::Threads { selection, .. } => {
-                Some(selection.selected_for_len(self.channel_action_thread_items().len()))
-            }
-        }
-    }
-
     pub fn select_channel_action_row(&mut self, row: usize) -> bool {
         let len = match self.popups.channel_leader_action() {
             Some(ChannelLeaderActionState::Actions { .. }) => {
@@ -180,9 +154,6 @@ impl DashboardState {
             }
             Some(ChannelLeaderActionState::MuteDuration { .. }) => {
                 self.selected_channel_mute_duration_items().len()
-            }
-            Some(ChannelLeaderActionState::Threads { .. }) => {
-                self.channel_action_thread_items().len()
             }
             None => return false,
         };
@@ -192,13 +163,23 @@ impl DashboardState {
         if let Some(action) = self.popups.channel_leader_action_mut() {
             let selection = match action {
                 ChannelLeaderActionState::Actions { selection, .. }
-                | ChannelLeaderActionState::MuteDuration { selection, .. }
-                | ChannelLeaderActionState::Threads { selection, .. } => selection,
+                | ChannelLeaderActionState::MuteDuration { selection, .. } => selection,
             };
             selection.select(row);
             return true;
         }
         false
+    }
+
+    /// Make `channel_id` the active channel so the message pane, which always
+    /// follows the active channel, can render a pinned-message or thread-list
+    /// view for it. Without this a never-opened channel keeps showing the
+    /// previously active channel, so the view silently fails to switch.
+    /// Skipped when the channel is already open so its viewport is not reset.
+    fn open_channel_for_pane_view(&mut self, channel_id: Id<ChannelMarker>) {
+        if self.selected_channel_id() != Some(channel_id) {
+            self.activate_channel(channel_id);
+        }
     }
 
     pub fn activate_selected_channel_action(&mut self) -> Option<AppCommand> {
@@ -250,17 +231,20 @@ impl DashboardState {
                             })
                     }
                     ChannelActionKind::LoadPinnedMessages => {
-                        self.enter_pinned_message_view(channel_id);
                         self.close_channel_leader_action();
+                        self.open_channel_for_pane_view(channel_id);
+                        self.enter_pinned_message_view(channel_id);
+                        // Move focus into the message pane like the thread list
+                        // does, so the pinned list is immediately navigable.
+                        self.focus_pane(FocusPane::Messages);
                         None
                     }
                     ChannelActionKind::ShowThreads => {
-                        if let Some(action) = self.popups.channel_leader_action_mut() {
-                            *action = ChannelLeaderActionState::Threads {
-                                channel_id,
-                                selection: Default::default(),
-                            };
-                        }
+                        // Open the channel's threads as a card list in the message pane.
+                        self.close_channel_leader_action();
+                        self.open_channel_for_pane_view(channel_id);
+                        self.enter_channel_thread_list_view(channel_id);
+                        self.focus_pane(FocusPane::Messages);
                         None
                     }
                     ChannelActionKind::MarkAsRead => {
@@ -294,21 +278,6 @@ impl DashboardState {
                 self.close_channel_leader_action();
                 self.toggle_channel_mute(channel_id, Some(item.duration))
             }
-            ChannelLeaderActionState::Threads { .. } => {
-                let items = self.channel_action_thread_items();
-                let index = self.selected_channel_action_index()?;
-                let item = items.get(index)?.clone();
-                let guild_id = self
-                    .discord
-                    .channel(item.channel_id)
-                    .and_then(|c| c.guild_id);
-                self.activate_channel(item.channel_id);
-                self.close_channel_leader_action();
-                guild_id.map(|guild_id| AppCommand::SubscribeGuildChannel {
-                    guild_id,
-                    channel_id: item.channel_id,
-                })
-            }
         }
     }
 
@@ -335,15 +304,6 @@ impl DashboardState {
                         shortcut,
                         self.selected_channel_mute_duration_items().len(),
                     )?;
-                self.select_channel_action_row(index);
-                self.activate_selected_channel_action()
-            }
-            ChannelLeaderActionState::Threads { .. } => {
-                let threads = self.channel_action_thread_items();
-                let index = self
-                    .options
-                    .key_bindings()
-                    .matching_indexed_shortcut_index(shortcut, threads.len())?;
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()
             }

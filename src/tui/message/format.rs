@@ -21,7 +21,7 @@ use crate::discord::ids::{
 };
 use ratatui::{
     style::{Color, Modifier, Style},
-    text::Span,
+    text::{Line, Span},
 };
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -33,7 +33,8 @@ use crate::tui::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, detected_url_ranges,
         truncate_display_width, truncate_text,
     },
-    state::{DashboardState, ThreadSummary, discord_color},
+    state::{DashboardState, discord_color},
+    ui::forum::forum_post_card_lines,
 };
 
 const ACCENT: Color = Color::Cyan;
@@ -42,7 +43,6 @@ const COMMAND_BLUE: Color = Color::Rgb(88, 101, 242);
 const COMMAND_USAGE_PREFIX: &str = "┌ ";
 const SELF_REACTION: Color = Color::Yellow;
 const INLINE_CODE: Color = Color::Rgb(255, 165, 0);
-const THREAD_CARD_INDENT: &str = "  ";
 const EDITED_MARKER: &str = " (edited)";
 const MARKDOWN_QUOTE_PREFIX: &str = "▎ ";
 const MARKDOWN_BULLET_PREFIX: &str = "• ";
@@ -116,6 +116,18 @@ impl MessageContentLine {
             styled_prefixes: Vec::new(),
             image_slots: Vec::new(),
         }
+    }
+
+    /// Wrap a pre-styled [`Line`] as a [`MessageContentLine`], concatenating the
+    /// span text and preserving each span's style as a byte-range prefix so
+    /// [`Self::spans`] reproduces the original styling.
+    pub(in crate::tui) fn from_line(line: Line<'static>) -> Self {
+        let mut content = Self::plain(String::new());
+        for span in line.spans {
+            let style = span.style;
+            content.append_styled_suffix(&span.content, style);
+        }
+        content
     }
 
     fn with_image_slots(mut self, slots: Vec<MessageContentImageSlot>) -> Self {
@@ -1876,24 +1888,35 @@ fn format_thread_created_lines(
     state: &DashboardState,
     width: usize,
 ) -> Vec<MessageContentLine> {
-    let summary = state.thread_summary_for_message(message);
-    let thread_name = summary
-        .as_ref()
-        .map(|summary| summary.name.as_str())
-        .or_else(|| message.content.as_deref().filter(|value| !value.is_empty()))
-        .unwrap_or("thread");
+    let thread_name = state
+        .thread_summary_for_message(message)
+        .map(|summary| summary.name)
+        .or_else(|| {
+            message
+                .content
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "thread".to_owned());
     let mut lines = vec![format_thread_created_starter_line(
         message,
         state,
-        thread_name,
+        &thread_name,
         width,
     )];
-    lines.extend(format_thread_card_lines(
-        thread_name,
-        summary.as_ref(),
-        message.id,
-        width,
-    ));
+
+    // Reuse the forum-post card UI for the thread box. The card owns a two-column
+    // marker gutter, so cap the body at 72 columns (the historical thread-box
+    // maximum) and add the gutter back to keep the same on-screen width.
+    let card_width = width.saturating_sub(2).clamp(4, 72).saturating_add(2);
+    if let Some(item) = state.thread_card_item_for_message(message) {
+        lines.extend(
+            forum_post_card_lines(&item, false, card_width, state.show_custom_emoji())
+                .into_iter()
+                .map(MessageContentLine::from_line),
+        );
+    }
     lines
 }
 
@@ -1930,146 +1953,6 @@ fn format_thread_created_starter_line(
         line.styled_range(thread_start, thread_name.len(), thread_style);
     }
     line
-}
-
-fn format_thread_card_lines(
-    thread_name: &str,
-    summary: Option<&ThreadSummary>,
-    message_id: Id<MessageMarker>,
-    width: usize,
-) -> Vec<MessageContentLine> {
-    let card_width = thread_card_width(width);
-    let inner_width = thread_card_inner_width(width);
-    vec![
-        MessageContentLine::accent(thread_card_border('╭', '╮', width)),
-        thread_card_line(
-            format_thread_card_title_line(thread_name, summary, inner_width),
-            inner_width,
-        ),
-        thread_card_line(
-            format_thread_latest_line(summary, message_id, inner_width),
-            inner_width,
-        ),
-        MessageContentLine::accent(format!(
-            "{THREAD_CARD_INDENT}╰{}╯",
-            "─".repeat(card_width.saturating_sub(2))
-        )),
-    ]
-}
-
-fn format_thread_card_title_line(
-    thread_name: &str,
-    summary: Option<&ThreadSummary>,
-    width: usize,
-) -> MessageContentLine {
-    let Some(count_label) = summary.and_then(thread_message_count_label) else {
-        return MessageContentLine::accent(truncate_display_width(thread_name, width));
-    };
-
-    let count_width = count_label.width();
-    if count_width.saturating_add(2) >= width {
-        return MessageContentLine::accent(truncate_display_width(thread_name, width));
-    }
-
-    let name_width = width.saturating_sub(count_width).saturating_sub(2);
-    let name = truncate_display_width(thread_name, name_width);
-    let padding = width
-        .saturating_sub(name.width())
-        .saturating_sub(count_width);
-    MessageContentLine::accent(format!("{name}{}{count_label}", " ".repeat(padding)))
-}
-
-fn thread_message_count_label(summary: &ThreadSummary) -> Option<String> {
-    summary
-        .message_count
-        .or(summary.total_message_sent)
-        .map(|count| {
-            let label = if count == 1 { "message" } else { "messages" };
-            format!("{count} {label}")
-        })
-}
-
-fn thread_card_width(width: usize) -> usize {
-    width
-        .saturating_sub(THREAD_CARD_INDENT.width())
-        .clamp(4, 72)
-}
-
-fn thread_card_inner_width(width: usize) -> usize {
-    thread_card_width(width).saturating_sub(4).max(1)
-}
-
-fn thread_card_border(left: char, right: char, width: usize) -> String {
-    let card_width = thread_card_width(width);
-    format!(
-        "{THREAD_CARD_INDENT}{left}{}{right}",
-        "─".repeat(card_width.saturating_sub(2))
-    )
-}
-
-fn thread_card_line(mut line: MessageContentLine, inner_width: usize) -> MessageContentLine {
-    let prefix = format!("{THREAD_CARD_INDENT}│ ");
-    let suffix = " │";
-    let padding = inner_width.saturating_sub(line.text.width());
-    line.text = format!("{prefix}{}{}{suffix}", line.text, " ".repeat(padding));
-    line
-}
-
-fn format_thread_latest_line(
-    summary: Option<&ThreadSummary>,
-    message_id: Id<MessageMarker>,
-    width: usize,
-) -> MessageContentLine {
-    let mut metadata = Vec::new();
-    if let Some(summary) = summary {
-        let mut statuses = Vec::new();
-        let latest_message_id = summary.latest_message_id.unwrap_or(message_id);
-        let age = format_message_relative_age(latest_message_id);
-        if summary.archived == Some(true) {
-            statuses.push("archived".to_owned());
-        }
-        if summary.locked == Some(true) {
-            statuses.push("locked".to_owned());
-        }
-        let suffix = if statuses.is_empty() {
-            age
-        } else {
-            format!("{age} · {}", statuses.join(" · "))
-        };
-        if let Some(preview) = summary.latest_message_preview.as_ref() {
-            return MessageContentLine::dim(format_latest_message_preview(
-                &preview.author,
-                &preview.content,
-                &suffix,
-                width,
-            ));
-        }
-        metadata.push(suffix);
-    } else {
-        metadata.push(format_message_relative_age(message_id));
-        metadata.push("Thread details unavailable".to_owned());
-    }
-
-    MessageContentLine::dim(truncate_display_width(&metadata.join(" · "), width))
-}
-
-fn format_latest_message_preview(
-    author: &str,
-    content: &str,
-    suffix: &str,
-    width: usize,
-) -> String {
-    let prefix = format!("{author} ");
-    let suffix = format!(" {suffix}");
-    if prefix.width().saturating_add(suffix.width()) >= width {
-        return truncate_display_width(&format!("{author} {content}{suffix}"), width);
-    }
-
-    let content_width = width
-        .saturating_sub(prefix.width())
-        .saturating_sub(suffix.width());
-    let content = truncate_display_width(content, content_width.max(1));
-    format!("{prefix}{content}{suffix}")
 }
 
 pub(in crate::tui) fn format_message_relative_age(message_id: Id<MessageMarker>) -> String {

@@ -164,15 +164,19 @@ impl DashboardState {
         // Once the cap is hit only the already-selected tags stay toggleable.
         // The rest are reported as not selectable so the picker can dim them.
         let cap_reached = popup.selected_tag_ids.len() >= MAX_FORUM_POST_TAGS;
+        let guild_id = channel.guild_id;
         let tags = display_ids
             .iter()
             .enumerate()
             .filter_map(|(index, id)| {
                 let tag = channel.available_tags.iter().find(|tag| tag.id == *id)?;
                 let selected = popup.selected_tag_ids.contains(&tag.id);
+                let emoji = self.forum_tag_emoji_fields(tag, guild_id);
                 Some(ForumPostComposerTagView {
                     name: tag.name.clone(),
-                    emoji: forum_tag_emoji_label(tag.emoji_id.is_some(), tag.emoji_name.as_deref()),
+                    unicode_emoji: emoji.unicode_emoji,
+                    custom_emoji_url: emoji.custom_emoji_url,
+                    custom_emoji_label: emoji.custom_emoji_label,
                     selected,
                     active: editing_tags && index == popup.selected_tag_index,
                     selectable: selected || !cap_reached,
@@ -884,17 +888,5 @@ fn forum_post_text_field_cursor(
         | ForumPostComposerFieldState::Tags
         | ForumPostComposerFieldState::Submit
         | ForumPostComposerFieldState::Cancel => 0,
-    }
-}
-
-fn forum_tag_emoji_label(custom: bool, name: Option<&str>) -> Option<String> {
-    let name = name?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    if custom {
-        Some(format!(":{name}:"))
-    } else {
-        Some(name.to_owned())
     }
 }

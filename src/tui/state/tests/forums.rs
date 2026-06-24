@@ -1,8 +1,8 @@
 use super::*;
 use crate::discord::AppCommand;
 use crate::tui::state::ActiveModalPopupKind;
-use crate::tui::state::ForumPostActionKind;
 use crate::tui::state::MessagePaneSource;
+use crate::tui::state::ThreadActionKind;
 
 #[test]
 fn forum_channel_renders_loaded_posts_in_message_pane() {
@@ -35,7 +35,7 @@ fn forum_channel_renders_loaded_posts_in_message_pane() {
 
     assert_eq!(state.selected_forum_post(), 1);
     assert_eq!(state.message_scroll(), 1);
-    assert_eq!(state.focused_forum_post_selection(), Some(0));
+    assert_eq!(state.focused_thread_card_selection(), Some(0));
 }
 
 #[test]
@@ -142,7 +142,13 @@ fn forum_post_items_resolve_applied_tag_names() {
         .into_iter()
         .next()
         .expect("forum post should be visible");
-    assert_eq!(post.applied_tags, vec!["rust", "question"]);
+    assert_eq!(
+        post.applied_tags
+            .iter()
+            .map(|tag| tag.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["rust", "question"]
+    );
 }
 
 #[test]
@@ -1107,15 +1113,17 @@ fn forum_post_bottom_scroll_uses_last_full_page() {
 
     state.jump_bottom();
 
+    // Untagged posts are five rows each, so a height-10 viewport fits two cards
+    // and the last full page shows the final two posts.
     assert_eq!(state.selected_forum_post(), 9);
-    assert_eq!(state.message_scroll(), 9);
+    assert_eq!(state.message_scroll(), 8);
     assert_eq!(
         state
-            .visible_forum_post_items()
+            .visible_thread_card_items()
             .iter()
             .map(|post| post.label.as_str())
             .collect::<Vec<_>>(),
-        vec!["post 1"]
+        vec!["post 2", "post 1"]
     );
 }
 
@@ -1167,7 +1175,7 @@ fn poll_vote_actions_are_available_by_default() {
     assert!(poll_action.enabled);
 }
 
-fn forum_post_action_menu_state() -> DashboardState {
+fn thread_action_menu_state() -> DashboardState {
     let mut state = state_with_forum_channel_posts();
     state.set_message_view_height(10);
     state.focus_pane(FocusPane::Messages);
@@ -1190,16 +1198,16 @@ fn follow_selected_forum_post(state: &mut DashboardState) {
 }
 
 #[test]
-fn forum_post_action_menu_opens_with_permission_dimmed_items() {
-    let mut state = forum_post_action_menu_state();
+fn thread_action_menu_opens_with_permission_dimmed_items() {
+    let mut state = thread_action_menu_state();
 
-    assert!(state.open_selected_forum_post_actions());
-    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ForumPostActionMenu));
+    assert!(state.open_selected_thread_actions());
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ThreadActionMenu));
 
-    let items = state.selected_forum_post_action_items();
+    let items = state.selected_thread_action_items();
     assert_eq!(items.len(), 11);
 
-    let enabled = |kind: ForumPostActionKind| {
+    let enabled = |kind: ThreadActionKind| {
         items
             .iter()
             .find(|item| item.kind == kind)
@@ -1207,39 +1215,90 @@ fn forum_post_action_menu_opens_with_permission_dimmed_items() {
             .unwrap_or(false)
     };
     // Wired-up actions are selectable.
-    assert!(enabled(ForumPostActionKind::CopyLink));
-    assert!(enabled(ForumPostActionKind::ToggleFollow));
-    assert!(enabled(ForumPostActionKind::CopyId));
+    assert!(enabled(ThreadActionKind::CopyLink));
+    assert!(enabled(ThreadActionKind::ToggleFollow));
+    assert!(enabled(ThreadActionKind::CopyId));
     // Muting is only offered once the post is followed; this fixture is not.
-    assert!(!enabled(ForumPostActionKind::ToggleMute));
+    assert!(!enabled(ThreadActionKind::ToggleMute));
     // Management actions require permission; this fixture's user is not the
     // owner or a moderator, so they are dimmed.
-    assert!(!enabled(ForumPostActionKind::Close));
-    assert!(!enabled(ForumPostActionKind::Lock));
-    assert!(!enabled(ForumPostActionKind::Edit));
-    assert!(!enabled(ForumPostActionKind::Delete));
+    assert!(!enabled(ThreadActionKind::Close));
+    assert!(!enabled(ThreadActionKind::Lock));
+    assert!(!enabled(ThreadActionKind::Edit));
+    assert!(!enabled(ThreadActionKind::Delete));
 }
 
 #[test]
-fn forum_post_actions_skipped_outside_forum_posts() {
+fn thread_actions_skipped_outside_forum_posts() {
     // A regular message channel has no forum post focused, so the trigger falls
     // through to the normal action contexts.
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
 
-    assert!(!state.open_selected_forum_post_actions());
-    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostActionMenu));
+    assert!(!state.open_selected_thread_actions());
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ThreadActionMenu));
 }
 
 #[test]
-fn forum_post_action_copies_link_and_thread_id() {
-    let mut state = forum_post_action_menu_state();
-    state.open_selected_forum_post_actions();
+fn channel_pane_forum_post_thread_opens_thread_actions() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let thread_id = Id::new(30);
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(
+        guild_id,
+        "guild",
+        vec![forum_channel_info(guild_id, forum_id)],
+    ));
+    state.confirm_selected_guild();
+    // A followed forum post shows up as a thread under the forum in the pane.
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..forum_thread_info(
+            guild_id,
+            forum_id,
+            thread_id.get(),
+            "my post",
+            Some(301),
+            false,
+        )
+    }));
+
+    state.focus_pane(FocusPane::Channels);
+    // Forum is row 0, the nested post thread is row 1.
+    state.move_down();
+    assert_eq!(
+        state
+            .channel_pane_entries()
+            .get(state.selected_channel())
+            .and_then(|entry| entry.channel_id()),
+        Some(thread_id),
+    );
+
+    // The shared action trigger opens the forum post menu, not the channel menu.
+    state.open_leader_actions_for_focused_target();
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ThreadActionMenu));
+    assert!(!state.is_channel_leader_action_active());
+    // Mute is only enabled for a followed post, confirming the menu targets the
+    // joined thread (id 30) rather than the forum channel.
+    let items = state.selected_thread_action_items();
+    assert!(
+        items
+            .iter()
+            .find(|item| item.kind == ThreadActionKind::ToggleMute)
+            .is_some_and(|item| item.enabled)
+    );
+}
+
+#[test]
+fn thread_action_copies_link_and_thread_id() {
+    let mut state = thread_action_menu_state();
+    state.open_selected_thread_actions();
     // "Copy link" is the sixth row.
     for _ in 0..5 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
-    assert_eq!(state.activate_selected_forum_post_action(), None);
+    assert_eq!(state.activate_selected_thread_action(), None);
     assert_eq!(
         state.take_copy_text_request(),
         Some((
@@ -1248,12 +1307,12 @@ fn forum_post_action_copies_link_and_thread_id() {
         ))
     );
 
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
     // "Copy thread ID" is the last row.
     for _ in 0..10 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
-    assert_eq!(state.activate_selected_forum_post_action(), None);
+    assert_eq!(state.activate_selected_thread_action(), None);
     assert_eq!(
         state.take_copy_text_request(),
         Some(("31".to_owned(), "Thread ID copied"))
@@ -1261,19 +1320,43 @@ fn forum_post_action_copies_link_and_thread_id() {
 }
 
 #[test]
-fn forum_post_action_mute_uses_duration_submenu() {
-    let mut state = forum_post_action_menu_state();
+fn thread_action_shortcut_jumps_to_matching_row() {
+    let mut state = thread_action_menu_state();
+    state.open_selected_thread_actions();
+
+    // The default "Copy thread ID" shortcut activates that row directly, even
+    // though the selection still sits on the first row.
+    let items = state.selected_thread_action_items();
+    let copy_id_index = items
+        .iter()
+        .position(|item| item.kind == ThreadActionKind::CopyId)
+        .expect("copy id row is present");
+    let chord = state
+        .key_bindings()
+        .thread_action_shortcuts(&items, copy_id_index)[0];
+
+    assert_eq!(state.activate_thread_action_shortcut(chord), None);
+    assert_eq!(
+        state.take_copy_text_request(),
+        Some(("31".to_owned(), "Thread ID copied"))
+    );
+    assert!(!state.is_thread_action_menu_active());
+}
+
+#[test]
+fn thread_action_mute_uses_duration_submenu() {
+    let mut state = thread_action_menu_state();
     follow_selected_forum_post(&mut state);
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
     // "Mute post" is the seventh row; selecting it opens the duration submenu.
     for _ in 0..6 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
-    assert_eq!(state.activate_selected_forum_post_action(), None);
-    assert!(state.is_forum_post_action_mute_duration_phase());
+    assert_eq!(state.activate_selected_thread_action(), None);
+    assert!(state.is_thread_action_mute_duration_phase());
 
     // Picking a duration issues the thread mute command and closes the menu.
-    let command = state.activate_selected_forum_post_action();
+    let command = state.activate_selected_thread_action();
     assert!(matches!(
         command,
         Some(AppCommand::SetThreadMuted {
@@ -1282,16 +1365,16 @@ fn forum_post_action_mute_uses_duration_submenu() {
             ..
         }) if channel_id == Id::new(31)
     ));
-    assert!(!state.is_forum_post_action_menu_active());
+    assert!(!state.is_thread_action_menu_active());
 }
 
 #[test]
-fn forum_post_action_follow_toggle_emits_follow_command() {
-    let mut state = forum_post_action_menu_state();
-    state.open_selected_forum_post_actions();
+fn thread_action_follow_toggle_emits_follow_command() {
+    let mut state = thread_action_menu_state();
+    state.open_selected_thread_actions();
     // "Follow post" is the second row; the fixture post is not followed.
-    state.move_forum_post_action_down();
-    let command = state.activate_selected_forum_post_action();
+    state.move_thread_action_down();
+    let command = state.activate_selected_thread_action();
     assert!(matches!(
         command,
         Some(AppCommand::SetThreadFollowed {
@@ -1300,26 +1383,26 @@ fn forum_post_action_follow_toggle_emits_follow_command() {
             ..
         }) if channel_id == Id::new(31)
     ));
-    assert!(!state.is_forum_post_action_menu_active());
+    assert!(!state.is_thread_action_menu_active());
 }
 
 #[test]
-fn forum_post_action_disabled_item_is_noop() {
-    let mut state = forum_post_action_menu_state();
-    state.open_selected_forum_post_actions();
+fn thread_action_disabled_item_is_noop() {
+    let mut state = thread_action_menu_state();
+    state.open_selected_thread_actions();
     // "Delete post" (tenth row) is disabled this round.
     for _ in 0..9 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
-    assert_eq!(state.activate_selected_forum_post_action(), None);
+    assert_eq!(state.activate_selected_thread_action(), None);
     // The menu stays open since nothing happened.
-    assert!(state.is_forum_post_action_menu_active());
+    assert!(state.is_thread_action_menu_active());
 }
 
 /// Forum post menu where the current user owns the guild, so the post
 /// management actions (close/lock/pin/delete) are permitted. The single thread
 /// (31, "release notes") is not archived/locked/pinned.
-fn manageable_forum_post_action_menu_state() -> DashboardState {
+fn manageable_thread_action_menu_state() -> DashboardState {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
     let mut state = DashboardState::new();
@@ -1366,11 +1449,11 @@ fn manageable_forum_post_action_menu_state() -> DashboardState {
 
 #[test]
 fn forum_post_management_actions_emit_commands_for_manager() {
-    let mut state = manageable_forum_post_action_menu_state();
-    state.open_selected_forum_post_actions();
+    let mut state = manageable_thread_action_menu_state();
+    state.open_selected_thread_actions();
 
-    let items = state.selected_forum_post_action_items();
-    let item = |kind: ForumPostActionKind| {
+    let items = state.selected_thread_action_items();
+    let item = |kind: ThreadActionKind| {
         items
             .iter()
             .find(|item| item.kind == kind)
@@ -1379,44 +1462,44 @@ fn forum_post_management_actions_emit_commands_for_manager() {
     };
     // A manager sees all four wired-up management actions enabled, labelled for
     // the post's current (not archived/locked/pinned) state.
-    let close = item(ForumPostActionKind::Close);
+    let close = item(ThreadActionKind::Close);
     assert!(close.enabled && close.label == "Close post");
-    let lock = item(ForumPostActionKind::Lock);
+    let lock = item(ThreadActionKind::Lock);
     assert!(lock.enabled && lock.label == "Lock post");
-    let pin = item(ForumPostActionKind::Pin);
+    let pin = item(ThreadActionKind::Pin);
     assert!(pin.enabled && pin.label == "Pin post");
-    assert!(item(ForumPostActionKind::Delete).enabled);
+    assert!(item(ThreadActionKind::Delete).enabled);
 
     // Close -> archive command (second-row offset 2).
     for _ in 0..2 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
     assert!(matches!(
-        state.activate_selected_forum_post_action(),
-        Some(AppCommand::SetForumPostArchived { channel_id, archived: true, .. })
+        state.activate_selected_thread_action(),
+        Some(AppCommand::SetThreadArchived { channel_id, archived: true, .. })
             if channel_id == Id::new(31)
     ));
-    assert!(!state.is_forum_post_action_menu_active());
+    assert!(!state.is_thread_action_menu_active());
 
     // Lock -> lock command (row offset 3).
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
     for _ in 0..3 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
     assert!(matches!(
-        state.activate_selected_forum_post_action(),
-        Some(AppCommand::SetForumPostLocked { channel_id, locked: true, .. })
+        state.activate_selected_thread_action(),
+        Some(AppCommand::SetThreadLocked { channel_id, locked: true, .. })
             if channel_id == Id::new(31)
     ));
 
     // Pin -> pin command (row offset 8).
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
     for _ in 0..8 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
     assert!(matches!(
-        state.activate_selected_forum_post_action(),
-        Some(AppCommand::SetForumPostPinned { channel_id, pinned: true, .. })
+        state.activate_selected_thread_action(),
+        Some(AppCommand::SetThreadPinned { channel_id, pinned: true, .. })
             if channel_id == Id::new(31)
     ));
 }
@@ -1425,31 +1508,31 @@ fn forum_post_management_actions_emit_commands_for_manager() {
 /// delete confirmation gate open. Asserts the gate replaced the menu and that
 /// nothing was emitted yet.
 fn open_forum_post_delete_gate(state: &mut DashboardState) {
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
     for _ in 0..9 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
-    assert_eq!(state.activate_selected_forum_post_action(), None);
-    assert!(!state.is_forum_post_action_menu_active());
-    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ForumPostDeleteConfirmation));
+    assert_eq!(state.activate_selected_thread_action(), None);
+    assert!(!state.is_thread_action_menu_active());
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ThreadDeleteConfirmation));
 }
 
 #[test]
 fn forum_post_delete_uses_confirmation_before_emitting() {
-    let mut state = manageable_forum_post_action_menu_state();
+    let mut state = manageable_thread_action_menu_state();
 
     // Cancelling the gate clears it without deleting.
     open_forum_post_delete_gate(&mut state);
-    state.close_forum_post_delete_confirmation();
-    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostDeleteConfirmation));
+    state.close_thread_delete_confirmation();
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ThreadDeleteConfirmation));
 
     // Confirming issues the delete and closes the gate.
     open_forum_post_delete_gate(&mut state);
     assert!(matches!(
-        state.confirm_forum_post_delete(),
-        Some(AppCommand::DeleteForumPost { channel_id, .. }) if channel_id == Id::new(31)
+        state.confirm_thread_delete(),
+        Some(AppCommand::DeleteThread { channel_id, .. }) if channel_id == Id::new(31)
     ));
-    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostDeleteConfirmation));
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ThreadDeleteConfirmation));
 }
 
 #[test]
@@ -1492,9 +1575,9 @@ fn forum_post_delete_requires_manage_permission_not_authorship() {
     state.set_message_view_height(10);
     state.focus_pane(FocusPane::Messages);
 
-    state.open_selected_forum_post_actions();
-    let items = state.selected_forum_post_action_items();
-    let enabled = |kind: ForumPostActionKind| {
+    state.open_selected_thread_actions();
+    let items = state.selected_thread_action_items();
+    let enabled = |kind: ThreadActionKind| {
         items
             .iter()
             .find(|item| item.kind == kind)
@@ -1502,15 +1585,15 @@ fn forum_post_delete_requires_manage_permission_not_authorship() {
             .unwrap_or(false)
     };
     // The author can close their own post...
-    assert!(enabled(ForumPostActionKind::Close));
+    assert!(enabled(ThreadActionKind::Close));
     // ...but cannot delete it, nor use the moderator-only actions.
-    assert!(!enabled(ForumPostActionKind::Delete));
-    assert!(!enabled(ForumPostActionKind::Lock));
+    assert!(!enabled(ThreadActionKind::Delete));
+    assert!(!enabled(ThreadActionKind::Lock));
 }
 
 #[test]
 fn forum_post_management_labels_reflect_thread_state() {
-    let mut state = manageable_forum_post_action_menu_state();
+    let mut state = manageable_thread_action_menu_state();
     // Re-upsert the thread as archived + locked + pinned (flags PINNED = 1 << 1).
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(true, true)),
@@ -1524,34 +1607,34 @@ fn forum_post_management_labels_reflect_thread_state() {
             true,
         )
     }));
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
 
-    let items = state.selected_forum_post_action_items();
-    let label = |kind: ForumPostActionKind| {
+    let items = state.selected_thread_action_items();
+    let label = |kind: ThreadActionKind| {
         items
             .iter()
             .find(|item| item.kind == kind)
             .map(|item| item.label.clone())
             .expect("action should exist")
     };
-    assert_eq!(label(ForumPostActionKind::Close), "Reopen post");
-    assert_eq!(label(ForumPostActionKind::Lock), "Unlock post");
-    assert_eq!(label(ForumPostActionKind::Pin), "Unpin post");
+    assert_eq!(label(ThreadActionKind::Close), "Reopen post");
+    assert_eq!(label(ThreadActionKind::Lock), "Unlock post");
+    assert_eq!(label(ThreadActionKind::Pin), "Unpin post");
 }
 
 #[test]
-fn forum_post_edit_action_opens_popup_seeded_from_post() {
-    let mut state = manageable_forum_post_action_menu_state();
-    state.open_selected_forum_post_actions();
+fn thread_edit_action_opens_popup_seeded_from_post() {
+    let mut state = manageable_thread_action_menu_state();
+    state.open_selected_thread_actions();
     // "Edit post" is the fifth row (offset 4) and enabled for the manager.
     for _ in 0..4 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
-    assert_eq!(state.activate_selected_forum_post_action(), None);
-    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ForumPostEdit));
+    assert_eq!(state.activate_selected_thread_action(), None);
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ThreadEdit));
 
     let view = state
-        .forum_post_edit_view()
+        .thread_edit_view()
         .expect("edit popup should expose a view");
     assert_eq!(view.title, "release notes");
     // The guild owner has manage permission, so slow mode is editable.
@@ -1559,58 +1642,58 @@ fn forum_post_edit_action_opens_popup_seeded_from_post() {
 }
 
 #[test]
-fn forum_post_edit_submit_emits_edit_command_with_edited_title() {
-    let mut state = manageable_forum_post_action_menu_state();
-    state.open_forum_post_edit(Id::new(31));
+fn thread_edit_submit_emits_edit_command_with_edited_title() {
+    let mut state = manageable_thread_action_menu_state();
+    state.open_thread_edit(Id::new(31));
 
     // Edit the title inline: Enter to edit, clear, type, Enter to commit.
-    assert_eq!(state.activate_forum_post_edit(), None);
-    state.clear_forum_post_edit_active_field();
+    assert_eq!(state.activate_thread_edit(), None);
+    state.clear_thread_edit_active_field();
     for ch in "renamed".chars() {
-        state.push_forum_post_edit_char(ch);
+        state.push_thread_edit_char(ch);
     }
-    assert_eq!(state.activate_forum_post_edit(), None);
+    assert_eq!(state.activate_thread_edit(), None);
 
     // Move to the submit cell and activate it.
-    state.cycle_forum_post_edit_field_next(); // Tags
-    state.cycle_forum_post_edit_field_next(); // SlowMode
-    state.cycle_forum_post_edit_field_next(); // AutoArchive
-    state.cycle_forum_post_edit_field_next(); // Submit
-    let command = state.activate_forum_post_edit();
+    state.cycle_thread_edit_field_next(); // Tags
+    state.cycle_thread_edit_field_next(); // SlowMode
+    state.cycle_thread_edit_field_next(); // AutoArchive
+    state.cycle_thread_edit_field_next(); // Submit
+    let command = state.activate_thread_edit();
 
     assert!(matches!(
         command,
-        Some(AppCommand::EditForumPost { channel_id, ref name, .. })
+        Some(AppCommand::EditThread { channel_id, ref name, .. })
             if channel_id == Id::new(31) && name == "renamed"
     ));
-    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostEdit));
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ThreadEdit));
 }
 
 #[test]
-fn forum_post_edit_slow_mode_is_locked_without_manage_permission() {
+fn thread_edit_slow_mode_is_locked_without_manage_permission() {
     // The default forum fixture has no current user with manage permission, so
     // the slow-mode selector is read-only and cycling it does nothing.
-    let mut state = forum_post_action_menu_state();
-    state.open_forum_post_edit(Id::new(31));
+    let mut state = thread_action_menu_state();
+    state.open_thread_edit(Id::new(31));
 
     let before = state
-        .forum_post_edit_view()
+        .thread_edit_view()
         .expect("edit popup should expose a view");
     assert!(!before.can_set_slow_mode);
 
     // Focus the slow-mode selector and try to cycle it.
-    state.cycle_forum_post_edit_field_next(); // Tags
-    state.cycle_forum_post_edit_field_next(); // SlowMode
-    state.cycle_forum_post_edit_selector(true);
+    state.cycle_thread_edit_field_next(); // Tags
+    state.cycle_thread_edit_field_next(); // SlowMode
+    state.cycle_thread_edit_selector(true);
 
     let after = state
-        .forum_post_edit_view()
+        .thread_edit_view()
         .expect("edit popup should expose a view");
     assert_eq!(before.slow_mode_label, after.slow_mode_label);
 }
 
 #[test]
-fn forum_post_edit_tag_picker_lists_parent_forum_tags() {
+fn thread_edit_tag_picker_lists_parent_forum_tags() {
     // Available tags live on the parent forum, while the post (thread) only
     // carries its applied tags. The editor must resolve the picker from the
     // parent, otherwise it wrongly reports "no tags available".
@@ -1665,14 +1748,14 @@ fn forum_post_edit_tag_picker_lists_parent_forum_tags() {
     state.set_message_view_height(10);
     state.focus_pane(FocusPane::Messages);
 
-    state.open_forum_post_edit(Id::new(31));
-    state.cycle_forum_post_edit_field_next(); // Title -> Tags
+    state.open_thread_edit(Id::new(31));
+    state.cycle_thread_edit_field_next(); // Title -> Tags
     // Opening the picker must succeed (not fall back to "no tags available").
-    assert_eq!(state.activate_forum_post_edit(), None);
-    assert!(state.is_forum_post_edit_tag_picker_active());
+    assert_eq!(state.activate_thread_edit(), None);
+    assert!(state.is_thread_edit_tag_picker_active());
 
     let view = state
-        .forum_post_edit_view()
+        .thread_edit_view()
         .expect("edit popup should expose a view");
     let names: Vec<&str> = view.tags.iter().map(|tag| tag.name.as_str()).collect();
     assert!(names.contains(&"rust") && names.contains(&"question"));
@@ -1685,53 +1768,136 @@ fn forum_post_edit_tag_picker_lists_parent_forum_tags() {
 }
 
 #[test]
-fn forum_post_notification_settings_disabled_when_not_followed() {
+fn thread_edit_tag_picker_keeps_custom_emoji_tags() {
+    // Regression: a custom-emoji tag has `emoji_id` set and `emoji_name` null;
+    // it must surface a CDN url plus a `:name:` fallback, not be dropped.
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let mut state = DashboardState::new();
+    let mut forum = forum_channel_info(guild_id, forum_id);
+    forum.available_tags = vec![
+        ForumTagInfo {
+            id: Id::new(101),
+            name: "sparkles".to_owned(),
+            moderated: false,
+            emoji_id: Some(Id::new(77)),
+            emoji_name: None,
+        },
+        ForumTagInfo {
+            id: Id::new(102),
+            name: "fire".to_owned(),
+            moderated: false,
+            emoji_id: None,
+            emoji_name: Some("🔥".to_owned()),
+        },
+    ];
+    state.push_event(AppEvent::GuildCreate {
+        guild_id,
+        name: "guild".to_owned(),
+        member_count: None,
+        owner_id: Some(Id::new(10)),
+        channels: vec![forum],
+        members: Vec::new(),
+        presences: Vec::new(),
+        roles: Vec::new(),
+        // The tag payload omits the custom emoji name, so it is resolved from
+        // the guild emoji cache by `emoji_id`.
+        emojis: vec![CustomEmojiInfo::test(Id::new(77), "sparkle")],
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    let mut thread = forum_thread_info(guild_id, forum_id, 31, "release notes", Some(301), false);
+    thread.applied_tags = vec![Id::new(101)];
+    state.push_event(AppEvent::ForumPostsLoaded {
+        channel_id: forum_id,
+        archive_state: ForumPostArchiveState::Active,
+        offset: 0,
+        next_offset: 1,
+        threads: vec![thread],
+        first_messages: Vec::new(),
+        has_more: false,
+    });
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.set_message_view_height(10);
+    state.focus_pane(FocusPane::Messages);
+
+    state.open_thread_edit(Id::new(31));
+    let view = state
+        .thread_edit_view()
+        .expect("edit popup should expose a view");
+
+    let custom = view
+        .tags
+        .iter()
+        .find(|tag| tag.name == "sparkles")
+        .expect("custom-emoji tag should not be dropped");
+    assert_eq!(custom.unicode_emoji, None);
+    assert_eq!(
+        custom.custom_emoji_url.as_deref(),
+        Some("https://cdn.discordapp.com/emojis/77.png")
+    );
+    assert_eq!(custom.custom_emoji_label.as_deref(), Some(":sparkle:"));
+
+    let unicode = view
+        .tags
+        .iter()
+        .find(|tag| tag.name == "fire")
+        .expect("unicode-emoji tag should be present");
+    assert_eq!(unicode.unicode_emoji.as_deref(), Some("🔥"));
+    assert_eq!(unicode.custom_emoji_url, None);
+}
+
+#[test]
+fn thread_notification_settings_disabled_when_not_followed() {
     // The default fixture is not followed, so "Notification settings" must be
     // disabled (it targets the thread-member settings endpoint, which requires
     // membership).
-    let mut state = forum_post_action_menu_state();
-    state.open_selected_forum_post_actions();
+    let mut state = thread_action_menu_state();
+    state.open_selected_thread_actions();
 
-    let items = state.selected_forum_post_action_items();
+    let items = state.selected_thread_action_items();
     let notif = items
         .iter()
-        .find(|item| item.kind == ForumPostActionKind::NotificationSettings)
+        .find(|item| item.kind == ThreadActionKind::NotificationSettings)
         .expect("notification settings action should exist");
     assert!(!notif.enabled);
 
     // After following, the item becomes enabled.
-    state.close_forum_post_action_menu();
+    state.close_thread_action_menu();
     follow_selected_forum_post(&mut state);
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
 
-    let items = state.selected_forum_post_action_items();
+    let items = state.selected_thread_action_items();
     let notif = items
         .iter()
-        .find(|item| item.kind == ForumPostActionKind::NotificationSettings)
+        .find(|item| item.kind == ThreadActionKind::NotificationSettings)
         .expect("notification settings action should exist");
     assert!(notif.enabled);
 }
 
 #[test]
-fn forum_post_notification_settings_submenu_emits_command() {
+fn thread_notification_settings_submenu_emits_command() {
     // Activate "Notification settings" (row 7) on a followed post. The submenu
     // shows 3 radio rows; selecting "Nothing" (index 2) emits the command.
-    let mut state = forum_post_action_menu_state();
+    let mut state = thread_action_menu_state();
     follow_selected_forum_post(&mut state);
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
 
     // Navigate to "Notification settings" (row index 7).
     for _ in 0..7 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
     // Activating enters the submenu, returning None.
-    assert_eq!(state.activate_selected_forum_post_action(), None);
-    assert!(state.is_forum_post_action_notification_phase());
+    assert_eq!(state.activate_selected_thread_action(), None);
+    assert!(state.is_thread_action_notification_phase());
 
     // Pick "Nothing" (third row, index 2).
-    state.move_forum_post_action_down();
-    state.move_forum_post_action_down();
-    let command = state.activate_selected_forum_post_action();
+    state.move_thread_action_down();
+    state.move_thread_action_down();
+    let command = state.activate_selected_thread_action();
     assert!(matches!(
         command,
         Some(AppCommand::SetThreadNotificationLevel {
@@ -1740,14 +1906,14 @@ fn forum_post_notification_settings_submenu_emits_command() {
             ..
         }) if channel_id == Id::new(31)
     ));
-    assert!(!state.is_forum_post_action_menu_active());
+    assert!(!state.is_thread_action_menu_active());
 }
 
 #[test]
-fn forum_post_notification_settings_marks_current_level_after_update() {
+fn thread_notification_settings_marks_current_level_after_update() {
     // After a ThreadNotificationLevelUpdate event, the row matching the new
     // flags should have the [x] prefix and others should have [ ].
-    let mut state = forum_post_action_menu_state();
+    let mut state = thread_action_menu_state();
     follow_selected_forum_post(&mut state);
 
     // Simulate the optimistic update setting flags to 2 (All messages).
@@ -1756,14 +1922,14 @@ fn forum_post_notification_settings_marks_current_level_after_update() {
         flags: 2,
     });
 
-    state.open_selected_forum_post_actions();
+    state.open_selected_thread_actions();
     for _ in 0..7 {
-        state.move_forum_post_action_down();
+        state.move_thread_action_down();
     }
-    assert_eq!(state.activate_selected_forum_post_action(), None);
-    assert!(state.is_forum_post_action_notification_phase());
+    assert_eq!(state.activate_selected_thread_action(), None);
+    assert!(state.is_thread_action_notification_phase());
 
-    let items = state.selected_forum_post_notification_items();
+    let items = state.selected_thread_notification_items();
     assert_eq!(items.len(), 3);
     assert!(
         items[0].label.starts_with("[x]"),
@@ -1776,5 +1942,110 @@ fn forum_post_notification_settings_marks_current_level_after_update() {
     assert!(
         items[2].label.starts_with("[ ]"),
         "Nothing should not be marked"
+    );
+}
+
+#[test]
+fn channel_pane_regular_thread_opens_thread_actions_without_pin() {
+    let guild_id = Id::new(1);
+    // `general` (id 11) is a normal text channel in the standard channel tree,
+    // so a thread under it is a regular thread, not a forum post.
+    let parent_id = Id::new(11);
+    let thread_id = Id::new(30);
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..thread_channel_info(guild_id, parent_id, thread_id, "design chat")
+    }));
+
+    state.focus_pane(FocusPane::Channels);
+    // Walk down to the nested joined thread under `general`.
+    for _ in 0..10 {
+        let selected = state
+            .channel_pane_entries()
+            .get(state.selected_channel())
+            .and_then(|entry| entry.channel_id());
+        if selected == Some(thread_id) {
+            break;
+        }
+        state.move_down();
+    }
+    assert_eq!(
+        state
+            .channel_pane_entries()
+            .get(state.selected_channel())
+            .and_then(|entry| entry.channel_id()),
+        Some(thread_id),
+    );
+
+    // The shared action trigger opens the thread action menu, not the channel
+    // menu.
+    state.open_leader_actions_for_focused_target();
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ThreadActionMenu));
+    assert!(!state.is_channel_leader_action_active());
+
+    let items = state.selected_thread_action_items();
+    let label = |kind: ThreadActionKind| {
+        items
+            .iter()
+            .find(|item| item.kind == kind)
+            .map(|item| item.label.clone())
+    };
+    // Labels read "thread", not "post".
+    assert_eq!(
+        label(ThreadActionKind::Close),
+        Some("Close thread".to_owned())
+    );
+    assert_eq!(
+        label(ThreadActionKind::Lock),
+        Some("Lock thread".to_owned())
+    );
+    assert_eq!(
+        label(ThreadActionKind::Edit),
+        Some("Edit thread".to_owned())
+    );
+    assert_eq!(
+        label(ThreadActionKind::Delete),
+        Some("Delete thread".to_owned())
+    );
+    assert_eq!(
+        label(ThreadActionKind::ToggleMute),
+        Some("Mute thread".to_owned())
+    );
+    assert_eq!(
+        label(ThreadActionKind::ToggleFollow),
+        Some("Unfollow thread".to_owned())
+    );
+    // Pin is forum-only, so it never appears for a regular thread.
+    assert!(label(ThreadActionKind::Pin).is_none());
+    // The remaining management/notification rows are still present.
+    assert!(label(ThreadActionKind::NotificationSettings).is_some());
+}
+
+#[test]
+fn thread_action_menu_keeps_pin_and_post_labels() {
+    let mut state = manageable_thread_action_menu_state();
+    state.open_selected_thread_actions();
+
+    let items = state.selected_thread_action_items();
+    let label = |kind: ThreadActionKind| {
+        items
+            .iter()
+            .find(|item| item.kind == kind)
+            .map(|item| item.label.clone())
+    };
+    // Forum posts keep the "post" noun and the forum-only Pin row.
+    assert_eq!(
+        label(ThreadActionKind::Close),
+        Some("Close post".to_owned())
+    );
+    assert_eq!(
+        label(ThreadActionKind::ToggleMute),
+        Some("Mute post".to_owned())
+    );
+    assert_eq!(label(ThreadActionKind::Pin), Some("Pin post".to_owned()));
+    assert_eq!(
+        label(ThreadActionKind::Delete),
+        Some("Delete post".to_owned())
     );
 }

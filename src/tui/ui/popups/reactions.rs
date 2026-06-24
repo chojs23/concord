@@ -5,7 +5,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
-    emoji_images: Vec<EmojiImage<'_>>,
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if !state.is_active_modal_popup(ActiveModalPopupKind::EmojiReactionPicker) {
         return;
@@ -485,7 +485,7 @@ fn render_emoji_reaction_images(
     reactions: &[EmojiReactionItem],
     selected: usize,
     visible_items: usize,
-    emoji_images: Vec<EmojiImage<'_>>,
+    emoji_images: &[EmojiImage<'_>],
 ) {
     if area.width <= EMOJI_REACTION_IMAGE_WIDTH || area.height == 0 {
         return;

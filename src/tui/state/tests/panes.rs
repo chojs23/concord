@@ -298,6 +298,98 @@ fn channel_tree_shows_joined_threads_under_parent_channel() {
 }
 
 #[test]
+fn channel_tree_hides_archived_joined_threads() {
+    let guild_id = Id::new(1);
+    let parent_id = Id::new(11);
+    let active_thread_id = Id::new(30);
+    let archived_thread_id = Id::new(31);
+    let mut state = state_with_channel_tree();
+
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..thread_channel_info(guild_id, parent_id, active_thread_id, "active thread")
+    }));
+    // Joined but archived: the `/threads/search` fetch for the thread-list view
+    // caches these, but they must stay out of the sidebar.
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(true, false)),
+        ..thread_channel_info(guild_id, parent_id, archived_thread_id, "archived thread")
+    }));
+
+    assert_eq!(
+        channel_entry_names(&state),
+        vec!["general", "active thread", "random"]
+    );
+}
+
+#[test]
+fn channel_thread_list_view_lists_joined_threads_as_cards() {
+    use crate::tui::state::MessagePaneSource;
+
+    let guild_id = Id::new(1);
+    let parent_id = Id::new(11);
+    let joined_thread_id = Id::new(30);
+    let mut state = state_with_channel_tree();
+
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..thread_channel_info(guild_id, parent_id, joined_thread_id, "joined thread")
+    }));
+
+    state.activate_channel(parent_id);
+    state.enter_channel_thread_list_view(parent_id);
+
+    assert!(state.is_channel_thread_list_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ChannelThreads {
+            channel_id: parent_id
+        })
+    );
+    // Before the `/threads/search` fetch lands, the gateway-cached joined thread
+    // is shown straight away.
+    let cards = state.selected_thread_card_items();
+    assert_eq!(
+        cards.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
+        vec!["joined thread"]
+    );
+    assert_eq!(state.message_pane_title(), "Threads · #general");
+}
+
+#[test]
+fn is_forum_post_thread_distinguishes_posts_from_regular_threads() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let text_id = Id::new(11); // `general` text channel in the standard tree
+    let post_id = Id::new(30);
+    let thread_id = Id::new(31);
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::ChannelUpsert(forum_channel_info(
+        guild_id, forum_id,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..forum_thread_info(
+            guild_id,
+            forum_id,
+            post_id.get(),
+            "a post",
+            Some(300),
+            false,
+        )
+    }));
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..thread_channel_info(guild_id, text_id, thread_id, "a thread")
+    }));
+
+    assert!(state.is_forum_post_thread(post_id));
+    assert!(!state.is_forum_post_thread(thread_id));
+    assert!(!state.is_forum_post_thread(text_id));
+}
+
+#[test]
 fn channel_tree_removes_thread_after_current_user_leaves() {
     let guild_id = Id::new(1);
     let parent_id = Id::new(11);

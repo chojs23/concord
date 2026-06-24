@@ -286,38 +286,38 @@ impl DiscordClient {
         self.rest.unfollow_thread(thread_id).await
     }
 
-    pub async fn set_forum_post_archived(
+    pub async fn set_thread_archived(
         &self,
         thread_id: Id<ChannelMarker>,
         archived: bool,
     ) -> Result<()> {
-        self.rest.set_forum_post_archived(thread_id, archived).await
+        self.rest.set_thread_archived(thread_id, archived).await
     }
 
-    pub async fn set_forum_post_locked(
+    pub async fn set_thread_locked(
         &self,
         thread_id: Id<ChannelMarker>,
         locked: bool,
     ) -> Result<()> {
-        self.rest.set_forum_post_locked(thread_id, locked).await
+        self.rest.set_thread_locked(thread_id, locked).await
     }
 
-    pub async fn set_forum_post_pinned(
+    pub async fn set_thread_pinned(
         &self,
         thread_id: Id<ChannelMarker>,
         pinned: bool,
         current_flags: u64,
     ) -> Result<()> {
         self.rest
-            .set_forum_post_pinned(thread_id, pinned, current_flags)
+            .set_thread_pinned(thread_id, pinned, current_flags)
             .await
     }
 
-    pub async fn delete_forum_post(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
-        self.rest.delete_forum_post(thread_id).await
+    pub async fn delete_thread(&self, thread_id: Id<ChannelMarker>) -> Result<()> {
+        self.rest.delete_thread(thread_id).await
     }
 
-    pub async fn edit_forum_post_settings(
+    pub async fn edit_thread_settings(
         &self,
         thread_id: Id<ChannelMarker>,
         name: &str,
@@ -326,7 +326,7 @@ impl DiscordClient {
         auto_archive_duration: u64,
     ) -> Result<()> {
         self.rest
-            .edit_forum_post_settings(
+            .edit_thread_settings(
                 thread_id,
                 name,
                 applied_tags,

@@ -1,6 +1,6 @@
 use super::*;
 use crate::tui::selection;
-use crate::tui::state::{ForumPostEditField, ForumPostEditTagView, ForumPostEditView};
+use crate::tui::state::{ThreadEditField, ThreadEditTagView, ThreadEditView};
 
 const FORUM_POST_EDIT_POPUP_WIDTH: u16 = 78;
 const FORUM_POST_EDIT_POPUP_HEIGHT: u16 = 18;
@@ -25,21 +25,26 @@ struct EditLayout {
     cursor: Option<(usize, usize)>,
 }
 
-pub(in crate::tui::ui) fn render_forum_post_edit(
+pub(in crate::tui::ui) fn render_thread_edit(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::ForumPostEdit) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::ThreadEdit) {
         return;
     }
-    let Some(view) = state.forum_post_edit_view() else {
+    let Some(view) = state.thread_edit_view() else {
         return;
     };
 
-    let popup = forum_post_edit_popup_area(area);
+    let popup = thread_edit_popup_area(area);
     frame.render_widget(Clear, popup);
-    let block = panel_block("Edit Forum Post", true);
+    let title = if view.is_forum_post {
+        "Edit Forum Post"
+    } else {
+        "Edit Thread"
+    };
+    let block = panel_block(title, true);
     let inner = block.inner(popup);
     // Reserve the rightmost column for the scrollbar so long content never
     // collides with it.
@@ -49,7 +54,7 @@ pub(in crate::tui::ui) fn render_forum_post_edit(
     let total = layout.lines.len();
     let viewport = inner.height as usize;
     let scroll = state
-        .forum_post_edit_scroll()
+        .thread_edit_scroll()
         .min(total.saturating_sub(viewport));
 
     let visible: Vec<Line<'static>> = layout
@@ -75,7 +80,7 @@ pub(in crate::tui::ui) fn render_forum_post_edit(
     }
 }
 
-pub(in crate::tui::ui) fn forum_post_edit_popup_area(area: Rect) -> Rect {
+pub(in crate::tui::ui) fn thread_edit_popup_area(area: Rect) -> Rect {
     centered_rect(
         area,
         FORUM_POST_EDIT_POPUP_WIDTH
@@ -87,38 +92,46 @@ pub(in crate::tui::ui) fn forum_post_edit_popup_area(area: Rect) -> Rect {
     )
 }
 
-fn build_edit_layout(view: &ForumPostEditView, width: usize) -> EditLayout {
+fn build_edit_layout(view: &ThreadEditView, width: usize) -> EditLayout {
     let mut lines = Vec::new();
 
     let title_row = lines.len();
     lines.push(field_line(
         "title",
         &view.title,
-        view.active_field == ForumPostEditField::Title,
+        view.active_field == ThreadEditField::Title,
         view.editing_title,
         width,
         "(empty)",
     ));
 
-    lines.push(Line::from(""));
-    let tags_row = lines.len();
-    let tag_label = if view.requires_tag {
-        "tags: required"
+    // Tags only exist on forum posts. For a regular thread the whole Tags
+    // section is omitted, and `tags_row` collapses onto the slow-mode row so the
+    // (then-unreachable) Tags focus range stays valid.
+    let tags_row = if view.is_forum_post {
+        lines.push(Line::from(""));
+        let tags_row = lines.len();
+        let tag_label = if view.requires_tag {
+            "tags: required"
+        } else {
+            "tags:"
+        };
+        lines.push(section_line(
+            tag_label,
+            view.active_field == ThreadEditField::Tags,
+        ));
+        push_tag_summary(&mut lines, &view.tags, width);
+        tags_row
     } else {
-        "tags:"
+        lines.len()
     };
-    lines.push(section_line(
-        tag_label,
-        view.active_field == ForumPostEditField::Tags,
-    ));
-    push_tag_summary(&mut lines, &view.tags, width);
 
     lines.push(Line::from(""));
     let slow_mode_row = lines.len();
     lines.push(selector_line(
         "slow mode",
         &view.slow_mode_label,
-        view.active_field == ForumPostEditField::SlowMode,
+        view.active_field == ThreadEditField::SlowMode,
         view.can_set_slow_mode,
         width,
     ));
@@ -127,7 +140,7 @@ fn build_edit_layout(view: &ForumPostEditView, width: usize) -> EditLayout {
     lines.push(selector_line(
         "auto-archive",
         &view.auto_archive_label,
-        view.active_field == ForumPostEditField::AutoArchive,
+        view.active_field == ThreadEditField::AutoArchive,
         true,
         width,
     ));
@@ -136,12 +149,12 @@ fn build_edit_layout(view: &ForumPostEditView, width: usize) -> EditLayout {
     let submit_row = lines.len();
     lines.push(button_line(
         "submit",
-        view.active_field == ForumPostEditField::Submit,
+        view.active_field == ThreadEditField::Submit,
     ));
     let cancel_row = lines.len();
     lines.push(button_line(
         "cancel",
-        view.active_field == ForumPostEditField::Cancel,
+        view.active_field == ThreadEditField::Cancel,
     ));
 
     if let Some(status) = view.status.as_deref() {
@@ -169,20 +182,20 @@ fn build_edit_layout(view: &ForumPostEditView, width: usize) -> EditLayout {
 
 /// The [start, end) row range that must be brought into view for the currently
 /// focused cell.
-fn focus_rows(view: &ForumPostEditView, layout: &EditLayout) -> (usize, usize) {
+fn focus_rows(view: &ThreadEditView, layout: &EditLayout) -> (usize, usize) {
     match view.active_field {
-        ForumPostEditField::Title => (layout.title_row, layout.title_row + 1),
-        ForumPostEditField::Tags => (layout.tags_row, layout.slow_mode_row),
-        ForumPostEditField::SlowMode => (layout.slow_mode_row, layout.auto_archive_row),
-        ForumPostEditField::AutoArchive => (layout.auto_archive_row, layout.submit_row),
+        ThreadEditField::Title => (layout.title_row, layout.title_row + 1),
+        ThreadEditField::Tags => (layout.tags_row, layout.slow_mode_row),
+        ThreadEditField::SlowMode => (layout.slow_mode_row, layout.auto_archive_row),
+        ThreadEditField::AutoArchive => (layout.auto_archive_row, layout.submit_row),
         // Anchor the buttons to the end of the content so the other button and
         // any error status below them stay on screen instead of being clipped.
-        ForumPostEditField::Submit => (layout.submit_row, layout.lines.len()),
-        ForumPostEditField::Cancel => (layout.cancel_row, layout.lines.len()),
+        ThreadEditField::Submit => (layout.submit_row, layout.lines.len()),
+        ThreadEditField::Cancel => (layout.cancel_row, layout.lines.len()),
     }
 }
 
-fn reveal_target(view: &ForumPostEditView, layout: &EditLayout) -> (usize, usize) {
+fn reveal_target(view: &ThreadEditView, layout: &EditLayout) -> (usize, usize) {
     if let Some((row, _)) = layout.cursor {
         (row, row + 1)
     } else {
@@ -192,19 +205,19 @@ fn reveal_target(view: &ForumPostEditView, layout: &EditLayout) -> (usize, usize
 
 /// Total content height and the row range to reveal, for `sync_view_heights` to
 /// drive the popup scroll state without rebuilding the layout itself.
-pub(in crate::tui::ui) struct ForumPostEditMetrics {
+pub(in crate::tui::ui) struct ThreadEditMetrics {
     pub total_lines: usize,
     pub reveal_start: usize,
     pub reveal_end: usize,
 }
 
-pub(in crate::tui::ui) fn forum_post_edit_metrics(
-    view: &ForumPostEditView,
+pub(in crate::tui::ui) fn thread_edit_metrics(
+    view: &ThreadEditView,
     content_width: usize,
-) -> ForumPostEditMetrics {
+) -> ThreadEditMetrics {
     let layout = build_edit_layout(view, content_width);
     let (reveal_start, reveal_end) = reveal_target(view, &layout);
-    ForumPostEditMetrics {
+    ThreadEditMetrics {
         total_lines: layout.lines.len(),
         reveal_start,
         reveal_end,
@@ -214,15 +227,16 @@ pub(in crate::tui::ui) fn forum_post_edit_metrics(
 /// Floating tag picker drawn on top of the editor, reusing the composer's
 /// visual style. Tags are listed with checkboxes, scrolled to keep the active
 /// tag in view.
-pub(in crate::tui::ui) fn render_forum_post_edit_tag_picker(
+pub(in crate::tui::ui) fn render_thread_edit_tag_picker(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
+    emoji_images: &[EmojiImage<'_>],
 ) {
-    if !state.is_forum_post_edit_tag_picker_active() {
+    if !state.is_thread_edit_tag_picker_active() {
         return;
     }
-    let Some(view) = state.forum_post_edit_view() else {
+    let Some(view) = state.thread_edit_view() else {
         return;
     };
     if view.tags.is_empty() {
@@ -230,7 +244,7 @@ pub(in crate::tui::ui) fn render_forum_post_edit_tag_picker(
     }
     let tags = &view.tags;
     let selected = tags.iter().position(|tag| tag.active).unwrap_or(0);
-    let popup = forum_post_edit_tag_picker_popup_area(area, tags.len());
+    let popup = thread_edit_tag_picker_popup_area(area, tags.len());
     let block = panel_block("Choose tags", true);
     let content = block.inner(popup);
     let visible_items = usize::from(content.height)
@@ -238,15 +252,32 @@ pub(in crate::tui::ui) fn render_forum_post_edit_tag_picker(
         .min(tags.len())
         .max(1);
     let visible_range = selection::visible_item_range(tags.len(), selected, visible_items);
+    let ready_urls = ready_emoji_urls(emoji_images);
     frame.render_widget(Clear, popup);
     let rows: Vec<Line<'static>> = tags[visible_range.clone()]
         .iter()
-        .map(|tag| tag_line(tag, usize::from(content.width)))
+        .map(|tag| {
+            tag_line(
+                tag,
+                usize::from(content.width),
+                tag_custom_emoji_ready(tag.custom_emoji_url.as_deref(), &ready_urls),
+            )
+        })
         .collect();
     frame.render_widget(
         Paragraph::new(rows).block(block).wrap(Wrap { trim: false }),
         popup,
     );
+    if state.show_custom_emoji() {
+        render_tag_picker_emojis(
+            frame,
+            content,
+            tags[visible_range.clone()]
+                .iter()
+                .map(|tag| tag.custom_emoji_url.as_deref()),
+            emoji_images,
+        );
+    }
     render_vertical_scrollbar(
         frame,
         Rect {
@@ -259,7 +290,43 @@ pub(in crate::tui::ui) fn render_forum_post_edit_tag_picker(
     );
 }
 
-fn forum_post_edit_tag_picker_popup_area(area: Rect, tag_count: usize) -> Rect {
+/// Overlays custom tag-emoji images in a tag picker, one per visible row, at the
+/// fixed column where `tag_line` reserves the blank emoji gap. Shared by the
+/// thread-edit and composer pickers (each passes its own urls per row).
+pub(super) fn render_tag_picker_emojis<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    row_custom_emoji_urls: impl IntoIterator<Item = Option<&'a str>>,
+    emoji_images: &[EmojiImage<'_>],
+) {
+    let emoji_col = tag_line_emoji_column();
+    if area.width <= emoji_col || area.height == 0 {
+        return;
+    }
+    for (offset, url) in row_custom_emoji_urls.into_iter().enumerate() {
+        let Some(url) = url else {
+            continue;
+        };
+        let Some(image) = emoji_images.iter().find(|image| image.url == url) else {
+            continue;
+        };
+        let y = area
+            .y
+            .saturating_add(u16::try_from(offset).unwrap_or(u16::MAX));
+        if y >= area.y.saturating_add(area.height) {
+            continue;
+        }
+        let image_area = Rect::new(
+            area.x.saturating_add(emoji_col),
+            y,
+            EMOJI_REACTION_IMAGE_WIDTH.min(area.width.saturating_sub(emoji_col)),
+            1,
+        );
+        frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+    }
+}
+
+fn thread_edit_tag_picker_popup_area(area: Rect, tag_count: usize) -> Rect {
     let visible = tag_count.clamp(1, TAG_PICKER_VISIBLE_ITEMS) as u16;
     centered_rect(area, TAG_PICKER_WIDTH, visible.saturating_add(2))
 }
@@ -276,14 +343,15 @@ fn button_line(label: &str, active: bool) -> Line<'static> {
     ])
 }
 
-fn tag_line(tag: &ForumPostEditTagView, width: usize) -> Line<'static> {
+fn tag_line(tag: &ThreadEditTagView, width: usize, thumbnail_ready: bool) -> Line<'static> {
     let marker = if tag.active { "▸" } else { " " };
     let checkbox = if tag.selected { "[x]" } else { "[ ]" };
-    let emoji = tag
-        .emoji
-        .as_deref()
-        .map(|emoji| format!(" {emoji}"))
-        .unwrap_or_default();
+    let emoji = tag_emoji_text(
+        tag.unicode_emoji.as_deref(),
+        tag.custom_emoji_url.as_deref(),
+        tag.custom_emoji_label.as_deref(),
+        thumbnail_ready,
+    );
     let style = if tag.active {
         highlight_style()
     } else if !tag.selectable {
@@ -297,7 +365,47 @@ fn tag_line(tag: &ForumPostEditTagView, width: usize) -> Line<'static> {
     ))
 }
 
-fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ForumPostEditTagView], width: usize) {
+/// The emoji portion of a tag row (with a leading space). A custom emoji reserves
+/// a blank gap for the overlaid image once ready, else its `:name:` label.
+pub(super) fn tag_emoji_text(
+    unicode_emoji: Option<&str>,
+    custom_emoji_url: Option<&str>,
+    custom_emoji_label: Option<&str>,
+    thumbnail_ready: bool,
+) -> String {
+    if let Some(emoji) = unicode_emoji {
+        return format!(" {emoji}");
+    }
+    if custom_emoji_url.is_some() {
+        if thumbnail_ready {
+            return format!(" {}", " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH)));
+        }
+        if let Some(label) = custom_emoji_label {
+            return format!(" {label}");
+        }
+    }
+    String::new()
+}
+
+/// Column of the reserved custom-emoji gap within a picker row, measured from
+/// the row start: marker + space + `[x]` + space.
+fn tag_line_emoji_column() -> u16 {
+    "  [x] ".width() as u16
+}
+
+pub(super) fn ready_emoji_urls(emoji_images: &[EmojiImage<'_>]) -> Vec<String> {
+    emoji_images.iter().map(|image| image.url.clone()).collect()
+}
+
+/// Whether a custom tag emoji's image has loaded (so the row reserves the gap).
+pub(super) fn tag_custom_emoji_ready(
+    custom_emoji_url: Option<&str>,
+    ready_urls: &[String],
+) -> bool {
+    custom_emoji_url.is_some_and(|url| ready_urls.iter().any(|ready| ready == url))
+}
+
+fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], width: usize) {
     if tags.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no tags available",
@@ -309,11 +417,14 @@ fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ForumPostEditTagView
     let shown = selected_count.max(TAG_SUMMARY_MIN_VISIBLE).min(tags.len());
     for tag in tags.iter().take(shown) {
         let checkbox = if tag.selected { "[x]" } else { "[ ]" };
-        let emoji = tag
-            .emoji
-            .as_deref()
-            .map(|emoji| format!(" {emoji}"))
-            .unwrap_or_default();
+        // The collapsed summary is part of the static form (no image overlay),
+        // so custom emoji fall back to their `:name:` label here.
+        let emoji = tag_emoji_text(
+            tag.unicode_emoji.as_deref(),
+            tag.custom_emoji_url.as_deref(),
+            tag.custom_emoji_label.as_deref(),
+            false,
+        );
         let style = if tag.selected {
             Style::default().fg(ACCENT)
         } else {

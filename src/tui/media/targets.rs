@@ -670,16 +670,23 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
         }
     }
 
-    // Forum post cards render preview-message reactions through a separate
-    // card pipeline, so they do not appear in `visible_messages()` while a
-    // forum channel is selected. Collect those URLs here so the shared emoji
-    // image cache can still load and render them.
-    for post in state.visible_forum_post_items() {
+    // Thread cards render preview reactions outside `visible_messages()`, so
+    // collect their URLs here for the shared emoji image cache.
+    for post in state.visible_thread_card_items() {
         for reaction in &post.preview_reactions {
             if reaction.count == 0 {
                 continue;
             }
             if let Some(url) = reaction.emoji.custom_image_url()
+                && seen.insert(url.clone())
+            {
+                targets.push(EmojiImageTarget { url });
+            }
+        }
+        // Custom forum-tag emoji are overlaid as images on the card's tags row,
+        // so their CDN urls also have to be fetched into the shared cache.
+        for tag in &post.applied_tags {
+            if let Some(url) = tag.custom_emoji_url.clone()
                 && seen.insert(url.clone())
             {
                 targets.push(EmojiImageTarget { url });

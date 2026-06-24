@@ -46,16 +46,16 @@ pub(super) fn handle_popup_key(
         ActiveModalPopupKind::GuildLeaveConfirmation => {
             handle_guild_leave_confirmation_key(state, key)
         }
-        ActiveModalPopupKind::ForumPostDeleteConfirmation => {
-            handle_forum_post_delete_confirmation_key(state, key)
+        ActiveModalPopupKind::ThreadDeleteConfirmation => {
+            handle_thread_delete_confirmation_key(state, key)
         }
         ActiveModalPopupKind::PollVotePicker => handle_poll_vote_picker_key(state, key),
         ActiveModalPopupKind::EmojiReactionPicker => handle_emoji_reaction_picker_key(state, key),
         ActiveModalPopupKind::ChannelSwitcher => handle_channel_switcher_key(state, key),
         ActiveModalPopupKind::Search => handle_search_popup_key(state, key),
         ActiveModalPopupKind::ForumPostComposer => handle_forum_post_composer_key(state, key),
-        ActiveModalPopupKind::ForumPostEdit => handle_forum_post_edit_key(state, key),
-        ActiveModalPopupKind::ForumPostActionMenu => handle_forum_post_action_menu_key(state, key),
+        ActiveModalPopupKind::ThreadEdit => handle_thread_edit_key(state, key),
+        ActiveModalPopupKind::ThreadActionMenu => handle_thread_action_menu_key(state, key),
         ActiveModalPopupKind::Leader => super::leader::handle_leader_key(state, key),
         ActiveModalPopupKind::MessageUrlPicker => handle_message_url_picker_key(state, key),
         ActiveModalPopupKind::MessageActionMenu => handle_message_action_menu_key(state, key),
@@ -73,7 +73,7 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::ReactionUsers
         | ActiveModalPopupKind::MessageConfirmation
         | ActiveModalPopupKind::GuildLeaveConfirmation
-        | ActiveModalPopupKind::ForumPostDeleteConfirmation
+        | ActiveModalPopupKind::ThreadDeleteConfirmation
         | ActiveModalPopupKind::PollVotePicker
         | ActiveModalPopupKind::EmojiReactionPicker => PopupKeyPhase::Priority,
         ActiveModalPopupKind::MessageActionMenu
@@ -84,8 +84,8 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::ChannelSwitcher
         | ActiveModalPopupKind::Search
         | ActiveModalPopupKind::ForumPostComposer
-        | ActiveModalPopupKind::ForumPostEdit
-        | ActiveModalPopupKind::ForumPostActionMenu => PopupKeyPhase::Deferred,
+        | ActiveModalPopupKind::ThreadEdit
+        | ActiveModalPopupKind::ThreadActionMenu => PopupKeyPhase::Deferred,
     }
 }
 
@@ -226,17 +226,17 @@ fn handle_forum_post_composer_edit_key(
     None
 }
 
-pub(super) fn handle_forum_post_edit_key(
+pub(super) fn handle_thread_edit_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    if state.is_forum_post_edit_tag_picker_active() {
-        return handle_forum_post_edit_tag_picker_key(state, key);
+    if state.is_thread_edit_tag_picker_active() {
+        return handle_thread_edit_tag_picker_key(state, key);
     }
-    if state.is_forum_post_edit_title_editing() {
+    if state.is_thread_edit_title_editing() {
         // Keep the text cursor on screen as the user types or moves it.
-        state.request_forum_post_edit_scroll_reveal();
-        return handle_forum_post_edit_title_key(state, key);
+        state.request_thread_edit_scroll_reveal();
+        return handle_thread_edit_title_key(state, key);
     }
 
     // The scroll keys (J/K and the arrows) pan the viewport without moving the
@@ -247,22 +247,22 @@ pub(super) fn handle_forum_post_edit_key(
         KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l')
     ) && let Some(action) = state.key_bindings().scroll_action(key)
     {
-        state.scroll_forum_post_edit(action);
+        state.scroll_thread_edit(action);
         return None;
     }
 
     // Anything else changes the focused field, so re-reveal it after handling.
-    state.request_forum_post_edit_scroll_reveal();
+    state.request_thread_edit_scroll_reveal();
 
     // Left/Right (or h/l) cycle the focused selector (slow mode / auto-archive).
     // These are no-ops on the non-selector fields.
     match key.code {
         KeyCode::Left | KeyCode::Char('h') => {
-            state.cycle_forum_post_edit_selector(false);
+            state.cycle_thread_edit_selector(false);
             return None;
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            state.cycle_forum_post_edit_selector(true);
+            state.cycle_thread_edit_selector(true);
             return None;
         }
         _ => {}
@@ -273,28 +273,28 @@ pub(super) fn handle_forum_post_edit_key(
         .selection_action(key, SelectionKeySet::Navigation)
     {
         match action {
-            SelectionAction::Next => state.move_forum_post_edit_selection_down(),
-            SelectionAction::Previous => state.move_forum_post_edit_selection_up(),
+            SelectionAction::Next => state.move_thread_edit_selection_down(),
+            SelectionAction::Previous => state.move_thread_edit_selection_up(),
         }
         return None;
     }
 
     match key.code {
         KeyCode::Tab => {
-            state.cycle_forum_post_edit_field_next();
+            state.cycle_thread_edit_field_next();
             return None;
         }
         KeyCode::BackTab => {
-            state.cycle_forum_post_edit_field_previous();
+            state.cycle_thread_edit_field_previous();
             return None;
         }
         _ => {}
     }
 
     match state.key_bindings().composer_action(key) {
-        ComposerAction::Submit => return state.activate_forum_post_edit(),
-        ComposerAction::Close => state.close_or_cancel_forum_post_edit(),
-        ComposerAction::ClearInput => state.clear_forum_post_edit_active_field(),
+        ComposerAction::Submit => return state.activate_thread_edit(),
+        ComposerAction::Close => state.close_or_cancel_thread_edit(),
+        ComposerAction::ClearInput => state.clear_thread_edit_active_field(),
         ComposerAction::OpenInEditor
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
@@ -315,7 +315,7 @@ pub(super) fn handle_forum_post_edit_key(
     None
 }
 
-fn handle_forum_post_edit_tag_picker_key(
+fn handle_thread_edit_tag_picker_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
@@ -324,16 +324,16 @@ fn handle_forum_post_edit_tag_picker_key(
         .selection_action(key, SelectionKeySet::Navigation)
     {
         match action {
-            SelectionAction::Next => state.move_forum_post_edit_selection_down(),
-            SelectionAction::Previous => state.move_forum_post_edit_selection_up(),
+            SelectionAction::Next => state.move_thread_edit_selection_down(),
+            SelectionAction::Previous => state.move_thread_edit_selection_up(),
         }
         return None;
     }
 
     match state.key_bindings().composer_action(key) {
-        ComposerAction::Submit => return state.activate_forum_post_edit(),
-        ComposerAction::Close => state.close_or_cancel_forum_post_edit(),
-        ComposerAction::ClearInput => state.clear_forum_post_edit_active_field(),
+        ComposerAction::Submit => return state.activate_thread_edit(),
+        ComposerAction::Close => state.close_or_cancel_thread_edit(),
+        ComposerAction::ClearInput => state.clear_thread_edit_active_field(),
         ComposerAction::OpenInEditor
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
@@ -354,24 +354,21 @@ fn handle_forum_post_edit_tag_picker_key(
     None
 }
 
-fn handle_forum_post_edit_title_key(
-    state: &mut DashboardState,
-    key: KeyEvent,
-) -> Option<AppCommand> {
+fn handle_thread_edit_title_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     match state.key_bindings().composer_action(key) {
         ComposerAction::PasteClipboard => state.request_paste_clipboard(),
-        ComposerAction::Submit => return state.activate_forum_post_edit(),
-        ComposerAction::Close => state.close_or_cancel_forum_post_edit(),
-        ComposerAction::ClearInput => state.clear_forum_post_edit_active_field(),
-        ComposerAction::DeletePreviousChar => state.delete_forum_post_edit_previous_char(),
-        ComposerAction::DeletePreviousWord => state.delete_forum_post_edit_previous_word(),
-        ComposerAction::MoveCursorWordLeft => state.move_forum_post_edit_cursor_word_left(),
-        ComposerAction::MoveCursorLeft => state.move_forum_post_edit_cursor_left(),
-        ComposerAction::MoveCursorWordRight => state.move_forum_post_edit_cursor_word_right(),
-        ComposerAction::MoveCursorRight => state.move_forum_post_edit_cursor_right(),
-        ComposerAction::MoveCursorHome => state.move_forum_post_edit_cursor_home(),
-        ComposerAction::MoveCursorEnd => state.move_forum_post_edit_cursor_end(),
-        ComposerAction::InsertChar(value) => state.push_forum_post_edit_char(value),
+        ComposerAction::Submit => return state.activate_thread_edit(),
+        ComposerAction::Close => state.close_or_cancel_thread_edit(),
+        ComposerAction::ClearInput => state.clear_thread_edit_active_field(),
+        ComposerAction::DeletePreviousChar => state.delete_thread_edit_previous_char(),
+        ComposerAction::DeletePreviousWord => state.delete_thread_edit_previous_word(),
+        ComposerAction::MoveCursorWordLeft => state.move_thread_edit_cursor_word_left(),
+        ComposerAction::MoveCursorLeft => state.move_thread_edit_cursor_left(),
+        ComposerAction::MoveCursorWordRight => state.move_thread_edit_cursor_word_right(),
+        ComposerAction::MoveCursorRight => state.move_thread_edit_cursor_right(),
+        ComposerAction::MoveCursorHome => state.move_thread_edit_cursor_home(),
+        ComposerAction::MoveCursorEnd => state.move_thread_edit_cursor_end(),
+        ComposerAction::InsertChar(value) => state.push_thread_edit_char(value),
         // The title is a single line, so newline and the vertical/editor moves
         // and attachment shortcut do nothing here.
         ComposerAction::InsertNewline
@@ -384,30 +381,36 @@ fn handle_forum_post_edit_title_key(
     None
 }
 
-pub(super) fn handle_forum_post_action_menu_key(
+pub(super) fn handle_thread_action_menu_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    if state.key_bindings().is_popup_close_key(key) {
-        // Esc backs out of the mute submenu first, then closes the menu.
-        if !state.back_forum_post_action_menu() {
-            state.close_forum_post_action_menu();
-        }
-        return None;
+    fn activate_thread_action_shortcut(
+        state: &mut DashboardState,
+        shortcut: KeyChord,
+    ) -> Option<AppCommand> {
+        state
+            .thread_action_shortcut_matches(shortcut)
+            .then(|| state.activate_thread_action_shortcut(shortcut))?
     }
-    if key.code == KeyCode::Enter {
-        return state.activate_selected_forum_post_action();
-    }
-    if let Some(action) = state
-        .key_bindings()
-        .selection_action(key, SelectionKeySet::Navigation)
-    {
-        match action {
-            SelectionAction::Next => state.move_forum_post_action_down(),
-            SelectionAction::Previous => state.move_forum_post_action_up(),
+
+    // Esc (or a close key) backs out of the mute/notification submenu first,
+    // then closes the menu.
+    fn close_or_back(state: &mut DashboardState) {
+        if !state.back_thread_action_menu() {
+            state.close_thread_action_menu();
         }
     }
-    None
+
+    handle_popup_list_key(
+        state,
+        key,
+        close_or_back,
+        DashboardState::move_thread_action_down,
+        DashboardState::move_thread_action_up,
+        DashboardState::activate_selected_thread_action,
+        activate_thread_action_shortcut,
+    )
 }
 
 pub(super) fn handle_channel_switcher_key(
@@ -604,15 +607,15 @@ pub(super) fn handle_guild_leave_confirmation_key(
     )
 }
 
-pub(super) fn handle_forum_post_delete_confirmation_key(
+pub(super) fn handle_thread_delete_confirmation_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
     handle_confirmation_key(
         state,
         key,
-        DashboardState::confirm_forum_post_delete,
-        DashboardState::close_forum_post_delete_confirmation,
+        DashboardState::confirm_thread_delete,
+        DashboardState::close_thread_delete_confirmation,
     )
 }
 

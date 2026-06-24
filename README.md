@@ -367,6 +367,22 @@ Channel actions:
 | `m`      | Mark as read         | Mark the selected channel read               |
 | `u`      | Mute / unmute        | Toggle channel or category notification mute |
 
+Thread / post actions (a focused thread in the Channels pane or a forum post in the post list):
+
+| Shortcut | Action                | Description                                                     |
+| -------- | --------------------- | -------------------------------------------------------------- |
+| `m`      | Mark as read          | Mark the thread or post read                                   |
+| `f`      | Follow / unfollow     | Follow or unfollow the thread or post                          |
+| `c`      | Close / reopen        | Close or reopen the thread or post (author or moderator)       |
+| `l`      | Lock / unlock         | Lock or unlock the thread or post (moderator)                  |
+| `e`      | Edit                  | Edit title, tags, slow mode, and auto-archive                  |
+| `y`      | Copy link             | Copy a link to the thread or post                              |
+| `u`      | Mute / unmute         | Toggle thread or post notification mute (must follow first)    |
+| `n`      | Notification settings | Choose the notification level for the thread or post           |
+| `P`      | Pin / unpin           | Pin or unpin the post (forum posts only, moderator)            |
+| `d`      | Delete                | Delete the whole thread or post (moderator)                    |
+| `i`      | Copy ID               | Copy the thread or post ID                                     |
+
 Voice commands:
 
 | Sequence          | Action       | Description                               |
@@ -609,6 +625,19 @@ OpenPollVotePicker = "c"
 
 [keymap.member_actions]
 ShowProfile = "p"
+
+[keymap.thread_actions]
+MarkAsRead = "m"
+ToggleFollow = "f"
+Close = "c"
+Lock = "l"
+Edit = "e"
+CopyLink = "y"
+ToggleMute = "u"
+NotificationSettings = "n"
+Pin = "P"
+Delete = "d"
+CopyId = "i"
 
 [keymap.composer]
 OpenEditor = "<C-e>"
