@@ -58,9 +58,6 @@ fn leader_popup_title(state: &DashboardState) -> String {
         if state.is_guild_leader_action_active() {
             return "Server Actions".to_owned();
         }
-        if state.is_channel_action_threads_phase() {
-            return "Threads".to_owned();
-        }
         if state.is_channel_leader_action_active() {
             return "Channel Actions".to_owned();
         }
@@ -181,20 +178,6 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                 })
                 .collect(),
         );
-    }
-    if state.is_channel_action_threads_phase() {
-        return state
-            .channel_action_thread_items()
-            .into_iter()
-            .enumerate()
-            .map(|(index, thread)| {
-                leader_shortcut_line(
-                    state.key_bindings().indexed_shortcut(index).unwrap_or(' '),
-                    &thread.label,
-                    true,
-                )
-            })
-            .collect();
     }
     if state.is_channel_leader_action_active() {
         if state.is_channel_action_mute_duration_phase() {

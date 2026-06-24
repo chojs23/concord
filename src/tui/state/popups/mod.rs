@@ -750,10 +750,6 @@ pub(super) enum ChannelLeaderActionState {
         channel_id: Id<ChannelMarker>,
         selection: SelectablePopupState,
     },
-    Threads {
-        channel_id: Id<ChannelMarker>,
-        selection: SelectablePopupState,
-    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1345,13 +1341,6 @@ impl DashboardState {
         if !self.is_channel_leader_action_active() {
             return false;
         }
-        if self.is_channel_action_threads_phase() {
-            return indexed_shortcut_matches(
-                self.key_bindings(),
-                shortcut,
-                self.channel_action_thread_items().len(),
-            );
-        }
         if self.is_channel_action_mute_duration_phase() {
             return indexed_shortcut_matches(
                 self.key_bindings(),
@@ -1430,13 +1419,6 @@ impl DashboardState {
 
     pub fn is_guild_leader_action_active(&self) -> bool {
         self.popups.guild_leader_action().is_some()
-    }
-
-    pub fn is_channel_action_threads_phase(&self) -> bool {
-        matches!(
-            self.popups.channel_leader_action(),
-            Some(ChannelLeaderActionState::Threads { .. })
-        )
     }
 
     pub fn is_channel_action_mute_duration_phase(&self) -> bool {

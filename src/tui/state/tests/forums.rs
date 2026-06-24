@@ -35,7 +35,7 @@ fn forum_channel_renders_loaded_posts_in_message_pane() {
 
     assert_eq!(state.selected_forum_post(), 1);
     assert_eq!(state.message_scroll(), 1);
-    assert_eq!(state.focused_forum_post_selection(), Some(0));
+    assert_eq!(state.focused_thread_card_selection(), Some(0));
 }
 
 #[test]

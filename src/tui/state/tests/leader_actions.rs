@@ -22,7 +22,10 @@ fn leader_message_action_copy_closes_action_popup() {
 }
 
 #[test]
-fn channel_leader_action_lists_threads_for_selected_channel() {
+fn channel_leader_action_show_threads_opens_thread_list_view() {
+    use crate::tui::state::MessagePaneSource;
+
+    let parent_id = Id::new(2);
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
@@ -46,14 +49,25 @@ fn channel_leader_action_lists_threads_for_selected_channel() {
     assert_eq!(actions[5].kind, ChannelActionKind::ToggleMute);
     assert_eq!(actions[5].label, "Mute channel");
 
+    // "Show threads" now opens the channel's threads as cards in the message
+    // pane, the same way a forum channel shows its post list, instead of a
+    // submenu popup.
     let command = state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
     assert_eq!(command, None);
-    assert!(state.is_channel_action_threads_phase());
+    assert!(!state.is_channel_leader_action_active());
+    assert!(state.is_channel_thread_list_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ChannelThreads {
+            channel_id: parent_id
+        })
+    );
 
-    let threads = state.channel_action_thread_items();
-    assert_eq!(threads.len(), 1);
-    assert_eq!(threads[0].channel_id, Id::new(10));
-    assert_eq!(threads[0].label, "release notes");
+    let cards = state.selected_thread_card_items();
+    assert_eq!(cards, state.child_thread_items(parent_id));
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].channel_id, Id::new(10));
+    assert_eq!(cards[0].label, "release notes");
 }
 
 #[test]
@@ -102,20 +116,42 @@ fn mark_as_read_action_enablement_is_scoped_to_action_channel() {
 }
 
 #[test]
-fn channel_leader_action_open_thread_activates_and_subscribes() {
+fn channel_thread_list_card_opens_thread_and_subscribes() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
+    // "Show threads" opens the thread-list view; selecting a card then opens
+    // that thread as the active channel, exactly like a forum post.
     state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
-    let command = state.activate_selected_channel_action();
+    assert!(state.is_channel_thread_list_view());
+
+    let command = state.activate_selected_message_pane_item();
 
     assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_channel_thread_list_view());
     assert_eq!(
         command,
         Some(AppCommand::SubscribeGuildChannel {
             guild_id: Id::new(1),
             channel_id: Id::new(10),
+        })
+    );
+}
+
+#[test]
+fn channel_thread_list_view_esc_restores_previous_channel_view() {
+    let mut state = state_with_thread_created_message();
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
+    assert!(state.is_channel_thread_list_view());
+
+    assert!(state.return_from_channel_thread_list_view());
+    assert!(!state.is_channel_thread_list_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(crate::tui::state::MessagePaneSource::ChannelMessages {
+            channel_id: Id::new(2)
         })
     );
 }

@@ -29,6 +29,7 @@ pub enum MessagePaneSource {
     ChannelMessages { channel_id: Id<ChannelMarker> },
     PinnedMessages { channel_id: Id<ChannelMarker> },
     ForumPosts { channel_id: Id<ChannelMarker> },
+    ChannelThreads { channel_id: Id<ChannelMarker> },
 }
 
 impl MessagePaneSource {
@@ -36,7 +37,8 @@ impl MessagePaneSource {
         match self {
             Self::ChannelMessages { channel_id }
             | Self::PinnedMessages { channel_id }
-            | Self::ForumPosts { channel_id } => channel_id,
+            | Self::ForumPosts { channel_id }
+            | Self::ChannelThreads { channel_id } => channel_id,
         }
     }
 
@@ -49,6 +51,15 @@ impl MessagePaneSource {
 
     fn uses_forum_posts(self) -> bool {
         matches!(self, Self::ForumPosts { .. })
+    }
+
+    /// Both forum posts and a channel's thread list render the same
+    /// `ChannelThreadItem` cards and share the message pane's card-list
+    /// navigation/scroll/selection. The forum-specific bits (loading state,
+    /// active/archived sections, "load more") gate on `uses_forum_posts`
+    /// instead.
+    fn uses_thread_cards(self) -> bool {
+        matches!(self, Self::ForumPosts { .. } | Self::ChannelThreads { .. })
     }
 
     fn can_load_message_history(self) -> bool {
@@ -91,6 +102,19 @@ pub(super) struct PinnedMessageViewReturnTarget {
     pub(super) pending_unread_anchor_scroll: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ThreadListViewReturnTarget {
+    pub(super) channel_id: Id<ChannelMarker>,
+    pub(super) selected_message: usize,
+    pub(super) message_scroll: usize,
+    pub(super) message_line_scroll: usize,
+    pub(super) message_keep_selection_visible: bool,
+    pub(super) message_auto_follow: bool,
+    pub(super) new_messages_marker_message_id: Option<Id<MessageMarker>>,
+    pub(super) unread_divider_last_acked_id: Option<Id<MessageMarker>>,
+    pub(super) pending_unread_anchor_scroll: bool,
+}
+
 #[derive(Debug)]
 pub(super) struct MessageViewportState {
     pub(super) selected_message: usize,
@@ -118,6 +142,8 @@ pub(super) struct MessageViewportState {
     pub(super) message_max_preview_height: u16,
     pub(super) pinned_message_view_channel_id: Option<Id<ChannelMarker>>,
     pub(super) pinned_message_view_return_target: Option<PinnedMessageViewReturnTarget>,
+    pub(super) thread_list_view_channel_id: Option<Id<ChannelMarker>>,
+    pub(super) thread_list_view_return_target: Option<ThreadListViewReturnTarget>,
     pub(super) thread_return_target: Option<ThreadReturnTarget>,
 }
 
@@ -138,6 +164,8 @@ impl Default for MessageViewportState {
             message_max_preview_height: 0,
             pinned_message_view_channel_id: None,
             pinned_message_view_return_target: None,
+            thread_list_view_channel_id: None,
+            thread_list_view_return_target: None,
             thread_return_target: None,
         }
     }
@@ -148,6 +176,11 @@ impl DashboardState {
         let channel = self.selected_channel_state()?;
         if channel.is_forum() {
             return Some(MessagePaneSource::ForumPosts {
+                channel_id: channel.id,
+            });
+        }
+        if self.messages.thread_list_view_channel_id == Some(channel.id) {
+            return Some(MessagePaneSource::ChannelThreads {
                 channel_id: channel.id,
             });
         }
@@ -170,6 +203,11 @@ impl DashboardState {
     pub(crate) fn message_pane_uses_forum_posts(&self) -> bool {
         self.message_pane_source()
             .is_some_and(MessagePaneSource::uses_forum_posts)
+    }
+
+    pub(crate) fn message_pane_uses_thread_cards(&self) -> bool {
+        self.message_pane_source()
+            .is_some_and(MessagePaneSource::uses_thread_cards)
     }
 
     pub(crate) fn message_pane_can_load_message_history(&self) -> bool {
@@ -423,8 +461,8 @@ impl DashboardState {
     }
 
     pub fn focused_message_selection(&self) -> Option<usize> {
-        if self.message_pane_uses_forum_posts() {
-            return self.focused_forum_post_selection();
+        if self.message_pane_uses_thread_cards() {
+            return self.focused_thread_card_selection();
         }
         if self.navigation.focus == FocusPane::Messages
             && self.message_pane_uses_message_items()
@@ -451,8 +489,8 @@ impl DashboardState {
             return;
         }
 
-        if self.message_pane_uses_forum_posts() {
-            let len = self.selected_forum_post_items().len();
+        if self.message_pane_uses_thread_cards() {
+            let len = self.selected_thread_card_items().len();
             move_index_down(&mut self.messages.message_scroll, len);
             self.messages.message_auto_follow = false;
             self.messages.message_keep_selection_visible = false;
@@ -505,7 +543,8 @@ impl DashboardState {
 
     pub(super) fn half_page_message_down(&mut self, distance: usize) {
         let distance = distance.max(1);
-        if self.message_pane_uses_forum_posts() || self.messages.message_content_width == usize::MAX
+        if self.message_pane_uses_thread_cards()
+            || self.messages.message_content_width == usize::MAX
         {
             let len = self.message_pane_item_count();
             move_index_down_by(&mut self.messages.selected_message, len, distance);
@@ -553,7 +592,8 @@ impl DashboardState {
 
     pub fn next_newer_history_command_for_half_page_down(&self) -> Option<AppCommand> {
         let distance = (self.message_content_height() / 2).max(1);
-        if self.message_pane_uses_forum_posts() || self.messages.message_content_width == usize::MAX
+        if self.message_pane_uses_thread_cards()
+            || self.messages.message_content_width == usize::MAX
         {
             return self.next_newer_history_command_for_down_by(distance);
         }
@@ -638,7 +678,7 @@ impl DashboardState {
         {
             return;
         }
-        if self.message_pane_uses_forum_posts() {
+        if self.message_pane_uses_thread_cards() {
             move_index_up(&mut self.messages.message_scroll);
             self.messages.message_auto_follow = false;
             self.messages.message_keep_selection_visible = false;
@@ -655,7 +695,8 @@ impl DashboardState {
 
     pub(super) fn half_page_message_up(&mut self, distance: usize) {
         let distance = distance.max(1);
-        if self.message_pane_uses_forum_posts() || self.messages.message_content_width == usize::MAX
+        if self.message_pane_uses_thread_cards()
+            || self.messages.message_content_width == usize::MAX
         {
             self.messages.selected_message =
                 self.messages.selected_message.saturating_sub(distance);
@@ -702,8 +743,8 @@ impl DashboardState {
     }
 
     pub(super) fn select_visible_message_row(&mut self, row: usize) -> bool {
-        if self.message_pane_uses_forum_posts() {
-            return self.select_visible_forum_post_row(row);
+        if self.message_pane_uses_thread_cards() {
+            return self.select_visible_thread_card_row(row);
         }
         if self.messages.message_content_width == usize::MAX {
             return false;
@@ -871,8 +912,8 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) {
-        if self.message_pane_uses_forum_posts() {
-            self.clamp_forum_post_viewport();
+        if self.message_pane_uses_thread_cards() {
+            self.clamp_thread_card_viewport();
             self.messages.message_line_scroll = 0;
             return;
         }
@@ -926,8 +967,8 @@ impl DashboardState {
 
         self.messages.selected_message = self.messages.selected_message.min(item_count - 1);
         self.messages.message_scroll = self.messages.message_scroll.min(item_count - 1);
-        if self.message_pane_uses_forum_posts() {
-            self.clamp_forum_post_viewport();
+        if self.message_pane_uses_thread_cards() {
+            self.clamp_thread_card_viewport();
             self.messages.message_line_scroll = 0;
             return;
         }
@@ -1161,7 +1202,9 @@ impl DashboardState {
 
     pub(super) fn message_pane_item_count(&self) -> usize {
         match self.message_pane_source() {
-            Some(MessagePaneSource::ForumPosts { .. }) => self.selected_forum_post_items().len(),
+            Some(
+                MessagePaneSource::ForumPosts { .. } | MessagePaneSource::ChannelThreads { .. },
+            ) => self.selected_thread_card_items().len(),
             Some(
                 MessagePaneSource::ChannelMessages { .. }
                 | MessagePaneSource::PinnedMessages { .. },
@@ -1476,7 +1519,10 @@ impl DashboardState {
             Some(MessagePaneSource::PinnedMessages { channel_id }) => {
                 self.discord.cache.pinned_messages_for_channel(channel_id)
             }
-            Some(MessagePaneSource::ForumPosts { .. }) | None => Vec::new(),
+            Some(
+                MessagePaneSource::ForumPosts { .. } | MessagePaneSource::ChannelThreads { .. },
+            )
+            | None => Vec::new(),
         }
     }
 
@@ -1555,15 +1601,96 @@ impl DashboardState {
     pub fn pinned_message_view_channel_id(&self) -> Option<Id<ChannelMarker>> {
         match self.message_pane_source()? {
             MessagePaneSource::PinnedMessages { channel_id } => Some(channel_id),
-            MessagePaneSource::ChannelMessages { .. } | MessagePaneSource::ForumPosts { .. } => {
-                None
-            }
+            MessagePaneSource::ChannelMessages { .. }
+            | MessagePaneSource::ForumPosts { .. }
+            | MessagePaneSource::ChannelThreads { .. } => None,
         }
     }
 
     #[cfg(test)]
     pub fn is_pinned_message_view(&self) -> bool {
         self.is_pinned_message_view_active()
+    }
+
+    /// Open the channel's threads as cards in the message pane, mirroring how a
+    /// forum channel shows its post list. Forum channels already show their own
+    /// post list, so this view is only for non-forum channels with child
+    /// threads. Captures a return target so Esc restores the prior channel view.
+    pub fn enter_channel_thread_list_view(&mut self, channel_id: Id<ChannelMarker>) {
+        if self
+            .discord
+            .cache
+            .channel(channel_id)
+            .is_some_and(|channel| channel.is_forum())
+        {
+            return;
+        }
+        if !self.is_channel_thread_list_view_active() {
+            self.record_channel_thread_list_view_return_target(channel_id);
+        }
+        self.messages.thread_list_view_channel_id = Some(channel_id);
+        self.messages.selected_message = 0;
+        self.messages.message_scroll = 0;
+        self.messages.message_line_scroll = 0;
+        self.messages.message_auto_follow = false;
+        self.clear_new_messages_marker();
+        self.messages.message_keep_selection_visible = true;
+        self.clamp_message_viewport();
+    }
+
+    fn record_channel_thread_list_view_return_target(&mut self, channel_id: Id<ChannelMarker>) {
+        if self.selected_channel_id() != Some(channel_id) {
+            return;
+        }
+        self.messages.thread_list_view_return_target = Some(ThreadListViewReturnTarget {
+            channel_id,
+            selected_message: self.messages.selected_message,
+            message_scroll: self.messages.message_scroll,
+            message_line_scroll: self.messages.message_line_scroll,
+            message_keep_selection_visible: self.messages.message_keep_selection_visible,
+            message_auto_follow: self.messages.message_auto_follow,
+            new_messages_marker_message_id: self.messages.new_messages_marker_message_id,
+            unread_divider_last_acked_id: self.messages.unread_divider_last_acked_id,
+            pending_unread_anchor_scroll: self.messages.pending_unread_anchor_scroll,
+        });
+    }
+
+    pub fn return_from_channel_thread_list_view(&mut self) -> bool {
+        if !self.is_channel_thread_list_view_active() {
+            return false;
+        }
+        let Some(target) = self.messages.thread_list_view_return_target else {
+            return false;
+        };
+        if self.selected_channel_id() != Some(target.channel_id) {
+            self.messages.thread_list_view_return_target = None;
+            return false;
+        }
+
+        self.messages.thread_list_view_channel_id = None;
+        self.messages.thread_list_view_return_target = None;
+        self.messages.selected_message = target.selected_message;
+        self.messages.message_scroll = target.message_scroll;
+        self.messages.message_line_scroll = target.message_line_scroll;
+        self.messages.message_keep_selection_visible = target.message_keep_selection_visible;
+        self.messages.message_auto_follow = target.message_auto_follow;
+        self.messages.new_messages_marker_message_id = target.new_messages_marker_message_id;
+        self.messages.unread_divider_last_acked_id = target.unread_divider_last_acked_id;
+        self.messages.pending_unread_anchor_scroll = target.pending_unread_anchor_scroll;
+        self.clamp_message_viewport();
+        true
+    }
+
+    pub(super) fn is_channel_thread_list_view_active(&self) -> bool {
+        matches!(
+            self.message_pane_source(),
+            Some(MessagePaneSource::ChannelThreads { .. })
+        )
+    }
+
+    #[cfg(test)]
+    pub fn is_channel_thread_list_view(&self) -> bool {
+        self.is_channel_thread_list_view_active()
     }
 
     pub fn selected_message_state(&self) -> Option<&MessageState> {

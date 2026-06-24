@@ -298,6 +298,39 @@ fn channel_tree_shows_joined_threads_under_parent_channel() {
 }
 
 #[test]
+fn channel_thread_list_view_lists_joined_threads_as_cards() {
+    use crate::tui::state::MessagePaneSource;
+
+    let guild_id = Id::new(1);
+    let parent_id = Id::new(11);
+    let joined_thread_id = Id::new(30);
+    let mut state = state_with_channel_tree();
+
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..thread_channel_info(guild_id, parent_id, joined_thread_id, "joined thread")
+    }));
+
+    state.activate_channel(parent_id);
+    state.enter_channel_thread_list_view(parent_id);
+
+    assert!(state.is_channel_thread_list_view());
+    assert_eq!(
+        state.message_pane_source(),
+        Some(MessagePaneSource::ChannelThreads {
+            channel_id: parent_id
+        })
+    );
+    let cards = state.selected_thread_card_items();
+    assert_eq!(cards, state.child_thread_items(parent_id));
+    assert_eq!(
+        cards.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
+        vec!["joined thread"]
+    );
+    assert_eq!(state.message_pane_title(), "Threads · #general");
+}
+
+#[test]
 fn is_forum_post_thread_distinguishes_posts_from_regular_threads() {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);

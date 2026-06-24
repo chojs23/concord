@@ -55,20 +55,41 @@ impl DashboardState {
     }
 
     pub fn visible_forum_post_items(&self) -> Vec<ChannelThreadItem> {
+        self.visible_thread_card_items_from(&self.selected_forum_post_items())
+    }
+
+    /// The card items shown in the message pane, for both forum posts
+    /// (`ForumPosts`) and a channel's thread list (`ChannelThreads`). Both
+    /// sources render the identical `ChannelThreadItem` cards. Returns an empty
+    /// list for any other source.
+    pub fn selected_thread_card_items(&self) -> Vec<ChannelThreadItem> {
+        match self.message_pane_source() {
+            Some(MessagePaneSource::ForumPosts { .. }) => self.selected_forum_post_items(),
+            Some(MessagePaneSource::ChannelThreads { channel_id }) => {
+                self.child_thread_items(channel_id)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn visible_thread_card_items(&self) -> Vec<ChannelThreadItem> {
+        self.visible_thread_card_items_from(&self.selected_thread_card_items())
+    }
+
+    fn visible_thread_card_items_from(
+        &self,
+        items: &[ChannelThreadItem],
+    ) -> Vec<ChannelThreadItem> {
         let height = self.message_content_height();
         let mut rows = 0usize;
         let mut visible = Vec::new();
-        for post in self
-            .selected_forum_post_items()
-            .into_iter()
-            .skip(self.messages.message_scroll)
-        {
+        for post in items.iter().skip(self.messages.message_scroll) {
             let rendered_height = post.rendered_height();
             if !visible.is_empty() && rows.saturating_add(rendered_height) > height {
                 break;
             }
             rows = rows.saturating_add(rendered_height);
-            visible.push(post);
+            visible.push(post.clone());
             if rows >= height {
                 break;
             }
@@ -83,12 +104,19 @@ impl DashboardState {
         )
     }
 
-    pub fn focused_forum_post_selection(&self) -> Option<usize> {
-        if self.navigation.focus != FocusPane::Messages || !self.message_pane_uses_forum_posts() {
+    pub fn selected_thread_card(&self) -> usize {
+        clamp_selected_index(
+            self.messages.selected_message,
+            self.selected_thread_card_items().len(),
+        )
+    }
+
+    pub fn focused_thread_card_selection(&self) -> Option<usize> {
+        if self.navigation.focus != FocusPane::Messages || !self.message_pane_uses_thread_cards() {
             return None;
         }
-        let selected = self.selected_forum_post();
-        let visible_count = self.visible_forum_post_items().len();
+        let selected = self.selected_thread_card();
+        let visible_count = self.visible_thread_card_items().len();
         if visible_count > 0
             && selected >= self.messages.message_scroll
             && selected < self.messages.message_scroll + visible_count
@@ -99,9 +127,14 @@ impl DashboardState {
         }
     }
 
-    pub(super) fn select_visible_forum_post_row(&mut self, row: usize) -> bool {
+    pub(super) fn select_visible_thread_card_row(&mut self, row: usize) -> bool {
+        let items = self.selected_thread_card_items();
         let mut rendered_row = 0usize;
-        for (visible_index, post) in self.visible_forum_post_items().into_iter().enumerate() {
+        for (visible_index, post) in self
+            .visible_thread_card_items_from(&items)
+            .into_iter()
+            .enumerate()
+        {
             if post.section_label.is_some() {
                 if row == rendered_row {
                     return false;
@@ -110,7 +143,7 @@ impl DashboardState {
             }
             if row < rendered_row.saturating_add(FORUM_POST_CARD_HEIGHT) {
                 let index = self.messages.message_scroll.saturating_add(visible_index);
-                if index >= self.selected_forum_post_items().len() {
+                if index >= items.len() {
                     return false;
                 }
                 self.messages.selected_message = index;
@@ -123,8 +156,8 @@ impl DashboardState {
         false
     }
 
-    pub(super) fn clamp_forum_post_viewport(&mut self) {
-        let posts = self.selected_forum_post_items();
+    pub(super) fn clamp_thread_card_viewport(&mut self) {
+        let posts = self.selected_thread_card_items();
         if posts.is_empty() {
             self.messages.message_scroll = 0;
             return;
@@ -148,7 +181,9 @@ impl DashboardState {
     pub fn selected_message_history_channel_id(&self) -> Option<Id<ChannelMarker>> {
         match self.message_pane_source()? {
             MessagePaneSource::ChannelMessages { channel_id } => Some(channel_id),
-            MessagePaneSource::PinnedMessages { .. } | MessagePaneSource::ForumPosts { .. } => None,
+            MessagePaneSource::PinnedMessages { .. }
+            | MessagePaneSource::ForumPosts { .. }
+            | MessagePaneSource::ChannelThreads { .. } => None,
         }
     }
 
@@ -186,11 +221,18 @@ impl DashboardState {
         ))
     }
 
-    pub fn activate_selected_forum_post(&mut self) -> Option<AppCommand> {
+    /// Open the selected card as the active channel. A channel thread and a
+    /// forum post are both threads, so opening one mirrors opening the other:
+    /// remember where to return, switch to the thread, and subscribe to it.
+    pub fn activate_selected_thread_card(&mut self) -> Option<AppCommand> {
         let item = self
-            .selected_forum_post_items()
-            .get(self.selected_forum_post())?
+            .selected_thread_card_items()
+            .get(self.selected_thread_card())?
             .clone();
+        self.activate_thread_card_item(item)
+    }
+
+    fn activate_thread_card_item(&mut self, item: ChannelThreadItem) -> Option<AppCommand> {
         let guild_id = self
             .discord
             .channel(item.channel_id)
@@ -884,6 +926,9 @@ impl DashboardState {
             Some(MessagePaneSource::PinnedMessages { channel_id }) => {
                 format!("{} pinned messages", self.channel_label(channel_id))
             }
+            Some(MessagePaneSource::ChannelThreads { channel_id }) => {
+                format!("Threads · {}", self.channel_label(channel_id))
+            }
             Some(source) => self.channel_label(source.channel_id()),
             None => "no channel".to_owned(),
         }
@@ -1020,6 +1065,8 @@ impl DashboardState {
         self.navigation.channels.active_channel_id = Some(channel_id);
         self.messages.pinned_message_view_channel_id = None;
         self.messages.pinned_message_view_return_target = None;
+        self.messages.thread_list_view_channel_id = None;
+        self.messages.thread_list_view_return_target = None;
 
         // Capture the unread anchor BEFORE acking. The Discord-style red
         // divider sits just above the first message newer than this
