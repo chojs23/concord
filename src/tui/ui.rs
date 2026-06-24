@@ -425,7 +425,7 @@ fn channel_prefix(kind: &str) -> &'static str {
         "group-dm" | "Group" => "● ",
         "voice" | "GuildVoice" => "🔈 ",
         "category" | "GuildCategory" => "▾ ",
-        "forum" | "GuildForum" => "💬 ",
+        "forum" | "GuildForum" => "☁️ ",
         kind if is_thread_kind(kind) => "» ",
         _ => "# ",
     }

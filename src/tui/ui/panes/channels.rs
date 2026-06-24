@@ -179,7 +179,13 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                     } => {
                         let parent_prefix = parent_branch.participant_prefix();
                         let branch_prefix = branch.prefix();
-                        let thread_prefix = "↳ ";
+                        // Forum posts (threads under a forum) get the post icon;
+                        // regular threads get the thread icon.
+                        let thread_prefix = if dashboard.is_forum_post_thread(state.id) {
+                            "💬 "
+                        } else {
+                            "🧵 "
+                        };
                         let base_style = active_text_style(is_active, Style::default());
                         let is_muted = dashboard.channel_notification_muted(state.id);
                         let unread = dashboard.sidebar_channel_unread(state.id);

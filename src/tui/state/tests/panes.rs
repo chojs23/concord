@@ -298,6 +298,40 @@ fn channel_tree_shows_joined_threads_under_parent_channel() {
 }
 
 #[test]
+fn is_forum_post_thread_distinguishes_posts_from_regular_threads() {
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let text_id = Id::new(11); // `general` text channel in the standard tree
+    let post_id = Id::new(30);
+    let thread_id = Id::new(31);
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::ChannelUpsert(forum_channel_info(
+        guild_id, forum_id,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..forum_thread_info(
+            guild_id,
+            forum_id,
+            post_id.get(),
+            "a post",
+            Some(300),
+            false,
+        )
+    }));
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..thread_channel_info(guild_id, text_id, thread_id, "a thread")
+    }));
+
+    // Thread under a forum is a post; under a text channel it is a regular
+    // thread; a non-thread channel is neither.
+    assert!(state.is_forum_post_thread(post_id));
+    assert!(!state.is_forum_post_thread(thread_id));
+    assert!(!state.is_forum_post_thread(text_id));
+}
+
+#[test]
 fn channel_tree_removes_thread_after_current_user_leaves() {
     let guild_id = Id::new(1);
     let parent_id = Id::new(11);

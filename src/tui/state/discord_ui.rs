@@ -180,6 +180,18 @@ impl DashboardState {
     pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
         self.discord.cache.channel_unread_message_count(channel_id)
     }
+
+    /// Whether `channel_id` is a forum post, i.e. a thread whose parent is a
+    /// forum channel (as opposed to a regular thread under a text channel).
+    pub fn is_forum_post_thread(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.discord
+            .cache
+            .channel(channel_id)
+            .filter(|channel| channel.is_thread())
+            .and_then(|channel| channel.parent_id)
+            .and_then(|parent_id| self.discord.cache.channel(parent_id))
+            .is_some_and(|parent| parent.is_forum())
+    }
 }
 
 impl DashboardState {
