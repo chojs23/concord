@@ -51,6 +51,10 @@ pub struct ChannelState {
     /// inherit from their parent channel, so this stays empty for threads
     /// even after a payload arrives.
     pub permission_overwrites: Vec<PermissionOverwriteInfo>,
+    /// Discord's DM `is_message_request`: a pending request from a non-friend.
+    pub is_message_request: Option<bool>,
+    /// Discord's DM `is_spam`: a message request classified as spam.
+    pub is_spam: Option<bool>,
 }
 
 impl ChannelState {
@@ -64,6 +68,26 @@ impl ChannelState {
 
     pub fn is_forum(&self) -> bool {
         matches!(self.kind.as_str(), "forum" | "media" | "GuildForum")
+    }
+
+    /// A one-to-one direct message. Group DMs (`group-dm`) are excluded.
+    pub fn is_dm(&self) -> bool {
+        matches!(self.kind.as_str(), "dm" | "Private")
+    }
+
+    /// Sidebar tag for a DM Discord flagged as spam or a message request. Spam
+    /// wins. `None` otherwise.
+    pub fn dm_request_tag(&self) -> Option<&'static str> {
+        if !self.is_dm() {
+            return None;
+        }
+        if self.is_spam == Some(true) {
+            return Some("spam");
+        }
+        if self.is_message_request == Some(true) {
+            return Some("request");
+        }
+        None
     }
 
     pub fn is_voice(&self) -> bool {
@@ -329,6 +353,14 @@ impl DiscordState {
                     .and_then(|e| e.current_user_thread_notification_flags),
                 recipients,
                 permission_overwrites,
+                // Preserve across upserts: a partial CHANNEL_UPDATE that omits
+                // these must not silently unlock a request/spam DM.
+                is_message_request: channel
+                    .is_message_request
+                    .or_else(|| existing.and_then(|existing| existing.is_message_request)),
+                is_spam: channel
+                    .is_spam
+                    .or_else(|| existing.and_then(|existing| existing.is_spam)),
             },
         );
     }

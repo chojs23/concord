@@ -143,10 +143,16 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         };
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
+                        let request_tag = state.dm_request_tag();
+                        // +3 reserves room for the surrounding " [" and "]".
+                        let tag_width = request_tag
+                            .map(|tag| tag.width().saturating_add(3))
+                            .unwrap_or(0);
                         let label_width = max_width
                             .saturating_sub(branch_prefix.width())
                             .saturating_sub(prefix_width)
-                            .saturating_sub(badge_width);
+                            .saturating_sub(badge_width)
+                            .saturating_sub(tag_width);
                         let mut spans = vec![
                             selection_marker(is_selected),
                             Span::styled(branch_prefix, Style::default().fg(DIM)),
@@ -170,6 +176,12 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                             ),
                             name_style,
                         ));
+                        if let Some(tag) = request_tag {
+                            spans.push(Span::styled(
+                                format!(" [{tag}]"),
+                                Style::default().fg(DIM).add_modifier(Modifier::ITALIC),
+                            ));
+                        }
                         ListItem::new(Line::from(spans))
                     }
                     ChannelPaneEntry::Thread {

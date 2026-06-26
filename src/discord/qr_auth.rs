@@ -311,38 +311,10 @@ async fn checked_ticket_exchange_response(
 }
 
 fn format_ticket_exchange_error(status: reqwest::StatusCode, body: &str) -> String {
-    if parse_captcha_challenge(status, body).is_some() {
+    if super::captcha::parse_captcha_challenge(status, body).is_some() {
         "Discord requires captcha verification, so QR login cannot continue in this terminal. Log in with a token instead.".into()
     } else {
         format_discord_error_response(status, body)
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct CaptchaChallenge {
-    captcha_key: Vec<String>,
-    captcha_service: Option<String>,
-}
-
-fn parse_captcha_challenge(status: reqwest::StatusCode, body: &str) -> Option<CaptchaChallenge> {
-    if status != reqwest::StatusCode::BAD_REQUEST {
-        return None;
-    }
-
-    let challenge = serde_json::from_str::<CaptchaChallenge>(body).ok()?;
-    let is_hcaptcha = challenge
-        .captcha_service
-        .as_deref()
-        .is_none_or(|service| service.eq_ignore_ascii_case("hcaptcha"));
-    let requires_captcha = challenge
-        .captcha_key
-        .iter()
-        .any(|key| key == "captcha-required");
-
-    if is_hcaptcha && requires_captcha {
-        Some(challenge)
-    } else {
-        None
     }
 }
 
@@ -418,7 +390,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 mod tests {
     use super::{
         QR_QUIET_ZONE_MODULES, build_qr_bitmap, format_ticket_exchange_error,
-        parse_captcha_challenge, sanitize_response_body,
+        sanitize_response_body,
     };
 
     #[test]
@@ -473,13 +445,6 @@ mod tests {
         assert!(!sanitized.contains("blob"));
         assert!(!sanitized.contains("\":\"session\""));
         assert!(sanitized.contains("[redacted]"));
-    }
-
-    #[test]
-    fn parse_captcha_challenge_accepts_hcaptcha_required_response() {
-        let body = r#"{"captcha_key":["captcha-required"],"captcha_service":"hcaptcha","captcha_sitekey":"site","captcha_rqdata":"data","captcha_rqtoken":"rqtoken","captcha_session_id":"session"}"#;
-
-        assert!(parse_captcha_challenge(reqwest::StatusCode::BAD_REQUEST, body).is_some());
     }
 
     #[test]

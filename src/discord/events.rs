@@ -427,6 +427,12 @@ pub enum AppEvent {
     GatewayError {
         message: String,
     },
+    /// A REST action was refused until Discord's CAPTCHA is solved. `action`
+    /// labels what was attempted (e.g. "send message"). Shown as a transient
+    /// toast, never the gateway-error banner, since the connection is fine.
+    CaptchaRequired {
+        action: String,
+    },
     MediaPlaybackWindowReady {
         request_id: MediaPlaybackRequestId,
         url: String,
@@ -603,6 +609,7 @@ define_app_event_kinds! {
     UserGuildSettingsInit: AppEvent::UserGuildSettingsInit { .. },
     UserGuildSettingsUpdate: AppEvent::UserGuildSettingsUpdate { .. },
     GatewayError: AppEvent::GatewayError { .. },
+    CaptchaRequired: AppEvent::CaptchaRequired { .. },
     ThreadNotificationLevelUpdate: AppEvent::ThreadNotificationLevelUpdate { .. },
     MediaPlaybackWindowReady: AppEvent::MediaPlaybackWindowReady { .. },
     AttachmentDownloadStarted: AppEvent::AttachmentDownloadStarted { .. },
@@ -862,6 +869,7 @@ impl AppEventKind {
             }
 
             AppEventKind::GatewayError
+            | AppEventKind::CaptchaRequired
             | AppEventKind::GatewayDispatchReceived
             | AppEventKind::SignedOut
             | AppEventKind::MediaPlaybackWindowReady

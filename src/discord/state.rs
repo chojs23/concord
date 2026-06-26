@@ -965,6 +965,7 @@ impl DiscordState {
             }
             AppEvent::GatewayDispatchReceived { .. }
             | AppEvent::GatewayError { .. }
+            | AppEvent::CaptchaRequired { .. }
             | AppEvent::SignedOut
             | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }

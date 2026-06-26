@@ -553,7 +553,12 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
         return lines;
     }
 
-    vec![Line::from(composer_text(state, width))]
+    let text = composer_text(state, width);
+    // A locked DM is a hard stop, so override the dimmed placeholder with red.
+    if state.dm_composer_lock().is_some() {
+        return vec![Line::from(Span::styled(text, Style::default().fg(Color::Red)))];
+    }
+    vec![Line::from(text)]
 }
 
 struct ComposerDisplayInput {
@@ -910,6 +915,19 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
                 );
             }
             return format!("read-only · cannot create posts in {label}");
+        }
+        if let Some(lock) = state.dm_composer_lock() {
+            return match lock {
+                DmComposerLock::Spam => {
+                    format!("read-only · {label} is flagged as spam. open it in the official app first")
+                }
+                DmComposerLock::MessageRequest => {
+                    format!("read-only · {label} is a message request. accept it in the official app first")
+                }
+                DmComposerLock::NeverMessaged => {
+                    format!("read-only · no past messages with {label}. send the first one from the official app")
+                }
+            };
         }
         // Tell the user up-front if the shortcut won't open the composer here,
         // so they don't repeatedly press `i` and wonder why nothing happens.

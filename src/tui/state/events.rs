@@ -155,6 +155,14 @@ impl DashboardState {
                 self.runtime.gateway_error = Some(message.clone());
                 self.show_error_toast(message, Instant::now());
             }
+            AppEvent::CaptchaRequired { action } => {
+                self.show_captcha_toast(
+                    format!(
+                        "Discord needs a CAPTCHA to {action}. Finish it in the official Discord app, then try again."
+                    ),
+                    Instant::now(),
+                );
+            }
             AppEvent::MediaPlaybackWindowReady { request_id, .. } => {
                 self.clear_media_playback_preparing(*request_id);
             }

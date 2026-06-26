@@ -485,6 +485,24 @@ fn channel_parser_keeps_last_message_id() {
 }
 
 #[test]
+fn channel_parser_reads_dm_message_request_and_spam_flags() {
+    let channel = parse_channel_info(
+        &json!({
+            "id": "10",
+            "type": 1,
+            "is_message_request": true,
+            "is_spam": true,
+            "recipients": [{ "username": "stranger" }]
+        }),
+        None,
+    )
+    .expect("dm channel should parse");
+
+    assert_eq!(channel.is_message_request, Some(true));
+    assert_eq!(channel.is_spam, Some(true));
+}
+
+#[test]
 fn channel_parser_reads_forum_tags_and_media_type() {
     let channel = parse_channel_info(
         &json!({

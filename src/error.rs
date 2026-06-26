@@ -29,6 +29,8 @@ pub enum AppError {
     TooManyAttachments { count: usize },
     #[error("Discord request failed: {0}")]
     DiscordRequest(String),
+    #[error("Discord requires a CAPTCHA to {action}")]
+    CaptchaRequired { action: String },
     #[error("terminal I/O failed")]
     Io(#[from] std::io::Error),
     #[error("config file is not valid TOML")]

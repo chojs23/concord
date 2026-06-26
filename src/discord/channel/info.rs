@@ -49,6 +49,11 @@ pub struct ChannelInfo {
     /// channel-specific overrides", which matches Discord's behavior of
     /// inheriting from the guild base permissions.
     pub permission_overwrites: Vec<PermissionOverwriteInfo>,
+    /// Discord's `is_message_request` DM field: a pending request from a
+    /// non-friend. `None` when the payload omits it.
+    pub is_message_request: Option<bool>,
+    /// Discord's `is_spam` DM field: a message request classified as spam.
+    pub is_spam: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,6 +130,8 @@ impl ChannelInfo {
             current_user_joined_thread: None,
             recipients: None,
             permission_overwrites: Vec::new(),
+            is_message_request: None,
+            is_spam: None,
         }
     }
 }

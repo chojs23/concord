@@ -36,6 +36,16 @@ use crate::discord::AppCommand;
 use crate::tui::text_cursor::{previous_char_boundary, previous_word_boundary};
 use crate::tui::text_input::TextInputState;
 
+/// Why the composer is locked in a DM. Drives both the send gate and the hint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DmComposerLock {
+    Spam,
+    MessageRequest,
+    /// No locally known message authored by us, so the first send would hit the
+    /// CAPTCHA gate.
+    NeverMessaged,
+}
+
 #[derive(Debug, Default)]
 pub(in crate::tui::state) struct ComposerUiState {
     pub(in crate::tui::state) composer_input: TextInputState,
@@ -310,9 +320,42 @@ impl DashboardState {
     pub fn can_send_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
             Some(channel) if channel.is_forum() => false,
+            Some(_) if self.dm_composer_lock().is_some() => false,
             Some(channel) => self.discord.cache.can_send_in_channel(channel),
             None => true,
         }
+    }
+
+    /// Why the composer is locked in the selected one-to-one DM, or `None` when
+    /// sending is allowed (or the selection is not a DM). Sending the first
+    /// message into such a DM is what triggers Discord's CAPTCHA gate, which a
+    /// terminal cannot solve, so we lock first (issue #218).
+    ///
+    /// The `NeverMessaged` case trusts locally cached history. A dormant DM whose
+    /// latest page holds only the other side's messages reads as locked until one
+    /// of our own messages pages back in. That is the safe failure: a temporary
+    /// read-only composer rather than an unintended send.
+    pub fn dm_composer_lock(&self) -> Option<DmComposerLock> {
+        let channel = self.selected_channel_state()?;
+        if !channel.is_dm() {
+            return None;
+        }
+        if channel.is_spam == Some(true) {
+            return Some(DmComposerLock::Spam);
+        }
+        if channel.is_message_request == Some(true) {
+            return Some(DmComposerLock::MessageRequest);
+        }
+        // Without our own id we cannot prove we have written here, so defer to
+        // the flags above and otherwise allow sending.
+        let current_user_id = self.current_user_id()?;
+        let has_sent = self
+            .discord
+            .cache
+            .messages_for_channel(channel.id)
+            .iter()
+            .any(|message| message.author_id == current_user_id);
+        (!has_sent).then_some(DmComposerLock::NeverMessaged)
     }
 
     fn can_send_tts_in_selected_channel(&self) -> bool {

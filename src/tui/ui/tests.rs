@@ -616,6 +616,8 @@ fn channel_with_recipients(kind: &str, statuses: &[PresenceStatus]) -> ChannelSt
             })
             .collect(),
         permission_overwrites: Vec::new(),
+        is_message_request: None,
+        is_spam: None,
     }
 }
 

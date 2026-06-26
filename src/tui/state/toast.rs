@@ -5,6 +5,9 @@ use crate::discord::MediaPlaybackRequestId;
 use super::{DashboardState, MediaPlaybackPreparingUiState, ToastKind, ToastMessage, ToastView};
 
 const TOAST_DURATION: Duration = Duration::from_secs(2);
+/// Captcha guidance points the user to another client, so it lingers longer
+/// than the usual status toast.
+const CAPTCHA_TOAST_DURATION: Duration = Duration::from_secs(8);
 const MEDIA_PLAYBACK_PREPARING_TEXT: &str = "Preparing media playback...";
 
 impl DashboardState {
@@ -16,12 +19,26 @@ impl DashboardState {
         self.show_toast(text, ToastKind::Error, now);
     }
 
+    pub(in crate::tui) fn show_captcha_toast(&mut self, text: impl Into<String>, now: Instant) {
+        self.show_toast_for(text, ToastKind::Error, CAPTCHA_TOAST_DURATION, now);
+    }
+
     fn show_toast(&mut self, text: impl Into<String>, kind: ToastKind, now: Instant) {
+        self.show_toast_for(text, kind, TOAST_DURATION, now);
+    }
+
+    fn show_toast_for(
+        &mut self,
+        text: impl Into<String>,
+        kind: ToastKind,
+        duration: Duration,
+        now: Instant,
+    ) {
         self.runtime.media_playback_preparing = None;
         self.runtime.toast_message = Some(ToastMessage {
             text: text.into(),
             kind,
-            expires_at: Some(now + TOAST_DURATION),
+            expires_at: Some(now + duration),
         });
     }
 
@@ -122,6 +139,22 @@ mod tests {
         assert!(state.toast_message().is_some());
         assert!(state.clear_expired_toast(now + TOAST_DURATION));
         assert!(state.toast_message().is_none());
+    }
+
+    #[test]
+    fn captcha_required_event_shows_guidance_toast_without_gateway_banner() {
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::CaptchaRequired {
+            action: "send message".to_owned(),
+        });
+
+        let toast = state.toast_message().expect("captcha toast is visible");
+        assert!(toast.text.contains("CAPTCHA"));
+        assert_eq!(toast.kind, ToastKind::Error);
+        // A captcha is per-action, not a connection failure, so the persistent
+        // gateway-error banner must stay clear.
+        assert!(state.gateway_error().is_none());
     }
 
     #[test]

@@ -30,9 +30,15 @@ pub(super) fn log_app_error(context: &str, error: &AppError) {
 
 pub(super) async fn publish_app_error(client: &DiscordClient, context: &str, error: &AppError) {
     log_app_error(context, error);
-    client
-        .publish_event(AppEvent::GatewayError {
+    // A captcha gate is not a connection failure, so it gets its own event
+    // instead of the persistent gateway-error banner.
+    let event = match error {
+        AppError::CaptchaRequired { action } => AppEvent::CaptchaRequired {
+            action: action.clone(),
+        },
+        _ => AppEvent::GatewayError {
             message: format!("{context}: {error}"),
-        })
-        .await;
+        },
+    };
+    client.publish_event(event).await;
 }

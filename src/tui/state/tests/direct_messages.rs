@@ -84,6 +84,83 @@ fn restoring_discord_snapshot_recovers_missed_guilds_and_direct_messages() {
 }
 
 #[test]
+fn dm_composer_locks_until_current_user_has_sent_a_message() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(1)),
+    });
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_info(Id::new(20), "alice")));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
+
+    // Only the other person has written, so the composer stays locked.
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: None,
+        channel_id: Id::new(20),
+        message_id: Id::new(200),
+        author_id: Id::new(99),
+        content: Some("hi".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    assert_eq!(state.dm_composer_lock(), Some(DmComposerLock::NeverMessaged));
+    assert!(!state.can_send_in_selected_channel());
+    state.start_composer();
+    assert!(!state.is_composing());
+
+    // Once one of our own messages syncs in, the composer unlocks.
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: None,
+        channel_id: Id::new(20),
+        message_id: Id::new(201),
+        author_id: Id::new(1),
+        content: Some("hey".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    assert_eq!(state.dm_composer_lock(), None);
+    assert!(state.can_send_in_selected_channel());
+    state.start_composer();
+    assert!(state.is_composing());
+}
+
+#[test]
+fn dm_composer_locks_message_request_and_spam_dms_even_after_replying() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(1)),
+    });
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        is_message_request: Some(true),
+        ..dm_channel_info(Id::new(20), "stranger")
+    }));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
+
+    // Even with one of our own messages present, an unaccepted request stays
+    // locked: replying is exactly what trips the CAPTCHA gate.
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: None,
+        channel_id: Id::new(20),
+        message_id: Id::new(200),
+        author_id: Id::new(1),
+        content: Some("hey".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    assert_eq!(state.dm_composer_lock(), Some(DmComposerLock::MessageRequest));
+    assert!(!state.can_send_in_selected_channel());
+
+    // Spam classification takes precedence and reports the spam reason.
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        is_spam: Some(true),
+        ..dm_channel_info(Id::new(20), "stranger")
+    }));
+    assert_eq!(state.dm_composer_lock(), Some(DmComposerLock::Spam));
+}
+
+#[test]
 fn direct_message_cursor_stays_on_same_channel_after_recency_sort() {
     let mut state = state_with_direct_messages();
     state.confirm_selected_guild();

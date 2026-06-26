@@ -1,6 +1,7 @@
 mod application_commands;
 mod auth_http;
 mod builtin_commands;
+mod captcha;
 mod channel;
 mod client;
 mod commands;

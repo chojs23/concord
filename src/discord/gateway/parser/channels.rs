@@ -115,6 +115,8 @@ pub(crate) fn parse_channel_info(
         current_user_joined_thread,
         recipients,
         permission_overwrites,
+        is_message_request: value.get("is_message_request").and_then(Value::as_bool),
+        is_spam: value.get("is_spam").and_then(Value::as_bool),
     })
 }
 

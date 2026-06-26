@@ -47,12 +47,7 @@ impl DiscordRest {
             AppError::DiscordRequest(format!("{label} request failed: {error}"))
         })?;
         if let Err(error) = response.error_for_status_ref() {
-            let detail = response.text().await.ok().map(truncate_error_body);
-            let message = match detail.filter(|detail| !detail.trim().is_empty()) {
-                Some(detail) => format!("{label} failed: {error}: {detail}"),
-                None => format!("{label} failed: {error}"),
-            };
-            return Err(AppError::DiscordRequest(message));
+            return Err(request_error(error, response, label).await);
         }
         Ok(())
     }
@@ -66,17 +61,36 @@ impl DiscordRest {
             AppError::DiscordRequest(format!("{label} request failed: {error}"))
         })?;
         if let Err(error) = response.error_for_status_ref() {
-            let detail = response.text().await.ok().map(truncate_error_body);
-            let message = match detail.filter(|detail| !detail.trim().is_empty()) {
-                Some(detail) => format!("{label} failed: {error}: {detail}"),
-                None => format!("{label} failed: {error}"),
-            };
-            return Err(AppError::DiscordRequest(message));
+            return Err(request_error(error, response, label).await);
         }
         response
             .json()
             .await
             .map_err(|error| AppError::DiscordRequest(format!("{label} decode failed: {error}")))
+    }
+}
+
+/// Turns a non-2xx Discord response into an `AppError`, reading the body once.
+///
+/// A captcha challenge becomes `CaptchaRequired` so callers stop instead of
+/// retrying. Retrying an unsolved captcha is what escalates to a temporary
+/// account block (issue #218).
+async fn request_error(error: reqwest::Error, response: reqwest::Response, label: &str) -> AppError {
+    let status = response.status();
+    let body = response.text().await.ok();
+    if let Some(body) = body.as_deref()
+        && super::captcha::parse_captcha_challenge(status, body).is_some()
+    {
+        return AppError::CaptchaRequired {
+            action: label.to_owned(),
+        };
+    }
+    let detail = body
+        .map(truncate_error_body)
+        .filter(|detail| !detail.trim().is_empty());
+    match detail {
+        Some(detail) => AppError::DiscordRequest(format!("{label} failed: {error}: {detail}")),
+        None => AppError::DiscordRequest(format!("{label} failed: {error}")),
     }
 }
 
