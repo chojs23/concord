@@ -180,8 +180,8 @@ choose `[o] Sign out`.
 - Switch channels, threads, and posts with the fuzzy channel switcher (`Space`, `Space`)
 - Load pinned messages per channel
 - Open channel actions for pinned messages, thread lists, and mark-as-read
-- Join and leave voice channels
-- Highlight active voice speakers in voice channel participant rows
+- Join and leave voice channels/DM calls
+- Highlight active voice speakers in voice channel/DM calls
 - Track unread messages and mention counts per channel
 - Mute and unmute channels and servers
 - Leave the selected server after confirmation
@@ -365,8 +365,8 @@ Channel actions:
 
 | Shortcut | Action               | Description                                  |
 | -------- | -------------------- | -------------------------------------------- |
-| `j`      | Join voice           | Join the selected voice channel              |
-| `l`      | Leave voice          | Leave the current voice channel              |
+| `j`      | Join voice           | Join the selected voice channel or DM call   |
+| `l`      | Leave voice          | Leave the current voice channel or DM call   |
 | `p`      | Show pinned messages | Open the selected channel's pinned messages  |
 | `t`      | Show threads         | List threads for the selected channel        |
 | `m`      | Mark as read         | Mark the selected channel read               |
