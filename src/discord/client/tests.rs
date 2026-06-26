@@ -2,7 +2,7 @@ use crate::{
     AppError,
     discord::{
         ActivityInfo, AppEvent, ChannelInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
-        RoleInfo, UserProfileInfo, VoiceSoundKind, VoiceStateInfo,
+        RoleInfo, UserProfileInfo, VoiceScope, VoiceSoundKind, VoiceStateInfo,
         gateway::GatewayCommand,
         ids::{
             Id,
@@ -287,19 +287,19 @@ fn requested_voice_state_tracks_shutdown_fallback() {
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
 
     client
-        .update_voice_state(Id::new(1), Some(Id::new(10)), true, false)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), Some(Id::new(10)), true, false)
         .expect("gateway command should queue");
     let voice = client
         .requested_voice_connection()
         .expect("requested voice state should be tracked");
 
-    assert_eq!(voice.guild_id, Id::new(1));
+    assert_eq!(voice.guild_id(), Some(Id::new(1)));
     assert_eq!(voice.channel_id, Id::new(10));
     assert!(voice.self_mute);
     assert!(!voice.self_deaf);
 
     client
-        .update_voice_state(Id::new(1), None, false, false)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), None, false, false)
         .expect("gateway command should queue");
 
     assert_eq!(client.requested_voice_connection(), None);
@@ -317,7 +317,7 @@ fn requested_voice_state_skips_duplicate_gateway_updates() {
         .expect("gateway commands can be taken once");
 
     client
-        .update_voice_state(Id::new(1), Some(Id::new(10)), true, false)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), Some(Id::new(10)), true, false)
         .expect("initial join should queue");
     assert_voice_update(
         &mut gateway_commands,
@@ -328,7 +328,7 @@ fn requested_voice_state_skips_duplicate_gateway_updates() {
     );
 
     client
-        .update_voice_state(Id::new(1), Some(Id::new(10)), true, false)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), Some(Id::new(10)), true, false)
         .expect("duplicate join is ignored without closing channel");
     assert!(matches!(
         gateway_commands.try_recv(),
@@ -336,7 +336,7 @@ fn requested_voice_state_skips_duplicate_gateway_updates() {
     ));
 
     client
-        .update_voice_state(Id::new(1), Some(Id::new(10)), false, false)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), Some(Id::new(10)), false, false)
         .expect("mute change should queue");
     assert_voice_update(
         &mut gateway_commands,
@@ -347,12 +347,12 @@ fn requested_voice_state_skips_duplicate_gateway_updates() {
     );
 
     client
-        .update_voice_state(Id::new(1), None, false, false)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), None, false, false)
         .expect("leave should queue");
     assert_voice_update(&mut gateway_commands, Id::new(1), None, false, false);
 
     client
-        .update_voice_state(Id::new(1), None, false, false)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), None, false, false)
         .expect("duplicate leave is ignored without closing channel");
     assert!(matches!(
         gateway_commands.try_recv(),
@@ -418,7 +418,7 @@ async fn voice_join_rejects_explicit_missing_connect_permission() {
         .expect("gateway commands can be taken once");
 
     let error = client
-        .update_voice_state(Id::new(1), Some(Id::new(2)), false, false)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), Some(Id::new(2)), false, false)
         .expect_err("missing CONNECT should stop before gateway command");
 
     assert_eq!(error, "cannot connect to voice channel");
@@ -450,7 +450,7 @@ async fn voice_state_update_allows_current_channel_mute_change_without_connect_p
         .expect("gateway commands can be taken once");
 
     client
-        .update_voice_state(Id::new(1), Some(Id::new(2)), true, true)
+        .update_voice_state(VoiceScope::Guild(Id::new(1)), Some(Id::new(2)), true, true)
         .expect("current channel mute and deaf changes should still queue");
 
     assert_voice_update(
@@ -923,7 +923,7 @@ fn assert_voice_update(
         panic!("expected voice update command");
     };
 
-    assert_eq!(guild_id, expected_guild_id);
+    assert_eq!(guild_id, Some(expected_guild_id));
     assert_eq!(channel_id, expected_channel_id);
     assert_eq!(self_mute, expected_self_mute);
     assert_eq!(self_deaf, expected_self_deaf);

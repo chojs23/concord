@@ -7,7 +7,7 @@ pub(super) fn leave_current_voice_channel_on_shutdown(client: &DiscordClient) {
         return;
     };
     if let Err(message) =
-        client.update_voice_state(voice.guild_id, None, voice.self_mute, voice.self_deaf)
+        client.update_voice_state(voice.scope, None, voice.self_mute, voice.self_deaf)
     {
         logging::error("app", format!("voice shutdown leave failed: {message}"));
     }

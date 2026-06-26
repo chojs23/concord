@@ -527,14 +527,24 @@ impl DashboardState {
         let mut channels = self.channels();
         if self.navigation.guilds.active == ActiveGuildScope::DirectMessages {
             sort_direct_message_channels(&mut channels);
-            return channels
-                .into_iter()
-                .filter(|state| !state.is_thread())
-                .map(|state| ChannelPaneEntry::Channel {
+            // DMs and group DMs render as a tree: each conversation is a root,
+            // with the people currently in its call nested beneath it, mirroring
+            // how guild voice channels list their participants.
+            let mut entries = Vec::new();
+            for state in channels.into_iter().filter(|state| !state.is_thread()) {
+                entries.push(ChannelPaneEntry::Channel {
                     state,
                     branch: ChannelBranch::None,
-                })
-                .collect();
+                });
+                let participants = self.discord.voice_participants_for_private_channel(state.id);
+                entries.extend(participants.into_iter().map(|participant| {
+                    ChannelPaneEntry::VoiceParticipant {
+                        participant,
+                        parent_branch: ChannelBranch::None,
+                    }
+                }));
+            }
+            return entries;
         }
 
         let voice_participants_by_channel = match self.navigation.guilds.active {
@@ -922,24 +932,29 @@ impl DashboardState {
     }
 
     pub fn active_voice_connection_label(&self) -> Option<String> {
-        let (guild_id, channel_id, other_client) =
+        let (scope, channel_id, other_client) =
             if let Some(voice) = self.runtime.voice_connection {
-                (voice.guild_id, voice.channel_id?, false)
+                (voice.scope, voice.channel_id?, false)
             } else {
                 let voice = self.discord.current_user_voice_connection()?;
-                (voice.guild_id, voice.channel_id, true)
+                (voice.scope, voice.channel_id, true)
             };
-        let guild = self
-            .guild_name(guild_id)
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("guild-{}", guild_id.get()));
         let channel = self
             .discord
             .channel(channel_id)
             .map(|channel| channel.name.clone())
             .unwrap_or_else(|| format!("channel-{}", channel_id.get()));
         let suffix = if other_client { " (other client)" } else { "" };
-        Some(format!("{guild} - {channel}{suffix}"))
+        // Guild voice shows "guild - channel"; a DM/group-DM call has no guild,
+        // so it is labeled under "Direct Messages" instead.
+        let prefix = match scope.guild_id() {
+            Some(guild_id) => self
+                .guild_name(guild_id)
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("guild-{}", guild_id.get())),
+            None => "Direct Messages".to_owned(),
+        };
+        Some(format!("{prefix} - {channel}{suffix}"))
     }
 
     pub fn current_voice_self_status(&self) -> (bool, bool) {

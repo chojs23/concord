@@ -90,4 +90,6 @@ pub use state::{
 };
 pub(crate) use upload::read_profile_avatar_image;
 pub use user_settings::{UserCustomStatusInfo, UserFriendSourceFlagsInfo, UserSettingsInfo};
-pub use voice::{VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo};
+pub use voice::{
+    VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,
+};

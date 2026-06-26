@@ -102,15 +102,16 @@ impl DashboardState {
                     .cache
                     .forum_child_ack_targets(channel_id)
                     .is_empty());
-        let joined_here = channel.is_voice()
-            && channel.guild_id.is_some_and(|guild_id| {
-                self.runtime.voice_connection.is_some_and(|voice| {
-                    voice.guild_id == guild_id && voice.channel_id == Some(channel_id)
-                })
+        let joined_here = channel.supports_voice_call()
+            && self.runtime.voice_connection.is_some_and(|voice| {
+                voice.scope == channel.voice_scope() && voice.channel_id == Some(channel_id)
             });
-        let can_join_voice = channel.is_voice()
+        // Guild voice needs the connect permission; DM and group-DM calls have
+        // no guild permission model, so they are always joinable.
+        let can_join_voice = channel.supports_voice_call()
             && !joined_here
-            && self.discord.cache.can_connect_voice_channel(channel);
+            && (channel.guild_id.is_none()
+                || self.discord.cache.can_connect_voice_channel(channel));
         let mute_label = match (
             self.discord.cache.channel_notification_muted(channel_id),
             channel.is_category(),
@@ -200,9 +201,8 @@ impl DashboardState {
                         self.discord
                             .cache
                             .channel(channel_id)
-                            .and_then(|channel| channel.guild_id)
-                            .map(|guild_id| AppCommand::JoinVoiceChannel {
-                                guild_id,
+                            .map(|channel| AppCommand::JoinVoiceChannel {
+                                scope: channel.voice_scope(),
                                 channel_id,
                                 self_mute: self.options.voice_options.self_mute,
                                 self_deaf: self.options.voice_options.self_deaf,
@@ -223,9 +223,8 @@ impl DashboardState {
                         self.discord
                             .cache
                             .channel(channel_id)
-                            .and_then(|channel| channel.guild_id)
-                            .map(|guild_id| AppCommand::LeaveVoiceChannel {
-                                guild_id,
+                            .map(|channel| AppCommand::LeaveVoiceChannel {
+                                scope: channel.voice_scope(),
                                 self_mute: self.options.voice_options.self_mute,
                                 self_deaf: self.options.voice_options.self_deaf,
                             })

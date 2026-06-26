@@ -2,9 +2,9 @@ use std::time::Instant;
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker},
+    marker::{ChannelMarker, MessageMarker},
 };
-use crate::discord::{AppEvent, VoiceConnectionStatus};
+use crate::discord::{AppEvent, VoiceConnectionStatus, VoiceScope};
 use crate::logging;
 
 use super::{
@@ -306,12 +306,12 @@ impl DashboardState {
                 self.activate_event_channel(*channel_id, channel_cursor_id);
             }
             AppEvent::VoiceConnectionStatusChanged {
-                guild_id,
+                scope,
                 channel_id,
                 status,
                 message,
             } => {
-                self.record_voice_connection_status(*guild_id, *channel_id, *status, message);
+                self.record_voice_connection_status(*scope, *channel_id, *status, message);
             }
             AppEvent::ChannelUpsert(channel) => {
                 self.record_thread_channel_upserted(channel);
@@ -343,7 +343,7 @@ impl DashboardState {
 
     fn record_voice_connection_status(
         &mut self,
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Option<Id<ChannelMarker>>,
         status: VoiceConnectionStatus,
         message: &Option<String>,
@@ -351,7 +351,7 @@ impl DashboardState {
         match status {
             VoiceConnectionStatus::Connecting => {
                 self.runtime.voice_connection = Some(VoiceConnectionUiState {
-                    guild_id,
+                    scope,
                     channel_id,
                 });
                 self.show_success_toast(
@@ -361,7 +361,7 @@ impl DashboardState {
             }
             VoiceConnectionStatus::Connected => {
                 self.runtime.voice_connection = Some(VoiceConnectionUiState {
-                    guild_id,
+                    scope,
                     channel_id,
                 });
                 self.show_success_toast(
@@ -373,7 +373,7 @@ impl DashboardState {
                 if self
                     .runtime
                     .voice_connection
-                    .is_some_and(|voice| voice.guild_id == guild_id)
+                    .is_some_and(|voice| voice.scope == scope)
                 {
                     self.runtime.voice_connection = None;
                 }
@@ -386,7 +386,7 @@ impl DashboardState {
                 if self
                     .runtime
                     .voice_connection
-                    .is_some_and(|voice| voice.guild_id == guild_id)
+                    .is_some_and(|voice| voice.scope == scope)
                 {
                     self.runtime.voice_connection = None;
                 }

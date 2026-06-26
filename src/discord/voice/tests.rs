@@ -21,7 +21,8 @@ fn voice_state(user_id: u64, channel_id: Option<Id<ChannelMarker>>) -> VoiceStat
 
 fn voice_server() -> VoiceServerInfo {
     VoiceServerInfo {
-        guild_id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: None,
         endpoint: Some("voice.example.com".to_owned()),
         token: "secret-token".to_owned(),
     }
@@ -50,7 +51,7 @@ fn voice_runtime_assembles_local_voice_session() {
 
     match action {
         Some(VoiceRuntimeAction::Connect(session)) => {
-            assert_eq!(session.guild_id, Id::new(1));
+            assert_eq!(session.scope, VoiceScope::Guild(Id::new(1)));
             assert_eq!(session.channel_id, Id::new(10));
             assert_eq!(session.user_id, Id::new(10));
             assert_eq!(session.endpoint, "voice.example.com");
@@ -213,7 +214,7 @@ fn voice_runtime_reconnects_after_matching_connection_end() {
 #[test]
 fn voice_gateway_session_debug_redacts_secrets() {
     let session = VoiceGatewaySession {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(10),
         user_id: Id::new(20),
         session_id: "secret-session".to_owned(),
@@ -241,7 +242,7 @@ fn voice_state_debug_redacts_session_id() {
 #[test]
 fn voice_dave_state_tracks_speaking_ssrc_mapping() {
     let session = VoiceGatewaySession {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(10),
         user_id: Id::new(20),
         session_id: "voice-session".to_owned(),
@@ -1026,7 +1027,7 @@ fn voice_microphone_overload_gain_blanks_extreme_same_polarity_clip() {
 #[test]
 fn voice_identify_payload_matches_expected_shape() {
     let session = VoiceGatewaySession {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(10),
         user_id: Id::new(20),
         session_id: "voice-session".to_owned(),
@@ -1950,7 +1951,7 @@ fn fake_outbound_state(mode: &str, nonce_suffix: u32) -> VoiceOutboundSendState 
 
 fn test_voice_gateway_session() -> VoiceGatewaySession {
     VoiceGatewaySession {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(10),
         user_id: Id::new(20),
         session_id: "voice-session".to_owned(),

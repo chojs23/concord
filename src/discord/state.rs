@@ -21,7 +21,7 @@ use super::notification::{
 };
 use super::profile::{ProfileRoleIds, UserProfileCacheKey};
 use super::read::ChannelReadState;
-pub use super::voice::{CurrentVoiceConnectionState, VoiceParticipantState};
+pub use super::voice::{CurrentVoiceConnectionState, VoiceParticipantState, VoiceScope};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
@@ -159,7 +159,7 @@ pub(in crate::discord) struct TypingIndicator {
 #[derive(Clone, Debug, Default)]
 pub(in crate::discord) struct VoiceStateCache {
     pub(in crate::discord) states:
-        BTreeMap<(Id<GuildMarker>, Id<UserMarker>), super::voice::VoiceState>,
+        BTreeMap<(VoiceScope, Id<UserMarker>), super::voice::VoiceState>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -868,19 +868,24 @@ impl DiscordState {
                 self.update_channel_recipient_presence(user_id, status);
             }
             AppEvent::VoiceStateUpdate { state } => {
-                if let Some(member) = state.member.as_ref() {
-                    self.upsert_guild_member(state.guild_id, member);
-                    self.refresh_message_author_display_name(state.guild_id, member);
+                // Member objects ride along only on guild voice states; DM call
+                // states have no guild and no member to upsert.
+                if let (Some(member), Some(guild_id)) = (state.member.as_ref(), state.guild_id) {
+                    self.upsert_guild_member(guild_id, member);
+                    self.refresh_message_author_display_name(guild_id, member);
                 }
                 self.update_voice_state(state);
             }
             AppEvent::VoiceSpeakingUpdate {
-                guild_id,
+                scope,
                 channel_id,
                 user_id,
                 speaking,
             } => {
-                self.update_voice_speaking(*guild_id, *channel_id, *user_id, *speaking);
+                self.update_voice_speaking(*scope, *channel_id, *user_id, *speaking);
+            }
+            AppEvent::CallDelete { channel_id } => {
+                self.remove_voice_states_for_channel(*channel_id);
             }
             AppEvent::TypingStart {
                 channel_id,

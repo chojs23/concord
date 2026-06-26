@@ -124,7 +124,7 @@ fn raw_voice_state_update_extracts_channel_and_member() {
     assert!(events.iter().any(|event| matches!(
         event,
         AppEvent::VoiceStateUpdate { state }
-            if state.guild_id == Id::new(10)
+            if state.guild_id == Some(Id::new(10))
                 && state.channel_id == Some(Id::new(30))
                 && state.user_id == Id::new(20)
                 && state.mute
@@ -134,6 +134,70 @@ fn raw_voice_state_update_extracts_channel_and_member() {
                 && state.member.as_ref().is_some_and(|member|
                     member.display_name == "Alice Nick" && member.role_ids == vec![Id::new(40)]
                 )
+    )));
+}
+
+#[test]
+fn dm_call_voice_states_parse_without_a_guild() {
+    use crate::discord::VoiceScope;
+
+    // A DM/group-DM voice state arrives with a null guild and the DM channel id.
+    let dm_state = parse_user_account_event(
+        &json!({
+            "t": "VOICE_STATE_UPDATE",
+            "d": {
+                "guild_id": null,
+                "channel_id": "30",
+                "user_id": "20",
+                "session_id": "dm-voice-session"
+            }
+        })
+        .to_string(),
+    );
+    assert!(dm_state.iter().any(|event| matches!(
+        event,
+        AppEvent::VoiceStateUpdate { state }
+            if state.guild_id.is_none()
+                && state.channel_id == Some(Id::new(30))
+                && state.scope() == Some(VoiceScope::Private(Id::new(30)))
+    )));
+
+    // CALL_CREATE describes an in-progress DM call and seeds its participants.
+    let call = parse_user_account_event(
+        &json!({
+            "t": "CALL_CREATE",
+            "d": {
+                "channel_id": "30",
+                "voice_states": [
+                    { "user_id": "20", "channel_id": "30" },
+                    { "user_id": "21" }
+                ]
+            }
+        })
+        .to_string(),
+    );
+    let call_users: Vec<_> = call
+        .iter()
+        .filter_map(|event| match event {
+            AppEvent::VoiceStateUpdate { state } => Some(state),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(call_users.len(), 2);
+    // A participant whose state omits its channel inherits the call's channel.
+    assert!(
+        call_users
+            .iter()
+            .all(|state| state.channel_id == Some(Id::new(30)) && state.guild_id.is_none())
+    );
+
+    // CALL_DELETE ends the call and clears its channel.
+    let deleted = parse_user_account_event(
+        &json!({ "t": "CALL_DELETE", "d": { "channel_id": "30" } }).to_string(),
+    );
+    assert!(deleted.iter().any(|event| matches!(
+        event,
+        AppEvent::CallDelete { channel_id } if *channel_id == Id::new(30)
     )));
 }
 
@@ -159,7 +223,7 @@ fn raw_voice_server_update_extracts_endpoint_without_exposing_token_in_debug() {
         })
         .expect("voice server update should parse");
 
-    assert_eq!(server.guild_id, Id::new(10));
+    assert_eq!(server.guild_id, Some(Id::new(10)));
     assert_eq!(server.endpoint.as_deref(), Some("voice.example.com"));
     assert_eq!(server.token, "secret-voice-token");
     assert!(!format!("{server:?}").contains("secret-voice-token"));
@@ -182,7 +246,7 @@ fn raw_voice_state_update_extracts_leave_payload() {
     assert!(events.iter().any(|event| matches!(
         event,
         AppEvent::VoiceStateUpdate { state }
-            if state.guild_id == Id::new(10)
+            if state.guild_id == Some(Id::new(10))
                 && state.channel_id.is_none()
                 && state.user_id == Id::new(20)
     )));
@@ -214,7 +278,7 @@ fn raw_guild_create_emits_initial_voice_states() {
     assert!(events.iter().any(|event| matches!(
         event,
         AppEvent::VoiceStateUpdate { state }
-            if state.guild_id == Id::new(10)
+            if state.guild_id == Some(Id::new(10))
                 && state.channel_id == Some(Id::new(30))
                 && state.user_id == Id::new(20)
                 && state.self_stream
@@ -249,7 +313,7 @@ fn raw_ready_parser_emits_initial_voice_states_from_embedded_guilds() {
     assert!(events.iter().any(|event| matches!(
         event,
         AppEvent::VoiceStateUpdate { state }
-            if state.guild_id == Id::new(10)
+            if state.guild_id == Some(Id::new(10))
                 && state.channel_id == Some(Id::new(30))
                 && state.user_id == Id::new(20)
     )));
@@ -276,7 +340,7 @@ fn raw_ready_supplemental_emits_voice_states_from_embedded_guilds() {
     assert!(events.iter().any(|event| matches!(
         event,
         AppEvent::VoiceStateUpdate { state }
-            if state.guild_id == Id::new(10)
+            if state.guild_id == Some(Id::new(10))
                 && state.channel_id == Some(Id::new(30))
                 && state.user_id == Id::new(20)
     )));

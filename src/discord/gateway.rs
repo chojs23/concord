@@ -66,7 +66,9 @@ pub enum GatewayCommand {
         ranges: Vec<(u32, u32)>,
     },
     UpdateVoiceState {
-        guild_id: Id<GuildMarker>,
+        /// `None` for DM and group-DM calls, which Discord joins with a null
+        /// `guild_id` and the DM `channel_id` as the voice target.
+        guild_id: Option<Id<GuildMarker>>,
         channel_id: Option<Id<ChannelMarker>>,
         self_mute: bool,
         self_deaf: bool,
@@ -793,7 +795,7 @@ async fn dispatch_command(
                 "gateway",
                 format!(
                     "updating voice state: guild={} channel={} self_mute={} self_deaf={}",
-                    guild_id.get(),
+                    guild_id.map(|id| id.get()).unwrap_or_default(),
                     channel_id.map(|id| id.get()).unwrap_or_default(),
                     self_mute,
                     self_deaf,
@@ -966,15 +968,18 @@ fn guild_channel_subscribe_payload(
 }
 
 fn voice_state_update_payload(
-    guild_id: Id<GuildMarker>,
+    guild_id: Option<Id<GuildMarker>>,
     channel_id: Option<Id<ChannelMarker>>,
     self_mute: bool,
     self_deaf: bool,
 ) -> String {
+    // A null `guild_id` tells Discord this is a DM or group-DM call; the
+    // `channel_id` then points at the DM channel rather than a guild voice
+    // channel.
     json!({
         "op": 4,
         "d": {
-            "guild_id": guild_id.to_string(),
+            "guild_id": guild_id.map(|guild_id| guild_id.to_string()),
             "channel_id": channel_id.map(|channel_id| channel_id.to_string()),
             "self_mute": self_mute,
             "self_deaf": self_deaf,
@@ -1359,7 +1364,7 @@ mod tests {
     #[test]
     fn voice_state_update_payload_joins_and_leaves_voice_channel() {
         let join_payload: serde_json::Value = serde_json::from_str(&voice_state_update_payload(
-            Id::<GuildMarker>::new(10),
+            Some(Id::<GuildMarker>::new(10)),
             Some(Id::<ChannelMarker>::new(20)),
             true,
             false,
@@ -1372,12 +1377,24 @@ mod tests {
         assert_eq!(join_payload["d"]["self_deaf"].as_bool(), Some(false));
 
         let leave_payload: serde_json::Value = serde_json::from_str(&voice_state_update_payload(
-            Id::<GuildMarker>::new(10),
+            Some(Id::<GuildMarker>::new(10)),
             None,
             true,
             false,
         ))
         .expect("voice leave payload should be valid json");
         assert!(leave_payload["d"]["channel_id"].is_null());
+
+        // A DM or group-DM call joins with a null guild and the DM channel as
+        // the voice target.
+        let dm_call_payload: serde_json::Value = serde_json::from_str(&voice_state_update_payload(
+            None,
+            Some(Id::<ChannelMarker>::new(30)),
+            false,
+            false,
+        ))
+        .expect("dm call payload should be valid json");
+        assert!(dm_call_payload["d"]["guild_id"].is_null());
+        assert_eq!(dm_call_payload["d"]["channel_id"].as_str(), Some("30"));
     }
 }

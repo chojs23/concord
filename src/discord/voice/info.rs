@@ -7,9 +7,58 @@ use crate::discord::ids::{
 
 use crate::discord::MemberInfo;
 
+/// Identifies the voice server a connection belongs to. Guild voice is keyed by
+/// `guild_id`; DM and group-DM calls have no guild, so Discord keys the same
+/// machinery by the DM `channel_id` with `guild_id` sent as null.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum VoiceScope {
+    Guild(Id<GuildMarker>),
+    Private(Id<ChannelMarker>),
+}
+
+impl VoiceScope {
+    pub fn guild_id(self) -> Option<Id<GuildMarker>> {
+        match self {
+            Self::Guild(guild_id) => Some(guild_id),
+            Self::Private(_) => None,
+        }
+    }
+
+    pub fn private_channel_id(self) -> Option<Id<ChannelMarker>> {
+        match self {
+            Self::Private(channel_id) => Some(channel_id),
+            Self::Guild(_) => None,
+        }
+    }
+
+    /// Voice IDENTIFY `server_id`: the guild id for guild voice, the DM channel
+    /// id for a private call.
+    pub fn server_id_string(self) -> String {
+        match self {
+            Self::Guild(guild_id) => guild_id.to_string(),
+            Self::Private(channel_id) => channel_id.to_string(),
+        }
+    }
+
+    /// Derive a scope from a `(guild_id, channel_id)` pair. A guild wins; a
+    /// private call is keyed by its channel; neither present (a DM leave) yields
+    /// `None`.
+    fn from_ids(
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Option<Id<ChannelMarker>>,
+    ) -> Option<Self> {
+        match (guild_id, channel_id) {
+            (Some(guild_id), _) => Some(Self::Guild(guild_id)),
+            (None, Some(channel_id)) => Some(Self::Private(channel_id)),
+            (None, None) => None,
+        }
+    }
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct VoiceStateInfo {
-    pub guild_id: Id<GuildMarker>,
+    /// `None` for DM/group-DM call voice states, which carry a null `guild_id`.
+    pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Option<Id<ChannelMarker>>,
     pub user_id: Id<UserMarker>,
     pub session_id: Option<String>,
@@ -30,7 +79,7 @@ impl VoiceStateInfo {
         user_id: Id<UserMarker>,
     ) -> Self {
         Self {
-            guild_id,
+            guild_id: Some(guild_id),
             channel_id,
             user_id,
             session_id: None,
@@ -64,11 +113,25 @@ impl fmt::Debug for VoiceStateInfo {
     }
 }
 
+impl VoiceStateInfo {
+    pub fn scope(&self) -> Option<VoiceScope> {
+        VoiceScope::from_ids(self.guild_id, self.channel_id)
+    }
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct VoiceServerInfo {
-    pub guild_id: Id<GuildMarker>,
+    /// `None` for DM/group-DM call servers, which carry a `channel_id` instead.
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_id: Option<Id<ChannelMarker>>,
     pub endpoint: Option<String>,
     pub token: String,
+}
+
+impl VoiceServerInfo {
+    pub fn scope(&self) -> Option<VoiceScope> {
+        VoiceScope::from_ids(self.guild_id, self.channel_id)
+    }
 }
 
 #[cfg(test)]
@@ -76,7 +139,8 @@ pub struct VoiceServerInfo {
 impl VoiceServerInfo {
     pub(crate) fn test(guild_id: Id<GuildMarker>) -> Self {
         Self {
-            guild_id,
+            guild_id: Some(guild_id),
+            channel_id: None,
             endpoint: None,
             token: String::new(),
         }

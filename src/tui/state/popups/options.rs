@@ -442,7 +442,7 @@ impl DashboardState {
         };
 
         self.enqueue_pending_command(AppCommand::UpdateVoiceCapturePermission {
-            guild_id: voice.guild_id,
+            scope: voice.scope,
             channel_id,
             allow_microphone_transmit: self.options.voice_options.allow_microphone_transmit,
             microphone_sensitivity: self.options.voice_options.microphone_sensitivity,

@@ -233,7 +233,7 @@ impl DashboardState {
         };
 
         self.enqueue_pending_command(AppCommand::UpdateVoiceState {
-            guild_id: voice.guild_id,
+            scope: voice.scope,
             channel_id,
             self_mute: self.options.voice_options.self_mute,
             self_deaf: self.options.voice_options.self_deaf,

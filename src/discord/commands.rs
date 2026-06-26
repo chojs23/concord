@@ -10,7 +10,7 @@ use crate::discord::ids::{
 
 use super::application_commands::ApplicationCommandInvocation;
 use super::message::MessageInfo;
-use super::{ActivityInfo, PresenceStatus};
+use super::{ActivityInfo, PresenceStatus, VoiceScope};
 
 pub const MAX_UPLOAD_FILE_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_UPLOAD_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
@@ -479,7 +479,7 @@ pub enum AppCommand {
         ranges: Vec<(u32, u32)>,
     },
     JoinVoiceChannel {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         self_mute: bool,
         self_deaf: bool,
@@ -489,13 +489,13 @@ pub enum AppCommand {
         voice_output_volume: crate::config::VoiceVolumePercent,
     },
     UpdateVoiceState {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         self_mute: bool,
         self_deaf: bool,
     },
     UpdateVoiceCapturePermission {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         allow_microphone_transmit: bool,
         microphone_sensitivity: crate::config::MicrophoneSensitivityDb,
@@ -503,7 +503,7 @@ pub enum AppCommand {
         voice_output_volume: crate::config::VoiceVolumePercent,
     },
     LeaveVoiceChannel {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         self_mute: bool,
         self_deaf: bool,
     },

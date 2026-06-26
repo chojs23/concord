@@ -151,7 +151,7 @@ fn runs_inline(command: &AppCommand) -> bool {
 mod tests {
     use crate::{
         config::{MicrophoneSensitivityDb, VoiceVolumePercent},
-        discord::ids::Id,
+        discord::{VoiceScope, ids::Id},
     };
 
     use super::*;
@@ -165,7 +165,7 @@ mod tests {
             channel_id: Some(Id::new(2)),
         }));
         assert!(runs_inline(&AppCommand::UpdateVoiceCapturePermission {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(2),
             allow_microphone_transmit: true,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),

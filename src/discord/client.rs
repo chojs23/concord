@@ -28,7 +28,7 @@ use super::{
     request_lifecycle::RequestLifecycle,
     rest::DiscordRest,
     state::{CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, SnapshotRevision},
-    voice::{self, VoiceRuntimeEvent},
+    voice::{self, VoiceRuntimeEvent, VoiceScope},
 };
 
 const MEMBER_SEARCH_MIN_QUERY_CHARS: usize = 2;
@@ -275,7 +275,7 @@ impl DiscordClient {
 
     pub fn update_voice_state(
         &self,
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Option<Id<ChannelMarker>>,
         self_mute: bool,
         self_deaf: bool,
@@ -284,13 +284,12 @@ impl DiscordClient {
             .requested_voice
             .write()
             .expect("requested voice lock is not poisoned");
-        if voice_state_request_is_duplicate(*requested, guild_id, channel_id, self_mute, self_deaf)
-        {
+        if voice_state_request_is_duplicate(*requested, scope, channel_id, self_mute, self_deaf) {
             return Ok(());
         }
         if let Some(channel_id) = channel_id {
             let requested_same_channel = requested
-                .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                .filter(|voice| voice.scope == scope && voice.channel_id == channel_id)
                 .is_some();
             if !requested_same_channel {
                 let state = self
@@ -299,9 +298,12 @@ impl DiscordClient {
                     .expect("discord state lock is not poisoned");
                 let current_same_channel = state
                     .current_user_voice_connection()
-                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .filter(|voice| voice.scope == scope && voice.channel_id == channel_id)
                     .is_some();
+                // Permission gates apply only to guild voice channels; DM and
+                // group-DM calls have no guild permission model to check.
                 if !current_same_channel
+                    && scope.guild_id().is_some()
                     && let Some(channel) = state.channel(channel_id)
                     && !state.can_connect_voice_channel(channel)
                 {
@@ -311,7 +313,7 @@ impl DiscordClient {
         }
 
         let result = self.send_gateway_command(GatewayCommand::UpdateVoiceState {
-            guild_id,
+            guild_id: scope.guild_id(),
             channel_id,
             self_mute,
             self_deaf,
@@ -319,22 +321,22 @@ impl DiscordClient {
         if result.is_ok() {
             if let Some(channel_id) = channel_id {
                 let allow_microphone_transmit = requested
-                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .filter(|voice| voice.scope == scope && voice.channel_id == channel_id)
                     .is_some_and(|voice| voice.allow_microphone_transmit);
                 let microphone_sensitivity = requested
-                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .filter(|voice| voice.scope == scope && voice.channel_id == channel_id)
                     .map(|voice| voice.microphone_sensitivity)
                     .unwrap_or_default();
                 let microphone_volume = requested
-                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .filter(|voice| voice.scope == scope && voice.channel_id == channel_id)
                     .map(|voice| voice.microphone_volume)
                     .unwrap_or_default();
                 let voice_output_volume = requested
-                    .filter(|voice| voice.guild_id == guild_id && voice.channel_id == channel_id)
+                    .filter(|voice| voice.scope == scope && voice.channel_id == channel_id)
                     .map(|voice| voice.voice_output_volume)
                     .unwrap_or_default();
                 let voice = CurrentVoiceConnectionState {
-                    guild_id,
+                    scope,
                     channel_id,
                     self_mute,
                     self_deaf,
@@ -347,7 +349,7 @@ impl DiscordClient {
                 let _ = self
                     .voice_events_tx
                     .send(VoiceRuntimeEvent::Requested(Some(voice)));
-            } else if requested.is_some_and(|voice| voice.guild_id == guild_id) {
+            } else if requested.is_some_and(|voice| voice.scope == scope) {
                 *requested = None;
                 let _ = self
                     .voice_events_tx
@@ -359,7 +361,7 @@ impl DiscordClient {
 
     pub fn update_voice_capture_permission(
         &self,
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         allow_microphone_transmit: bool,
         microphone_sensitivity: MicrophoneSensitivityDb,
@@ -373,7 +375,7 @@ impl DiscordClient {
         let Some(mut voice) = *requested else {
             return;
         };
-        if voice.guild_id != guild_id || voice.channel_id != channel_id {
+        if voice.scope != scope || voice.channel_id != channel_id {
             return;
         }
         if voice.allow_microphone_transmit == allow_microphone_transmit
@@ -608,19 +610,19 @@ pub(crate) fn validate_token_header(token: &str) -> Result<()> {
 
 fn voice_state_request_is_duplicate(
     requested: Option<CurrentVoiceConnectionState>,
-    guild_id: Id<GuildMarker>,
+    scope: VoiceScope,
     channel_id: Option<Id<ChannelMarker>>,
     self_mute: bool,
     self_deaf: bool,
 ) -> bool {
     match (requested, channel_id) {
         (Some(voice), Some(channel_id)) => {
-            voice.guild_id == guild_id
+            voice.scope == scope
                 && voice.channel_id == channel_id
                 && voice.self_mute == self_mute
                 && voice.self_deaf == self_deaf
         }
-        (Some(voice), None) => voice.guild_id != guild_id,
+        (Some(voice), None) => voice.scope != scope,
         (None, None) => true,
         (None, Some(_)) => false,
     }

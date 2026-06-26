@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::VoiceScope;
 
 #[test]
 fn tracks_members_and_presences() {
@@ -164,7 +165,7 @@ fn tracks_voice_participants_join_move_and_leave() {
     );
 
     state.apply_event(&AppEvent::VoiceSpeakingUpdate {
-        guild_id,
+        scope: VoiceScope::Guild(guild_id),
         channel_id: first_voice,
         user_id: alice,
         speaking: true,
@@ -182,7 +183,7 @@ fn tracks_voice_participants_join_move_and_leave() {
         },
     });
     state.apply_event(&AppEvent::VoiceSpeakingUpdate {
-        guild_id,
+        scope: VoiceScope::Guild(guild_id),
         channel_id: first_voice,
         user_id: bob,
         speaking: true,
@@ -217,7 +218,7 @@ fn tracks_voice_participants_join_move_and_leave() {
         state: voice_state(guild_id, Some(second_voice), bob),
     });
     state.apply_event(&AppEvent::VoiceSpeakingUpdate {
-        guild_id,
+        scope: VoiceScope::Guild(guild_id),
         channel_id: second_voice,
         user_id: bob,
         speaking: true,
@@ -237,6 +238,233 @@ fn tracks_voice_participants_join_move_and_leave() {
     assert_eq!(second_voice_participants[0].user_id, bob);
     assert!(!second_voice_participants[0].speaking);
     assert_eq!(state.current_user_voice_connection(), None);
+}
+
+#[test]
+fn tracks_dm_call_participants_resolving_names_from_recipients() {
+    let dm_channel = Id::new(50);
+    let me = Id::new(20);
+    let friend = Id::new(21);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::Ready {
+        user: "Me".to_owned(),
+        user_id: Some(me),
+    });
+    // A group DM has no guild and carries its members as recipients.
+    state.apply_event(&AppEvent::ChannelUpsert(dm_channel_with_recipients(
+        dm_channel,
+        "",
+        "group-dm",
+        vec![ChannelRecipientInfo::test(friend, "Friend")],
+    )));
+
+    // Both users join the DM call, which Discord reports with a null guild.
+    for user_id in [me, friend] {
+        state.apply_event(&AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo {
+                guild_id: None,
+                ..voice_state(Id::new(1), Some(dm_channel), user_id)
+            },
+        });
+    }
+
+    let participants = state.voice_participants_for_private_channel(dm_channel);
+    assert_eq!(participants.len(), 2);
+    // The current user resolves to the session name; the friend resolves through
+    // the DM recipient list. A guild-scoped query must not see private calls.
+    assert!(
+        participants
+            .iter()
+            .any(|participant| participant.user_id == me && participant.display_name == "Me")
+    );
+    assert!(
+        participants
+            .iter()
+            .any(|participant| participant.user_id == friend
+                && participant.display_name == "Friend")
+    );
+    assert!(
+        state
+            .voice_participants_for_channel(Id::new(1), dm_channel)
+            .is_empty()
+    );
+
+    // Leaving a DM call arrives with a null guild and null channel.
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: None,
+            ..voice_state(Id::new(1), None, friend)
+        },
+    });
+    let participants = state.voice_participants_for_private_channel(dm_channel);
+    assert_eq!(participants.len(), 1);
+    assert_eq!(participants[0].user_id, me);
+}
+
+#[test]
+fn moving_between_dm_calls_does_not_leave_the_user_in_the_old_call() {
+    let first_dm = Id::new(50);
+    let second_dm = Id::new(51);
+    let me = Id::new(20);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::Ready {
+        user: "Me".to_owned(),
+        user_id: Some(me),
+    });
+
+    // Join the first DM call, then move straight to a second DM call. Discord
+    // reports the move as a single voice state for the new call, with no leave
+    // for the old one.
+    for dm_channel in [first_dm, second_dm] {
+        state.apply_event(&AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo {
+                guild_id: None,
+                ..voice_state(Id::new(1), Some(dm_channel), me)
+            },
+        });
+    }
+
+    assert!(
+        state
+            .voice_participants_for_private_channel(first_dm)
+            .is_empty(),
+        "the user should no longer appear in the call they left"
+    );
+    let current = state.voice_participants_for_private_channel(second_dm);
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0].user_id, me);
+    assert_eq!(
+        state.current_user_voice_connection().map(|voice| voice.scope),
+        Some(VoiceScope::Private(second_dm))
+    );
+}
+
+#[test]
+fn leaving_a_dm_call_clears_stale_speaking_in_the_old_call() {
+    let first_dm = Id::new(50);
+    let second_dm = Id::new(51);
+    let me = Id::new(20);
+    let friend = Id::new(21);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::Ready {
+        user: "Me".to_owned(),
+        user_id: Some(me),
+    });
+    state.apply_event(&AppEvent::ChannelUpsert(dm_channel_with_recipients(
+        first_dm,
+        "",
+        "group-dm",
+        vec![ChannelRecipientInfo::test(friend, "Friend")],
+    )));
+
+    for user_id in [me, friend] {
+        state.apply_event(&AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo {
+                guild_id: None,
+                ..voice_state(Id::new(1), Some(first_dm), user_id)
+            },
+        });
+    }
+    state.apply_event(&AppEvent::VoiceSpeakingUpdate {
+        scope: VoiceScope::Private(first_dm),
+        channel_id: first_dm,
+        user_id: friend,
+        speaking: true,
+    });
+    assert!(
+        state
+            .voice_participants_for_private_channel(first_dm)
+            .iter()
+            .any(|participant| participant.user_id == friend && participant.speaking)
+    );
+
+    // Moving to another DM call must reset speaking flags in the call we left,
+    // which sits under a different scope than the new one.
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: None,
+            ..voice_state(Id::new(1), Some(second_dm), me)
+        },
+    });
+    assert!(
+        state
+            .voice_participants_for_private_channel(first_dm)
+            .iter()
+            .all(|participant| !participant.speaking)
+    );
+}
+
+#[test]
+fn call_delete_clears_a_dm_calls_participants() {
+    let dm = Id::new(50);
+    let me = Id::new(20);
+    let friend = Id::new(21);
+    let mut state = DiscordState::default();
+
+    state.apply_event(&AppEvent::Ready {
+        user: "Me".to_owned(),
+        user_id: Some(me),
+    });
+    state.apply_event(&AppEvent::ChannelUpsert(dm_channel_with_recipients(
+        dm,
+        "",
+        "group-dm",
+        vec![ChannelRecipientInfo::test(friend, "Friend")],
+    )));
+    for user_id in [me, friend] {
+        state.apply_event(&AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo {
+                guild_id: None,
+                ..voice_state(Id::new(1), Some(dm), user_id)
+            },
+        });
+    }
+    assert_eq!(state.voice_participants_for_private_channel(dm).len(), 2);
+
+    state.apply_event(&AppEvent::CallDelete { channel_id: dm });
+    assert!(
+        state
+            .voice_participants_for_private_channel(dm)
+            .is_empty()
+    );
+}
+
+#[test]
+fn dm_call_join_and_leave_both_chime() {
+    use crate::discord::VoiceSoundKind;
+
+    let dm = Id::new(50);
+    let me = Id::new(20);
+    let mut state = DiscordState::default();
+    state.apply_event(&AppEvent::Ready {
+        user: "Me".to_owned(),
+        user_id: Some(me),
+    });
+
+    // Joining a DM call carries the channel, so it chimes a join.
+    let join = VoiceStateInfo {
+        guild_id: None,
+        ..voice_state(Id::new(1), Some(dm), me)
+    };
+    assert_eq!(
+        state.voice_sound_for_state_update(&join),
+        Some(VoiceSoundKind::Join)
+    );
+    state.apply_event(&AppEvent::VoiceStateUpdate { state: join });
+
+    // Leaving a DM call arrives with a null guild and null channel; the leave
+    // chime must still fire, found via the cached entry rather than the payload.
+    let leave = VoiceStateInfo {
+        guild_id: None,
+        ..voice_state(Id::new(1), None, me)
+    };
+    assert_eq!(
+        state.voice_sound_for_state_update(&leave),
+        Some(VoiceSoundKind::Leave)
+    );
 }
 
 #[test]

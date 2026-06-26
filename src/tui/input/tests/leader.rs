@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::BTreeMap;
+use crate::discord::VoiceScope;
 
 #[test]
 fn enter_toggles_selected_channel_category_and_space_opens_leader() {
@@ -506,7 +507,7 @@ fn keymap_executes_canonical_pane_and_voice_commands() {
         ..Default::default()
     });
     state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Some(Id::new(11)),
         status: VoiceConnectionStatus::Connecting,
         message: None,
@@ -524,7 +525,7 @@ fn keymap_executes_canonical_pane_and_voice_commands() {
     assert_eq!(
         state.drain_pending_commands(),
         vec![AppCommand::UpdateVoiceState {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(11),
             self_mute: true,
             self_deaf: false,
@@ -537,7 +538,7 @@ fn keymap_executes_canonical_pane_and_voice_commands() {
     assert_eq!(
         command,
         Some(AppCommand::LeaveVoiceChannel {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             self_mute: true,
             self_deaf: false,
         })

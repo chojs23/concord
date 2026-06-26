@@ -4,6 +4,7 @@ use crate::discord::ids::{
 };
 use crate::discord::{
     ChannelInfo, ChannelRecipientInfo, ForumTagInfo, PermissionOverwriteInfo, PresenceStatus,
+    VoiceScope,
 };
 
 use crate::discord::state::DiscordState;
@@ -92,6 +93,27 @@ impl ChannelState {
 
     pub fn is_voice(&self) -> bool {
         matches!(self.kind.as_str(), "voice" | "GuildVoice")
+    }
+
+    /// A 1:1 DM or a group DM. Unlike [`Self::is_dm`], this also matches group
+    /// DMs, which together are the channels that support a private call.
+    pub fn is_dm_or_group_dm(&self) -> bool {
+        matches!(self.kind.as_str(), "dm" | "Private" | "group-dm" | "Group")
+    }
+
+    /// Whether a voice call can be placed here: a guild voice channel, or a DM /
+    /// group-DM conversation.
+    pub fn supports_voice_call(&self) -> bool {
+        self.is_voice() || self.is_dm_or_group_dm()
+    }
+
+    /// The voice connection scope for this channel: a guild voice channel routes
+    /// by its guild, while a DM or group DM routes a call by its own channel id.
+    pub fn voice_scope(&self) -> VoiceScope {
+        match self.guild_id {
+            Some(guild_id) => VoiceScope::Guild(guild_id),
+            None => VoiceScope::Private(self.id),
+        }
     }
 
     pub fn is_private_thread(&self) -> bool {

@@ -693,7 +693,7 @@ pub(super) fn voice_identify_payload(session: &VoiceGatewaySession) -> String {
     json!({
         "op": 0,
         "d": {
-            "server_id": session.guild_id.to_string(),
+            "server_id": session.scope.server_id_string(),
             "user_id": session.user_id.to_string(),
             "channel_id": session.channel_id.to_string(),
             "session_id": session.session_id,

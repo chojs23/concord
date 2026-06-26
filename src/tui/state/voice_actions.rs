@@ -19,7 +19,7 @@ impl DashboardState {
         let voice = self.runtime.voice_connection?;
         voice.channel_id?;
         Some(AppCommand::LeaveVoiceChannel {
-            guild_id: voice.guild_id,
+            scope: voice.scope,
             self_mute: self.options.voice_options.self_mute,
             self_deaf: self.options.voice_options.self_deaf,
         })

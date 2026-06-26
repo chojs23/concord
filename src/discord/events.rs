@@ -16,7 +16,8 @@ use super::{
     ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo,
     GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, PollInfo, PresenceStatus,
     ReactionUsersInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas, UserProfileInfo,
-    UserSettingsInfo, VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,
+    UserSettingsInfo, VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind,
+    VoiceStateInfo,
     is_thread_kind,
 };
 
@@ -327,7 +328,7 @@ pub enum AppEvent {
         state: VoiceStateInfo,
     },
     VoiceSpeakingUpdate {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         user_id: Id<UserMarker>,
         speaking: bool,
@@ -336,13 +337,17 @@ pub enum AppEvent {
         server: VoiceServerInfo,
     },
     VoiceConnectionStatusChanged {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Option<Id<ChannelMarker>>,
         status: VoiceConnectionStatus,
         message: Option<String>,
     },
     VoiceSound {
         kind: VoiceSoundKind,
+    },
+    /// A DM or group-DM call ended; every voice state in that channel is dropped.
+    CallDelete {
+        channel_id: Id<ChannelMarker>,
     },
     /// Discord's TYPING_START dispatch: emitted ~10s before the typing
     /// indicator should expire. The dashboard tracks the latest timestamp
@@ -592,6 +597,7 @@ define_app_event_kinds! {
     VoiceServerUpdate: AppEvent::VoiceServerUpdate { .. },
     VoiceConnectionStatusChanged: AppEvent::VoiceConnectionStatusChanged { .. },
     VoiceSound: AppEvent::VoiceSound { .. },
+    CallDelete: AppEvent::CallDelete { .. },
     TypingStart: AppEvent::TypingStart { .. },
     CurrentUserReactionAdd: AppEvent::CurrentUserReactionAdd { .. },
     CurrentUserReactionRemove: AppEvent::CurrentUserReactionRemove { .. },
@@ -856,6 +862,7 @@ impl AppEventKind {
             | AppEventKind::PresenceUpdate
             | AppEventKind::VoiceStateUpdate
             | AppEventKind::VoiceSpeakingUpdate
+            | AppEventKind::CallDelete
             | AppEventKind::TypingStart
             | AppEventKind::UserSettingsUpdate
             | AppEventKind::UserNoteLoaded

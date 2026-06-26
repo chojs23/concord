@@ -1,5 +1,5 @@
 use super::*;
-use crate::discord::AppCommand;
+use crate::discord::{AppCommand, VoiceScope};
 use crate::tui::keybindings::OptionsCategoryShortcut;
 
 #[test]
@@ -70,7 +70,7 @@ fn display_option_items_include_voice_state_controls() {
 fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     let mut state = DashboardState::new();
     state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Some(Id::new(11)),
         status: VoiceConnectionStatus::Connecting,
         message: None,
@@ -82,7 +82,7 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     assert_eq!(
         state.drain_pending_commands(),
         vec![AppCommand::UpdateVoiceState {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(11),
             self_mute: true,
             self_deaf: false,
@@ -94,7 +94,7 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     assert_eq!(
         state.drain_pending_commands(),
         vec![AppCommand::UpdateVoiceState {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(11),
             self_mute: true,
             self_deaf: true,
@@ -107,7 +107,7 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     assert_eq!(
         state.drain_pending_commands(),
         vec![AppCommand::UpdateVoiceCapturePermission {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(11),
             allow_microphone_transmit: true,
             microphone_sensitivity: Default::default(),
@@ -125,7 +125,7 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     assert_eq!(
         state.drain_pending_commands(),
         vec![AppCommand::UpdateVoiceCapturePermission {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(11),
             allow_microphone_transmit: true,
             microphone_sensitivity: state.voice_options().microphone_sensitivity,
@@ -192,7 +192,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
     assert_eq!(
         command,
         Some(AppCommand::JoinVoiceChannel {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(11),
             self_mute: true,
             self_deaf: true,
@@ -204,7 +204,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
     );
 
     state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Some(Id::new(11)),
         status: VoiceConnectionStatus::Connecting,
         message: None,
@@ -221,7 +221,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
     assert_eq!(
         command,
         Some(AppCommand::LeaveVoiceChannel {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             self_mute: true,
             self_deaf: true,
         })
@@ -232,7 +232,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
 fn voice_direct_actions_toggle_state_and_leave_current_voice() {
     let mut state = DashboardState::new();
     state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Some(Id::new(11)),
         status: VoiceConnectionStatus::Connecting,
         message: None,
@@ -243,7 +243,7 @@ fn voice_direct_actions_toggle_state_and_leave_current_voice() {
     assert_eq!(
         state.drain_pending_commands(),
         vec![AppCommand::UpdateVoiceState {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(11),
             self_mute: true,
             self_deaf: false,
@@ -255,7 +255,7 @@ fn voice_direct_actions_toggle_state_and_leave_current_voice() {
     assert_eq!(
         state.drain_pending_commands(),
         vec![AppCommand::UpdateVoiceState {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             channel_id: Id::new(11),
             self_mute: true,
             self_deaf: true,
@@ -266,7 +266,7 @@ fn voice_direct_actions_toggle_state_and_leave_current_voice() {
     assert_eq!(
         command,
         Some(AppCommand::LeaveVoiceChannel {
-            guild_id: Id::new(1),
+            scope: VoiceScope::Guild(Id::new(1)),
             self_mute: true,
             self_deaf: true,
         })

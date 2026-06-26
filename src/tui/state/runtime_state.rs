@@ -1,10 +1,9 @@
 use std::time::Instant;
 
-use crate::discord::ids::{
-    Id,
-    marker::{ChannelMarker, GuildMarker},
+use crate::discord::ids::{Id, marker::ChannelMarker};
+use crate::discord::{
+    AttachmentDownloadId, DownloadAttachmentSource, MediaPlaybackRequestId, VoiceScope,
 };
-use crate::discord::{AttachmentDownloadId, DownloadAttachmentSource, MediaPlaybackRequestId};
 
 use super::{AttachmentDownloadProgressView, DashboardState, ToastKind};
 
@@ -17,7 +16,7 @@ pub(super) struct ToastMessage {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct VoiceConnectionUiState {
-    pub(super) guild_id: Id<GuildMarker>,
+    pub(super) scope: VoiceScope,
     pub(super) channel_id: Option<Id<ChannelMarker>>,
 }
 

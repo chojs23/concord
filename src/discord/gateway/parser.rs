@@ -35,7 +35,10 @@ use presence::{parse_presence_update, parse_typing_start};
 use ready::{parse_ready, parse_ready_supplemental};
 use relationships::{parse_relationship_add, parse_relationship_remove, parse_relationship_update};
 use user_settings::parse_user_settings_update;
-use voice::{parse_guild_voice_states, parse_voice_server_update, parse_voice_state_update};
+use voice::{
+    parse_call, parse_call_delete, parse_guild_voice_states, parse_voice_server_update,
+    parse_voice_state_update,
+};
 
 #[derive(Clone, Debug)]
 pub(super) struct ParsedGatewayDispatch {
@@ -116,6 +119,8 @@ fn parse_user_account_event_data(event_type: &str, data: &Value) -> Vec<AppEvent
         "PRESENCE_UPDATE" => parse_presence_update(data),
         "VOICE_STATE_UPDATE" => parse_voice_state_update(data).into_iter().collect(),
         "VOICE_SERVER_UPDATE" => parse_voice_server_update(data).into_iter().collect(),
+        "CALL_CREATE" | "CALL_UPDATE" => parse_call(data),
+        "CALL_DELETE" => parse_call_delete(data).into_iter().collect(),
         "TYPING_START" => parse_typing_start(data).into_iter().collect(),
         _ => Vec::new(),
     }

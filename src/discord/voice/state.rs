@@ -5,7 +5,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crate::discord::{VoiceSoundKind, VoiceStateInfo};
+use crate::discord::{VoiceScope, VoiceSoundKind, VoiceStateInfo};
 
 use crate::discord::state::DiscordState;
 
@@ -23,7 +23,7 @@ pub struct VoiceParticipantState {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CurrentVoiceConnectionState {
-    pub guild_id: Id<GuildMarker>,
+    pub scope: VoiceScope,
     pub channel_id: Id<ChannelMarker>,
     pub self_mute: bool,
     pub self_deaf: bool,
@@ -33,12 +33,19 @@ pub struct CurrentVoiceConnectionState {
     pub voice_output_volume: VoiceVolumePercent,
 }
 
+impl CurrentVoiceConnectionState {
+    /// The guild this connection belongs to, or `None` for a DM/group-DM call.
+    pub fn guild_id(&self) -> Option<Id<GuildMarker>> {
+        self.scope.guild_id()
+    }
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 impl CurrentVoiceConnectionState {
     pub(crate) fn test(guild_id: Id<GuildMarker>, channel_id: Id<ChannelMarker>) -> Self {
         Self {
-            guild_id,
+            scope: VoiceScope::Guild(guild_id),
             channel_id,
             self_mute: false,
             self_deaf: false,
@@ -68,9 +75,9 @@ impl DiscordState {
         self.voice
             .states
             .iter()
-            .find_map(|((guild_id, user_id), state)| {
+            .find_map(|((scope, user_id), state)| {
                 (*user_id == current_user_id).then_some(CurrentVoiceConnectionState {
-                    guild_id: *guild_id,
+                    scope: *scope,
                     channel_id: state.channel_id,
                     self_mute: state.self_mute,
                     self_deaf: state.self_deaf,
@@ -87,10 +94,26 @@ impl DiscordState {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
     ) -> Vec<VoiceParticipantState> {
+        self.voice_participants_for_scope(VoiceScope::Guild(guild_id), channel_id)
+    }
+
+    /// Voice participants currently in a DM or group-DM call.
+    pub fn voice_participants_for_private_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> Vec<VoiceParticipantState> {
+        self.voice_participants_for_scope(VoiceScope::Private(channel_id), channel_id)
+    }
+
+    fn voice_participants_for_scope(
+        &self,
+        scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
+    ) -> Vec<VoiceParticipantState> {
         let mut participants = Vec::new();
-        for ((state_guild_id, _), state) in &self.voice.states {
-            if *state_guild_id == guild_id && state.channel_id == channel_id {
-                participants.push(self.voice_participant_state(guild_id, state));
+        for ((state_scope, _), state) in &self.voice.states {
+            if *state_scope == scope && state.channel_id == channel_id {
+                participants.push(self.voice_participant_state(scope, state));
             }
         }
         sort_voice_participants(&mut participants);
@@ -111,7 +134,7 @@ impl DiscordState {
     ) -> bool {
         self.voice
             .states
-            .get(&(guild_id, user_id))
+            .get(&(VoiceScope::Guild(guild_id), user_id))
             .map(|state| state.speaking)
             .unwrap_or(false)
     }
@@ -123,7 +146,7 @@ impl DiscordState {
     ) -> Option<Id<ChannelMarker>> {
         self.voice
             .states
-            .get(&(guild_id, user_id))
+            .get(&(VoiceScope::Guild(guild_id), user_id))
             .map(|state| state.channel_id)
     }
 
@@ -131,7 +154,14 @@ impl DiscordState {
         &self,
         state: &VoiceStateInfo,
     ) -> Option<VoiceSoundKind> {
-        let before = self.user_voice_channel_in_guild(state.guild_id, state.user_id);
+        // Look the user up by id, not scope: a DM leave carries no location, so
+        // their cached entry is the only way to know which call they left.
+        let before = self
+            .voice
+            .states
+            .iter()
+            .find(|((_, user_id), _)| *user_id == state.user_id)
+            .map(|(_, current)| current.channel_id);
         let after = state.channel_id;
         if before == after {
             return None;
@@ -145,6 +175,7 @@ impl DiscordState {
             };
         }
 
+        // For other users, only chime for the channel the current user is in.
         let active_voice_channel = self.current_user_voice_connection()?.channel_id;
         match (
             before == Some(active_voice_channel),
@@ -170,16 +201,17 @@ impl DiscordState {
         &self,
         guild_id: Id<GuildMarker>,
     ) -> BTreeMap<Id<ChannelMarker>, Vec<VoiceParticipantState>> {
+        let scope = VoiceScope::Guild(guild_id);
         let mut participants_by_channel: BTreeMap<Id<ChannelMarker>, Vec<VoiceParticipantState>> =
             BTreeMap::new();
-        for ((state_guild_id, _), state) in &self.voice.states {
-            if *state_guild_id != guild_id {
+        for ((state_scope, _), state) in &self.voice.states {
+            if *state_scope != scope {
                 continue;
             }
             participants_by_channel
                 .entry(state.channel_id)
                 .or_default()
-                .push(self.voice_participant_state(guild_id, state));
+                .push(self.voice_participant_state(scope, state));
         }
         for participants in participants_by_channel.values_mut() {
             sort_voice_participants(participants);
@@ -189,14 +221,13 @@ impl DiscordState {
 
     fn voice_participant_state(
         &self,
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         state: &VoiceState,
     ) -> VoiceParticipantState {
         VoiceParticipantState {
             user_id: state.user_id,
             display_name: self
-                .member_display_name(guild_id, state.user_id)
-                .map(str::to_owned)
+                .voice_participant_display_name(scope, state.user_id)
                 .unwrap_or_else(|| format!("user-{}", state.user_id.get())),
             deaf: state.deaf,
             mute: state.mute,
@@ -207,32 +238,77 @@ impl DiscordState {
         }
     }
 
-    pub(in crate::discord) fn update_voice_state(&mut self, state: &VoiceStateInfo) {
-        let key = (state.guild_id, state.user_id);
-        let current_user_previous_channel = if self.session.current_user_id == Some(state.user_id) {
-            self.voice
-                .states
-                .get(&key)
-                .map(|current| current.channel_id)
-        } else {
-            None
-        };
-        if let Some(previous_channel_id) = current_user_previous_channel {
-            if state.channel_id != Some(previous_channel_id) {
-                self.clear_voice_speaking_for_channel(state.guild_id, previous_channel_id);
+    /// Resolve a participant's display name: guild voice via the member list, a
+    /// DM via the channel recipients. The current user is special-cased because
+    /// Discord omits self from a group DM's recipient list.
+    fn voice_participant_display_name(
+        &self,
+        scope: VoiceScope,
+        user_id: Id<UserMarker>,
+    ) -> Option<String> {
+        match scope {
+            VoiceScope::Guild(guild_id) => {
+                self.member_display_name(guild_id, user_id).map(str::to_owned)
+            }
+            VoiceScope::Private(channel_id) => {
+                if self.session.current_user_id == Some(user_id) {
+                    if let Some(name) = self.session.current_user.clone() {
+                        return Some(name);
+                    }
+                }
+                self.channel(channel_id)?
+                    .recipients
+                    .iter()
+                    .find(|recipient| recipient.user_id == user_id)
+                    .map(|recipient| recipient.display_name.clone())
             }
         }
+    }
+
+    pub(in crate::discord) fn update_voice_state(&mut self, state: &VoiceStateInfo) {
+        let user_id = state.user_id;
+        let is_current_user = self.session.current_user_id == Some(user_id);
+
+        // `None` only for a DM leave (null guild and channel), handled by the
+        // user-id removal in the leave branch below.
+        let scope = state.scope();
+
+        // When the current user moves or leaves, clear stale speaking flags in
+        // the channel they were in. Found by user id, not scope, so it also
+        // covers cross-scope moves (DM A -> DM B) and DM leaves (no scope).
+        if is_current_user
+            && let Some((previous_scope, previous_channel_id)) = self
+                .voice
+                .states
+                .iter()
+                .find(|((_, state_user_id), _)| *state_user_id == user_id)
+                .map(|((scope, _), current)| (*scope, current.channel_id))
+            && state.channel_id != Some(previous_channel_id)
+        {
+            self.clear_voice_speaking_for_channel(previous_scope, previous_channel_id);
+        }
+
         if let Some(channel_id) = state.channel_id {
+            let scope = scope.expect("a voice state with a channel always has a scope");
+            let key = (scope, user_id);
             let speaking = self
                 .voice
                 .states
                 .get(&key)
                 .is_some_and(|current| current.channel_id == channel_id && current.speaking);
+            // Moving across scopes (DM A -> DM B, guild -> DM) changes the key,
+            // and Discord sends only the new location, so drop any stale entry
+            // this user still holds under a different scope.
+            self.voice
+                .states
+                .retain(|(state_scope, state_user_id), _| {
+                    *state_user_id != user_id || *state_scope == scope
+                });
             self.voice.states.insert(
                 key,
                 VoiceState {
                     channel_id,
-                    user_id: state.user_id,
+                    user_id,
                     deaf: state.deaf,
                     mute: state.mute,
                     self_deaf: state.self_deaf,
@@ -242,18 +318,31 @@ impl DiscordState {
                 },
             );
         } else {
-            self.voice.states.remove(&key);
+            // A leave: a guild leave names its guild, a DM leave names nothing
+            // so we drop every private entry this user holds.
+            match state.guild_id {
+                Some(guild_id) => {
+                    self.voice
+                        .states
+                        .remove(&(VoiceScope::Guild(guild_id), user_id));
+                }
+                None => {
+                    self.voice.states.retain(|(scope, state_user_id), _| {
+                        !(matches!(scope, VoiceScope::Private(_)) && *state_user_id == user_id)
+                    });
+                }
+            }
         }
     }
 
     pub(in crate::discord) fn update_voice_speaking(
         &mut self,
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         user_id: Id<UserMarker>,
         speaking: bool,
     ) {
-        let Some(state) = self.voice.states.get_mut(&(guild_id, user_id)) else {
+        let Some(state) = self.voice.states.get_mut(&(scope, user_id)) else {
             return;
         };
         if state.channel_id == channel_id {
@@ -266,13 +355,15 @@ impl DiscordState {
         guild_id: Id<GuildMarker>,
         user_id: Id<UserMarker>,
     ) {
-        self.voice.states.remove(&(guild_id, user_id));
+        self.voice
+            .states
+            .remove(&(VoiceScope::Guild(guild_id), user_id));
     }
 
     pub(in crate::discord) fn remove_voice_states_for_guild(&mut self, guild_id: Id<GuildMarker>) {
         self.voice
             .states
-            .retain(|(state_guild_id, _), _| *state_guild_id != guild_id);
+            .retain(|(scope, _), _| *scope != VoiceScope::Guild(guild_id));
     }
 
     pub(in crate::discord) fn remove_voice_states_for_channel(
@@ -286,11 +377,11 @@ impl DiscordState {
 
     fn clear_voice_speaking_for_channel(
         &mut self,
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
     ) {
-        for ((state_guild_id, _), state) in &mut self.voice.states {
-            if *state_guild_id == guild_id && state.channel_id == channel_id {
+        for ((state_scope, _), state) in &mut self.voice.states {
+            if *state_scope == scope && state.channel_id == channel_id {
                 state.speaking = false;
             }
         }

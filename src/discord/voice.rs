@@ -28,7 +28,7 @@ use gateway::voice_speaking_payload;
 use gateway::*;
 #[cfg(not(test))]
 use gateway::{run_voice_gateway_session, send_voice_binary, send_voice_text};
-pub use info::{VoiceConnectionStatus, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo};
+pub use info::{VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo};
 #[cfg(all(feature = "voice-playback", target_os = "linux", not(test)))]
 use microphone::log_captured_alsa_errors;
 #[cfg(all(feature = "voice-playback", not(test)))]
@@ -102,7 +102,7 @@ use crate::discord::{
     DiscordState, SequencedAppEvent, SnapshotRevision,
     ids::{
         Id,
-        marker::{ChannelMarker, GuildMarker, UserMarker},
+        marker::{ChannelMarker, UserMarker},
     },
 };
 use crate::logging;
@@ -238,7 +238,7 @@ pub(crate) enum VoiceRuntimeEvent {
     VoiceState(VoiceStateInfo),
     VoiceServer(VoiceServerInfo),
     ConnectionEnded {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         session_id: String,
         endpoint: String,
@@ -257,7 +257,7 @@ pub(crate) struct VoiceStatusPublisher {
 
 #[derive(Clone, Eq, PartialEq)]
 struct VoiceGatewaySession {
-    guild_id: Id<GuildMarker>,
+    scope: VoiceScope,
     channel_id: Id<ChannelMarker>,
     user_id: Id<UserMarker>,
     session_id: String,
@@ -295,7 +295,7 @@ impl VoiceStatusPublisher {
             &self.revision,
             &self.publish_lock,
             &AppEvent::VoiceConnectionStatusChanged {
-                guild_id: session.guild_id,
+                scope: session.scope,
                 channel_id: Some(session.channel_id),
                 status,
                 message: Some(message.into()),
@@ -317,7 +317,7 @@ impl VoiceStatusPublisher {
             &self.revision,
             &self.publish_lock,
             &AppEvent::VoiceSpeakingUpdate {
-                guild_id: session.guild_id,
+                scope: session.scope,
                 channel_id: session.channel_id,
                 user_id,
                 speaking,
@@ -330,12 +330,12 @@ impl VoiceStatusPublisher {
 impl VoiceGatewaySession {
     fn matches_connection_end(
         &self,
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         session_id: &str,
         endpoint: &str,
     ) -> bool {
-        self.guild_id == guild_id
+        self.scope == scope
             && self.channel_id == channel_id
             && self.session_id == session_id
             && self.endpoint == endpoint
@@ -343,7 +343,7 @@ impl VoiceGatewaySession {
 
     fn connection_ended_event(&self) -> VoiceRuntimeEvent {
         VoiceRuntimeEvent::ConnectionEnded {
-            guild_id: self.guild_id,
+            scope: self.scope,
             channel_id: self.channel_id,
             session_id: self.session_id.clone(),
             endpoint: self.endpoint.clone(),
@@ -556,7 +556,7 @@ struct VoiceBinaryFrame<'a> {
 impl fmt::Debug for VoiceGatewaySession {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("VoiceGatewaySession")
-            .field("guild_id", &self.guild_id)
+            .field("scope", &self.scope)
             .field("channel_id", &self.channel_id)
             .field("user_id", &self.user_id)
             .field("session_id", &"<redacted>")

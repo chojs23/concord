@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::VoiceScope;
 
 #[test]
 fn header_shows_available_update_version() {
@@ -84,7 +85,7 @@ fn header_shows_connected_account() {
         owner_id: None,
     });
     state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Some(Id::new(11)),
         status: VoiceConnectionStatus::Connecting,
         message: None,
@@ -145,7 +146,7 @@ fn header_keeps_current_user_white_while_speaking() {
         state: VoiceStateInfo::test(Id::new(1), Some(Id::new(11)), Id::new(10)),
     });
     state.push_event(AppEvent::VoiceSpeakingUpdate {
-        guild_id: Id::new(1),
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(11),
         user_id: Id::new(10),
         speaking: true,
@@ -492,13 +493,13 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         },
     });
     state.push_event(AppEvent::VoiceSpeakingUpdate {
-        guild_id,
+        scope: VoiceScope::Guild(guild_id),
         channel_id: voice_id,
         user_id: alice,
         speaking: true,
     });
     state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id,
+        scope: VoiceScope::Guild(guild_id),
         channel_id: Some(voice_id),
         status: VoiceConnectionStatus::Connecting,
         message: None,
@@ -736,7 +737,7 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
     assert_eq!(buffer[alice_cell].fg, Color::White);
 
     state.push_event(AppEvent::VoiceSpeakingUpdate {
-        guild_id,
+        scope: VoiceScope::Guild(guild_id),
         channel_id: voice_id,
         user_id: alice,
         speaking: true,

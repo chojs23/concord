@@ -17,7 +17,7 @@ pub(super) struct VoiceRuntimeState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ObservedSelfVoiceState {
-    guild_id: Id<GuildMarker>,
+    scope: VoiceScope,
     channel_id: Id<ChannelMarker>,
     session_id: String,
 }
@@ -28,7 +28,7 @@ impl VoiceRuntimeState {
             VoiceRuntimeEvent::Requested(requested) => {
                 if let Some(next) = requested
                     && self.requested.is_some_and(|current| {
-                        current.guild_id != next.guild_id || current.channel_id != next.channel_id
+                        current.scope != next.scope || current.channel_id != next.channel_id
                     })
                 {
                     self.server = None;
@@ -56,13 +56,13 @@ impl VoiceRuntimeState {
                 self.server = Some(server);
             }
             VoiceRuntimeEvent::ConnectionEnded {
-                guild_id,
+                scope,
                 channel_id,
                 session_id,
                 endpoint,
             } => {
                 if self.active.as_ref().is_some_and(|active| {
-                    active.matches_connection_end(guild_id, channel_id, &session_id, &endpoint)
+                    active.matches_connection_end(scope, channel_id, &session_id, &endpoint)
                 }) {
                     self.active = None;
                     return self.connect_if_ready();
@@ -80,19 +80,21 @@ impl VoiceRuntimeState {
             return None;
         }
         let requested = self.requested?;
-        if state.guild_id != requested.guild_id {
-            return None;
-        }
+        // A leave clears the channel; for a DM that also clears the scope, so we
+        // treat any channel-less state for the current user as a disconnect.
         let Some(channel_id) = state.channel_id else {
             self.current_voice = None;
             self.server = None;
             return self.close_active();
         };
+        if state.scope() != Some(requested.scope) {
+            return None;
+        }
         let session_id = state
             .session_id
             .filter(|session_id| !session_id.is_empty())?;
         self.current_voice = Some(ObservedSelfVoiceState {
-            guild_id: state.guild_id,
+            scope: requested.scope,
             channel_id,
             session_id,
         });
@@ -102,11 +104,11 @@ impl VoiceRuntimeState {
     fn connect_if_ready(&mut self) -> Option<VoiceRuntimeAction> {
         let requested = self.requested?;
         let voice = self.current_voice.as_ref()?;
-        if requested.guild_id != voice.guild_id || requested.channel_id != voice.channel_id {
+        if requested.scope != voice.scope || requested.channel_id != voice.channel_id {
             return self.close_active();
         }
         let server = self.server.as_ref()?;
-        if server.guild_id != requested.guild_id {
+        if server.scope() != Some(requested.scope) {
             return None;
         }
         let endpoint = server.endpoint.as_ref()?.trim_end_matches('/').to_owned();
@@ -114,7 +116,7 @@ impl VoiceRuntimeState {
             return None;
         }
         let session = VoiceGatewaySession {
-            guild_id: requested.guild_id,
+            scope: requested.scope,
             channel_id: requested.channel_id,
             user_id: self.current_user_id?,
             session_id: voice.session_id.clone(),
@@ -135,7 +137,7 @@ impl VoiceRuntimeState {
     pub(super) fn capture_gate(&self) -> Option<VoiceCaptureGate> {
         let active = self.active.as_ref()?;
         let requested = self.requested?;
-        if active.guild_id != requested.guild_id || active.channel_id != requested.channel_id {
+        if active.scope != requested.scope || active.channel_id != requested.channel_id {
             return None;
         }
         Some(VoiceCaptureGate {
@@ -148,7 +150,7 @@ impl VoiceRuntimeState {
     pub(super) fn playback_gate(&self) -> Option<VoicePlaybackGate> {
         let active = self.active.as_ref()?;
         let requested = self.requested?;
-        if active.guild_id != requested.guild_id || active.channel_id != requested.channel_id {
+        if active.scope != requested.scope || active.channel_id != requested.channel_id {
             return None;
         }
         Some(VoicePlaybackGate {
