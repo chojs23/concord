@@ -470,6 +470,9 @@ show_images = true
 # Preview quality: efficient, balanced, high, or original.
 image_preview_quality = "balanced"
 
+# Attachment viewer: efficient, balanced, high, or original.
+attachment_viewer_quality = "original"
+
 # Render custom Discord emoji as images when possible.
 show_custom_emoji = true
 
