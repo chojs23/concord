@@ -123,7 +123,7 @@ pub(in crate::tui) fn visible_image_preview_targets(
     if let Some((message_id, preview_index, preview)) = state.selected_attachment_viewer_preview()
         && state.show_images()
     {
-        let quality = state.image_preview_quality();
+        let quality = state.attachment_viewer_quality();
         let (preview_width, preview_height) = image_preview_size_for_dimensions(
             layout.viewer_preview_width,
             layout.viewer_max_preview_height,
@@ -178,7 +178,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
     if let Some((message_id, preview_index, preview)) = state.selected_attachment_viewer_preview()
         && state.show_images()
     {
-        let quality = state.image_preview_quality();
+        let quality = state.attachment_viewer_quality();
         let (preview_width, preview_height) = image_preview_size_for_dimensions(
             layout.viewer_preview_width,
             layout.viewer_max_preview_height,
