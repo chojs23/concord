@@ -470,6 +470,9 @@ show_images = true
 # Preview quality: efficient, balanced, high, or original.
 image_preview_quality = "balanced"
 
+# Attachment viewer quality: efficient, balanced, high, or original.
+attachment_viewer_quality = "original"
+
 # Render custom Discord emoji as images when possible.
 show_custom_emoji = true
 
@@ -531,7 +534,7 @@ voice_output_volume = 100
 - `sixel`: force Sixel rendering.
 - `halfblocks`: force Unicode half-block fallback rendering.
 
-`image_preview_quality`:
+`image_preview_quality` and `attachment_viewer_quality`:
 
 - `efficient`: smaller preview requests to reduce bandwidth and memory use.
 - `balanced`: default quality with bounded resource use.

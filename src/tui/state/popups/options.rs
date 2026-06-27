@@ -5,7 +5,7 @@ use crate::tui::keybindings::OptionsCategoryShortcut;
 use super::super::{DashboardState, DisplayOptionItem};
 use super::{ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState};
 
-const DISPLAY_OPTION_COUNT: usize = 6;
+const DISPLAY_OPTION_COUNT: usize = 7;
 const COMPOSER_OPTION_COUNT: usize = 1;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = 6;
@@ -189,7 +189,15 @@ impl DashboardState {
                 value: Some(options.image_preview_quality.label().to_owned()),
                 gauge_percent: None,
                 effective: options.images_visible(),
-                description: "Quality preset for attachment, embed, and viewer previews.",
+                description: "Quality preset for attachment and embed.",
+            },
+            DisplayOptionItem {
+                label: "Attachment viewer quality",
+                enabled: true,
+                value: Some(options.attachment_viewer_quality.label().to_owned()),
+                gauge_percent: None,
+                effective: options.images_visible(),
+                description: "Quality preset for attachment viewer previews.",
             },
             DisplayOptionItem {
                 label: "Show custom emoji images",
@@ -322,10 +330,14 @@ impl DashboardState {
                     self.options.display_options.image_preview_quality.next()
             }
             (OptionsCategory::Display, 4) => {
+                self.options.display_options.attachment_viewer_quality =
+                    self.options.display_options.attachment_viewer_quality.next()
+            }
+            (OptionsCategory::Display, 5) => {
                 self.options.display_options.show_custom_emoji =
                     !self.options.display_options.show_custom_emoji
             }
-            (OptionsCategory::Display, 5) => {
+            (OptionsCategory::Display, 6) => {
                 self.options.display_options.circular_avatars =
                     !self.options.display_options.circular_avatars
             }

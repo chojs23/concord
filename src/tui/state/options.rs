@@ -212,6 +212,10 @@ impl DashboardState {
         self.options.display_options.image_preview_quality
     }
 
+    pub fn attachment_viewer_quality(&self) -> ImagePreviewQualityPreset {
+        self.options.display_options.attachment_viewer_quality
+    }
+
     pub fn show_custom_emoji(&self) -> bool {
         self.options.display_options.custom_emoji_visible()
     }
