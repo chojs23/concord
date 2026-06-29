@@ -124,7 +124,8 @@ impl DashboardState {
             MessageActionItem {
                 kind: MessageActionKind::PlayMedia,
                 label: "play media".to_owned(),
-                enabled: !message_media_playback_items(message).is_empty(),
+                enabled: self.media_playback_enabled()
+                    && !message_media_playback_items(message).is_empty(),
             },
             MessageActionItem {
                 kind: MessageActionKind::ViewAttachment,
@@ -218,6 +219,9 @@ impl DashboardState {
     pub fn activate_selected_message_action(&mut self) -> Option<AppCommand> {
         let action = self.selected_message_action()?;
         if !action.enabled {
+            if action.kind == MessageActionKind::PlayMedia && !self.media_playback_enabled() {
+                self.show_media_playback_disabled_toast(std::time::Instant::now());
+            }
             return None;
         }
         self.close_message_action_menu();
@@ -330,12 +334,26 @@ impl DashboardState {
 
     pub fn activate_message_action_shortcut(&mut self, shortcut: KeyChord) -> Option<AppCommand> {
         let actions = self.selected_message_action_items();
-        let index = self.options.key_bindings().matching_action_shortcut_index(
+        let key_bindings = self.options.key_bindings();
+        let Some(index) = key_bindings.matching_action_shortcut_index(
             &actions,
             shortcut,
             |key_bindings, actions, index| key_bindings.message_action_shortcuts(actions, index),
             |action| action.enabled,
-        )?;
+        ) else {
+            if !self.media_playback_enabled()
+                && actions.iter().enumerate().any(|(index, action)| {
+                    action.kind == MessageActionKind::PlayMedia
+                        && key_bindings
+                            .message_action_shortcuts(&actions, index)
+                            .iter()
+                            .any(|candidate| candidate.matches_chord(shortcut))
+                })
+            {
+                self.show_media_playback_disabled_toast(std::time::Instant::now());
+            }
+            return None;
+        };
         self.select_message_action_row(index);
         self.activate_selected_message_action()
     }
@@ -346,6 +364,9 @@ impl DashboardState {
             .into_iter()
             .find(|action| action.kind == kind)?;
         if !action.enabled {
+            if kind == MessageActionKind::PlayMedia && !self.media_playback_enabled() {
+                self.show_media_playback_disabled_toast(std::time::Instant::now());
+            }
             return None;
         }
         self.close_message_action_menu();
@@ -519,6 +540,10 @@ impl DashboardState {
     }
 
     pub fn direct_play_selected_message_media(&mut self) -> Option<AppCommand> {
+        if !self.media_playback_enabled() {
+            self.show_media_playback_disabled_toast(std::time::Instant::now());
+            return None;
+        }
         let message = self.selected_message_state()?;
         message_media_playback_items(message)
             .into_iter()

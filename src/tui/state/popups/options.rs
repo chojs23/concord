@@ -5,7 +5,7 @@ use crate::tui::keybindings::OptionsCategoryShortcut;
 use super::super::{DashboardState, DisplayOptionItem};
 use super::{ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState};
 
-const DISPLAY_OPTION_COUNT: usize = 7;
+const DISPLAY_OPTION_COUNT: usize = 8;
 const COMPOSER_OPTION_COUNT: usize = 1;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = 6;
@@ -215,6 +215,14 @@ impl DashboardState {
                 effective: options.avatars_visible() && options.circular_avatars,
                 description: "Mask message and profile avatars into a circle.",
             },
+            DisplayOptionItem {
+                label: "Media playback",
+                enabled: options.media_playback,
+                value: None,
+                gauge_percent: None,
+                effective: options.media_playback_enabled(),
+                description: "Allow videos to open in the external media player.",
+            },
         ]
     }
 
@@ -343,6 +351,10 @@ impl DashboardState {
             (OptionsCategory::Display, 6) => {
                 self.options.display_options.circular_avatars =
                     !self.options.display_options.circular_avatars
+            }
+            (OptionsCategory::Display, 7) => {
+                self.options.display_options.media_playback =
+                    !self.options.display_options.media_playback
             }
             (OptionsCategory::Composer, 0) => {
                 self.options.composer_options.emojis_as_links =

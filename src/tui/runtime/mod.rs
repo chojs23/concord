@@ -242,18 +242,25 @@ pub(super) async fn run_dashboard(
                         if let Some(command) = outcome.command {
                             match command {
                                 AppCommand::PlayMedia { target, request_id } => {
-                                    let request_id = request_id.unwrap_or_else(|| {
-                                        state.next_media_playback_request_id()
-                                    });
-                                    state.show_media_playback_preparing_toast(
-                                        request_id,
-                                        target.url.clone(),
-                                    );
-                                    state.enqueue_pending_command(AppCommand::PlayMedia {
-                                        target,
-                                        request_id: Some(request_id),
-                                    });
-                                    dirty = true;
+                                    if state.media_playback_enabled() {
+                                        let request_id = request_id.unwrap_or_else(|| {
+                                            state.next_media_playback_request_id()
+                                        });
+                                        state.show_media_playback_preparing_toast(
+                                            request_id,
+                                            target.url.clone(),
+                                        );
+                                        state.enqueue_pending_command(AppCommand::PlayMedia {
+                                            target,
+                                            request_id: Some(request_id),
+                                        });
+                                        dirty = true;
+                                    } else {
+                                        state.show_media_playback_disabled_toast(
+                                            std::time::Instant::now(),
+                                        );
+                                        dirty = true;
+                                    }
                                 }
                                 command => {
                                     let _ = command_helpers::send_or_record_closed(

@@ -77,6 +77,30 @@ fn options_popup_cycles_attachment_viewer_quality() {
 }
 
 #[test]
+fn options_popup_toggles_media_playback() {
+    let mut state = state_with_messages(1);
+
+    state.open_options_popup();
+    handle_key(&mut state, key(KeyCode::Enter));
+    for _ in 0..7 {
+        handle_key(&mut state, key(KeyCode::Down));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert!(state.display_options().media_playback);
+    assert_eq!(
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            composer: state.composer_options(),
+            credentials: Default::default(),
+            notifications: state.notification_options(),
+            voice: state.voice_options(),
+        })
+    );
+}
+
+#[test]
 fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
     let mut state = state_with_messages(1);
 
@@ -211,7 +235,7 @@ fn options_popup_selection_aliases_move_selection() {
     assert_eq!(state.selected_option_index(), Some(0));
 
     handle_key(&mut state, ctrl_key('d'));
-    assert_eq!(state.selected_option_index(), Some(6));
+    assert_eq!(state.selected_option_index(), Some(7));
 
     handle_key(&mut state, ctrl_key('u'));
     assert_eq!(state.selected_option_index(), Some(0));

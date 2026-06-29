@@ -8,6 +8,7 @@ const TOAST_DURATION: Duration = Duration::from_secs(2);
 /// Captcha guidance points the user to another client, so it lingers longer
 /// than the usual status toast.
 const CAPTCHA_TOAST_DURATION: Duration = Duration::from_secs(8);
+const MEDIA_PLAYBACK_DISABLED_TEXT: &str = "Media playback is disabled in Display options.";
 const MEDIA_PLAYBACK_PREPARING_TEXT: &str = "Preparing media playback...";
 
 impl DashboardState {
@@ -21,6 +22,10 @@ impl DashboardState {
 
     pub(in crate::tui) fn show_captcha_toast(&mut self, text: impl Into<String>, now: Instant) {
         self.show_toast_for(text, ToastKind::Error, CAPTCHA_TOAST_DURATION, now);
+    }
+
+    pub(in crate::tui) fn show_media_playback_disabled_toast(&mut self, now: Instant) {
+        self.show_toast(MEDIA_PLAYBACK_DISABLED_TEXT, ToastKind::Info, now);
     }
 
     fn show_toast(&mut self, text: impl Into<String>, kind: ToastKind, now: Instant) {

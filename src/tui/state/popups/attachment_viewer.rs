@@ -126,6 +126,10 @@ impl DashboardState {
     }
 
     pub fn play_selected_attachment_viewer_attachment(&mut self) -> Option<AppCommand> {
+        if !self.media_playback_enabled() {
+            self.show_media_playback_disabled_toast(std::time::Instant::now());
+            return None;
+        }
         let item = self.selected_attachment_viewer_item()?;
         if !item.is_video {
             return None;

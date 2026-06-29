@@ -208,6 +208,10 @@ impl DashboardState {
         self.options.display_options.images_visible()
     }
 
+    pub fn media_playback_enabled(&self) -> bool {
+        self.options.display_options.media_playback_enabled()
+    }
+
     pub fn image_preview_quality(&self) -> ImagePreviewQualityPreset {
         self.options.display_options.image_preview_quality
     }
