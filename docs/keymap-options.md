@@ -35,13 +35,13 @@ DeletePreviousWord = "<A-backspace>"
 
 There are several kinds of keymap settings:
 
-| Config path                                                                                                 | What it controls                                                                                        |
-| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `[keymap] leader`                                                                                           | The key that opens the leader popup. Defaults to `Space`.                                               |
-| `[keymap] <ActionName>`                                                                                     | Directly assignable UI actions such as `StartComposer`, `ClosePopup`, `ReplyMessage`, and `OpenThread`. |
-| `[keymap.groups]`                                                                                           | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                               |
-| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]`, `[keymap.thread_actions]` | Shortcuts shown inside focused-pane and thread/post action menus.                     |
-| `[keymap.composer]`                                                                                         | Shortcuts used while the message composer is open, such as editor and cursor commands.                  |
+| Config path                                                                                                                            | What it controls                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `[keymap] leader`                                                                                                                      | The key that opens the leader popup. Defaults to `Space`.                                               |
+| `[keymap] <ActionName>`                                                                                                                | Directly assignable UI actions such as `StartComposer`, `ClosePopup`, `ReplyMessage`, and `OpenThread`. |
+| `[keymap.groups]`                                                                                                                      | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                               |
+| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]`, `[keymap.thread_actions]` | Shortcuts shown inside focused-pane and thread/post action menus.                                       |
+| `[keymap.composer]`                                                                                                                    | Shortcuts used while the message composer is open, such as editor and cursor commands.                  |
 
 `[keymap]` action values can be either a string or an object with `keys` and an
 optional `description`:
@@ -58,6 +58,17 @@ Leader sequences like `<leader><C-w>`, compact plain sequences like `fd`, and
 general multi-key prefixes like `<C-w>f` are supported. Prefix sequences show a
 [which-key.nvim](https://github.com/folke/which-key.nvim) style popup. For example, `fd` opens an `f` popup after `f`, then runs
 the action after `d`.
+
+Set an action to `false` or an empty string to disable that shortcut and remove
+its default binding:
+
+```toml
+[keymap]
+CopyMessage = false # or ""
+
+[keymap.message_actions]
+CopyMessage = ""
+```
 
 Scoped action tables use the same string or object shape, but each `keys` entry
 must be a single key chord. Multi-key sequences such as `gt` are only supported
@@ -99,30 +110,30 @@ assign your own full sequence if you want direct keys for them.
 
 Navigation and app actions:
 
-| Action name             | Default config             | Action                                   |
-| ----------------------- | -------------------------- | ---------------------------------------- |
+| Action name             | Default config             | Action                                                                     |
+| ----------------------- | -------------------------- | -------------------------------------------------------------------------- |
 | `StartComposer`         | `"i"`                      | Start the message composer, or open the forum/media post composer overlay. |
-| `OpenPaneFilter`        | `"/"`                      | Open the focused pane filter or search.  |
-| `ClosePopup`            | `"q"`                      | Close the active popup.                  |
-| `FocusGuildPane`        | `"1"`                      | Show and focus the Servers pane.         |
-| `FocusChannelPane`      | `"2"`                      | Show and focus the Channels pane.        |
-| `FocusMessagePane`      | `"3"`                      | Focus the Messages pane.                 |
-| `FocusMemberPane`       | `"4"`                      | Show and focus the Members pane.         |
-| `SelectNext`            | `"j"`                      | Move selection down in navigation lists. |
-| `SelectPrevious`        | `"k"`                      | Move selection up in navigation lists.   |
-| `CycleFocusNext`        | `["tab", "l", "right"]`    | Cycle focus forward.                     |
-| `CycleFocusPrevious`    | `["<S-tab>", "h", "left"]` | Cycle focus backward.                    |
-| `HalfPageDown`          | `"<C-d>"`                  | Half-page down.                          |
-| `HalfPageUp`            | `"<C-u>"`                  | Half-page up.                            |
-| `ScrollViewportDown`    | `"J"`                      | Scroll the focused pane viewport down.   |
-| `ScrollViewportUp`      | `"K"`                      | Scroll the focused pane viewport up.     |
-| `JumpTop`               | `"gg"`                     | Jump to the top.                         |
-| `JumpBottom`            | `"G"`                      | Jump to the bottom.                      |
-| `ScrollHorizontalLeft`  | `"H"`                      | Scroll focused pane horizontally left.   |
-| `ScrollHorizontalRight` | `"L"`                      | Scroll focused pane horizontally right.  |
-| `ResizePaneLeft`        | `["<A-h>", "<A-left>"]`    | Shrink the focused pane width.           |
-| `ResizePaneRight`       | `["<A-l>", "<A-right>"]`   | Grow the focused pane width.             |
-| `Quit`                  | `"q"`                      | Quit Concord.                            |
+| `OpenPaneFilter`        | `"/"`                      | Open the focused pane filter or search.                                    |
+| `ClosePopup`            | `"q"`                      | Close the active popup.                                                    |
+| `FocusGuildPane`        | `"1"`                      | Show and focus the Servers pane.                                           |
+| `FocusChannelPane`      | `"2"`                      | Show and focus the Channels pane.                                          |
+| `FocusMessagePane`      | `"3"`                      | Focus the Messages pane.                                                   |
+| `FocusMemberPane`       | `"4"`                      | Show and focus the Members pane.                                           |
+| `SelectNext`            | `"j"`                      | Move selection down in navigation lists.                                   |
+| `SelectPrevious`        | `"k"`                      | Move selection up in navigation lists.                                     |
+| `CycleFocusNext`        | `["tab", "l", "right"]`    | Cycle focus forward.                                                       |
+| `CycleFocusPrevious`    | `["<S-tab>", "h", "left"]` | Cycle focus backward.                                                      |
+| `HalfPageDown`          | `"<C-d>"`                  | Half-page down.                                                            |
+| `HalfPageUp`            | `"<C-u>"`                  | Half-page up.                                                              |
+| `ScrollViewportDown`    | `"J"`                      | Scroll the focused pane viewport down.                                     |
+| `ScrollViewportUp`      | `"K"`                      | Scroll the focused pane viewport up.                                       |
+| `JumpTop`               | `"gg"`                     | Jump to the top.                                                           |
+| `JumpBottom`            | `"G"`                      | Jump to the bottom.                                                        |
+| `ScrollHorizontalLeft`  | `"H"`                      | Scroll focused pane horizontally left.                                     |
+| `ScrollHorizontalRight` | `"L"`                      | Scroll focused pane horizontally right.                                    |
+| `ResizePaneLeft`        | `["<A-h>", "<A-left>"]`    | Shrink the focused pane width.                                             |
+| `ResizePaneRight`       | `["<A-l>", "<A-right>"]`   | Grow the focused pane width.                                               |
+| `Quit`                  | `"q"`                      | Quit Concord.                                                              |
 
 Message actions:
 
@@ -222,12 +233,12 @@ LeaveServer = { keys = ["l"], description = "leave server" }
 FolderSettings = { keys = ["r"], description = "folder settings" }
 ```
 
-| Scoped action  | Default | Action                                                                     |
-| -------------- | ------- | -------------------------------------------------------------------------- |
-| `MarkAsRead`   | `m`     | Mark all unread viewable channels in the selected server read.             |
-| `MuteServer`   | `u`     | Mute or unmute the selected server. Also accepts `ToggleMute` as an alias. |
-| `LeaveServer`  | `l`     | Open confirmation to leave the selected server.                            |
-| `FolderSettings` | `r`   | Edit the selected server folder name and color.                            |
+| Scoped action    | Default | Action                                                                     |
+| ---------------- | ------- | -------------------------------------------------------------------------- |
+| `MarkAsRead`     | `m`     | Mark all unread viewable channels in the selected server read.             |
+| `MuteServer`     | `u`     | Mute or unmute the selected server. Also accepts `ToggleMute` as an alias. |
+| `LeaveServer`    | `l`     | Open confirmation to leave the selected server.                            |
+| `FolderSettings` | `r`     | Edit the selected server folder name and color.                            |
 
 Channel pane actions:
 
@@ -325,19 +336,19 @@ Delete = "d"
 CopyId = "i"
 ```
 
-| Scoped action          | Default | Action                                                        |
-| ---------------------- | ------- | ------------------------------------------------------------- |
-| `MarkAsRead`           | `m`     | Mark the thread or post read.                                 |
-| `ToggleFollow`         | `f`     | Follow or unfollow the thread or post.                        |
+| Scoped action          | Default | Action                                                         |
+| ---------------------- | ------- | -------------------------------------------------------------- |
+| `MarkAsRead`           | `m`     | Mark the thread or post read.                                  |
+| `ToggleFollow`         | `f`     | Follow or unfollow the thread or post.                         |
 | `Close`                | `c`     | Close or reopen the thread or post. Needs author or moderator. |
-| `Lock`                 | `l`     | Lock or unlock the thread or post. Moderator only.            |
-| `Edit`                 | `e`     | Edit title, tags, slow mode, and auto-archive.               |
-| `CopyLink`             | `y`     | Copy a link to the thread or post.                            |
-| `ToggleMute`           | `u`     | Mute or unmute the thread or post. Needs following first.     |
-| `NotificationSettings` | `n`     | Choose the notification level for the thread or post.         |
-| `Pin`                  | `P`     | Pin or unpin the post. Forum posts only, moderator only.      |
-| `Delete`               | `d`     | Delete the whole thread or post. Moderator only.              |
-| `CopyId`               | `i`     | Copy the thread or post ID.                                   |
+| `Lock`                 | `l`     | Lock or unlock the thread or post. Moderator only.             |
+| `Edit`                 | `e`     | Edit title, tags, slow mode, and auto-archive.                 |
+| `CopyLink`             | `y`     | Copy a link to the thread or post.                             |
+| `ToggleMute`           | `u`     | Mute or unmute the thread or post. Needs following first.      |
+| `NotificationSettings` | `n`     | Choose the notification level for the thread or post.          |
+| `Pin`                  | `P`     | Pin or unpin the post. Forum posts only, moderator only.       |
+| `Delete`               | `d`     | Delete the whole thread or post. Moderator only.               |
+| `CopyId`               | `i`     | Copy the thread or post ID.                                    |
 
 Scoped action `description` changes the label shown in server, channel,
 message, member, and thread action menus. Multiple configured `keys` work as aliases

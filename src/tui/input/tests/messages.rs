@@ -418,6 +418,26 @@ fn play_media_shortcut_returns_media_command() {
 }
 
 #[test]
+fn disabled_play_media_keymap_removes_message_shortcut() {
+    let mut state = state_with_keymap(KeymapOptions {
+        mappings: [("PlayMedia".to_owned(), KeymapBinding::disabled())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    });
+    state.push_event(message_create_event(MessageCreateFixture {
+        message_id: Id::new(1),
+        content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    state.focus_pane(FocusPane::Messages);
+
+    let command = handle_key(&mut state, char_key('x'));
+
+    assert_eq!(command, None);
+}
+
+#[test]
 fn message_pane_copy_shortcut_requests_selected_message_content() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);

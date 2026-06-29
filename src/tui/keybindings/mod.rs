@@ -476,6 +476,13 @@ fn parse_keymap_binding_lossy(
     binding: &KeymapBinding,
     leader: KeyChord,
 ) -> Option<KeyMapActionSpec> {
+    if binding.is_disabled() {
+        return Some(KeyMapActionSpec {
+            sequences: Vec::new(),
+            label: action.label().to_owned(),
+        });
+    }
+
     let sequences = binding
         .keys
         .iter()
@@ -498,6 +505,13 @@ fn parse_keymap_binding(
     binding: &KeymapBinding,
     leader: KeyChord,
 ) -> std::result::Result<KeyMapActionSpec, String> {
+    if binding.is_disabled() {
+        return Ok(KeyMapActionSpec {
+            sequences: Vec::new(),
+            label: action.label().to_owned(),
+        });
+    }
+
     let mut sequences = Vec::new();
     for sequence in &binding.keys {
         let sequence = parse_keymap_sequence(action_name, sequence, leader)?.0;
@@ -633,6 +647,10 @@ fn parse_action_scope<K: Copy + Eq>(
 fn parse_action_shortcut_binding_lossy(
     binding: &KeymapBinding,
 ) -> Option<(Vec<KeyChord>, Option<String>)> {
+    if binding.is_disabled() {
+        return Some((Vec::new(), None));
+    }
+
     let shortcuts = binding
         .keys
         .iter()
@@ -645,6 +663,10 @@ fn parse_action_shortcut_binding(
     action_name: &str,
     binding: &KeymapBinding,
 ) -> std::result::Result<(Vec<KeyChord>, Option<String>), String> {
+    if binding.is_disabled() {
+        return Ok((Vec::new(), None));
+    }
+
     let mut shortcuts = Vec::new();
     for key in &binding.keys {
         shortcuts.push(
@@ -1541,6 +1563,48 @@ mod tests {
             key_bindings.message_action_label(&thread_actions[0]),
             "open thread"
         );
+    }
+
+    #[test]
+    fn disabled_keymap_binding_removes_default_direct_shortcut() {
+        let keymap = KeymapOptions {
+            mappings: [("PlayMedia".to_owned(), KeymapBinding::disabled())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let key_bindings =
+            KeyBindings::try_from_options(&keymap).expect("disabled keymap should parse");
+
+        assert_eq!(
+            key_bindings
+                .keymap_lookup_direct_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            None
+        );
+    }
+
+    #[test]
+    fn disabled_message_action_binding_removes_default_action_shortcut() {
+        let keymap = KeymapOptions {
+            message_actions: [("PlayMedia".to_owned(), KeymapBinding::disabled())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let key_bindings =
+            KeyBindings::try_from_options(&keymap).expect("disabled action keymap should parse");
+        let actions = [MessageActionItem {
+            kind: MessageActionKind::PlayMedia,
+            label: "play media".to_owned(),
+            enabled: true,
+        }];
+
+        assert!(
+            key_bindings
+                .message_action_shortcuts(&actions, 0)
+                .is_empty()
+        );
+        assert_eq!(key_bindings.message_action_shortcut_label(&actions, 0), "");
     }
 
     #[test]

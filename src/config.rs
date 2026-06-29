@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 
 use crate::discord::ids::{
     Id,
@@ -101,6 +101,7 @@ pub struct KeymapBinding {
 #[serde(untagged)]
 enum KeymapBindingInput {
     Simple(String),
+    Disabled(bool),
     Structured {
         keys: KeymapKeysInput,
         description: Option<String>,
@@ -121,6 +122,17 @@ impl KeymapBinding {
             description: None,
         }
     }
+
+    pub fn disabled() -> Self {
+        Self {
+            keys: Vec::new(),
+            description: None,
+        }
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        self.keys.is_empty()
+    }
 }
 
 impl<'de> Deserialize<'de> for KeymapBinding {
@@ -129,13 +141,26 @@ impl<'de> Deserialize<'de> for KeymapBinding {
         D: serde::Deserializer<'de>,
     {
         match KeymapBindingInput::deserialize(deserializer)? {
+            KeymapBindingInput::Simple(key) if key.trim().is_empty() => Ok(Self::disabled()),
             KeymapBindingInput::Simple(key) => Ok(Self::one(key)),
+            KeymapBindingInput::Disabled(false) => Ok(Self::disabled()),
+            KeymapBindingInput::Disabled(true) => Err(de::Error::custom(
+                "keymap binding boolean must be false to disable the shortcut",
+            )),
             KeymapBindingInput::Structured { keys, description } => {
                 let keys = match keys {
+                    KeymapKeysInput::One(key) if key.trim().is_empty() => Vec::new(),
                     KeymapKeysInput::One(key) => vec![key],
+                    KeymapKeysInput::Many(keys) if keys.iter().all(|key| key.trim().is_empty()) => {
+                        Vec::new()
+                    }
                     KeymapKeysInput::Many(keys) => keys,
                 };
-                Ok(Self { keys, description })
+                if keys.is_empty() {
+                    Ok(Self::disabled())
+                } else {
+                    Ok(Self { keys, description })
+                }
             }
         }
     }
@@ -1031,6 +1056,30 @@ mod tests {
         assert_eq!(
             keymap.mappings.get("OpenPaneFilter"),
             Some(&crate::config::KeymapBinding::one("<C-f>"))
+        );
+    }
+
+    #[test]
+    fn keymap_options_parse_disabled_bindings() {
+        let keymap = parse_keymap_options(
+            "[keymap]\nPlayMedia = \"\"\nOpenPaneFilter = false\n\n[keymap.message_actions]\nPlayMedia = false\nOpenUrl = \"\"\n",
+        );
+
+        assert_eq!(
+            keymap.mappings.get("PlayMedia"),
+            Some(&crate::config::KeymapBinding::disabled())
+        );
+        assert_eq!(
+            keymap.mappings.get("OpenPaneFilter"),
+            Some(&crate::config::KeymapBinding::disabled())
+        );
+        assert_eq!(
+            keymap.message_actions.get("PlayMedia"),
+            Some(&crate::config::KeymapBinding::disabled())
+        );
+        assert_eq!(
+            keymap.message_actions.get("OpenUrl"),
+            Some(&crate::config::KeymapBinding::disabled())
         );
     }
 

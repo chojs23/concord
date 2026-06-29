@@ -520,8 +520,8 @@ fn user_profile_popup_lists_mutual_servers() {
 fn message_action_menu_marks_selected_and_disabled_actions() {
     let actions = vec![
         MessageActionItem {
-            label: "Open thread".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::OpenThread)
+            label: "copy message".to_owned(),
+            ..MessageActionItem::test(MessageActionKind::CopyContent)
         },
         MessageActionItem {
             label: "Show reacted users".to_owned(),
@@ -539,11 +539,21 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "  [t] Open thread",
+            "  [y] copy message",
             "› [u] Show reacted users (unavailable)",
             "  [c] Choose poll votes",
         ]
     );
+
+    let disabled_copy_keymap = KeymapOptions {
+        message_actions: [("CopyMessage".to_owned(), KeymapBinding::disabled())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let lines = message_action_menu_lines_with_keymap_options(&actions, 0, &disabled_copy_keymap);
+
+    assert_eq!(line_texts_from_ratatui(&lines)[0], "› [] copy message");
 }
 
 #[test]

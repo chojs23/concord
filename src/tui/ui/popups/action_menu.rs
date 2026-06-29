@@ -359,6 +359,17 @@ pub(in crate::tui::ui) fn message_action_menu_lines(
     )
 }
 
+#[cfg(test)]
+pub(in crate::tui::ui) fn message_action_menu_lines_with_keymap_options(
+    actions: &[MessageActionItem],
+    selected: usize,
+    keymap_options: &crate::config::KeymapOptions,
+) -> Vec<Line<'static>> {
+    let key_bindings = crate::tui::keybindings::KeyBindings::try_from_options(keymap_options)
+        .expect("test keymap options should parse");
+    message_action_menu_lines_with_key_bindings(actions, selected, &key_bindings)
+}
+
 fn message_action_menu_lines_with_key_bindings(
     actions: &[MessageActionItem],
     selected: usize,
@@ -379,7 +390,7 @@ fn message_action_menu_lines_with_key_bindings(
         .enumerate()
         .map(|(index, action)| {
             let selected = index == selected;
-            let shortcut = format!("{:<prefix_width$}", prefixes[index]);
+            let shortcut = padded_shortcut_prefix(&prefixes[index], prefix_width);
             let label = if action.enabled {
                 key_bindings.message_action_label(action)
             } else {
@@ -418,7 +429,7 @@ fn thread_action_menu_lines(
         .enumerate()
         .map(|(index, action)| {
             let selected = index == selected;
-            let shortcut = format!("{:<prefix_width$}", prefixes[index]);
+            let shortcut = padded_shortcut_prefix(&prefixes[index], prefix_width);
             let label = if action.enabled {
                 key_bindings.thread_action_label(action)
             } else {
@@ -501,9 +512,17 @@ fn thread_action_line(label: &str, selected: bool, enabled: bool) -> Line<'stati
 
 fn shortcut_label_prefix(label: &str) -> String {
     if label.is_empty() {
-        return "    ".to_owned();
+        return "[]".to_owned();
     }
     format!("[{label}] ")
+}
+
+fn padded_shortcut_prefix(prefix: &str, width: usize) -> String {
+    if prefix == "[]" {
+        "[] ".to_owned()
+    } else {
+        format!("{prefix:<width$}")
+    }
 }
 
 fn truncate_action_menu_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {

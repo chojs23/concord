@@ -25,7 +25,10 @@ mod toast;
 mod url_picker;
 
 #[cfg(test)]
-pub(super) use action_menu::{leader_action_lines_for_test, message_action_menu_lines};
+pub(super) use action_menu::{
+    leader_action_lines_for_test, message_action_menu_lines,
+    message_action_menu_lines_with_keymap_options,
+};
 pub(super) use action_menu::{
     leader_popup_area_for_state, message_action_menu_area, render_leader_popup,
     render_message_action_menu, render_thread_action_menu,

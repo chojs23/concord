@@ -1082,22 +1082,32 @@ where
     if index >= shortcut_sets.len() {
         return Vec::new();
     }
-    action_shortcuts(index, shortcut_sets)
+    action_shortcuts(index, &shortcut_sets)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ActionShortcutCandidates {
+    Enabled(Vec<KeyChord>),
+    Disabled,
 }
 
 fn action_shortcut_candidates<K>(
     bindings: &[ActionShortcutBinding<K>],
     kind: K,
     default_shortcuts: &impl Fn(K) -> Vec<KeyChord>,
-) -> Vec<KeyChord>
+) -> ActionShortcutCandidates
 where
     K: Copy + Eq,
 {
-    bindings
-        .iter()
-        .find(|binding| binding.kind == kind)
-        .map(|binding| binding.shortcuts.clone())
-        .unwrap_or_else(|| default_shortcuts(kind))
+    if let Some(binding) = bindings.iter().find(|binding| binding.kind == kind) {
+        if binding.shortcuts.is_empty() {
+            ActionShortcutCandidates::Disabled
+        } else {
+            ActionShortcutCandidates::Enabled(binding.shortcuts.clone())
+        }
+    } else {
+        ActionShortcutCandidates::Enabled(default_shortcuts(kind))
+    }
 }
 
 fn is_left_key(code: KeyCode) -> bool {
@@ -1125,25 +1135,33 @@ fn is_composer_newline_key(key: KeyEvent) -> bool {
     }
 }
 
-fn action_shortcuts(
-    index: usize,
-    shortcut_sets: impl IntoIterator<Item = Vec<KeyChord>>,
-) -> Vec<KeyChord> {
-    let shortcut_sets = shortcut_sets.into_iter().collect::<Vec<_>>();
-    let Some(preferred) = shortcut_sets.get(index) else {
+fn action_shortcuts(index: usize, shortcut_sets: &[ActionShortcutCandidates]) -> Vec<KeyChord> {
+    let Some(ActionShortcutCandidates::Enabled(preferred)) = shortcut_sets.get(index) else {
         return Vec::new();
     };
-    let shortcuts = unique_action_shortcuts(preferred, shortcut_sets.clone());
+    let enabled_shortcut_sets = shortcut_sets
+        .iter()
+        .filter_map(|set| match set {
+            ActionShortcutCandidates::Enabled(shortcuts) => Some(shortcuts.clone()),
+            ActionShortcutCandidates::Disabled => None,
+        })
+        .collect::<Vec<_>>();
+    let shortcuts = unique_action_shortcuts(preferred, enabled_shortcut_sets.clone());
     if !shortcuts.is_empty() {
         return shortcuts;
     }
 
-    let mut used = shortcut_sets.iter().flatten().copied().collect::<Vec<_>>();
+    let mut used = enabled_shortcut_sets
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
     for fallback_index in 0..=index {
-        let Some(preferred) = shortcut_sets.get(fallback_index) else {
-            return Vec::new();
+        let Some(ActionShortcutCandidates::Enabled(preferred)) = shortcut_sets.get(fallback_index)
+        else {
+            continue;
         };
-        if !unique_action_shortcuts(preferred, shortcut_sets.clone()).is_empty() {
+        if !unique_action_shortcuts(preferred, enabled_shortcut_sets.clone()).is_empty() {
             continue;
         }
         let Some(fallback) = first_unused_indexed_shortcut(&used) else {
