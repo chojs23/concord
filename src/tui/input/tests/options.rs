@@ -27,6 +27,7 @@ fn options_popup_cycles_image_preview_quality() {
     let mut state = state_with_messages(1);
 
     state.open_options_popup();
+    handle_key(&mut state, key(KeyCode::Enter));
     for _ in 0..3 {
         handle_key(&mut state, key(KeyCode::Down));
     }
@@ -35,6 +36,33 @@ fn options_popup_cycles_image_preview_quality() {
     assert_eq!(
         state.display_options().image_preview_quality,
         ImagePreviewQualityPreset::High
+    );
+    assert_eq!(
+        state.take_options_save_request(),
+        Some(AppOptions {
+            display: state.display_options(),
+            composer: state.composer_options(),
+            credentials: Default::default(),
+            notifications: state.notification_options(),
+            voice: state.voice_options(),
+        })
+    );
+}
+
+#[test]
+fn options_popup_cycles_attachment_viewer_quality() {
+    let mut state = state_with_messages(1);
+
+    state.open_options_popup();
+    handle_key(&mut state, key(KeyCode::Enter));
+    for _ in 0..4 {
+        handle_key(&mut state, key(KeyCode::Down));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        state.display_options().attachment_viewer_quality,
+        ImagePreviewQualityPreset::Efficient
     );
     assert_eq!(
         state.take_options_save_request(),
@@ -183,7 +211,7 @@ fn options_popup_selection_aliases_move_selection() {
     assert_eq!(state.selected_option_index(), Some(0));
 
     handle_key(&mut state, ctrl_key('d'));
-    assert_eq!(state.selected_option_index(), Some(5));
+    assert_eq!(state.selected_option_index(), Some(6));
 
     handle_key(&mut state, ctrl_key('u'));
     assert_eq!(state.selected_option_index(), Some(0));

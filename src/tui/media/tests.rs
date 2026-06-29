@@ -605,7 +605,7 @@ fn attachment_viewer_target_shows_video_thumbnail_preview() {
     assert!(target.show_play_marker);
     assert_eq!(
         target.url,
-        "https://media.discordapp.net/attachments/691/150/clip-2.mp4?format=webp&width=540&height=960"
+        "https://media.discordapp.net/attachments/691/150/clip-2.mp4?format=webp&width=563&height=1000"
     );
 }
 
