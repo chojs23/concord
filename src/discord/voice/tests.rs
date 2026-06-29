@@ -1,4 +1,5 @@
 use super::dave::VoiceDaveOutboundPayload;
+use super::opus::VoicePlaybackDecodeState;
 use super::rtp::build_voice_rtp_packet;
 use super::runtime::stop_voice_connection_task;
 use super::*;
@@ -407,11 +408,25 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
 }
 
 fn test_playback_frame(ssrc: u32, user_id: Option<u64>, sequence: u16) -> VoicePlaybackFrame {
+    test_playback_frame_with_timestamp(
+        ssrc,
+        user_id,
+        sequence,
+        u32::from(sequence) * DISCORD_OPUS_TIMESTAMP_INCREMENT,
+    )
+}
+
+fn test_playback_frame_with_timestamp(
+    ssrc: u32,
+    user_id: Option<u64>,
+    sequence: u16,
+    timestamp: u32,
+) -> VoicePlaybackFrame {
     VoicePlaybackFrame {
         ssrc,
         user_id,
         sequence,
-        timestamp: u32::from(sequence) * DISCORD_OPUS_TIMESTAMP_INCREMENT,
+        timestamp,
         opus: vec![sequence as u8],
     }
 }
@@ -427,7 +442,7 @@ fn voice_playout_buffer_reorders_nearby_packets() {
     assert!(buffer.push(test_playback_frame(9, Some(42), 11), now));
 
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -435,7 +450,7 @@ fn voice_playout_buffer_reorders_nearby_packets() {
         )))
     );
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION * 2),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -443,7 +458,7 @@ fn voice_playout_buffer_reorders_nearby_packets() {
         )))
     );
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION * 3),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -453,8 +468,87 @@ fn voice_playout_buffer_reorders_nearby_packets() {
 }
 
 #[test]
+fn voice_playout_buffer_schedules_packets_by_rtp_timestamp_delta() {
+    struct Case {
+        name: &'static str,
+        timestamp_step: u32,
+        step_duration: Duration,
+        early_duration: Duration,
+    }
+
+    for case in [
+        Case {
+            name: "20ms Discord packet",
+            timestamp_step: DISCORD_OPUS_TIMESTAMP_INCREMENT,
+            step_duration: VOICE_PLAYBACK_FRAME_DURATION,
+            early_duration: Duration::from_millis(10),
+        },
+        Case {
+            name: "10ms Abaddon packet",
+            timestamp_step: 480,
+            step_duration: Duration::from_millis(10),
+            early_duration: Duration::from_millis(5),
+        },
+    ] {
+        let now = Instant::now();
+        let playout_start = now + VOICE_PLAYBACK_JITTER_BUFFER_DELAY;
+        let mut buffer = VoicePlaybackPlayoutBuffer::default();
+        let timestamps = [
+            case.timestamp_step * 10,
+            case.timestamp_step * 11,
+            case.timestamp_step * 12,
+        ];
+
+        assert!(buffer.push(
+            test_playback_frame_with_timestamp(9, Some(42), 10, timestamps[0]),
+            now
+        ));
+        assert!(buffer.push(
+            test_playback_frame_with_timestamp(9, Some(42), 11, timestamps[1]),
+            now
+        ));
+        assert!(buffer.push(
+            test_playback_frame_with_timestamp(9, Some(42), 12, timestamps[2]),
+            now
+        ));
+
+        assert_eq!(
+            buffer.next_frame(playout_start),
+            Some(VoicePlayoutFrame::Audio(
+                test_playback_frame_with_timestamp(9, Some(42), 10, timestamps[0])
+            )),
+            "{} should emit the first frame at playout start",
+            case.name
+        );
+        assert_eq!(
+            buffer.next_frame(playout_start + case.early_duration),
+            None,
+            "{} should wait for the RTP timestamp delta",
+            case.name
+        );
+        assert_eq!(
+            buffer.next_frame(playout_start + case.step_duration),
+            Some(VoicePlayoutFrame::Audio(
+                test_playback_frame_with_timestamp(9, Some(42), 11, timestamps[1])
+            )),
+            "{} should emit the second frame after its timestamp delta",
+            case.name
+        );
+        assert_eq!(
+            buffer.next_frame(playout_start + case.step_duration * 2),
+            Some(VoicePlayoutFrame::Audio(
+                test_playback_frame_with_timestamp(9, Some(42), 12, timestamps[2])
+            )),
+            "{} should keep the same timestamp cadence",
+            case.name
+        );
+    }
+}
+
+#[test]
 fn voice_playout_buffer_emits_packet_loss_for_missing_sequence() {
     let now = Instant::now();
+    let playout_start = now + VOICE_PLAYBACK_JITTER_BUFFER_DELAY;
     let mut buffer = VoicePlaybackPlayoutBuffer::default();
 
     assert!(buffer.push(test_playback_frame(9, Some(42), 10), now));
@@ -462,7 +556,7 @@ fn voice_playout_buffer_emits_packet_loss_for_missing_sequence() {
     assert!(buffer.push(test_playback_frame(9, Some(42), 13), now));
 
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(playout_start),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -470,20 +564,63 @@ fn voice_playout_buffer_emits_packet_loss_for_missing_sequence() {
         )))
     );
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(playout_start + VOICE_PLAYBACK_FRAME_DURATION),
         Some(VoicePlayoutFrame::PacketLoss {
             ssrc: 9,
             user_id: Some(42),
             sequence: 11,
+            timestamp_step: DISCORD_OPUS_TIMESTAMP_INCREMENT,
         })
     );
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(playout_start + VOICE_PLAYBACK_FRAME_DURATION * 2),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
             12
         )))
+    );
+}
+
+#[test]
+fn voice_playout_buffer_uses_10ms_step_for_packet_loss() {
+    let now = Instant::now();
+    let playout_start = now + VOICE_PLAYBACK_JITTER_BUFFER_DELAY;
+    let mut buffer = VoicePlaybackPlayoutBuffer::default();
+
+    assert!(buffer.push(
+        test_playback_frame_with_timestamp(9, Some(42), 10, 4800),
+        now
+    ));
+    assert!(buffer.push(
+        test_playback_frame_with_timestamp(9, Some(42), 12, 5760),
+        now
+    ));
+    assert!(buffer.push(
+        test_playback_frame_with_timestamp(9, Some(42), 13, 6240),
+        now
+    ));
+
+    assert_eq!(
+        buffer.next_frame(playout_start),
+        Some(VoicePlayoutFrame::Audio(
+            test_playback_frame_with_timestamp(9, Some(42), 10, 4800)
+        ))
+    );
+    assert_eq!(
+        buffer.next_frame(playout_start + Duration::from_millis(10)),
+        Some(VoicePlayoutFrame::PacketLoss {
+            ssrc: 9,
+            user_id: Some(42),
+            sequence: 11,
+            timestamp_step: 480,
+        })
+    );
+    assert_eq!(
+        buffer.next_frame(playout_start + Duration::from_millis(20)),
+        Some(VoicePlayoutFrame::Audio(
+            test_playback_frame_with_timestamp(9, Some(42), 12, 5760)
+        ))
     );
 }
 
@@ -496,7 +633,7 @@ fn voice_playout_buffer_drops_stale_packets_after_playout_advances() {
     assert!(buffer.push(test_playback_frame(9, Some(42), 8), now));
     assert!(buffer.push(test_playback_frame(9, Some(42), 9), now));
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -504,7 +641,7 @@ fn voice_playout_buffer_drops_stale_packets_after_playout_advances() {
         )))
     );
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION * 2),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -526,6 +663,27 @@ fn voice_decoded_samples_mix_same_tick_frames() {
     assert_voice_sample_near(mixed[1], 0.0);
     assert_voice_sample_near(mixed[2], 0.0);
     assert_voice_sample_near(mixed[3], -gain);
+}
+
+#[test]
+fn voice_decode_state_outputs_one_poll_quantum_per_mix() {
+    let mut state = VoicePlaybackDecodeState::default();
+    let poll_samples =
+        VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS);
+
+    state.push_decoded_samples(1, vec![1.0; poll_samples * 2]);
+    state.push_decoded_samples(2, vec![0.5; poll_samples]);
+
+    let first = state
+        .next_pending_mix()
+        .expect("first poll should mix pending samples");
+    let second = state
+        .next_pending_mix()
+        .expect("second poll should drain 20ms frame remainder");
+
+    assert_eq!(first.len(), poll_samples);
+    assert_eq!(second.len(), poll_samples);
+    assert!(state.next_pending_mix().is_none());
 }
 
 #[test]

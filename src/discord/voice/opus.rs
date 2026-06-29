@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::Instant,
+};
 
 #[cfg(feature = "voice-playback")]
 use std::sync::Arc;
@@ -25,7 +28,8 @@ use super::playback::{
 use super::{
     DISCORD_OPUS_20MS_STEREO_SAMPLES, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL,
     DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE, OPUS_MAX_ENCODED_FRAME_BYTES,
-    OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL, VOICE_PLAYBACK_FRAME_DURATION, VOICE_PLAYBACK_FRAME_QUEUE,
+    OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL, VOICE_PLAYBACK_FRAME_QUEUE, VOICE_PLAYBACK_POLL_DURATION,
+    VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL,
 };
 use crate::logging;
 
@@ -48,6 +52,12 @@ pub(super) struct VoiceOpusDecode {
 struct VoiceDecodedAudio {
     #[cfg(feature = "voice-playback")]
     samples_tx: Option<SyncSender<Vec<f32>>>,
+}
+
+#[derive(Default)]
+pub(super) struct VoicePlaybackDecodeState {
+    decoders: HashMap<u32, OpusDecoder>,
+    pending_samples: HashMap<u32, VecDeque<f32>>,
 }
 
 impl VoiceOpusDecode {
@@ -171,10 +181,10 @@ async fn run_voice_playback_decode(
     mut frames_rx: mpsc::Receiver<VoicePlaybackFrame>,
     decoded_audio: VoiceDecodedAudio,
 ) {
-    let mut decoders = HashMap::new();
+    let mut decode_state = VoicePlaybackDecodeState::default();
     let mut playout_buffers = VoicePlaybackPlayoutBuffers::default();
     let mut post_process = VoicePlaybackPostProcess::default();
-    let mut playout_tick = interval(VOICE_PLAYBACK_FRAME_DURATION);
+    let mut playout_tick = interval(VOICE_PLAYBACK_POLL_DURATION);
     playout_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut decoded_frames = 0u64;
     loop {
@@ -187,7 +197,7 @@ async fn run_voice_playback_decode(
             }
             _ = playout_tick.tick() => {
                 let frames = playout_buffers.next_frames(Instant::now());
-                if let Some(mut samples) = decode_voice_playout_frames(frames, &mut decoders) {
+                if let Some(mut samples) = decode_state.next_mixed_samples(frames) {
                     post_process.process(&mut samples);
                     let pcm_samples = samples.len();
                     decoded_audio.try_send(samples);
@@ -207,17 +217,47 @@ async fn run_voice_playback_decode(
     }
 }
 
-pub(super) fn decode_voice_playout_frames(
-    frames: Vec<VoicePlayoutFrame>,
-    decoders: &mut HashMap<u32, OpusDecoder>,
-) -> Option<Vec<f32>> {
-    let mut decoded_frames = Vec::new();
-    for frame in frames {
-        if let Some(samples) = decode_voice_playout_frame(frame, decoders) {
-            decoded_frames.push(samples);
+impl VoicePlaybackDecodeState {
+    pub(super) fn next_mixed_samples(
+        &mut self,
+        frames: Vec<VoicePlayoutFrame>,
+    ) -> Option<Vec<f32>> {
+        for frame in frames {
+            let ssrc = frame.ssrc();
+            if let Some(samples) = decode_voice_playout_frame(frame, &mut self.decoders) {
+                self.push_decoded_samples(ssrc, samples);
+            }
         }
+        self.next_pending_mix()
     }
-    mix_voice_decoded_samples(&decoded_frames)
+
+    pub(super) fn push_decoded_samples(&mut self, ssrc: u32, samples: Vec<f32>) {
+        self.pending_samples
+            .entry(ssrc)
+            .or_default()
+            .extend(samples);
+    }
+
+    pub(super) fn next_pending_mix(&mut self) -> Option<Vec<f32>> {
+        let chunk_len =
+            VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS);
+        let chunks: Vec<Vec<f32>> = self
+            .pending_samples
+            .values_mut()
+            .filter_map(|samples| drain_voice_pending_chunk(samples, chunk_len))
+            .collect();
+        self.pending_samples
+            .retain(|_, samples| !samples.is_empty());
+        mix_voice_decoded_samples(&chunks)
+    }
+}
+
+fn drain_voice_pending_chunk(samples: &mut VecDeque<f32>, chunk_len: usize) -> Option<Vec<f32>> {
+    if samples.is_empty() {
+        return None;
+    }
+    let len = samples.len().min(chunk_len);
+    Some(samples.drain(..len).collect())
 }
 
 pub(super) fn decode_voice_playout_frame(
@@ -225,8 +265,10 @@ pub(super) fn decode_voice_playout_frame(
     decoders: &mut HashMap<u32, OpusDecoder>,
 ) -> Option<Vec<f32>> {
     let ssrc = frame.ssrc();
+    let packet_loss_stereo_samples =
+        frame.packet_loss_samples_per_channel() * usize::from(DISCORD_VOICE_CHANNELS);
     if frame.is_packet_loss() && !decoders.contains_key(&ssrc) {
-        return Some(vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES]);
+        return Some(vec![0.0f32; packet_loss_stereo_samples]);
     }
     if let std::collections::hash_map::Entry::Vacant(entry) = decoders.entry(ssrc) {
         match OpusDecoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo) {
@@ -243,7 +285,7 @@ pub(super) fn decode_voice_playout_frame(
         .get_mut(&ssrc)
         .expect("Opus decoder should exist after insertion");
     let decode_sample_capacity = if frame.opus().is_empty() {
-        DISCORD_OPUS_20MS_STEREO_SAMPLES
+        packet_loss_stereo_samples
     } else {
         OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS)
     };
@@ -261,7 +303,7 @@ pub(super) fn decode_voice_playout_frame(
                 ),
             );
             decoders.remove(&ssrc);
-            return Some(vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES]);
+            return Some(vec![0.0f32; packet_loss_stereo_samples]);
         }
     };
     let decoded_len = samples_per_channel * usize::from(DISCORD_VOICE_CHANNELS);
