@@ -236,6 +236,9 @@ You can toggle image viewing on or off in the configuration file. When image vie
 
 Video playback uses [mpv](https://mpv.io/). Make sure `mpv` is installed and in your PATH.
 YouTube playback depends on your local `mpv` setup, such as `yt-dlp` support.
+External media playback is off by default. You can enable it with
+`media_playback = true` under `[display]`, or toggle it from the in-app Display
+options menu.
 
 ### Members & Profiles
 
@@ -466,6 +469,9 @@ show_avatars = true
 
 # Render inline image previews for attachments and embeds.
 show_images = true
+
+# Allow video media to open in an external player.
+media_playback = false
 
 # Preview quality: efficient, balanced, high, or original.
 image_preview_quality = "balanced"
