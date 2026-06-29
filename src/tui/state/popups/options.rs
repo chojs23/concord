@@ -330,8 +330,11 @@ impl DashboardState {
                     self.options.display_options.image_preview_quality.next()
             }
             (OptionsCategory::Display, 4) => {
-                self.options.display_options.attachment_viewer_quality =
-                    self.options.display_options.attachment_viewer_quality.next()
+                self.options.display_options.attachment_viewer_quality = self
+                    .options
+                    .display_options
+                    .attachment_viewer_quality
+                    .next()
             }
             (OptionsCategory::Display, 5) => {
                 self.options.display_options.show_custom_emoji =
