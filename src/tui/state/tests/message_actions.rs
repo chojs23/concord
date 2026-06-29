@@ -204,7 +204,17 @@ fn attachment_viewer_navigation_clamps_and_downloads_current_attachment() {
 
 #[test]
 fn attachment_viewer_play_selected_attachment_only_plays_videos() {
-    let mut state = state_with_messages(1);
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        media_playback: true,
+        ..Default::default()
+    });
+    state.push_event(guild_create_event(
+        Id::new(1),
+        "guild",
+        vec![text_channel_info(Id::new(1), Id::new(2), "general")],
+    ));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
     state.push_event(latest_history_loaded(
         Id::new(2),
         vec![MessageInfo {
@@ -670,7 +680,17 @@ fn direct_message_url_opens_url_picker_for_multiple_urls() {
 
 #[test]
 fn direct_play_media_prefers_video_attachment() {
-    let mut state = state_with_messages(1);
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        media_playback: true,
+        ..Default::default()
+    });
+    state.push_event(guild_create_event(
+        Id::new(1),
+        "guild",
+        vec![text_channel_info(Id::new(1), Id::new(2), "general")],
+    ));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
     state.push_event(latest_history_loaded(
         Id::new(2),
         vec![MessageInfo {
@@ -695,8 +715,46 @@ fn direct_play_media_prefers_video_attachment() {
 }
 
 #[test]
+fn media_playback_disabled_removes_message_play_action() {
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        media_playback: false,
+        ..Default::default()
+    });
+    state.push_event(guild_create_event(
+        Id::new(1),
+        "guild",
+        vec![text_channel_info(Id::new(1), Id::new(2), "general")],
+    ));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            attachments: vec![video_attachment(10)],
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(!message_action(&actions, MessageActionKind::PlayMedia).enabled);
+    assert_eq!(state.direct_play_selected_message_media(), None);
+}
+
+#[test]
 fn direct_play_media_uses_youtube_url() {
-    let mut state = state_with_messages(1);
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        media_playback: true,
+        ..Default::default()
+    });
+    state.push_event(guild_create_event(
+        Id::new(1),
+        "guild",
+        vec![text_channel_info(Id::new(1), Id::new(2), "general")],
+    ));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
     state.push_event(latest_history_loaded(
         Id::new(2),
         vec![MessageInfo {

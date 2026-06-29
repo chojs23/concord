@@ -22,6 +22,7 @@ pub struct DisplayOptions {
     pub disable_image_preview: bool,
     pub show_avatars: bool,
     pub show_images: bool,
+    pub media_playback: bool,
     pub image_preview_quality: ImagePreviewQualityPreset,
     pub attachment_viewer_quality: ImagePreviewQualityPreset,
     pub image_protocol: ImageProtocolPreference,
@@ -415,6 +416,7 @@ impl Default for DisplayOptions {
             disable_image_preview: false,
             show_avatars: true,
             show_images: true,
+            media_playback: false,
             image_preview_quality: ImagePreviewQualityPreset::default(),
             attachment_viewer_quality: ImagePreviewQualityPreset::Original,
             image_protocol: ImageProtocolPreference::default(),
@@ -431,6 +433,10 @@ impl DisplayOptions {
 
     pub fn images_visible(self) -> bool {
         !self.disable_image_preview && self.show_images
+    }
+
+    pub fn media_playback_enabled(self) -> bool {
+        self.media_playback
     }
 
     pub fn custom_emoji_visible(self) -> bool {
@@ -734,6 +740,7 @@ mod tests {
 
         assert!(options.avatars_visible());
         assert!(options.images_visible());
+        assert!(!options.media_playback_enabled());
         assert!(options.custom_emoji_visible());
         assert_eq!(
             options.image_preview_quality,
@@ -748,6 +755,7 @@ mod tests {
             disable_image_preview: true,
             show_avatars: true,
             show_images: true,
+            media_playback: false,
             image_preview_quality: ImagePreviewQualityPreset::Balanced,
             attachment_viewer_quality: ImagePreviewQualityPreset::Original,
             image_protocol: ImageProtocolPreference::Auto,
@@ -770,6 +778,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 MicrophoneSensitivityDb::default(),
             ),
             (
@@ -778,6 +787,17 @@ mod tests {
                 ImagePreviewQualityPreset::Original,
                 false,
                 false,
+                false,
+                false,
+                MicrophoneSensitivityDb::default(),
+            ),
+            (
+                "[display]\nmedia_playback = true\n",
+                false,
+                ImagePreviewQualityPreset::Balanced,
+                false,
+                false,
+                true,
                 false,
                 MicrophoneSensitivityDb::default(),
             ),
@@ -788,12 +808,14 @@ mod tests {
                 true,
                 false,
                 false,
+                false,
                 MicrophoneSensitivityDb::default(),
             ),
             (
                 "[voice]\nallow_microphone_transmit = true\n",
                 false,
                 ImagePreviewQualityPreset::Balanced,
+                false,
                 false,
                 false,
                 true,
@@ -806,12 +828,14 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 MicrophoneSensitivityDb::new(-70),
             ),
             (
                 "[voice]\nmicrophone_sensitivity = 10\n",
                 false,
                 ImagePreviewQualityPreset::Balanced,
+                false,
                 false,
                 false,
                 false,
@@ -824,12 +848,14 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 MicrophoneSensitivityDb::new(-100),
             ),
             (
                 "[notifications]\ndesktop_notifications = false\n",
                 false,
                 ImagePreviewQualityPreset::Balanced,
+                false,
                 false,
                 false,
                 false,
@@ -842,12 +868,14 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 MicrophoneSensitivityDb::default(),
             ),
             (
                 "[notifications]\nnotification_sound = \"/tmp/message.wav\"\n",
                 false,
                 ImagePreviewQualityPreset::Balanced,
+                false,
                 false,
                 false,
                 false,
@@ -860,12 +888,14 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 MicrophoneSensitivityDb::default(),
             ),
             (
                 "[credentials]\nstore = \"plain\"\n",
                 false,
                 ImagePreviewQualityPreset::Balanced,
+                false,
                 false,
                 false,
                 false,
@@ -879,6 +909,7 @@ mod tests {
             image_preview_quality,
             self_mute,
             self_deaf,
+            media_playback,
             allow_microphone_transmit,
             microphone_sensitivity,
         ) in cases
@@ -887,6 +918,7 @@ mod tests {
             assert_eq!(config.display.disable_image_preview, disable_image_preview);
             assert!(config.display.show_avatars);
             assert!(config.display.show_images);
+            assert_eq!(config.display.media_playback, media_playback);
             assert_eq!(config.display.image_preview_quality, image_preview_quality);
             assert_eq!(config.display.image_protocol, ImageProtocolPreference::Auto);
             assert!(config.display.show_custom_emoji);
@@ -1253,6 +1285,7 @@ mod tests {
                 disable_image_preview: true,
                 show_avatars: false,
                 show_images: false,
+                media_playback: false,
                 image_preview_quality: ImagePreviewQualityPreset::Original,
                 attachment_viewer_quality: ImagePreviewQualityPreset::Original,
                 image_protocol: ImageProtocolPreference::Kitty,

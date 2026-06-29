@@ -15,7 +15,7 @@ use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, han
 use crate::discord::AppCommand;
 use crate::{
     config::{
-        AppOptions, ImagePreviewQualityPreset, KeymapBinding, KeymapOptions,
+        AppOptions, DisplayOptions, ImagePreviewQualityPreset, KeymapBinding, KeymapOptions,
         MicrophoneSensitivityDb, VoiceVolumePercent,
     },
     discord::{
