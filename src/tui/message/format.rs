@@ -917,7 +917,7 @@ fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {
 }
 
 fn next_inline_markdown_marker(value: &str, cursor: usize) -> Option<usize> {
-    ["`", "***", "**", "*", "_"]
+    ["`", "***", "**", "*", "__", "_", "~~"]
         .into_iter()
         .filter_map(|marker| next_inline_markdown_marker_for(value, cursor, marker))
         .min()
@@ -948,8 +948,12 @@ fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str
         Some(("**", Style::default().add_modifier(Modifier::BOLD)))
     } else if rest.starts_with('*') {
         Some(("*", Style::default().add_modifier(Modifier::ITALIC)))
+    } else if rest.starts_with("__") {
+        Some(("__", Style::default().add_modifier(Modifier::UNDERLINED)))
     } else if rest.starts_with('_') && should_open_underscore_marker(value, cursor) {
         Some(("_", Style::default().add_modifier(Modifier::ITALIC)))
+    } else if rest.starts_with("~~") {
+        Some(("~~", Style::default().add_modifier(Modifier::CROSSED_OUT)))
     } else {
         None
     }

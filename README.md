@@ -209,9 +209,8 @@ Concord renders a practical subset of Discord-style Markdown in message bodies:
 - Headings: `# H1`, `## H2`, `### H3`
 - Quotes: `> quoted text`
 - Bullets: `- item` and `* item`
-- Inline styles: `**bold**`, `*italic*`, and `` `inline code` ``
-- Fenced code blocks with optional language labels, rendered as compact boxes
-  with syntax highlighting
+- Inline styles: `**bold**`, `*italic*`, `__underline__`, `~~strikethrough~~`, and `` `inline code` ``
+- Fenced code blocks with optional language labels, rendered as compact boxes with syntax highlighting
 - Raw URLs and markdown link destinations are underlined and can be opened from message actions
 
 ### Reactions & Polls
