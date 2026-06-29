@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.9] - 2026-06-29
+
+### Bug Fixes
+
+- Support 10ms Discord voice packets (#229) in [#229](https://github.com/chojs23/concord/pull/229) by @chojs23
+
+### Documentation
+
+- Update changelog by @chojs23
+- Update readme by @chojs23
+
+### Features
+
+- Add a separate image quality option for the attachment viewer (#224) in [#224](https://github.com/chojs23/concord/pull/224) by @LmanTW
+- Add support for disabling keymap shortcuts by @chojs23
+- Make external media playback opt-in (#230) in [#230](https://github.com/chojs23/concord/pull/230) by @chojs23
+- Add underline and strikethrough support to message formatting (#228) in [#228](https://github.com/chojs23/concord/pull/228) by @LmanTW
+
+### Miscellaneous Tasks
+
+- Remove legacy tests by @chojs23
+
+### New Contributors
+
+- @LmanTW made their first contribution in [#228](https://github.com/chojs23/concord/pull/228)
+
 ## [2.2.8] - 2026-06-26
 
 ### Bug Fixes

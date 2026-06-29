@@ -1,6 +1,6 @@
 [package]
 name = "concord"
-version = "2.2.8"
+version = "2.2.9"
 edition = "2024"
 rust-version = "1.85"
 description = "A terminal user interface client for Discord"
