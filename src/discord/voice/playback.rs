@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 #[cfg(feature = "voice-playback")]
 use std::sync::Arc;
@@ -17,8 +20,8 @@ use super::audio_buffer::VoiceAudioBuffer;
 #[cfg(all(feature = "voice-playback", target_os = "linux"))]
 use super::log_captured_alsa_errors;
 use super::{
-    DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE, VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ,
-    VOICE_PLAYBACK_JITTER_BUFFER_DELAY, VOICE_PLAYBACK_JITTER_BUFFER_FRAMES,
+    DISCORD_OPUS_TIMESTAMP_INCREMENT, DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE,
+    VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ, VOICE_PLAYBACK_JITTER_BUFFER_DELAY,
     VOICE_PLAYBACK_MAX_BUFFERED_FRAMES_PER_SSRC, VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES,
 };
 use crate::config::VoiceVolumePercent;
@@ -43,6 +46,7 @@ pub(super) enum VoicePlayoutFrame {
         ssrc: u32,
         user_id: Option<u64>,
         sequence: u16,
+        timestamp_step: u32,
     },
 }
 
@@ -68,9 +72,11 @@ pub(super) struct VoicePlaybackPlayoutBuffer {
     ssrc: Option<u32>,
     frames: Vec<VoicePlaybackFrame>,
     next_sequence: Option<u16>,
+    next_playout_at: Option<Instant>,
     first_buffered_at: Option<Instant>,
     started: bool,
     last_user_id: Option<u64>,
+    last_timestamp_step: Option<u32>,
     consecutive_missing: usize,
 }
 
@@ -117,6 +123,13 @@ impl VoicePlayoutFrame {
 
     pub(super) fn is_packet_loss(&self) -> bool {
         matches!(self, Self::PacketLoss { .. })
+    }
+
+    pub(super) fn packet_loss_samples_per_channel(&self) -> usize {
+        match self {
+            Self::Audio(_) => DISCORD_OPUS_TIMESTAMP_INCREMENT as usize,
+            Self::PacketLoss { timestamp_step, .. } => *timestamp_step as usize,
+        }
     }
 }
 
@@ -219,10 +232,18 @@ impl VoicePlaybackPlayoutBuffer {
             let aged_enough = self.first_buffered_at.is_some_and(|started_at| {
                 now.duration_since(started_at) >= VOICE_PLAYBACK_JITTER_BUFFER_DELAY
             });
-            if self.frames.len() < VOICE_PLAYBACK_JITTER_BUFFER_FRAMES && !aged_enough {
+            let buffered_enough = self.buffered_contiguous_duration(next_sequence)
+                >= VOICE_PLAYBACK_JITTER_BUFFER_DELAY;
+            if !buffered_enough && !aged_enough {
                 return None;
             }
             self.started = true;
+        }
+        if self
+            .next_playout_at
+            .is_some_and(|playout_at| now < playout_at)
+        {
+            return None;
         }
 
         self.drop_stale_frames(next_sequence);
@@ -233,19 +254,19 @@ impl VoicePlaybackPlayoutBuffer {
             .position(|frame| frame.sequence == next_sequence)
         {
             let frame = self.frames.remove(position);
-            self.advance_after_audio(frame.sequence);
+            self.advance_after_audio(&frame, now);
             return Some(VoicePlayoutFrame::Audio(frame));
         }
 
         if self.frames.is_empty() {
-            return self.next_packet_loss_frame_or_stop(next_sequence);
+            return self.next_packet_loss_frame_or_stop(next_sequence, now);
         }
 
         if self.consecutive_missing < VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES {
-            return Some(self.packet_loss_frame(next_sequence));
+            return Some(self.packet_loss_frame(next_sequence, now));
         }
 
-        self.skip_to_next_buffered_frame(next_sequence)
+        self.skip_to_next_buffered_frame(next_sequence, now)
     }
 
     fn drop_stale_frames(&mut self, next_sequence: u16) {
@@ -268,25 +289,36 @@ impl VoicePlaybackPlayoutBuffer {
         }
     }
 
-    fn next_packet_loss_frame_or_stop(&mut self, next_sequence: u16) -> Option<VoicePlayoutFrame> {
+    fn next_packet_loss_frame_or_stop(
+        &mut self,
+        next_sequence: u16,
+        now: Instant,
+    ) -> Option<VoicePlayoutFrame> {
         if self.consecutive_missing < VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES {
-            return Some(self.packet_loss_frame(next_sequence));
+            return Some(self.packet_loss_frame(next_sequence, now));
         }
         self.reset_idle();
         None
     }
 
-    fn packet_loss_frame(&mut self, sequence: u16) -> VoicePlayoutFrame {
+    fn packet_loss_frame(&mut self, sequence: u16, now: Instant) -> VoicePlayoutFrame {
         self.consecutive_missing += 1;
+        let timestamp_step = self.last_timestamp_step();
         self.next_sequence = Some(sequence.wrapping_add(1));
+        self.schedule_next_playout(voice_timestamp_step_duration(timestamp_step), now);
         VoicePlayoutFrame::PacketLoss {
             ssrc: self.ssrc.unwrap_or_default(),
             user_id: self.last_user_id,
             sequence,
+            timestamp_step,
         }
     }
 
-    fn skip_to_next_buffered_frame(&mut self, next_sequence: u16) -> Option<VoicePlayoutFrame> {
+    fn skip_to_next_buffered_frame(
+        &mut self,
+        next_sequence: u16,
+        now: Instant,
+    ) -> Option<VoicePlayoutFrame> {
         let position = self
             .frames
             .iter()
@@ -294,20 +326,102 @@ impl VoicePlaybackPlayoutBuffer {
             .min_by_key(|(_, frame)| voice_sequence_distance(next_sequence, frame.sequence))
             .map(|(position, _)| position)?;
         let frame = self.frames.remove(position);
-        self.advance_after_audio(frame.sequence);
+        self.advance_after_audio(&frame, now);
         Some(VoicePlayoutFrame::Audio(frame))
     }
 
-    fn advance_after_audio(&mut self, sequence: u16) {
-        self.next_sequence = Some(sequence.wrapping_add(1));
+    fn advance_after_audio(&mut self, frame: &VoicePlaybackFrame, now: Instant) {
+        self.next_sequence = Some(frame.sequence.wrapping_add(1));
         self.consecutive_missing = 0;
         self.first_buffered_at = None;
+        let step = self.playout_step_duration_after(frame);
+        self.schedule_next_playout(step, now);
+    }
+
+    fn playout_step_duration_after(&mut self, frame: &VoicePlaybackFrame) -> Duration {
+        if let Some(timestamp_step) = self.timestamp_step_after(frame) {
+            self.last_timestamp_step = Some(timestamp_step);
+            return voice_timestamp_step_duration(timestamp_step);
+        }
+        self.last_playout_step_duration()
+    }
+
+    fn timestamp_step_after(&self, frame: &VoicePlaybackFrame) -> Option<u32> {
+        self.frames
+            .iter()
+            .filter_map(|queued| {
+                let sequence_distance =
+                    u32::from(voice_sequence_distance(frame.sequence, queued.sequence));
+                if sequence_distance == 0 || sequence_distance >= 0x8000 {
+                    return None;
+                }
+                let timestamp_distance = queued.timestamp.wrapping_sub(frame.timestamp);
+                if timestamp_distance % sequence_distance != 0 {
+                    return None;
+                }
+                let timestamp_step = timestamp_distance / sequence_distance;
+                valid_voice_timestamp_step(timestamp_step)
+                    .then_some((sequence_distance, timestamp_step))
+            })
+            .min_by_key(|(sequence_distance, _)| *sequence_distance)
+            .map(|(_, timestamp_step)| timestamp_step)
+    }
+
+    fn buffered_contiguous_duration(&self, next_sequence: u16) -> Duration {
+        let mut sequence = next_sequence;
+        let mut previous = None;
+        let mut last_timestamp_step = None;
+        let mut duration = Duration::ZERO;
+        while let Some(frame) = self
+            .frames
+            .iter()
+            .find(|queued| queued.sequence == sequence)
+        {
+            if let Some(previous_timestamp) = previous {
+                let timestamp_step = frame.timestamp.wrapping_sub(previous_timestamp);
+                if !valid_voice_timestamp_step(timestamp_step) {
+                    break;
+                }
+                last_timestamp_step = Some(timestamp_step);
+                duration += voice_timestamp_step_duration(timestamp_step);
+            }
+            previous = Some(frame.timestamp);
+            sequence = sequence.wrapping_add(1);
+        }
+        if previous.is_some() {
+            duration += voice_timestamp_step_duration(
+                last_timestamp_step.unwrap_or(DISCORD_OPUS_TIMESTAMP_INCREMENT),
+            );
+        }
+        duration
+    }
+
+    fn schedule_next_playout(&mut self, step: Duration, now: Instant) {
+        let base = self.next_playout_at.unwrap_or(now);
+        let schedule_base =
+            if now.saturating_duration_since(base) > VOICE_PLAYBACK_JITTER_BUFFER_DELAY {
+                now
+            } else {
+                base
+            };
+        self.next_playout_at = Some(schedule_base + step);
+    }
+
+    fn last_playout_step_duration(&self) -> Duration {
+        voice_timestamp_step_duration(self.last_timestamp_step())
+    }
+
+    fn last_timestamp_step(&self) -> u32 {
+        self.last_timestamp_step
+            .unwrap_or(DISCORD_OPUS_TIMESTAMP_INCREMENT)
     }
 
     fn reset_idle(&mut self) {
         self.next_sequence = None;
+        self.next_playout_at = None;
         self.first_buffered_at = None;
         self.started = false;
+        self.last_timestamp_step = None;
         self.consecutive_missing = 0;
     }
 
@@ -323,6 +437,16 @@ fn voice_sequence_before(sequence: u16, reference: u16) -> bool {
 
 fn voice_sequence_distance(from: u16, to: u16) -> u16 {
     to.wrapping_sub(from)
+}
+
+fn valid_voice_timestamp_step(timestamp_step: u32) -> bool {
+    timestamp_step > 0 && timestamp_step <= DISCORD_OPUS_TIMESTAMP_INCREMENT * 6
+}
+
+fn voice_timestamp_step_duration(timestamp_step: u32) -> Duration {
+    Duration::from_micros(
+        u64::from(timestamp_step) * 1_000_000 / u64::from(DISCORD_VOICE_SAMPLE_RATE),
+    )
 }
 
 #[cfg(feature = "voice-playback")]
