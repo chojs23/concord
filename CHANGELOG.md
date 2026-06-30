@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.10] - 2026-06-30
+
+### Bug Fixes
+
+- Fix qwerty shortkey shadows numeric keys by @chojs23
+- Fix missing pinned post (#231) in [#231](https://github.com/chojs23/concord/pull/231) by @chojs23
+- Show fresh servers missing from guild_folders at top of server pane by @chojs23
+
+### Miscellaneous Tasks
+
+- Consolidate config load by @chojs23
+
+### Refactor
+
+- _(tui)_ Unify popup scrolling on shared scrolloff viewport by @chojs23
+
 ## [2.2.9] - 2026-06-29
 
 ### Bug Fixes
