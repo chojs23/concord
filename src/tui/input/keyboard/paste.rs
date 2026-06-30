@@ -34,12 +34,11 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
     }
 
     if !state.is_composing() {
-           if pasted_file_attachments(text).is_none() {
-              return false;
-           }
-           state.start_composer();
-           return handle_pasted_file_attachments(state, text);
-       }
+        if pasted_file_attachments(text).is_none() {
+            return false;
+        }
+        state.start_composer();
+        return handle_pasted_file_attachments(state, text);
     }
 
     if handle_pasted_file_attachments(state, text) {
