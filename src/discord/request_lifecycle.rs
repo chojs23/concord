@@ -1122,9 +1122,15 @@ impl ForumPostRequestState {
                 offset,
             });
         }
+        // Only start the archived stream once the active search is fully
+        // drained. While an active page is still in flight, `active.next`
+        // returns `None` even though more active posts are coming, so without
+        // this guard the archived section would start loading and interleave
+        // before the active list finishes.
+        let allow_archived_initial = should_load_more && self.active.is_exhausted();
         if let Some(offset) =
             self.archived
-                .next(channel_changed, should_load_more, should_load_more)
+                .next(channel_changed, allow_archived_initial, should_load_more)
         {
             return Some(ForumPostRequestCursor {
                 archive_state: ForumPostArchiveState::Archived,
@@ -1213,6 +1219,18 @@ impl ForumPostPageRequestState {
 
     fn set_failed(&mut self, offset: usize) {
         *self = Self::Failed { offset };
+    }
+
+    /// A page stream is drained once a loaded page reported no more results.
+    /// A pending (`Requested`) page is not exhausted: more results may follow.
+    fn is_exhausted(&self) -> bool {
+        matches!(
+            self,
+            Self::Loaded {
+                has_more: false,
+                ..
+            }
+        )
     }
 }
 
@@ -1443,6 +1461,51 @@ mod tests {
         assert_eq!(
             requests.next(Some(target(guild, channel, true))),
             Some((guild, channel, ForumPostArchiveState::Active, 25))
+        );
+    }
+
+    #[test]
+    fn archived_forum_posts_wait_for_the_active_search_to_drain() {
+        let mut requests = ForumPostRequests::default();
+        let guild = Id::new(100);
+        let channel = Id::new(1);
+
+        assert_eq!(
+            requests.next(Some(target(guild, channel, false))),
+            Some((guild, channel, ForumPostArchiveState::Active, 0))
+        );
+        requests.record_event(&AppEvent::ForumPostsLoaded {
+            channel_id: channel,
+            archive_state: ForumPostArchiveState::Active,
+            offset: 0,
+            next_offset: 25,
+            threads: vec![forum_post(channel, 10)],
+            first_messages: Vec::new(),
+            has_more: true,
+        });
+
+        // Scrolling fetches the next active page.
+        assert_eq!(
+            requests.next(Some(target(guild, channel, true))),
+            Some((guild, channel, ForumPostArchiveState::Active, 25))
+        );
+        // While that page is still in flight, archived must not start and
+        // interleave ahead of the rest of the active posts.
+        assert_eq!(requests.next(Some(target(guild, channel, true))), None);
+
+        // Only after the active search reports it is drained does archived begin.
+        requests.record_event(&AppEvent::ForumPostsLoaded {
+            channel_id: channel,
+            archive_state: ForumPostArchiveState::Active,
+            offset: 25,
+            next_offset: 26,
+            threads: vec![forum_post(channel, 11)],
+            first_messages: Vec::new(),
+            has_more: false,
+        });
+        assert_eq!(
+            requests.next(Some(target(guild, channel, true))),
+            Some((guild, channel, ForumPostArchiveState::Archived, 0))
         );
     }
 

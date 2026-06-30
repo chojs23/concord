@@ -195,7 +195,13 @@ impl DiscordRest {
         // only need `last_message_time` because zero-reply posts are almost
         // always recent and already covered by the first response.
         if offset == 0 {
-            let (activity, recent) = tokio::join!(
+            // `relevance` is the only sort that lifts pinned posts to the top.
+            // The activity/creation sorts bury an inactive pin below page 0, so
+            // we also harvest pins from a relevance page (active only, since
+            // archiving clears the pin flag). Best-effort, so a failed relevance
+            // call cannot break the list.
+            let harvest_pins = archive_state == ForumPostArchiveState::Active;
+            let (activity, recent, pins) = tokio::join!(
                 self.load_forum_post_search_page(
                     guild_id,
                     channel_id,
@@ -210,8 +216,27 @@ impl DiscordRest {
                     offset,
                     ForumSearchSort::CreationTime,
                 ),
+                async {
+                    if harvest_pins {
+                        self.load_forum_post_search_page(
+                            guild_id,
+                            channel_id,
+                            archive_state,
+                            offset,
+                            ForumSearchSort::Relevance,
+                        )
+                        .await
+                        .ok()
+                    } else {
+                        None
+                    }
+                },
             );
-            return Ok(merge_forum_pages(activity?, recent?));
+            let page = merge_forum_pages(activity?, recent?);
+            return Ok(match pins {
+                Some(pins) => merge_pinned_forum_posts(page, pins),
+                None => page,
+            });
         }
 
         self.load_forum_post_search_page(
@@ -487,6 +512,9 @@ pub(super) fn is_search_index_warming(error: &AppError) -> bool {
 pub(super) enum ForumSearchSort {
     LastMessageTime,
     CreationTime,
+    /// Only used to harvest pinned posts: it is the one sort under which
+    /// Discord lifts pins to the top of the results.
+    Relevance,
 }
 
 impl ForumSearchSort {
@@ -494,6 +522,7 @@ impl ForumSearchSort {
         match self {
             Self::LastMessageTime => "last_message_time",
             Self::CreationTime => "creation_time",
+            Self::Relevance => "relevance",
         }
     }
 }
@@ -530,4 +559,49 @@ pub(super) fn merge_forum_pages(active: ForumPostPage, recent: ForumPostPage) ->
         first_messages,
         has_more: active.has_more,
     }
+}
+
+/// Fold only the pinned posts from a `relevance`-sorted page into `page`,
+/// discarding relevance's reshuffle of everything else. The display layer
+/// re-sorts pinned-first, so the pins just need to be present. `next_offset`
+/// and `has_more` stay from `page` so pagination keeps following the activity
+/// sort.
+pub(super) fn merge_pinned_forum_posts(
+    mut page: ForumPostPage,
+    pins: ForumPostPage,
+) -> ForumPostPage {
+    let mut seen_threads = page
+        .threads
+        .iter()
+        .map(|thread| thread.channel_id)
+        .collect::<std::collections::HashSet<_>>();
+    let mut new_pin_ids = std::collections::HashSet::new();
+    let mut pinned_threads = Vec::new();
+    for thread in pins.threads {
+        if !thread.thread_pinned().unwrap_or(false) {
+            continue;
+        }
+        if seen_threads.insert(thread.channel_id) {
+            new_pin_ids.insert(thread.channel_id);
+            pinned_threads.push(thread);
+        }
+    }
+    if pinned_threads.is_empty() {
+        return page;
+    }
+
+    let mut seen_messages = page
+        .first_messages
+        .iter()
+        .map(|message| message.message_id)
+        .collect::<std::collections::HashSet<_>>();
+    for message in pins.first_messages {
+        if new_pin_ids.contains(&message.channel_id) && seen_messages.insert(message.message_id) {
+            page.first_messages.push(message);
+        }
+    }
+
+    pinned_threads.extend(page.threads);
+    page.threads = pinned_threads;
+    page
 }

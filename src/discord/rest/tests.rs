@@ -24,8 +24,8 @@ use super::{
     },
     forum::{
         ForumPostPage, ForumSearchSort, create_forum_post_request_body, is_search_index_warming,
-        merge_forum_pages, parse_create_forum_post_response, parse_forum_first_messages,
-        parse_forum_threads,
+        merge_forum_pages, merge_pinned_forum_posts, parse_create_forum_post_response,
+        parse_forum_first_messages, parse_forum_threads,
     },
     messages::{
         MessageEditRequest, edit_message_request_body, message_multipart_form,
@@ -756,5 +756,96 @@ fn forum_thread(parent_id: Id<ChannelMarker>, thread_id: u64, name: &str) -> Cha
         name: name.to_owned(),
         thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
         ..ChannelInfo::test(Id::new(thread_id), "public_thread")
+    }
+}
+
+#[test]
+fn merge_pinned_forum_posts_lifts_pins_absent_from_the_activity_body() {
+    let forum_id = Id::<ChannelMarker>::new(20);
+    // Activity body with no pin loaded (the real pin sits beyond page 0).
+    let body = ForumPostPage {
+        next_offset: 25,
+        threads: vec![
+            forum_thread_info(forum_id, 100, 10, "recent-a"),
+            forum_thread_info(forum_id, 200, 20, "recent-b"),
+        ],
+        first_messages: Vec::new(),
+        has_more: true,
+    };
+    let pins = ForumPostPage {
+        next_offset: 22,
+        threads: vec![
+            pinned_forum_thread(forum_id, 999, "PIN: read first"),
+            forum_thread_info(forum_id, 100, 10, "recent-a-relevance-copy"),
+            forum_thread_info(forum_id, 300, 30, "relevance-noise"),
+        ],
+        first_messages: vec![crate::discord::MessageInfo::test(
+            Id::new(999),
+            Id::new(9990),
+        )],
+        has_more: false,
+    };
+
+    let merged = merge_pinned_forum_posts(body, pins);
+
+    // Pin prepended, body kept, and the duplicate (100) plus non-pinned noise
+    // (300) dropped.
+    assert_eq!(
+        merged
+            .threads
+            .iter()
+            .map(|thread| thread.channel_id.get())
+            .collect::<Vec<_>>(),
+        vec![999, 100, 200],
+    );
+    assert!(
+        merged.threads[0].thread_pinned().unwrap_or(false),
+        "pin must lead so the display layer can lift it"
+    );
+    // The pin's starter message is carried over so its preview renders.
+    assert_eq!(
+        merged
+            .first_messages
+            .iter()
+            .map(|message| message.channel_id.get())
+            .collect::<Vec<_>>(),
+        vec![999],
+    );
+    // Pagination keeps following the activity body, untouched by the harvest.
+    assert_eq!(merged.next_offset, 25);
+    assert!(merged.has_more);
+
+    // When relevance surfaces no new pin, the body is returned unchanged.
+    let body = ForumPostPage {
+        next_offset: 25,
+        threads: vec![pinned_forum_thread(forum_id, 999, "already-loaded pin")],
+        first_messages: Vec::new(),
+        has_more: false,
+    };
+    let pins = ForumPostPage {
+        next_offset: 22,
+        threads: vec![
+            pinned_forum_thread(forum_id, 999, "same pin from relevance"),
+            forum_thread_info(forum_id, 400, 40, "relevance-noise"),
+        ],
+        first_messages: Vec::new(),
+        has_more: false,
+    };
+    let merged = merge_pinned_forum_posts(body, pins);
+    assert_eq!(
+        merged
+            .threads
+            .iter()
+            .map(|thread| thread.channel_id.get())
+            .collect::<Vec<_>>(),
+        vec![999],
+        "an already-loaded pin is not duplicated and noise is ignored"
+    );
+}
+
+fn pinned_forum_thread(parent_id: Id<ChannelMarker>, thread_id: u64, name: &str) -> ChannelInfo {
+    ChannelInfo {
+        flags: Some(1 << 1),
+        ..forum_thread(parent_id, thread_id, name)
     }
 }
