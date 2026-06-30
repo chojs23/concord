@@ -243,7 +243,6 @@ pub(in crate::tui::ui) fn render_thread_edit_tag_picker(
         return;
     }
     let tags = &view.tags;
-    let selected = tags.iter().position(|tag| tag.active).unwrap_or(0);
     let popup = thread_edit_tag_picker_popup_area(area, tags.len());
     let block = panel_block("Choose tags", true);
     let content = block.inner(popup);
@@ -251,7 +250,7 @@ pub(in crate::tui::ui) fn render_thread_edit_tag_picker(
         .min(TAG_PICKER_VISIBLE_ITEMS)
         .min(tags.len())
         .max(1);
-    let visible_range = selection::visible_item_range(tags.len(), selected, visible_items);
+    let visible_range = selection::visible_window(view.tag_scroll, visible_items, tags.len());
     let ready_urls = ready_emoji_urls(emoji_images);
     frame.render_widget(Clear, popup);
     let rows: Vec<Line<'static>> = tags[visible_range.clone()]
@@ -329,6 +328,18 @@ pub(super) fn render_tag_picker_emojis<'a>(
 fn thread_edit_tag_picker_popup_area(area: Rect, tag_count: usize) -> Rect {
     let visible = tag_count.clamp(1, TAG_PICKER_VISIBLE_ITEMS) as u16;
     centered_rect(area, TAG_PICKER_WIDTH, visible.saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn thread_edit_tag_picker_visible_items(
+    area: Rect,
+    tag_count: usize,
+) -> usize {
+    let popup = thread_edit_tag_picker_popup_area(area, tag_count);
+    let content = panel_block("Choose tags", true).inner(popup);
+    usize::from(content.height)
+        .min(TAG_PICKER_VISIBLE_ITEMS)
+        .min(tag_count)
+        .max(1)
 }
 
 fn button_line(label: &str, active: bool) -> Line<'static> {

@@ -56,6 +56,10 @@ fn search_popup_result_capacity(popup: Rect, view: &SearchPopupView) -> usize {
     .max(1)
 }
 
+pub(in crate::tui::ui) fn search_popup_visible_items(area: Rect, view: &SearchPopupView) -> usize {
+    search_popup_result_capacity(search_popup_area(area, view), view)
+}
+
 pub(in crate::tui::ui) fn search_popup_lines(
     view: &SearchPopupView,
     max_result_lines: usize,
@@ -85,11 +89,9 @@ pub(in crate::tui::ui) fn search_popup_lines(
     push_wrapped_styled_popup_text(&mut lines, &status, width, Style::default().fg(DIM));
 
     if !view.suggestions.is_empty() {
-        let start = search_popup_result_start(
-            view.suggestions.len(),
-            view.selected_suggestion,
-            max_result_lines,
-        );
+        let start = view
+            .suggestion_scroll
+            .min(view.suggestions.len().saturating_sub(max_result_lines));
         for (index, suggestion) in view
             .suggestions
             .iter()
@@ -114,7 +116,9 @@ pub(in crate::tui::ui) fn search_popup_lines(
         return lines;
     }
 
-    let start = search_popup_result_start(view.results.len(), view.selected, max_result_lines);
+    let start = view
+        .scroll
+        .min(view.results.len().saturating_sub(max_result_lines));
     for (index, result) in view
         .results
         .iter()
@@ -241,15 +245,6 @@ fn push_member_search_spans(
     if show_bot_marker && item.is_bot {
         spans.push(Span::styled(" [bot]", Style::default().fg(DIM)));
     }
-}
-
-fn search_popup_result_start(len: usize, selected: usize, max_result_lines: usize) -> usize {
-    if len == 0 || max_result_lines == 0 {
-        return 0;
-    }
-    selected
-        .min(len.saturating_sub(1))
-        .saturating_sub(max_result_lines / 2)
 }
 
 fn search_popup_cursor_position(popup: Rect, view: &SearchPopupView) -> Option<Position> {

@@ -105,6 +105,24 @@ impl DashboardState {
         }
     }
 
+    pub fn set_channel_switcher_view_height(&mut self, height: usize) {
+        let len = self
+            .popups
+            .channel_switcher()
+            .map(ChannelSwitcherState::visible_len)
+            .unwrap_or(0);
+        if let Some(switcher) = self.popups.channel_switcher_mut() {
+            switcher.selection.set_view_height_and_sync(height, len);
+        }
+    }
+
+    pub fn channel_switcher_scroll(&self) -> usize {
+        self.popups
+            .channel_switcher()
+            .map(|switcher| switcher.selection.scroll())
+            .unwrap_or(0)
+    }
+
     pub(super) fn page_channel_switcher_selection(&mut self, action: SelectionAction) {
         if let Some(switcher) = self.popups.channel_switcher_mut() {
             switcher.selection.page(switcher.visible_len(), action);

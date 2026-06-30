@@ -168,6 +168,23 @@ impl DashboardState {
         }
     }
 
+    pub fn set_emoji_reaction_picker_view_height(&mut self, height: usize) {
+        let len = self
+            .filtered_emoji_reaction_items_slice()
+            .map(<[_]>::len)
+            .unwrap_or(0);
+        if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
+            picker.selection.set_view_height_and_sync(height, len);
+        }
+    }
+
+    pub fn emoji_reaction_picker_scroll(&self) -> usize {
+        self.popups
+            .emoji_reaction_picker()
+            .map(|picker| picker.selection.scroll())
+            .unwrap_or(0)
+    }
+
     pub fn selected_emoji_reaction_index_for_len(&self, len: usize) -> Option<usize> {
         self.popups
             .emoji_reaction_picker()

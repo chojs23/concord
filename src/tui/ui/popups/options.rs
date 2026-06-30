@@ -16,18 +16,26 @@ pub(in crate::tui::ui) fn render_options_popup(
     let inner = block.inner(popup);
     let visible_items = usize::from(inner.height).max(1);
     let inner_width = usize::from(inner.width).max(1);
+    let scroll = state.options_popup_scroll();
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(options_popup_lines(
             &items,
             selected,
             visible_items,
+            scroll,
             inner_width,
         ))
         .block(block),
         popup,
     );
-    render_option_gauges(frame, inner, &items, selected, visible_items);
+    render_option_gauges(frame, inner, &items, visible_items, scroll);
+}
+
+pub(in crate::tui::ui) fn options_popup_visible_items(area: Rect, state: &DashboardState) -> usize {
+    let popup = options_popup_area(area, state);
+    let inner = panel_block(state.options_popup_title(), true).inner(popup);
+    usize::from(inner.height).max(1)
 }
 
 pub(in crate::tui::ui) fn options_popup_area(area: Rect, state: &DashboardState) -> Rect {
@@ -49,12 +57,13 @@ pub(in crate::tui::ui) fn options_popup_lines(
     items: &[DisplayOptionItem],
     selected: usize,
     visible_items: usize,
+    scroll: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
     let visible_items = visible_items.max(1);
     let width = width.max(1);
     let selected = selected.min(items.len().saturating_sub(1));
-    let start = selected.saturating_add(1).saturating_sub(visible_items);
+    let start = scroll.min(items.len().saturating_sub(visible_items));
     let lines: Vec<Line<'static>> = items
         .iter()
         .enumerate()
@@ -108,12 +117,11 @@ fn render_option_gauges(
     frame: &mut Frame,
     inner: Rect,
     items: &[DisplayOptionItem],
-    selected: usize,
     visible_items: usize,
+    scroll: usize,
 ) {
     let visible_items = visible_items.max(1);
-    let selected = selected.min(items.len().saturating_sub(1));
-    let start = selected.saturating_add(1).saturating_sub(visible_items);
+    let start = scroll.min(items.len().saturating_sub(visible_items));
     let mut y = inner.y;
     for item in items.iter().skip(start).take(visible_items) {
         y = y.saturating_add(1);

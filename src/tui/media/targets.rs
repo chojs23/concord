@@ -645,16 +645,15 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
     if state.is_active_modal_popup(ActiveModalPopupKind::EmojiReactionPicker) {
         let reactions = state.filtered_emoji_reaction_items_slice().unwrap_or(&[]);
         if !reactions.is_empty() {
-            let selected = state
-                .selected_emoji_reaction_index_for_len(reactions.len())
-                .unwrap_or(0)
-                .min(reactions.len().saturating_sub(1));
+            // The stored scroll can be one frame stale, which prefetch tolerates.
             let visible_items = reactions
                 .len()
                 .clamp(1, selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
-            let visible_range =
-                selection::visible_item_range(reactions.len(), selected, visible_items);
-            for reaction in &reactions[visible_range] {
+            let start = state
+                .emoji_reaction_picker_scroll()
+                .min(reactions.len().saturating_sub(visible_items));
+            let end = (start + visible_items).min(reactions.len());
+            for reaction in &reactions[start..end] {
                 if let Some(url) = reaction.custom_image_url()
                     && seen.insert(url.clone())
                 {

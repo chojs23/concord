@@ -47,6 +47,20 @@ impl DashboardState {
         }
     }
 
+    pub fn set_options_popup_view_height(&mut self, height: usize) {
+        let item_count = self.options_popup_item_count();
+        if let Some(popup) = self.popups.options_popup_mut() {
+            popup.selection.set_view_height_and_sync(height, item_count);
+        }
+    }
+
+    pub fn options_popup_scroll(&self) -> usize {
+        self.popups
+            .options_popup()
+            .map(|popup| popup.selection.scroll())
+            .unwrap_or(0)
+    }
+
     pub fn selected_option_index(&self) -> Option<usize> {
         self.popups.options_popup().map(|popup| {
             popup

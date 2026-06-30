@@ -13,6 +13,7 @@ use super::super::local_upload_preview::{
     LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
     local_upload_preview_view,
 };
+use super::super::scroll::clamp_list_scroll;
 use super::super::{
     DashboardState, FocusPane, ForumPostComposerAttachmentView, ForumPostComposerField,
     ForumPostComposerTagView, ForumPostComposerView, LocalUploadPreviewView,
@@ -202,6 +203,7 @@ impl DashboardState {
             body_cursor: forum_post_text_field_cursor(popup, ForumPostComposerFieldState::Body),
             attachments,
             tags,
+            tag_scroll: popup.tag_scroll,
             requires_tag: channel.requires_forum_tag(),
             paste_pending: self.runtime.clipboard_paste_pending,
             status: popup.status.clone(),
@@ -418,6 +420,14 @@ impl DashboardState {
             }
             Some(_) => {}
             None => self.cycle_forum_post_field_previous(),
+        }
+    }
+
+    pub fn set_forum_post_tag_picker_view_height(&mut self, height: usize) {
+        if let Some(popup) = self.popups.forum_post_composer_mut() {
+            let len = popup.tag_order.len();
+            let cursor = popup.selected_tag_index.min(len.saturating_sub(1));
+            popup.tag_scroll = clamp_list_scroll(cursor, popup.tag_scroll, height.max(1), len);
         }
     }
 

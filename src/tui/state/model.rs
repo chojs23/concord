@@ -184,8 +184,10 @@ pub struct SearchPopupView {
     pub fields: Vec<SearchFieldView>,
     pub suggestions: Vec<SearchSuggestionItem>,
     pub selected_suggestion: usize,
+    pub suggestion_scroll: usize,
     pub results: Vec<SearchResultItem>,
     pub selected: usize,
+    pub scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
     pub total_results: Option<usize>,
@@ -235,6 +237,7 @@ pub struct ForumPostComposerView {
     pub body_cursor: usize,
     pub attachments: Vec<ForumPostComposerAttachmentView>,
     pub tags: Vec<ForumPostComposerTagView>,
+    pub tag_scroll: usize,
     pub requires_tag: bool,
     pub paste_pending: bool,
     pub status: Option<String>,
@@ -282,6 +285,7 @@ pub struct ThreadEditView {
     /// the renderer omits the Tags row entirely when this is `false`.
     pub is_forum_post: bool,
     pub tags: Vec<ThreadEditTagView>,
+    pub tag_scroll: usize,
     pub requires_tag: bool,
     /// Display label for the current slow-mode option, e.g. "5s" or "Off".
     pub slow_mode_label: String,

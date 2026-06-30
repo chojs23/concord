@@ -27,7 +27,7 @@ fn options_popup_lines_show_selected_toggle_state() {
         },
     ];
 
-    let lines = options_popup_lines(&items, 1, items.len(), 120);
+    let lines = options_popup_lines(&items, 1, items.len(), 0, 120);
 
     assert_eq!(lines[0].spans[1].content, "[ ] ");
     assert_eq!(lines[1].spans[0].content, "› ");
@@ -204,7 +204,7 @@ fn options_popup_lines_keep_selected_item_visible_when_clipped() {
         },
     ];
 
-    let lines = options_popup_lines(&items, 3, 2, 120);
+    let lines = options_popup_lines(&items, 3, 2, 2, 120);
     let rendered = line_texts_from_ratatui(&lines).join("\n");
 
     assert!(rendered.contains("Option 3"), "{rendered}");
@@ -609,7 +609,7 @@ fn emoji_reaction_picker_marks_selected_reaction() {
         },
     ];
 
-    let lines = emoji_reaction_picker_lines(&reactions, 1, 10, &[]);
+    let lines = emoji_reaction_picker_lines(&reactions, 1, 10, 0, &[]);
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
@@ -917,6 +917,7 @@ fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
         &reactions,
         0,
         10,
+        0,
         &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
     );
 
@@ -962,16 +963,17 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
         })
         .collect::<Vec<_>>();
 
-    let lines = emoji_reaction_picker_lines(&reactions, 12, 5, &[]);
+    // At scroll 10 the selected row 12 keeps rows 13 and 14 visible below it.
+    let lines = emoji_reaction_picker_lines(&reactions, 12, 5, 10, &[]);
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "  [9] :emoji_8: Emoji 8",
-            "  [0] :emoji_9: Emoji 9",
             "      :emoji_10: Emoji 10",
             "      :emoji_11: Emoji 11",
             "›     :emoji_12: Emoji 12",
+            "      :emoji_13: Emoji 13",
+            "      :emoji_14: Emoji 14",
         ]
     );
 }

@@ -5,6 +5,7 @@ use crate::discord::ids::{
 };
 use crate::tui::keybindings::ScrollAction;
 
+use super::super::scroll::clamp_list_scroll;
 use super::super::{DashboardState, ThreadEditField, ThreadEditTagView, ThreadEditView};
 use super::{ActiveModalPopupKind, ModalPopup, ThreadEditState};
 
@@ -89,6 +90,7 @@ impl super::super::DashboardState {
             selected_tag_ids,
             tag_order: Vec::new(),
             selected_tag_index: 0,
+            tag_scroll: 0,
             editing_tags: false,
             rate_limit_index,
             auto_archive_index,
@@ -226,6 +228,7 @@ impl super::super::DashboardState {
             title_cursor,
             is_forum_post: popup.is_forum_post,
             tags,
+            tag_scroll: popup.tag_scroll,
             requires_tag,
             slow_mode_label: SLOW_MODE_OPTIONS[popup.rate_limit_index].1.to_owned(),
             can_set_slow_mode: popup.can_set_slow_mode,
@@ -305,6 +308,14 @@ impl super::super::DashboardState {
             }
         } else {
             self.cycle_thread_edit_field_previous();
+        }
+    }
+
+    pub fn set_thread_edit_tag_picker_view_height(&mut self, height: usize) {
+        if let Some(popup) = self.popups.thread_edit_mut() {
+            let len = popup.tag_order.len();
+            let cursor = popup.selected_tag_index.min(len.saturating_sub(1));
+            popup.tag_scroll = clamp_list_scroll(cursor, popup.tag_scroll, height.max(1), len);
         }
     }
 

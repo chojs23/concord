@@ -39,7 +39,8 @@ pub(super) use attachment_viewer::render_attachment_viewer;
 #[cfg(test)]
 pub(super) use channel_switcher::{channel_switcher_cursor_position, channel_switcher_lines};
 pub(super) use channel_switcher::{
-    channel_switcher_item_index_at, channel_switcher_popup_area, render_channel_switcher_popup,
+    channel_switcher_item_index_at, channel_switcher_popup_area, channel_switcher_visible_items,
+    render_channel_switcher_popup,
 };
 pub(super) use confirmation::{
     guild_leave_confirmation_popup_area_for_state, message_confirmation_popup_area_for_state,
@@ -62,8 +63,8 @@ pub(super) use downloads::{
 };
 pub(super) use folder_settings::{folder_settings_popup_area, render_folder_settings_popup};
 pub(super) use forum_post::{
-    forum_post_composer_metrics, forum_post_composer_popup_area, render_forum_post_composer,
-    render_forum_post_tag_picker,
+    forum_post_composer_metrics, forum_post_composer_popup_area,
+    forum_post_tag_picker_visible_items, render_forum_post_composer, render_forum_post_tag_picker,
 };
 #[cfg(test)]
 pub(super) use keymap::keymap_help_popup_lines;
@@ -75,7 +76,7 @@ pub(super) use notification_inbox::{
 };
 #[cfg(test)]
 pub(super) use options::options_popup_lines;
-pub(super) use options::{options_popup_area, render_options_popup};
+pub(super) use options::{options_popup_area, options_popup_visible_items, render_options_popup};
 #[cfg(test)]
 pub(super) use polls::poll_vote_picker_lines;
 pub(super) use polls::{poll_vote_picker_popup_area, render_poll_vote_picker};
@@ -93,12 +94,15 @@ pub(super) use reactions::{
     filtered_emoji_reaction_picker_lines, reaction_users_popup_lines,
 };
 pub(super) use reactions::{
-    emoji_reaction_picker_popup_area_for_state, reaction_users_popup_area_for_state,
-    render_emoji_reaction_picker, render_reaction_users_popup,
+    emoji_reaction_picker_popup_area_for_state, emoji_reaction_picker_visible_items_for_area,
+    reaction_users_popup_area_for_state, render_emoji_reaction_picker, render_reaction_users_popup,
 };
-pub(super) use search::{render_search_popup, search_popup_area_for_state};
+pub(super) use search::{
+    render_search_popup, search_popup_area_for_state, search_popup_visible_items,
+};
 pub(super) use thread_edit::{
     render_thread_edit, render_thread_edit_tag_picker, thread_edit_metrics, thread_edit_popup_area,
+    thread_edit_tag_picker_visible_items,
 };
 #[cfg(test)]
 pub(super) use toast::toast_line;

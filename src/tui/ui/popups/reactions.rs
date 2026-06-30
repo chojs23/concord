@@ -22,7 +22,6 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
     let selected = state
         .selected_emoji_reaction_index_for_len(reactions.len())
         .unwrap_or(0);
-    let desired_visible_items = emoji_reaction_picker_visible_items(reactions.len());
     let popup = emoji_reaction_picker_popup_area(area, reactions.len(), filter.is_some());
     let ready_urls = emoji_images
         .iter()
@@ -30,10 +29,9 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
         .collect::<Vec<_>>();
     let block = panel_block("Choose reaction", true);
     let content = block.inner(popup);
-    let filter_lines = u16::from(filter.is_some());
     let visible_items =
-        usize::from(content.height.saturating_sub(filter_lines)).min(desired_visible_items);
-    let visible_range = selection::visible_item_range(reactions.len(), selected, visible_items);
+        emoji_reaction_picker_visible_items_for_area(area, reactions.len(), filter.is_some());
+    let scroll = state.emoji_reaction_picker_scroll();
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(emoji_reaction_picker_lines_with_custom_emoji_images(
@@ -42,6 +40,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
             EmojiReactionPickerRenderOptions {
                 key_bindings: state.key_bindings(),
                 max_visible_items: visible_items,
+                scroll,
                 thumbnail_urls: &ready_urls,
                 existing_reactions,
                 own_reactions,
@@ -59,7 +58,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
             frame,
             content,
             reactions,
-            selected,
+            scroll,
             visible_items,
             emoji_images,
         );
@@ -70,7 +69,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
             height: visible_items as u16,
             ..content
         },
-        visible_range.start,
+        scroll,
         visible_items,
         reactions.len(),
     );
@@ -157,6 +156,18 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_popup_area_for_state(
 
 fn emoji_reaction_picker_visible_items(reaction_count: usize) -> usize {
     reaction_count.clamp(1, selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS)
+}
+
+pub(in crate::tui::ui) fn emoji_reaction_picker_visible_items_for_area(
+    area: Rect,
+    reaction_count: usize,
+    has_filter: bool,
+) -> usize {
+    let desired = emoji_reaction_picker_visible_items(reaction_count);
+    let popup = emoji_reaction_picker_popup_area(area, reaction_count, has_filter);
+    let content = panel_block("Choose reaction", true).inner(popup);
+    let filter_lines = u16::from(has_filter);
+    usize::from(content.height.saturating_sub(filter_lines)).min(desired)
 }
 
 const REACTION_USERS_POPUP_TARGET_WIDTH: u16 = 58;
@@ -276,6 +287,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines(
     reactions: &[EmojiReactionItem],
     selected: usize,
     max_visible_items: usize,
+    scroll: usize,
     thumbnail_urls: &[String],
 ) -> Vec<Line<'static>> {
     emoji_reaction_picker_lines_with_custom_emoji_images(
@@ -284,6 +296,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines(
         EmojiReactionPickerRenderOptions {
             key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
+            scroll,
             thumbnail_urls,
             existing_reactions: &[],
             own_reactions: &[],
@@ -308,6 +321,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_for_width(
         EmojiReactionPickerRenderOptions {
             key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
+            scroll: 0,
             thumbnail_urls,
             existing_reactions: &[],
             own_reactions: &[],
@@ -332,6 +346,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_existing(
         EmojiReactionPickerRenderOptions {
             key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
+            scroll: 0,
             thumbnail_urls,
             existing_reactions,
             own_reactions: &[],
@@ -357,6 +372,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_own_reactions(
         EmojiReactionPickerRenderOptions {
             key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
+            scroll: 0,
             thumbnail_urls,
             existing_reactions,
             own_reactions,
@@ -381,6 +397,7 @@ pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
         EmojiReactionPickerRenderOptions {
             key_bindings: &crate::tui::keybindings::KeyBindings::default(),
             max_visible_items,
+            scroll: 0,
             thumbnail_urls,
             existing_reactions: &[],
             own_reactions: &[],
@@ -394,6 +411,7 @@ pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
 struct EmojiReactionPickerRenderOptions<'a> {
     key_bindings: &'a crate::tui::keybindings::KeyBindings,
     max_visible_items: usize,
+    scroll: usize,
     thumbnail_urls: &'a [String],
     existing_reactions: &'a [crate::discord::ReactionEmoji],
     own_reactions: &'a [crate::discord::ReactionEmoji],
@@ -408,8 +426,8 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
     options: EmojiReactionPickerRenderOptions<'_>,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(reactions.len().saturating_sub(1));
-    let visible_items = options.max_visible_items.max(1).min(reactions.len().max(1));
-    let visible_range = selection::visible_item_range(reactions.len(), selected, visible_items);
+    let visible_range =
+        selection::visible_window(options.scroll, options.max_visible_items, reactions.len());
 
     let mut lines: Vec<Line<'static>> = reactions[visible_range.clone()]
         .iter()
@@ -483,7 +501,7 @@ fn render_emoji_reaction_images(
     frame: &mut Frame,
     area: Rect,
     reactions: &[EmojiReactionItem],
-    selected: usize,
+    scroll: usize,
     visible_items: usize,
     emoji_images: &[EmojiImage<'_>],
 ) {
@@ -491,8 +509,7 @@ fn render_emoji_reaction_images(
         return;
     }
 
-    let selected = selected.min(reactions.len().saturating_sub(1));
-    let visible_range = selection::visible_item_range(reactions.len(), selected, visible_items);
+    let visible_range = selection::visible_window(scroll, visible_items, reactions.len());
     for (offset, reaction) in reactions[visible_range].iter().enumerate() {
         let Some(url) = reaction.custom_image_url() else {
             continue;

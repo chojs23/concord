@@ -31,6 +31,7 @@ mod thread_actions;
 mod thread_edit;
 mod user;
 
+use super::scroll::clamp_list_scroll;
 use super::{
     DashboardState, EmojiReactionItem, FocusPane, MessageUrlItem, PollVotePickerItem,
     ThreadEditField,
@@ -161,6 +162,7 @@ pub(super) struct ForumPostComposerState {
     pub(super) active_field: ForumPostComposerFieldState,
     pub(super) editing: Option<ForumPostComposerFieldState>,
     pub(super) selected_tag_index: usize,
+    pub(super) tag_scroll: usize,
     /// Display order of tags while the tag picker is open. Captured on entry
     /// (selected tags first) so the cursor does not jump as tags are toggled.
     /// Indexed by `selected_tag_index`.
@@ -189,6 +191,7 @@ impl ForumPostComposerState {
             active_field: ForumPostComposerFieldState::Title,
             editing: None,
             selected_tag_index: 0,
+            tag_scroll: 0,
             tag_order: Vec::new(),
             selected_tag_ids: Vec::new(),
             attachments: Vec::new(),
@@ -222,6 +225,7 @@ pub(super) struct ThreadEditState {
     /// Indexed by `selected_tag_index`.
     pub(super) tag_order: Vec<Id<ForumTagMarker>>,
     pub(super) selected_tag_index: usize,
+    pub(super) tag_scroll: usize,
     pub(super) editing_tags: bool,
     /// Index into [`SLOW_MODE_OPTIONS`] for the current slow-mode value.
     pub(super) rate_limit_index: usize,
@@ -278,9 +282,14 @@ pub(super) enum LeaderActionState {
     Member(MemberLeaderActionState),
 }
 
+/// Selectable list with the panes' scrolloff windowing. `view_height` is owned
+/// by the renderer, so `sync_view_heights` refreshes it every frame through
+/// `set_view_height_and_sync`, which also re-clamps `scroll`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct SelectablePopupState {
     selected: usize,
+    scroll: usize,
+    view_height: usize,
 }
 
 impl SelectablePopupState {
@@ -290,6 +299,10 @@ impl SelectablePopupState {
 
     pub(super) fn selected_for_len(&self, len: usize) -> usize {
         self.selected.min(len.saturating_sub(1))
+    }
+
+    pub(super) fn scroll(&self) -> usize {
+        self.scroll
     }
 
     pub(super) fn select(&mut self, row: usize) {
@@ -307,6 +320,16 @@ impl SelectablePopupState {
         self.selected = self.selected.saturating_sub(1);
     }
 
+    pub(super) fn set_view_height_and_sync(&mut self, height: usize, len: usize) {
+        self.view_height = height.max(1);
+        self.scroll = clamp_list_scroll(
+            self.selected_for_len(len),
+            self.scroll,
+            self.view_height,
+            len,
+        );
+    }
+
     pub(super) fn page(&mut self, len: usize, action: SelectionAction) {
         match action {
             SelectionAction::Next => {
@@ -321,6 +344,31 @@ impl SelectablePopupState {
                 self.selected = self.selected.saturating_sub(SELECTABLE_POPUP_PAGE_STEP);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod selectable_popup_viewport_tests {
+    use super::SelectablePopupState;
+
+    #[test]
+    fn selection_keeps_scrolloff_margin_like_panes() {
+        let mut sel = SelectablePopupState::default();
+        for _ in 0..6 {
+            sel.move_down(15);
+        }
+        sel.set_view_height_and_sync(5, 15);
+        // scrolloff 2 holds cursor 6 two rows below the top, not pinned to the bottom.
+        assert_eq!(sel.selected(), 6);
+        assert_eq!(sel.scroll(), 4);
+
+        for _ in 0..6 {
+            sel.move_down(15);
+        }
+        sel.set_view_height_and_sync(5, 15);
+        // At the list end the scroll stops, so cursor 12 keeps rows 13 and 14 below it.
+        assert_eq!(sel.selected(), 12);
+        assert_eq!(sel.scroll(), 10);
     }
 }
 

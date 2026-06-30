@@ -199,8 +199,10 @@ impl SearchPopupState {
                 .collect(),
             suggestions: self.suggestions.clone(),
             selected_suggestion: self.selected_suggestion(),
+            suggestion_scroll: self.suggestion_selection.scroll(),
             results: self.results.clone(),
             selected: self.selected(),
+            scroll: self.selection.scroll(),
             loading: self.loading,
             error: self.error.clone(),
             total_results: self.total_results,
@@ -255,6 +257,19 @@ impl DashboardState {
             };
         }
         self.refresh_message_search_suggestions();
+    }
+
+    pub fn set_search_popup_view_height(&mut self, height: usize) {
+        if let Some(search) = self.popups.search_popup_mut() {
+            let results_len = search.results.len();
+            let suggestions_len = search.suggestions.len();
+            search
+                .selection
+                .set_view_height_and_sync(height, results_len);
+            search
+                .suggestion_selection
+                .set_view_height_and_sync(height, suggestions_len);
+        }
     }
 
     pub fn move_search_result_down(&mut self) -> Option<AppCommand> {

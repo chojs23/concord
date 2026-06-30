@@ -19,6 +19,7 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
     let selected = state.selected_channel_switcher_index().unwrap_or(0);
     let popup = channel_switcher_popup_area(area);
     let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
+    let scroll = state.channel_switcher_scroll();
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(channel_switcher_lines(
@@ -27,6 +28,7 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
             query,
             query_cursor,
             max_result_lines,
+            scroll,
             popup.width.saturating_sub(2) as usize,
         ))
         .block(panel_block("Channel Switcher", true))
@@ -41,6 +43,10 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
 pub(in crate::tui::ui) fn channel_switcher_popup_area(area: Rect) -> Rect {
     let height = area.height.saturating_sub(2).clamp(8, 22);
     centered_rect(area, CHANNEL_SWITCHER_POPUP_WIDTH, height)
+}
+
+pub(in crate::tui::ui) fn channel_switcher_visible_items(area: Rect) -> usize {
+    usize::from(channel_switcher_popup_area(area).height.saturating_sub(4)).max(1)
 }
 
 pub(in crate::tui::ui) fn channel_switcher_item_index_at(
@@ -64,9 +70,9 @@ pub(in crate::tui::ui) fn channel_switcher_item_index_at(
     let line = row.saturating_sub(inner.y) as usize;
     let result_line = line.checked_sub(2)?;
     let items = state.channel_switcher_items();
-    let selected = state.selected_channel_switcher_index().unwrap_or(0);
+    let scroll = state.channel_switcher_scroll();
     let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
-    channel_switcher_visible_result_rows(&items, selected, max_result_lines)
+    channel_switcher_visible_result_rows(&items, scroll, max_result_lines)
         .get(result_line)
         .and_then(|row| match row {
             ChannelSwitcherResultRow::Item(index) => Some(*index),
@@ -103,6 +109,7 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
     query: &str,
     query_cursor: usize,
     max_result_lines: usize,
+    scroll: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
@@ -123,6 +130,7 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
             items,
             selected,
             max_result_lines,
+            scroll,
         ));
     }
 
@@ -186,9 +194,10 @@ fn channel_switcher_result_lines(
     items: &[ChannelSwitcherItem],
     selected: usize,
     max_result_lines: usize,
+    scroll: usize,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(items.len().saturating_sub(1));
-    let rows = channel_switcher_visible_result_rows(items, selected, max_result_lines);
+    let rows = channel_switcher_visible_result_rows(items, scroll, max_result_lines);
     rows.into_iter()
         .map(|row| match row {
             ChannelSwitcherResultRow::Item(index) => {
@@ -209,11 +218,12 @@ enum ChannelSwitcherResultRow {
 
 fn channel_switcher_visible_result_rows(
     items: &[ChannelSwitcherItem],
-    selected: usize,
+    scroll: usize,
     max_result_lines: usize,
 ) -> Vec<ChannelSwitcherResultRow> {
-    let selected = selected.min(items.len().saturating_sub(1));
-    let start = channel_switcher_visible_start(items, selected, max_result_lines);
+    // Group headers are interleaved as the window is walked and share the row
+    // budget, so the trailing `truncate` keeps the popup height.
+    let start = scroll.min(items.len().saturating_sub(1));
     let end = items.len().min(start.saturating_add(max_result_lines));
     let mut rows = Vec::new();
     let mut last_group: Option<&str> = None;
@@ -226,17 +236,6 @@ fn channel_switcher_visible_result_rows(
     }
     rows.truncate(max_result_lines.max(1));
     rows
-}
-
-fn channel_switcher_visible_start(
-    items: &[ChannelSwitcherItem],
-    selected: usize,
-    max_result_lines: usize,
-) -> usize {
-    if items.is_empty() || max_result_lines == 0 {
-        return 0;
-    }
-    selected.saturating_sub(max_result_lines / 2)
 }
 
 fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Line<'static> {

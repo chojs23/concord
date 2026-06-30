@@ -77,8 +77,10 @@ use self::panes::{
 };
 use self::panes::{render_channels, render_guilds, render_header, render_members};
 use self::popups::{
-    forum_post_composer_metrics, forum_post_composer_popup_area, keymap_popup_text_area,
-    keymap_popup_total_lines, render_attachment_viewer, render_channel_switcher_popup,
+    channel_switcher_visible_items, emoji_reaction_picker_visible_items_for_area,
+    forum_post_composer_metrics, forum_post_composer_popup_area,
+    forum_post_tag_picker_visible_items, keymap_popup_text_area, keymap_popup_total_lines,
+    options_popup_visible_items, render_attachment_viewer, render_channel_switcher_popup,
     render_debug_log_popup, render_downloads_popup, render_emoji_reaction_picker,
     render_folder_settings_popup, render_forum_post_composer, render_forum_post_tag_picker,
     render_guild_leave_confirmation, render_keymap_help_popup, render_leader_popup,
@@ -86,9 +88,10 @@ use self::popups::{
     render_notification_inbox_popup, render_options_popup, render_poll_vote_picker,
     render_quit_confirmation, render_reaction_users_popup, render_search_popup,
     render_thread_action_menu, render_thread_delete_confirmation, render_thread_edit,
-    render_thread_edit_tag_picker, render_toast, render_user_profile_popup, thread_edit_metrics,
-    thread_edit_popup_area, user_profile_popup_has_avatar, user_profile_popup_text_geometry,
-    user_profile_popup_total_lines,
+    render_thread_edit_tag_picker, render_toast, render_user_profile_popup,
+    search_popup_visible_items, thread_edit_metrics, thread_edit_popup_area,
+    thread_edit_tag_picker_visible_items, user_profile_popup_has_avatar,
+    user_profile_popup_text_geometry, user_profile_popup_total_lines,
 };
 use self::types::{
     ACCENT, DIM, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
@@ -160,6 +163,27 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         state.is_pane_visible(FocusPane::Members),
     ));
     state.set_reaction_users_popup_view_height(reaction_users_visible_line_count(area));
+    if state.is_active_modal_popup(ActiveModalPopupKind::EmojiReactionPicker) {
+        let reaction_count = state
+            .filtered_emoji_reaction_items_slice()
+            .map(<[_]>::len)
+            .unwrap_or(0);
+        let has_filter = state.emoji_reaction_filter().is_some();
+        let visible_items =
+            emoji_reaction_picker_visible_items_for_area(area, reaction_count, has_filter);
+        state.set_emoji_reaction_picker_view_height(visible_items);
+    }
+    if state.is_active_modal_popup(ActiveModalPopupKind::Options) {
+        let visible_items = options_popup_visible_items(area, state);
+        state.set_options_popup_view_height(visible_items);
+    }
+    if state.is_active_modal_popup(ActiveModalPopupKind::ChannelSwitcher) {
+        state.set_channel_switcher_view_height(channel_switcher_visible_items(area));
+    }
+    if let Some(view) = state.search_popup_view() {
+        let visible_items = search_popup_visible_items(area, &view);
+        state.set_search_popup_view_height(visible_items);
+    }
     if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
         // The popup body shrinks when the avatar slot is in use, so use
         // the same has-avatar predicate the renderer uses to keep the
@@ -192,6 +216,10 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         let metrics = forum_post_composer_metrics(&view, content_width, preview_count);
         state.set_forum_post_composer_metrics(viewport, metrics.total_lines);
         state.reveal_forum_post_composer_rows(metrics.reveal_start, metrics.reveal_end);
+        if state.is_forum_post_tag_picker_active() && !view.tags.is_empty() {
+            let visible_items = forum_post_tag_picker_visible_items(area, view.tags.len());
+            state.set_forum_post_tag_picker_view_height(visible_items);
+        }
     }
     if state.is_active_modal_popup(ActiveModalPopupKind::ThreadEdit)
         && let Some(view) = state.thread_edit_view()
@@ -205,6 +233,10 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         let metrics = thread_edit_metrics(&view, content_width);
         state.set_thread_edit_metrics(viewport, metrics.total_lines);
         state.reveal_thread_edit_rows(metrics.reveal_start, metrics.reveal_end);
+        if state.is_thread_edit_tag_picker_active() && !view.tags.is_empty() {
+            let visible_items = thread_edit_tag_picker_visible_items(area, view.tags.len());
+            state.set_thread_edit_tag_picker_view_height(visible_items);
+        }
     }
 }
 
