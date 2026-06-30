@@ -242,11 +242,10 @@ impl DashboardState {
             .iter()
             .enumerate()
             .position(|(index, _)| {
-                self.options.key_bindings().emoji_reaction_shortcut(
-                    &picker.filtered_items,
-                    &picker.existing_reactions,
-                    index,
-                ) == Some(shortcut)
+                self.options
+                    .key_bindings()
+                    .emoji_reaction_shortcut(&picker.filtered_items, index)
+                    == Some(shortcut)
             })?;
         if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
             picker.selection.select(index);

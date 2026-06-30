@@ -298,7 +298,7 @@ fn existing_reaction_can_be_added_without_add_reactions_permission() {
 }
 
 #[test]
-fn reaction_picker_prioritizes_existing_reactions_and_qwerty_shortcuts() {
+fn reaction_picker_prioritizes_existing_reactions_and_digit_shortcuts() {
     let mut state = state_with_reaction_message();
 
     state.open_emoji_reaction_picker();
@@ -314,7 +314,8 @@ fn reaction_picker_prioritizes_existing_reactions_and_qwerty_shortcuts() {
         }
     );
 
-    let command = state.activate_emoji_reaction_shortcut('q');
+    // The prioritized existing reaction sits first, so `1` toggles it off.
+    let command = state.activate_emoji_reaction_shortcut('1');
     assert_eq!(
         command,
         Some(AppCommand::RemoveReaction {

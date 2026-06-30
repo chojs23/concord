@@ -618,7 +618,7 @@ fn emoji_reaction_picker_marks_selected_reaction() {
 }
 
 #[test]
-fn emoji_reaction_picker_uses_qwerty_shortcuts_for_existing_reactions() {
+fn emoji_reaction_picker_assigns_digit_shortcuts_by_position() {
     let reactions = vec![
         EmojiReactionItem {
             label: "Thumbs up".to_owned(),
@@ -633,17 +633,12 @@ fn emoji_reaction_picker_uses_qwerty_shortcuts_for_existing_reactions() {
             ..EmojiReactionItem::test(ReactionEmoji::Unicode("😂".to_owned()))
         },
     ];
-    let existing_reactions = vec![
-        ReactionEmoji::Unicode("👍".to_owned()),
-        ReactionEmoji::Unicode("❤️".to_owned()),
-    ];
 
-    let lines =
-        emoji_reaction_picker_lines_with_existing(&reactions, &existing_reactions, 0, 10, &[]);
+    let lines = emoji_reaction_picker_lines(&reactions, 0, 10, 0, &[]);
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["› [q] 👍 Thumbs up", "  [w] ❤️ Heart", "  [1] 😂 Joy"]
+        vec!["› [1] 👍 Thumbs up", "  [2] ❤️ Heart", "  [3] 😂 Joy"]
     );
 }
 
@@ -659,20 +654,10 @@ fn emoji_reaction_picker_marks_own_reactions_yellow() {
             ..EmojiReactionItem::test(ReactionEmoji::Unicode("❤️".to_owned()))
         },
     ];
-    let existing_reactions = vec![
-        ReactionEmoji::Unicode("👍".to_owned()),
-        ReactionEmoji::Unicode("❤️".to_owned()),
-    ];
     let own_reactions = vec![ReactionEmoji::Unicode("❤️".to_owned())];
 
-    let lines = emoji_reaction_picker_lines_with_own_reactions(
-        &reactions,
-        &existing_reactions,
-        &own_reactions,
-        1,
-        10,
-        &[],
-    );
+    let lines =
+        emoji_reaction_picker_lines_with_own_reactions(&reactions, &own_reactions, 1, 10, &[]);
 
     assert_eq!(lines[0].spans[2].style.fg, None);
     assert_eq!(lines[1].spans[2].style.fg, Some(Color::Yellow));

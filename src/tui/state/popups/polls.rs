@@ -37,16 +37,12 @@ impl DashboardState {
 
     pub fn toggle_poll_vote_answer_shortcut(&mut self, shortcut: char) {
         let shortcut = shortcut.to_ascii_lowercase();
-        let key_bindings = self.options.key_bindings().clone();
         let Some(picker) = self.popups.poll_vote_picker_mut() else {
             return;
         };
-        let Some(index) = picker
-            .answers
-            .iter()
-            .enumerate()
-            .position(|(index, _)| key_bindings.indexed_shortcut(index) == Some(shortcut))
-        else {
+        let Some(index) = picker.answers.iter().enumerate().position(|(index, _)| {
+            crate::tui::keybindings::KeyBindings::indexed_shortcut(index) == Some(shortcut)
+        }) else {
             return;
         };
         picker.selection.select(index);

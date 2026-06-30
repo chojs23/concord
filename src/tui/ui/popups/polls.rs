@@ -23,7 +23,7 @@ pub(in crate::tui::ui) fn render_poll_vote_picker(
         frame,
         popup,
         "Choose poll votes",
-        poll_vote_picker_lines_with_key_bindings(answers, selected, state.key_bindings()),
+        poll_vote_picker_lines(answers, selected),
     );
 }
 
@@ -31,29 +31,18 @@ pub(in crate::tui::ui) fn poll_vote_picker_popup_area(area: Rect, answer_count: 
     centered_rect(area, 58, (answer_count as u16).saturating_add(2))
 }
 
-#[cfg(test)]
 pub(in crate::tui::ui) fn poll_vote_picker_lines(
     answers: &[PollVotePickerItem],
     selected: usize,
-) -> Vec<Line<'static>> {
-    poll_vote_picker_lines_with_key_bindings(
-        answers,
-        selected,
-        &crate::tui::keybindings::KeyBindings::default(),
-    )
-}
-
-fn poll_vote_picker_lines_with_key_bindings(
-    answers: &[PollVotePickerItem],
-    selected: usize,
-    key_bindings: &crate::tui::keybindings::KeyBindings,
 ) -> Vec<Line<'static>> {
     answers
         .iter()
         .enumerate()
         .map(|(index, answer)| {
             let selected = index == selected;
-            let shortcut = shortcut_prefix(key_bindings.indexed_shortcut(index));
+            let shortcut = shortcut_prefix(crate::tui::keybindings::KeyBindings::indexed_shortcut(
+                index,
+            ));
             let checkbox = if answer.selected { "[x]" } else { "[ ]" };
             let style = selectable_popup_label_style(selected, true);
             Line::from(vec![

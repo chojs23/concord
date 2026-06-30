@@ -157,7 +157,8 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                 .enumerate()
                 .map(|(index, item)| {
                     leader_shortcut_line(
-                        state.key_bindings().indexed_shortcut(index).unwrap_or(' '),
+                        crate::tui::keybindings::KeyBindings::indexed_shortcut(index)
+                            .unwrap_or(' '),
                         item.label,
                         true,
                     )
@@ -187,7 +188,8 @@ fn leader_action_lines(state: &DashboardState) -> Vec<Line<'static>> {
                 .enumerate()
                 .map(|(index, item)| {
                     leader_shortcut_line(
-                        state.key_bindings().indexed_shortcut(index).unwrap_or(' '),
+                        crate::tui::keybindings::KeyBindings::indexed_shortcut(index)
+                            .unwrap_or(' '),
                         item.label,
                         true,
                     )

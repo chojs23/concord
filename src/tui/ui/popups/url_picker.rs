@@ -40,9 +40,9 @@ pub(in crate::tui::ui) fn message_url_picker_lines(
         .enumerate()
         .map(|(index, item)| {
             let selected = index == selected;
-            let shortcut = shortcut_prefix(
-                crate::tui::keybindings::KeyBindings::default().indexed_shortcut(index),
-            );
+            let shortcut = shortcut_prefix(crate::tui::keybindings::KeyBindings::indexed_shortcut(
+                index,
+            ));
             let style = selectable_popup_label_style(selected, true);
             Line::from(vec![
                 selectable_popup_marker(selected),

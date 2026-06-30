@@ -999,8 +999,15 @@ impl KeyBindings {
         })
     }
 
-    pub fn indexed_shortcut(&self, index: usize) -> Option<char> {
-        indexed_shortcut(index)
+    /// Picker shortcut for the row at `index`: `1`-`9` then `0`. Self-independent
+    /// (digits never vary by config), so it is an associated function. Also passed
+    /// by name to `filter_map` in `first_unused_indexed_shortcut`.
+    pub fn indexed_shortcut(index: usize) -> Option<char> {
+        match index {
+            0..=8 => char::from_digit(u32::try_from(index + 1).ok()?, 10),
+            9 => Some('0'),
+            _ => None,
+        }
     }
 
     pub(in crate::tui) fn indexed_shortcut_matches(
@@ -1008,8 +1015,7 @@ impl KeyBindings {
         shortcut: KeyChord,
         index: usize,
     ) -> bool {
-        self.indexed_shortcut(index)
-            .is_some_and(|candidate| shortcut.matches_char(candidate))
+        Self::indexed_shortcut(index).is_some_and(|candidate| shortcut.matches_char(candidate))
     }
 
     pub(in crate::tui) fn matching_indexed_shortcut_index(
@@ -1020,38 +1026,18 @@ impl KeyBindings {
         (0..len).find(|index| self.indexed_shortcut_matches(shortcut, *index))
     }
 
+    /// Every picker row, existing or new, takes a `1`-`9`/`0` shortcut by its
+    /// display position. Existing reactions sort to the top, so they get the
+    /// leading digits.
     pub fn emoji_reaction_shortcut(
         &self,
         reactions: &[EmojiReactionItem],
-        existing_reactions: &[ReactionEmoji],
         index: usize,
     ) -> Option<char> {
-        let reaction = reactions.get(index)?;
-        if let Some(existing_index) = existing_reactions
-            .iter()
-            .position(|existing| existing == &reaction.emoji)
-        {
-            return self.qwerty_shortcut(existing_index);
+        if index >= reactions.len() {
+            return None;
         }
-
-        let regular_index = reactions[..index]
-            .iter()
-            .filter(|item| !existing_reactions.contains(&item.emoji))
-            .count();
-        self.indexed_shortcut(regular_index)
-    }
-
-    fn qwerty_shortcut(&self, index: usize) -> Option<char> {
-        const SHORTCUTS: &[u8] = b"qwertyuiop";
-        SHORTCUTS.get(index).map(|shortcut| char::from(*shortcut))
-    }
-}
-
-fn indexed_shortcut(index: usize) -> Option<char> {
-    match index {
-        0..=8 => char::from_digit(u32::try_from(index + 1).ok()?, 10),
-        9 => Some('0'),
-        _ => None,
+        Self::indexed_shortcut(index)
     }
 }
 
@@ -1177,7 +1163,7 @@ fn action_shortcuts(index: usize, shortcut_sets: &[ActionShortcutCandidates]) ->
 
 fn first_unused_indexed_shortcut(used: &[KeyChord]) -> Option<KeyChord> {
     (0..10)
-        .filter_map(indexed_shortcut)
+        .filter_map(KeyBindings::indexed_shortcut)
         .map(char_chord)
         .find(|shortcut| {
             !used

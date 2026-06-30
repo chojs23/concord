@@ -9,7 +9,7 @@ use super::state::{
 };
 use crate::{
     config::{KeymapBinding, KeymapOptions},
-    discord::{ReactionEmoji, password_auth::MfaMethod},
+    discord::password_auth::MfaMethod,
 };
 
 mod actions;
