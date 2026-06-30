@@ -601,6 +601,28 @@ fn guild_folder_update_reorders_sidebar_entries() {
 }
 
 #[test]
+fn guilds_missing_from_folders_appear_at_top_newest_first() {
+    let mut state = state_with_two_guilds();
+
+    state.push_event(super::user_settings_update(vec![GuildFolder {
+        id: None,
+        name: None,
+        color: None,
+        guild_ids: vec![Id::new(1)],
+    }]));
+
+    let entries = state.guild_pane_entries();
+    assert!(matches!(
+        entries[1],
+        GuildPaneEntry::Guild { state, .. } if state.id == Id::new(2)
+    ));
+    assert!(matches!(
+        entries[2],
+        GuildPaneEntry::Guild { state, .. } if state.id == Id::new(1)
+    ));
+}
+
+#[test]
 fn moving_channel_cursor_does_not_activate_channel() {
     let mut state = state_with_channel_tree();
     let random_id = Id::new(12);

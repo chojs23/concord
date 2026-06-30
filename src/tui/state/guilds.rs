@@ -21,10 +21,11 @@ impl DashboardState {
     }
 
     /// Builds the guild pane in display order: a virtual "Direct Messages"
-    /// row, then each `guild_folders` entry expanded into either a single
+    /// row, then any guild the user is in that the folder list omits (newly
+    /// joined servers Discord has not yet synced into `guild_folders`, newest
+    /// first), then each `guild_folders` entry expanded into either a single
     /// guild row (`id == None`, one member) or a folder header followed by
-    /// indented children. Collapsed folders hide their children. Guilds that
-    /// the user is in but the folder list omits get appended at the bottom.
+    /// indented children. Collapsed folders hide their children.
     pub fn guild_pane_entries(&self) -> Vec<GuildPaneEntry<'_>> {
         let mut entries: Vec<GuildPaneEntry<'_>> = vec![GuildPaneEntry::DirectMessages];
         let by_id: HashMap<Id<GuildMarker>, &GuildState> = self
@@ -33,14 +34,9 @@ impl DashboardState {
             .into_iter()
             .map(|guild| (guild.id, guild))
             .collect();
-        let mut placed: HashSet<Id<GuildMarker>> = HashSet::new();
         let folders = self.discord.cache.guild_folders();
 
         if folders.is_empty() {
-            // Iterating `by_id.values()` here is non-deterministic because
-            // it's a HashMap, which makes the sidebar shuffle on every render.
-            // Fall back to the discord state's own (insertion-ordered) guild
-            // list so the order stays stable until folder data arrives.
             for guild in self.discord.cache.guilds() {
                 entries.push(GuildPaneEntry::Guild {
                     state: guild,
@@ -48,6 +44,20 @@ impl DashboardState {
                 });
             }
             return entries;
+        }
+
+        let placed: HashSet<Id<GuildMarker>> = folders
+            .iter()
+            .flat_map(|folder| folder.guild_ids.iter().copied())
+            .collect();
+
+        for guild in self.discord.cache.guilds().into_iter().rev() {
+            if !placed.contains(&guild.id) {
+                entries.push(GuildPaneEntry::Guild {
+                    state: guild,
+                    branch: GuildBranch::None,
+                });
+            }
         }
 
         for folder in folders {
@@ -58,7 +68,6 @@ impl DashboardState {
                         state: guild,
                         branch: GuildBranch::None,
                     });
-                    placed.insert(folder.guild_ids[0]);
                 }
                 continue;
             }
@@ -68,12 +77,6 @@ impl DashboardState {
                 .as_ref()
                 .is_some_and(|key| self.navigation.guilds.collapsed_folders.contains(key));
             entries.push(GuildPaneEntry::FolderHeader { folder, collapsed });
-
-            // Always mark children as placed even when collapsed so we don't
-            // duplicate them in the trailing "ungrouped" loop.
-            for guild_id in &folder.guild_ids {
-                placed.insert(*guild_id);
-            }
 
             let mut child_guilds: Vec<&GuildState> = folder
                 .guild_ids
@@ -95,18 +98,6 @@ impl DashboardState {
                 entries.push(GuildPaneEntry::Guild {
                     state: guild,
                     branch,
-                });
-            }
-        }
-
-        // Same reasoning as the folder-empty branch above: walk the discord
-        // state's BTreeMap-backed list so the trailing "ungrouped" guilds
-        // appear in a stable, deterministic order.
-        for guild in self.discord.cache.guilds() {
-            if !placed.contains(&guild.id) {
-                entries.push(GuildPaneEntry::Guild {
-                    state: guild,
-                    branch: GuildBranch::None,
                 });
             }
         }
@@ -162,25 +153,28 @@ impl DashboardState {
             .into_iter()
             .map(|guild| (guild.id, guild))
             .collect();
-        let mut placed: HashSet<Id<GuildMarker>> = HashSet::new();
         let folders = self.discord.cache.guild_folders();
 
         if folders.is_empty() {
             return self.discord.cache.guilds();
         }
 
+        let placed: HashSet<Id<GuildMarker>> = folders
+            .iter()
+            .flat_map(|folder| folder.guild_ids.iter().copied())
+            .collect();
+
         let mut guilds = Vec::new();
+        for guild in self.discord.cache.guilds().into_iter().rev() {
+            if !placed.contains(&guild.id) {
+                guilds.push(guild);
+            }
+        }
         for folder in folders {
             for guild_id in &folder.guild_ids {
-                placed.insert(*guild_id);
                 if let Some(guild) = by_id.get(guild_id) {
                     guilds.push(*guild);
                 }
-            }
-        }
-        for guild in self.discord.cache.guilds() {
-            if !placed.contains(&guild.id) {
-                guilds.push(guild);
             }
         }
         guilds
