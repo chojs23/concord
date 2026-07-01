@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.11] - 2026-07-01
+
+### Bug Fixes
+
+- Respect user nitro and guild boost restrictions (#234) in [#234](https://github.com/chojs23/concord/pull/234) by @chojs23
+- Fix missing default profile avatar in profile popup by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- Add reply pings toggle option (#232) in [#232](https://github.com/chojs23/concord/pull/232) by @chojs23
+- Allow file drop without needing to already be composing (#212) (#227) in [#227](https://github.com/chojs23/concord/pull/227) by @LmanTW
+- Support bare array keymap bindings (#233) in [#233](https://github.com/chojs23/concord/pull/233) by @chojs23
+
+### Refactor
+
+- _(tests)_ Construct AppEvent variants via shared fixtures by @chojs23
+
 ## [2.2.10] - 2026-06-30
 
 ### Bug Fixes
