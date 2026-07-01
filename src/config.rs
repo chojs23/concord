@@ -111,19 +111,34 @@ pub struct KeymapBinding {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum KeymapBindingInput {
-    Simple(String),
+    // Variant order matters: `untagged` tries top to bottom, so `Disabled`
+    // catches `false` before `Keys` reads it, and `Keys` catches an array
+    // before `Structured`.
     Disabled(bool),
+    Keys(KeymapKeysInput),
     Structured {
         keys: KeymapKeysInput,
         description: Option<String>,
     },
 }
 
+/// One key (`"x"`) or several (`["x", "y"]`), shared by the bare and table forms.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum KeymapKeysInput {
     One(String),
     Many(Vec<String>),
+}
+
+impl KeymapKeysInput {
+    fn into_keys(self) -> Vec<String> {
+        match self {
+            Self::One(key) if key.trim().is_empty() => Vec::new(),
+            Self::One(key) => vec![key],
+            Self::Many(keys) if keys.iter().all(|key| key.trim().is_empty()) => Vec::new(),
+            Self::Many(keys) => keys,
+        }
+    }
 }
 
 impl KeymapBinding {
@@ -151,28 +166,20 @@ impl<'de> Deserialize<'de> for KeymapBinding {
     where
         D: serde::Deserializer<'de>,
     {
-        match KeymapBindingInput::deserialize(deserializer)? {
-            KeymapBindingInput::Simple(key) if key.trim().is_empty() => Ok(Self::disabled()),
-            KeymapBindingInput::Simple(key) => Ok(Self::one(key)),
-            KeymapBindingInput::Disabled(false) => Ok(Self::disabled()),
-            KeymapBindingInput::Disabled(true) => Err(de::Error::custom(
-                "keymap binding boolean must be false to disable the shortcut",
-            )),
-            KeymapBindingInput::Structured { keys, description } => {
-                let keys = match keys {
-                    KeymapKeysInput::One(key) if key.trim().is_empty() => Vec::new(),
-                    KeymapKeysInput::One(key) => vec![key],
-                    KeymapKeysInput::Many(keys) if keys.iter().all(|key| key.trim().is_empty()) => {
-                        Vec::new()
-                    }
-                    KeymapKeysInput::Many(keys) => keys,
-                };
-                if keys.is_empty() {
-                    Ok(Self::disabled())
-                } else {
-                    Ok(Self { keys, description })
-                }
+        let (keys, description) = match KeymapBindingInput::deserialize(deserializer)? {
+            KeymapBindingInput::Disabled(false) => return Ok(Self::disabled()),
+            KeymapBindingInput::Disabled(true) => {
+                return Err(de::Error::custom(
+                    "keymap binding boolean must be false to disable the shortcut",
+                ));
             }
+            KeymapBindingInput::Keys(keys) => (keys.into_keys(), None),
+            KeymapBindingInput::Structured { keys, description } => (keys.into_keys(), description),
+        };
+        if keys.is_empty() {
+            Ok(Self::disabled())
+        } else {
+            Ok(Self { keys, description })
         }
     }
 }
@@ -1078,9 +1085,9 @@ mod tests {
     }
 
     #[test]
-    fn keymap_options_parse_structured_bindings() {
+    fn keymap_options_parse_multi_key_bindings() {
         let keymap = parse_keymap_options(
-            "[keymap]\nChannelSwitcher = { keys = [\"<C-w>f\", \"<leader><C-w>\"], description = \"find channel\" }\nOpenPaneFilter = { keys = \"<C-f>\" }\n",
+            "[keymap]\nChannelSwitcher = { keys = [\"<C-w>f\", \"<leader><C-w>\"], description = \"find channel\" }\nOpenPaneFilter = { keys = \"<C-f>\" }\n\n[keymap.composer]\nSubmit = [\"<A-enter>\", \"<C-enter>\", \"<S-enter>\"]\n",
         );
 
         assert_eq!(
@@ -1093,6 +1100,18 @@ mod tests {
         assert_eq!(
             keymap.mappings.get("OpenPaneFilter"),
             Some(&crate::config::KeymapBinding::one("<C-f>"))
+        );
+
+        assert_eq!(
+            keymap.composer.get("Submit"),
+            Some(&crate::config::KeymapBinding {
+                keys: vec![
+                    "<A-enter>".to_owned(),
+                    "<C-enter>".to_owned(),
+                    "<S-enter>".to_owned(),
+                ],
+                description: None,
+            })
         );
     }
 
