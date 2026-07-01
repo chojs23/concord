@@ -48,11 +48,7 @@ fn guild_with_permissions(
         user: "me".to_owned(),
         user_id: Some(my_id),
     });
-    state.apply_event(&AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
+    state.apply_event(&guild_create_event(GuildCreateFixture {
         member_count: Some(1),
         owner_id: Some(owner_id),
         channels: vec![ChannelInfo {
@@ -63,10 +59,9 @@ fn guild_with_permissions(
             ..channel_info(channel_id, "GuildText", Vec::new())
         }],
         members: vec![member_with_roles(my_id, "me", my_role_ids)],
-        presences: Vec::new(),
         roles,
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state
 }
 
@@ -636,11 +631,7 @@ fn manage_messages_defaults_permissive_while_guild_member_roles_hydrate() {
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.apply_event(&AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: guild,
-        name: "guild".to_owned(),
+    state.apply_event(&guild_create_event(GuildCreateFixture {
         member_count: Some(1),
         owner_id: Some(owner),
         channels: vec![ChannelInfo {
@@ -649,11 +640,9 @@ fn manage_messages_defaults_permissive_while_guild_member_roles_hydrate() {
             name: "general".to_owned(),
             ..channel_info(channel, "GuildText", Vec::new())
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
         roles: vec![role_info(Id::new(guild.get()), "@everyone", VIEW_CHANNEL)],
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild)
+    }));
 
     let ch = state.channel(channel).expect("channel");
     assert!(state.can_manage_messages_in_channel(ch));
@@ -829,11 +818,7 @@ fn channel_visibility_stats_count_only_top_level() {
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.apply_event(&AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: guild,
-        name: "guild".to_owned(),
+    state.apply_event(&guild_create_event(GuildCreateFixture {
         member_count: Some(1),
         owner_id: Some(owner),
         channels: vec![
@@ -862,10 +847,9 @@ fn channel_visibility_stats_count_only_top_level() {
             },
         ],
         members: vec![member_info(me, "me")],
-        presences: Vec::new(),
         roles: vec![role_info(Id::new(guild.get()), "@everyone", VIEW_CHANNEL)],
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild)
+    }));
 
     let stats = state.channel_visibility_stats(Some(guild));
     assert_eq!(
@@ -883,12 +867,7 @@ fn missing_current_user_id_falls_back_to_visible() {
     // Until READY arrives we cannot decide. Be permissive so the sidebar is
     // not empty during the brief window between connect and READY.
     let mut state = DiscordState::default();
-    state.apply_event(&AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
+    state.apply_event(&guild_create_event(GuildCreateFixture {
         owner_id: Some(Id::new(99)),
         channels: vec![ChannelInfo {
             guild_id: Some(Id::new(1)),
@@ -896,11 +875,9 @@ fn missing_current_user_id_falls_back_to_visible() {
             permission_overwrites: vec![perm_role(1, 0, VIEW_CHANNEL)],
             ..channel_info(Id::new(2), "GuildText", Vec::new())
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
         roles: vec![role_info(Id::new(1), "@everyone", VIEW_CHANNEL)],
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     let ch = state.channel(Id::new(2)).expect("channel");
     assert!(state.can_view_channel(ch));
 }

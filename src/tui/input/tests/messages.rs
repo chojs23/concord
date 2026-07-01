@@ -217,11 +217,11 @@ fn esc_returns_from_pinned_message_view() {
     handle_key(&mut state, key(KeyCode::Up));
     let expected_selected = state.selected_message();
 
-    state.push_event(AppEvent::MessagePinnedUpdate {
+    state.push_event(message_pinned_update_event(MessagePinnedUpdateFixture {
         channel_id: Id::new(2),
         message_id: Id::new(2),
         pinned: true,
-    });
+    }));
     state.enter_pinned_message_view(Id::new(2));
     assert!(state.is_pinned_message_view());
 
@@ -336,15 +336,15 @@ fn message_pane_default_shortcuts_work_from_message_pane() {
 #[test]
 fn message_action_menu_d_shortcut_removes_embeds() {
     let mut state = state_with_own_message();
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id: Id::new(2),
-        before: None,
         messages: vec![MessageInfo {
             author_id: Id::new(99),
             embeds: vec![EmbedInfo::test()],
             ..MessageInfo::test(Id::new(2), Id::new(1))
         }],
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, key(KeyCode::Enter));
 
@@ -627,15 +627,17 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
         })
     );
 
-    state.push_event(AppEvent::MessageHistoryAroundLoaded {
-        channel_id: Id::new(2),
-        message_id: Id::new(5),
-        messages: vec![
-            MessageInfo::test(Id::new(2), Id::new(4)),
-            MessageInfo::test(Id::new(2), Id::new(5)),
-            MessageInfo::test(Id::new(2), Id::new(6)),
-        ],
-    });
+    state.push_event(message_history_around_loaded_event(
+        MessageHistoryAroundLoadedFixture {
+            channel_id: Id::new(2),
+            message_id: Id::new(5),
+            messages: vec![
+                MessageInfo::test(Id::new(2), Id::new(4)),
+                MessageInfo::test(Id::new(2), Id::new(5)),
+                MessageInfo::test(Id::new(2), Id::new(6)),
+            ],
+        },
+    ));
 
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(5));
     assert_eq!(
@@ -665,17 +667,19 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
     state.move_up();
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(6));
 
-    state.push_event(AppEvent::MessageHistoryAfterLoaded {
-        channel_id: Id::new(2),
-        after: Id::new(6),
-        messages: vec![
-            MessageInfo::test(Id::new(2), Id::new(7)),
-            MessageInfo::test(Id::new(2), Id::new(8)),
-            MessageInfo::test(Id::new(2), Id::new(9)),
-        ],
-        has_more: false,
-        mode: MessageHistoryAfterMode::GapFill,
-    });
+    state.push_event(message_history_after_loaded_event(
+        MessageHistoryAfterLoadedFixture {
+            channel_id: Id::new(2),
+            after: Id::new(6),
+            messages: vec![
+                MessageInfo::test(Id::new(2), Id::new(7)),
+                MessageInfo::test(Id::new(2), Id::new(8)),
+                MessageInfo::test(Id::new(2), Id::new(9)),
+            ],
+            mode: MessageHistoryAfterMode::GapFill,
+            ..MessageHistoryAfterLoadedFixture::new()
+        },
+    ));
 
     state.push_event(message_create_event(MessageCreateFixture {
         guild_id: Some(Id::new(1)),
@@ -699,20 +703,22 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
 #[test]
 fn pinned_and_forum_down_keys_do_not_request_newer_history() {
     let mut pinned_state = state_with_messages(0);
-    pinned_state.push_event(AppEvent::MessageHistoryLoaded {
+    pinned_state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id: Id::new(2),
-        before: None,
         messages: vec![MessageInfo::test(Id::new(2), Id::new(10))],
-    });
-    pinned_state.push_event(AppEvent::MessageHistoryAroundLoaded {
-        channel_id: Id::new(2),
-        message_id: Id::new(5),
-        messages: vec![
-            MessageInfo::test(Id::new(2), Id::new(4)),
-            MessageInfo::test(Id::new(2), Id::new(5)),
-            MessageInfo::test(Id::new(2), Id::new(6)),
-        ],
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
+    pinned_state.push_event(message_history_around_loaded_event(
+        MessageHistoryAroundLoadedFixture {
+            channel_id: Id::new(2),
+            message_id: Id::new(5),
+            messages: vec![
+                MessageInfo::test(Id::new(2), Id::new(4)),
+                MessageInfo::test(Id::new(2), Id::new(5)),
+                MessageInfo::test(Id::new(2), Id::new(6)),
+            ],
+        },
+    ));
     pinned_state.push_event(AppEvent::PinnedMessagesLoaded {
         channel_id: Id::new(2),
         messages: vec![MessageInfo::test(Id::new(2), Id::new(6))],
@@ -977,14 +983,14 @@ fn disabled_media_playback_display_option_blocks_attachment_viewer_playback() {
 fn reaction_users_popup_is_modal_and_escape_closes_it() {
     let mut state = state_with_messages(2);
     state.focus_pane(FocusPane::Messages);
-    state.push_event(AppEvent::ReactionUsersLoaded {
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
         reactions: vec![ReactionUsersInfo {
             users: vec![ReactionUserInfo::test(Id::new(10), "neo")],
             ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
         }],
-    });
+    }));
 
     handle_key(&mut state, key(KeyCode::Down));
 

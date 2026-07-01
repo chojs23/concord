@@ -550,11 +550,11 @@ fn live_thread_messages_increment_cached_counts_once() {
             ..MessageCreateFixture::test_fixture_default()
         }));
     }
-    state.apply_event(&AppEvent::MessageHistoryLoaded {
+    state.apply_event(&message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(30)),
         messages: vec![message_info(channel_id, 20, "old")],
-    });
+    }));
 
     let channel = state
         .channel(channel_id)

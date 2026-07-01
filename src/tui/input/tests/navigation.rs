@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::test_builders::guild_create_event;
 
 #[test]
 fn enter_toggles_selected_folder_and_focuses_channels_after_server_selection() {
@@ -382,19 +383,10 @@ fn uppercase_h_l_scroll_focused_side_panes_horizontally() {
 fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
     let mut guild_state = DashboardState::new();
     for id in 1..=8 {
-        guild_state.push_event(AppEvent::GuildCreate {
-            boost_tier: GuildBoostTier::None,
-            boost_count: 0,
-            guild_id: Id::new(id),
+        guild_state.push_event(guild_create_event(GuildCreateFixture {
             name: format!("guild {id}"),
-            member_count: None,
-            owner_id: None,
-            channels: Vec::new(),
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-        });
+            ..GuildCreateFixture::new(Id::new(id))
+        }));
     }
     guild_state.focus_pane(FocusPane::Guilds);
     guild_state.set_guild_view_height(3);
@@ -407,12 +399,7 @@ fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
     assert_eq!(guild_state.guild_scroll(), 0);
 
     let mut channel_state = DashboardState::new();
-    channel_state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
+    channel_state.push_event(guild_create_event(GuildCreateFixture {
         channels: (1..=8)
             .map(|id| ChannelInfo {
                 guild_id: Some(Id::new(1)),
@@ -421,12 +408,8 @@ fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
                 ..ChannelInfo::test(Id::new(10 + id), "GuildText")
             })
             .collect(),
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     channel_state.confirm_selected_guild();
     channel_state.focus_pane(FocusPane::Channels);
     channel_state.set_channel_view_height(3);
@@ -457,13 +440,7 @@ fn viewport_scroll_uses_configured_keys_in_side_panes() {
         .collect(),
         ..Default::default()
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
-        owner_id: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: (0..8)
             .map(|index| ChannelInfo {
                 guild_id: Some(Id::new(1)),
@@ -472,11 +449,8 @@ fn viewport_scroll_uses_configured_keys_in_side_panes() {
                 ..ChannelInfo::test(Id::new(10 + index), "GuildText")
             })
             .collect(),
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state.confirm_selected_guild();
     state.focus_pane(FocusPane::Channels);
     state.set_channel_view_height(3);

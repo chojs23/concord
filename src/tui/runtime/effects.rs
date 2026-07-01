@@ -387,9 +387,13 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::discord::ids::Id;
+    use crate::discord::test_builders::{
+        ForumPostsLoadedFixture, GuildCreateFixture, MessageHistoryLoadedFixture,
+        forum_posts_loaded_event, guild_create_event, message_history_loaded_event,
+    };
     use crate::discord::{
-        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, GuildBoostTier, MemberInfo,
-        MessageHistoryAfterMode, MessageInfo, RoleInfo,
+        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, MessageHistoryAfterMode,
+        MessageInfo, RoleInfo,
     };
 
     use super::*;
@@ -408,11 +412,11 @@ mod tests {
 
         process_effect_in_default_context(
             &mut state,
-            AppEvent::MessageHistoryLoaded {
+            message_history_loaded_event(MessageHistoryLoadedFixture {
                 channel_id,
-                before: None,
                 messages: vec![message_info(guild_id, channel_id, Id::new(20), author_id)],
-            },
+                ..MessageHistoryLoadedFixture::new()
+            }),
         );
 
         assert_eq!(
@@ -439,10 +443,9 @@ mod tests {
 
         process_effect_in_default_context(
             &mut state,
-            AppEvent::ForumPostsLoaded {
+            forum_posts_loaded_event(ForumPostsLoadedFixture {
                 channel_id: forum_id,
                 archive_state: ForumPostArchiveState::Active,
-                offset: 0,
                 next_offset: 1,
                 threads: vec![channel_info(
                     guild_id,
@@ -452,8 +455,8 @@ mod tests {
                     "GuildPublicThread",
                 )],
                 first_messages: vec![message_info(guild_id, thread_id, Id::new(20), author_id)],
-                has_more: false,
-            },
+                ..ForumPostsLoadedFixture::new()
+            }),
         );
 
         assert_eq!(
@@ -480,10 +483,9 @@ mod tests {
 
         process_effect_in_default_context(
             &mut state,
-            AppEvent::ForumPostsLoaded {
+            forum_posts_loaded_event(ForumPostsLoadedFixture {
                 channel_id: forum_id,
                 archive_state: ForumPostArchiveState::Active,
-                offset: 0,
                 next_offset: 1,
                 threads: vec![ChannelInfo {
                     owner_id: Some(owner_id),
@@ -495,9 +497,8 @@ mod tests {
                         "GuildPublicThread",
                     )
                 }],
-                first_messages: Vec::new(),
-                has_more: false,
-            },
+                ..ForumPostsLoadedFixture::new()
+            }),
         );
 
         assert_eq!(
@@ -523,11 +524,11 @@ mod tests {
             );
             state.confirm_selected_guild();
             state.confirm_selected_channel();
-            state.push_event(AppEvent::MessageHistoryLoaded {
+            state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
                 channel_id,
-                before: None,
                 messages: vec![message_info(guild_id, channel_id, Id::new(20), Id::new(99))],
-            });
+                ..MessageHistoryLoadedFixture::new()
+            }));
 
             process_effect_in_default_context(&mut state, event);
 
@@ -557,19 +558,11 @@ mod tests {
         guild_id: Id<crate::discord::ids::marker::GuildMarker>,
         channel: ChannelInfo,
     ) {
-        state.push_event(AppEvent::GuildCreate {
-            boost_tier: GuildBoostTier::None,
-            boost_count: 0,
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            owner_id: None,
+        state.push_event(guild_create_event(GuildCreateFixture {
             channels: vec![channel],
-            members: Vec::<MemberInfo>::new(),
-            presences: Vec::new(),
             roles: vec![RoleInfo::test(Id::new(guild_id.get()), "@everyone")],
-            emojis: Vec::new(),
-        });
+            ..GuildCreateFixture::new(guild_id)
+        }));
     }
 
     fn channel_info(

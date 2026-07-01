@@ -1,6 +1,11 @@
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::discord::test_builders::{
+    MessageHistoryAfterLoadedFixture, MessageHistoryLoadFailedFixture, MessageHistoryLoadedFixture,
+    message_history_after_loaded_event, message_history_load_failed_event,
+    message_history_loaded_event,
+};
 use crate::discord::{AppCommand, MessageHistoryAfterMode, MessageHistoryLoadTarget};
 
 #[test]
@@ -205,11 +210,13 @@ fn stale_reopen_reload_need_survives_failure_and_clears_after_success() {
 
     assert!(state.selected_message_history_needs_reload());
 
-    state.push_event(AppEvent::MessageHistoryLoadFailed {
-        channel_id: Id::new(2),
-        target: MessageHistoryLoadTarget::Latest,
-        message: "temporary failure".to_owned(),
-    });
+    state.push_event(message_history_load_failed_event(
+        MessageHistoryLoadFailedFixture {
+            channel_id: Id::new(2),
+            target: MessageHistoryLoadTarget::Latest,
+            message: "temporary failure".to_owned(),
+        },
+    ));
     assert!(state.selected_message_history_needs_reload());
 
     state.push_event(AppEvent::MessageHistoryRefreshed {
@@ -250,13 +257,15 @@ fn catch_up_messages_while_scrolled_away_set_new_messages_marker() {
     state.set_message_view_height(3);
     state.jump_top();
 
-    state.push_event(AppEvent::MessageHistoryAfterLoaded {
-        channel_id: Id::new(2),
-        after: Id::new(5),
-        messages: vec![message_info(Id::new(2), 7), message_info(Id::new(2), 6)],
-        has_more: false,
-        mode: MessageHistoryAfterMode::CatchUp,
-    });
+    state.push_event(message_history_after_loaded_event(
+        MessageHistoryAfterLoadedFixture {
+            channel_id: Id::new(2),
+            after: Id::new(5),
+            messages: vec![message_info(Id::new(2), 7), message_info(Id::new(2), 6)],
+            mode: MessageHistoryAfterMode::CatchUp,
+            ..MessageHistoryAfterLoadedFixture::new()
+        },
+    ));
 
     assert_eq!(state.new_messages_marker_message_id(), Some(Id::new(6)));
     assert_eq!(state.new_messages_count(), 2);
@@ -983,11 +992,11 @@ fn older_history_request_emits_visible_cursor_target() {
         })
     );
 
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(10)),
         messages: vec![message_info(channel_id, 5)],
-    });
+    }));
 
     state.move_up();
     assert_eq!(
@@ -1013,11 +1022,11 @@ fn older_history_request_advances_after_cache_limit_retention() {
             before: Some(Id::new(10)),
         })
     );
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(10)),
         messages: vec![message_info(channel_id, 5)],
-    });
+    }));
 
     assert_eq!(
         state.messages().last().map(|message| message.id),
@@ -1050,11 +1059,11 @@ fn older_history_request_leaves_empty_page_exhaustion_to_backend() {
         })
     );
 
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(10)),
-        messages: Vec::new(),
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
 
     assert_eq!(
         state.next_older_history_command(),

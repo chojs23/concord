@@ -1,4 +1,8 @@
 use super::*;
+use crate::discord::test_builders::{
+    GuildCreateFixture, MessageHistoryLoadedFixture, guild_create_event,
+    message_history_loaded_event,
+};
 
 #[test]
 fn channel_unread_decoration_matches_unread_state() {
@@ -62,11 +66,11 @@ fn later_history_does_not_clear_loaded_pin_state() {
             .all(|message| message.id != Id::new(10))
     );
 
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id: Id::new(2),
-        before: None,
         messages: vec![message_info(10, "mod", "important announcement", false)],
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
 
     state.enter_pinned_message_view(Id::new(2));
     assert_eq!(state.messages().len(), 1);
@@ -201,12 +205,7 @@ fn chat_input_command_message_keeps_embed_text() {
     let user_id = Id::new(30);
     let role_id = Id::new(100);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
@@ -217,15 +216,13 @@ fn chat_input_command_message_keeps_embed_text() {
             role_ids: vec![role_id],
             ..MemberInfo::test(user_id, "casey")
         }],
-        presences: Vec::new(),
         roles: vec![RoleInfo {
             color: Some(0x3366CC),
             position: 10,
             ..RoleInfo::test(role_id, "Blue")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     let mut message = message_with_content(Some(String::new()));
     message.message_kind = MessageKind::new(20);
     message.interaction = Some(MessageInteractionInfo {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::test_builders::guild_create_event;
 
 #[test]
 fn member_groups_use_roles_and_status_sorted_entries() {
@@ -8,12 +9,7 @@ fn member_groups_use_roles_and_status_sorted_entries() {
     let admin_role = Id::new(100);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![text_channel_info(guild_id, Id::new(2), "general")],
         members: vec![
             member_with_roles(bob, "bob", vec![admin_role]),
@@ -26,9 +22,8 @@ fn member_groups_use_roles_and_status_sorted_entries() {
             hoist: true,
             ..RoleInfo::test(admin_role, "Admin")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
 
     let groups = state.members_grouped();
@@ -54,13 +49,7 @@ fn member_role_color_uses_highest_nonzero_role_color() {
     let high_role = Id::new(102);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         members: vec![member_with_roles(
             user_id,
             "alice",
@@ -84,9 +73,8 @@ fn member_role_color_uses_highest_nonzero_role_color() {
                 ..RoleInfo::test(high_role, "High")
             },
         ],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
 
     let member = state.flattened_members()[0];
@@ -164,13 +152,7 @@ fn member_role_color_breaks_equal_position_ties_by_role_id() {
     let newer_role = Id::new(200);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         members: vec![member_with_roles(
             user_id,
             "alice",
@@ -189,9 +171,8 @@ fn member_role_color_breaks_equal_position_ties_by_role_id() {
                 ..RoleInfo::test(older_role, "Older")
             },
         ],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
 
     let member = state.flattened_members()[0];
@@ -241,19 +222,12 @@ fn member_groups_show_selected_group_dm_recipients() {
 fn member_panel_title_shows_online_and_total_when_counts_available() {
     let guild_id = Id::new(1);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(100),
-        channels: Vec::new(),
         members: vec![member_info(Id::new(10), "alice")],
         presences: vec![(Id::new(10), PresenceStatus::Online)],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
 
     state.push_event(guild_member_list_counts_event(guild_id, 25));
@@ -267,7 +241,7 @@ fn member_panel_title_shows_online_and_total_when_counts_available() {
 #[test]
 fn member_panel_title_stays_plain_without_guild_total_or_in_direct_messages() {
     let mut guild_state = DashboardState::new();
-    guild_state.push_event(guild_create_event(Id::new(1), "guild", Vec::new()));
+    guild_state.push_event(guild_create_event(GuildCreateFixture::new(Id::new(1))));
     guild_state.confirm_selected_guild();
     assert_eq!(guild_state.member_panel_title(), Line::from(" Members "));
 
@@ -286,12 +260,7 @@ fn member_groups_keep_offline_hoisted_members_in_role_buckets() {
     let admin_role = Id::new(100);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![text_channel_info(guild_id, Id::new(2), "general")],
         members: vec![
             member_with_roles(Id::new(10), "alice", vec![admin_role]),
@@ -312,9 +281,8 @@ fn member_groups_keep_offline_hoisted_members_in_role_buckets() {
             hoist: true,
             ..RoleInfo::test(admin_role, "Admin")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
 
     let groups = state.members_grouped();
@@ -360,12 +328,7 @@ fn member_groups_treat_idle_and_dnd_as_online() {
     let guild_id = Id::new(1);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![text_channel_info(guild_id, Id::new(2), "general")],
         members: vec![
             member_info(Id::new(10), "idle"),
@@ -379,10 +342,8 @@ fn member_groups_treat_idle_and_dnd_as_online() {
             // when the gateway has not delivered a presence yet).
             (Id::new(12), PresenceStatus::Unknown),
         ],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
 
     let groups = state.members_grouped();

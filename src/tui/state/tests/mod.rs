@@ -20,11 +20,14 @@ use super::{
     DmComposerLock, FocusPane, GuildActionKind, GuildPaneEntry, MessageActionItem,
     MessageActionKind, SearchResultItem,
 };
+use crate::discord::test_builders::{
+    ForumPostsLoadedFixture, MessageAckFixture, forum_posts_loaded_event, message_ack_event,
+};
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, ChannelInfo,
     ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CustomEmojiInfo, DiscordState, DownloadAttachmentSource,
-    EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, ForumTagInfo, GuildBoostTier, GuildFolder,
+    EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, ForumTagInfo, GuildFolder,
     GuildMemberListUpdateInfo, GuildNotificationSettingsInfo, MessageInfo, MessageKind,
     MessageReferenceInfo, MessageSearchPage, MessageSnapshotInfo, MessageState,
     MessageUpdateDispatchInfo, MessageUpdateEventFields, NotificationLevel,
@@ -185,18 +188,18 @@ where
             | AppCommand::ScheduleAckChannel {
                 channel_id,
                 message_id,
-            } => state.push_event(AppEvent::MessageAck {
+            } => state.push_event(message_ack_event(MessageAckFixture {
                 channel_id,
                 message_id,
-                mention_count: 0,
-            }),
+                ..MessageAckFixture::new()
+            })),
             AppCommand::AckChannels { targets } => {
                 for (channel_id, message_id) in targets {
-                    state.push_event(AppEvent::MessageAck {
+                    state.push_event(message_ack_event(MessageAckFixture {
                         channel_id,
                         message_id,
-                        mention_count: 0,
-                    });
+                        ..MessageAckFixture::new()
+                    }));
                 }
             }
             _ => {}
@@ -243,18 +246,19 @@ fn state_with_thread_created_message_after_regular_message() -> DashboardState {
     let thread_id = Id::new(10);
     let mut state = DashboardState::new();
 
-    state.push_event(guild_create_event(
-        guild_id,
-        "guild",
-        vec![
-            text_channel_info(guild_id, parent_id, "general"),
-            ChannelInfo {
-                message_count: Some(12),
-                member_count: None,
-                total_message_sent: Some(14),
-                ..thread_channel_info(guild_id, parent_id, thread_id, "release notes")
-            },
-        ],
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            channels: vec![
+                text_channel_info(guild_id, parent_id, "general"),
+                ChannelInfo {
+                    message_count: Some(12),
+                    member_count: None,
+                    total_message_sent: Some(14),
+                    ..thread_channel_info(guild_id, parent_id, thread_id, "release notes")
+                },
+            ],
+            ..GuildCreateFixture::new(guild_id)
+        },
     ));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
@@ -335,10 +339,11 @@ fn state_with_many_forum_channel_posts(count: u64) -> DashboardState {
     let forum_id = Id::new(20);
     let mut state = DashboardState::new();
 
-    state.push_event(guild_create_event(
-        guild_id,
-        "guild",
-        vec![forum_channel_info(guild_id, forum_id)],
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            channels: vec![forum_channel_info(guild_id, forum_id)],
+            ..GuildCreateFixture::new(guild_id)
+        },
     ));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
@@ -364,15 +369,13 @@ fn state_with_many_forum_channel_posts(count: u64) -> DashboardState {
             ..ChannelInfo::test(Id::new(30 + index), "GuildPublicThread")
         })
         .collect();
-    state.push_event(AppEvent::ForumPostsLoaded {
+    state.push_event(forum_posts_loaded_event(ForumPostsLoadedFixture {
         channel_id: forum_id,
         archive_state: ForumPostArchiveState::Active,
-        offset: 0,
         next_offset: threads.len(),
         threads,
-        first_messages: Vec::new(),
-        has_more: false,
-    });
+        ..ForumPostsLoadedFixture::new()
+    }));
     state
 }
 
@@ -399,27 +402,21 @@ fn state_with_voice_channel_participant() -> DashboardState {
     let alice = Id::new(20);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: vec![
-            category_channel_info(guild_id, category_id, "Channels", 0),
-            ChannelInfo {
-                parent_id: Some(category_id),
-                owner_id: None,
-                ..voice_channel_info(guild_id, voice_id, "Lobby")
-            },
-            child_text_channel_info(guild_id, text_id, category_id, "general", 1),
-        ],
-        members: vec![member_with_username(alice, "Alice", "alice")],
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            channels: vec![
+                category_channel_info(guild_id, category_id, "Channels", 0),
+                ChannelInfo {
+                    parent_id: Some(category_id),
+                    owner_id: None,
+                    ..voice_channel_info(guild_id, voice_id, "Lobby")
+                },
+                child_text_channel_info(guild_id, text_id, category_id, "general", 1),
+            ],
+            members: vec![member_with_username(alice, "Alice", "alice")],
+            ..GuildCreateFixture::new(guild_id)
+        },
+    ));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: voice_state(guild_id, Some(voice_id), alice),
     });

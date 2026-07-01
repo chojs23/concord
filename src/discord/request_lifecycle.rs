@@ -1250,6 +1250,15 @@ mod tests {
         MessageHistoryLoadTarget, UserProfileInfo,
     };
 
+    use crate::discord::test_builders::{
+        ChannelPinsUpdateFixture, ForumPostsLoadFailedFixture, ForumPostsLoadedFixture,
+        MessageHistoryAfterLoadedFixture, MessageHistoryLoadFailedFixture,
+        MessageHistoryLoadedFixture, UserProfileLoadFailedFixture, channel_pins_update_event,
+        forum_posts_load_failed_event, forum_posts_loaded_event,
+        message_history_after_loaded_event, message_history_load_failed_event,
+        message_history_loaded_event, user_profile_load_failed_event,
+    };
+
     use super::{
         ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberListSubscriptionRequests,
         MemberListSubscriptionTarget, MemberRequests, MentionMemberSearchRequests,
@@ -1266,11 +1275,13 @@ mod tests {
         assert_eq!(requests.next(None, false), None);
         assert_eq!(requests.next(Some(first), false), Some(first));
         assert_eq!(requests.next(Some(first), false), None);
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id: first,
-            target: MessageHistoryLoadTarget::Latest,
-            message: "temporary failure".to_owned(),
-        });
+        requests.record_event(&message_history_load_failed_event(
+            MessageHistoryLoadFailedFixture {
+                channel_id: first,
+                target: MessageHistoryLoadTarget::Latest,
+                message: "temporary failure".to_owned(),
+            },
+        ));
         assert_eq!(requests.next(Some(first), false), None);
         assert_eq!(requests.next(Some(second), false), Some(second));
         assert_eq!(requests.next(Some(first), false), Some(first));
@@ -1280,11 +1291,10 @@ mod tests {
         let second = Id::new(2);
 
         assert_eq!(requests.next(Some(first), false), Some(first));
-        requests.record_event(&AppEvent::MessageHistoryLoaded {
+        requests.record_event(&message_history_loaded_event(MessageHistoryLoadedFixture {
             channel_id: first,
-            before: None,
-            messages: Vec::new(),
-        });
+            ..MessageHistoryLoadedFixture::new()
+        }));
         assert_eq!(requests.next(Some(first), true), None);
         assert_eq!(requests.next(Some(second), false), Some(second));
         assert_eq!(requests.next(Some(first), true), Some(first));
@@ -1330,11 +1340,10 @@ mod tests {
         });
         assert_eq!(requests.next(Some(channel_id)), None);
 
-        requests.record_event(&AppEvent::ChannelPinsUpdate {
-            guild_id: None,
+        requests.record_event(&channel_pins_update_event(ChannelPinsUpdateFixture {
             channel_id,
-            last_pin_timestamp: None,
-        });
+            ..ChannelPinsUpdateFixture::new()
+        }));
 
         assert_eq!(requests.next(Some(channel_id)), Some(channel_id));
     }
@@ -1369,12 +1378,14 @@ mod tests {
             requests.next(Some(target(guild, first, false))),
             Some((guild, first, ForumPostArchiveState::Active, 0))
         );
-        requests.record_event(&AppEvent::ForumPostsLoadFailed {
-            channel_id: first,
-            archive_state: ForumPostArchiveState::Active,
-            offset: 0,
-            message: "temporary failure".to_owned(),
-        });
+        requests.record_event(&forum_posts_load_failed_event(
+            ForumPostsLoadFailedFixture {
+                channel_id: first,
+                archive_state: ForumPostArchiveState::Active,
+                message: "temporary failure".to_owned(),
+                ..ForumPostsLoadFailedFixture::new()
+            },
+        ));
         assert_eq!(requests.next(Some(target(guild, first, false))), None);
         assert_eq!(
             requests.next(Some(target(guild, second, false))),
@@ -1396,45 +1407,42 @@ mod tests {
             requests.next(Some(target(guild, channel, false))),
             Some((guild, channel, ForumPostArchiveState::Active, 0))
         );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
+        requests.record_event(&forum_posts_loaded_event(ForumPostsLoadedFixture {
             channel_id: channel,
             archive_state: ForumPostArchiveState::Active,
-            offset: 0,
             next_offset: 2,
             threads: vec![forum_post(channel, 10), forum_post(channel, 11)],
-            first_messages: Vec::new(),
             has_more: true,
-        });
+            ..ForumPostsLoadedFixture::new()
+        }));
 
         assert_eq!(requests.next(Some(target(guild, channel, false))), None);
         assert_eq!(
             requests.next(Some(target(guild, channel, true))),
             Some((guild, channel, ForumPostArchiveState::Active, 2))
         );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
+        requests.record_event(&forum_posts_loaded_event(ForumPostsLoadedFixture {
             channel_id: channel,
             archive_state: ForumPostArchiveState::Active,
             offset: 2,
             next_offset: 3,
             threads: vec![forum_post(channel, 12)],
-            first_messages: Vec::new(),
-            has_more: false,
-        });
+            ..ForumPostsLoadedFixture::new()
+        }));
 
         assert_eq!(requests.next(Some(target(guild, channel, false))), None);
         assert_eq!(
             requests.next(Some(target(guild, channel, true))),
             Some((guild, channel, ForumPostArchiveState::Archived, 0))
         );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
+        requests.record_event(&forum_posts_loaded_event(ForumPostsLoadedFixture {
             channel_id: channel,
             archive_state: ForumPostArchiveState::Archived,
-            offset: 0,
             next_offset: 2,
             threads: vec![forum_post(channel, 11), forum_post(channel, 12)],
-            first_messages: Vec::new(),
             has_more: true,
-        });
+            ..ForumPostsLoadedFixture::new()
+        }));
 
         assert_eq!(
             requests.next(Some(target(guild, channel, true))),
@@ -1448,15 +1456,14 @@ mod tests {
             requests.next(Some(target(guild, channel, false))),
             Some((guild, channel, ForumPostArchiveState::Active, 0))
         );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
+        requests.record_event(&forum_posts_loaded_event(ForumPostsLoadedFixture {
             channel_id: channel,
             archive_state: ForumPostArchiveState::Active,
-            offset: 0,
             next_offset: 25,
             threads: vec![forum_post(channel, 10), forum_post(channel, 11)],
-            first_messages: Vec::new(),
             has_more: true,
-        });
+            ..ForumPostsLoadedFixture::new()
+        }));
 
         assert_eq!(
             requests.next(Some(target(guild, channel, true))),
@@ -1474,15 +1481,14 @@ mod tests {
             requests.next(Some(target(guild, channel, false))),
             Some((guild, channel, ForumPostArchiveState::Active, 0))
         );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
+        requests.record_event(&forum_posts_loaded_event(ForumPostsLoadedFixture {
             channel_id: channel,
             archive_state: ForumPostArchiveState::Active,
-            offset: 0,
             next_offset: 25,
             threads: vec![forum_post(channel, 10)],
-            first_messages: Vec::new(),
             has_more: true,
-        });
+            ..ForumPostsLoadedFixture::new()
+        }));
 
         // Scrolling fetches the next active page.
         assert_eq!(
@@ -1494,15 +1500,14 @@ mod tests {
         assert_eq!(requests.next(Some(target(guild, channel, true))), None);
 
         // Only after the active search reports it is drained does archived begin.
-        requests.record_event(&AppEvent::ForumPostsLoaded {
+        requests.record_event(&forum_posts_loaded_event(ForumPostsLoadedFixture {
             channel_id: channel,
             archive_state: ForumPostArchiveState::Active,
             offset: 25,
             next_offset: 26,
             threads: vec![forum_post(channel, 11)],
-            first_messages: Vec::new(),
-            has_more: false,
-        });
+            ..ForumPostsLoadedFixture::new()
+        }));
         assert_eq!(
             requests.next(Some(target(guild, channel, true))),
             Some((guild, channel, ForumPostArchiveState::Archived, 0))
@@ -1591,11 +1596,13 @@ mod tests {
         });
         assert!(requests.begin_request(user_id, guild_id));
 
-        requests.record_event(&AppEvent::UserProfileLoadFailed {
-            user_id,
-            guild_id,
-            message: "temporary failure".to_owned(),
-        });
+        requests.record_event(&user_profile_load_failed_event(
+            UserProfileLoadFailedFixture {
+                user_id,
+                guild_id,
+                message: "temporary failure".to_owned(),
+            },
+        ));
         assert!(requests.begin_request(user_id, guild_id));
     }
 
@@ -1815,34 +1822,40 @@ mod tests {
         assert!(requests.begin_older_history_request(channel_id, before));
         assert!(!requests.begin_older_history_request(channel_id, before));
 
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Newer { after: Id::new(40) },
-            message: "unrelated newer failure".to_owned(),
-        });
-        assert!(!requests.begin_older_history_request(channel_id, before));
-
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Older {
-                before: Id::new(31),
+        requests.record_event(&message_history_load_failed_event(
+            MessageHistoryLoadFailedFixture {
+                channel_id,
+                target: MessageHistoryLoadTarget::Newer { after: Id::new(40) },
+                message: "unrelated newer failure".to_owned(),
             },
-            message: "stale older failure".to_owned(),
-        });
+        ));
         assert!(!requests.begin_older_history_request(channel_id, before));
 
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Older { before },
-            message: "temporary failure".to_owned(),
-        });
+        requests.record_event(&message_history_load_failed_event(
+            MessageHistoryLoadFailedFixture {
+                channel_id,
+                target: MessageHistoryLoadTarget::Older {
+                    before: Id::new(31),
+                },
+                message: "stale older failure".to_owned(),
+            },
+        ));
+        assert!(!requests.begin_older_history_request(channel_id, before));
+
+        requests.record_event(&message_history_load_failed_event(
+            MessageHistoryLoadFailedFixture {
+                channel_id,
+                target: MessageHistoryLoadTarget::Older { before },
+                message: "temporary failure".to_owned(),
+            },
+        ));
         assert!(requests.begin_older_history_request(channel_id, before));
 
-        requests.record_event(&AppEvent::MessageHistoryLoaded {
+        requests.record_event(&message_history_loaded_event(MessageHistoryLoadedFixture {
             channel_id,
             before: Some(before),
-            messages: Vec::new(),
-        });
+            ..MessageHistoryLoadedFixture::new()
+        }));
         assert!(!requests.begin_older_history_request(channel_id, before));
         assert!(requests.begin_older_history_request(channel_id, Id::new(20)));
     }
@@ -1864,48 +1877,55 @@ mod tests {
             MessageHistoryAfterMode::GapFill
         ));
 
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Older {
-                before: Id::new(20),
+        requests.record_event(&message_history_load_failed_event(
+            MessageHistoryLoadFailedFixture {
+                channel_id,
+                target: MessageHistoryLoadTarget::Older {
+                    before: Id::new(20),
+                },
+                message: "unrelated older failure".to_owned(),
             },
-            message: "unrelated older failure".to_owned(),
-        });
+        ));
         assert!(!requests.begin_history_after_request(
             channel_id,
             after,
             MessageHistoryAfterMode::GapFill
         ));
 
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Newer { after: Id::new(31) },
-            message: "stale newer failure".to_owned(),
-        });
+        requests.record_event(&message_history_load_failed_event(
+            MessageHistoryLoadFailedFixture {
+                channel_id,
+                target: MessageHistoryLoadTarget::Newer { after: Id::new(31) },
+                message: "stale newer failure".to_owned(),
+            },
+        ));
         assert!(!requests.begin_history_after_request(
             channel_id,
             after,
             MessageHistoryAfterMode::GapFill
         ));
 
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Newer { after },
-            message: "temporary failure".to_owned(),
-        });
+        requests.record_event(&message_history_load_failed_event(
+            MessageHistoryLoadFailedFixture {
+                channel_id,
+                target: MessageHistoryLoadTarget::Newer { after },
+                message: "temporary failure".to_owned(),
+            },
+        ));
         assert!(requests.begin_history_after_request(
             channel_id,
             after,
             MessageHistoryAfterMode::GapFill
         ));
 
-        requests.record_event(&AppEvent::MessageHistoryAfterLoaded {
-            channel_id,
-            after,
-            messages: Vec::new(),
-            has_more: false,
-            mode: MessageHistoryAfterMode::GapFill,
-        });
+        requests.record_event(&message_history_after_loaded_event(
+            MessageHistoryAfterLoadedFixture {
+                channel_id,
+                after,
+                mode: MessageHistoryAfterMode::GapFill,
+                ..MessageHistoryAfterLoadedFixture::new()
+            },
+        ));
         assert!(!requests.begin_history_after_request(
             channel_id,
             after,
@@ -1935,13 +1955,14 @@ mod tests {
             MessageHistoryAfterMode::CatchUp
         ));
 
-        requests.record_event(&AppEvent::MessageHistoryAfterLoaded {
-            channel_id,
-            after,
-            messages: Vec::new(),
-            has_more: false,
-            mode: MessageHistoryAfterMode::CatchUp,
-        });
+        requests.record_event(&message_history_after_loaded_event(
+            MessageHistoryAfterLoadedFixture {
+                channel_id,
+                after,
+                mode: MessageHistoryAfterMode::CatchUp,
+                ..MessageHistoryAfterLoadedFixture::new()
+            },
+        ));
 
         assert!(requests.begin_history_after_request(
             channel_id,

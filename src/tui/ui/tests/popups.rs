@@ -1,4 +1,7 @@
 use super::*;
+use crate::discord::test_builders::{
+    GuildCreateFixture, ReactionUsersLoadedFixture, guild_create_event, reaction_users_loaded_event,
+};
 use crate::tui::keybindings::{KeymapBindingSummary, OptionsCategoryShortcut};
 use crate::tui::ui::{downloads_popup_area, downloads_popup_lines};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -745,7 +748,7 @@ fn reaction_users_popup_scrolls_long_lists() {
 #[test]
 fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::ReactionUsersLoaded {
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
         reactions: vec![
@@ -763,7 +766,7 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
                 ..ReactionUsersInfo::test(ReactionEmoji::Unicode("❤️".to_owned()))
             },
         ],
-    });
+    }));
 
     // Use a wide terminal so the popup's full POPUP_TARGET_WIDTH (58)
     // applies and line truncation should never trigger.
@@ -827,7 +830,7 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
 #[test]
 fn reaction_users_popup_buffer_stays_clean_in_narrow_terminal() {
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::ReactionUsersLoaded {
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
         reactions: vec![ReactionUsersInfo {
@@ -837,7 +840,7 @@ fn reaction_users_popup_buffer_stays_clean_in_narrow_terminal() {
             ],
             ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
         }],
-    });
+    }));
 
     // Narrow terminal that would force the popup down to a width where
     // the long name no longer fits without wrapping. Pre-truncation must
@@ -1180,23 +1183,14 @@ fn leader_action_popup_renders_modified_action_shortcut_labels() {
         },
         Default::default(),
     );
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Channels);

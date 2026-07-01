@@ -48,7 +48,7 @@ fn question_mark_opens_current_keymap_popup_and_scrolls_within_bounds() {
 #[test]
 fn forum_blank_bottom_rows_do_not_select_hidden_posts() {
     let mut state = state_with_forum_channel_posts();
-    state.push_event(AppEvent::ForumPostsLoaded {
+    state.push_event(forum_posts_loaded_event(ForumPostsLoadedFixture {
         channel_id: Id::new(20),
         archive_state: crate::discord::ForumPostArchiveState::Active,
         offset: 2,
@@ -63,9 +63,8 @@ fn forum_blank_bottom_rows_do_not_select_hidden_posts() {
             thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
             ..ChannelInfo::test(Id::new(29), "GuildPublicThread")
         }],
-        first_messages: Vec::new(),
-        has_more: false,
-    });
+        ..ForumPostsLoadedFixture::new()
+    }));
     state.focus_pane(FocusPane::Messages);
     state.set_message_view_height(14);
     let (column, row) = message_row_point(13);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::test_builders::guild_create_event;
 use crate::discord::{MessageSearchAuthorType, MessageSearchHas};
 use crate::tui::state::SearchSuggestionItem;
 
@@ -187,13 +188,8 @@ fn member_search_filters_loaded_members_and_opens_profile() {
     let alice = Id::new(10);
     let bob = Id::new(20);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(2),
-        owner_id: None,
         channels: vec![text_channel_info(guild_id, Id::new(2), "general")],
         members: vec![
             member_with_username(alice, "Alice A", "alice"),
@@ -203,9 +199,8 @@ fn member_search_filters_loaded_members_and_opens_profile() {
             (alice, PresenceStatus::Online),
             (bob, PresenceStatus::Offline),
         ],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.activate_guild(ActiveGuildScope::Guild(guild_id));
     state.focus_pane(FocusPane::Members);
 

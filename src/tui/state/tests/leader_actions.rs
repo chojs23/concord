@@ -1,5 +1,6 @@
 use super::*;
 use crate::discord::AppCommand;
+use crate::discord::test_builders::{ForumPostsLoadedFixture, forum_posts_loaded_event};
 
 #[test]
 fn leader_message_action_copy_closes_action_popup() {
@@ -111,17 +112,15 @@ fn channel_thread_list_view_fetches_and_sections_active_and_archived_threads() {
         (ForumPostArchiveState::Active, 30, "active thread", false),
         (ForumPostArchiveState::Archived, 31, "archived thread", true),
     ] {
-        state.push_event(AppEvent::ForumPostsLoaded {
+        state.push_event(forum_posts_loaded_event(ForumPostsLoadedFixture {
             channel_id,
             archive_state,
-            offset: 0,
             next_offset: 1,
             threads: vec![forum_thread_info(
                 guild_id, channel_id, thread_id, name, None, archived,
             )],
-            first_messages: Vec::new(),
-            has_more: false,
-        });
+            ..ForumPostsLoadedFixture::new()
+        }));
     }
 
     let cards = state.selected_thread_card_items();

@@ -1,5 +1,9 @@
 use super::*;
 use crate::discord::VoiceScope;
+use crate::discord::test_builders::{
+    GuildCreateFixture, VoiceConnectionStatusChangedFixture, VoiceSpeakingUpdateFixture,
+    guild_create_event, voice_connection_status_changed_event, voice_speaking_update_event,
+};
 
 #[test]
 fn header_shows_available_update_version() {
@@ -65,30 +69,23 @@ fn header_shows_connected_account() {
         user: "muri".to_owned(),
         user_id: Some(Id::new(10)),
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(Id::new(1)),
             position: Some(0),
             name: "Lobby".to_owned(),
             ..ChannelInfo::test(Id::new(11), "GuildVoice")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        scope: VoiceScope::Guild(Id::new(1)),
-        channel_id: Some(Id::new(11)),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Some(Id::new(11)),
+            status: VoiceConnectionStatus::Connecting,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
 
     let dump = render_dashboard_dump(100, 10, &mut state);
     let header = dump.first().expect("dashboard render includes header");
@@ -140,12 +137,12 @@ fn header_keeps_current_user_white_while_speaking() {
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo::test(Id::new(1), Some(Id::new(11)), Id::new(10)),
     });
-    state.push_event(AppEvent::VoiceSpeakingUpdate {
+    state.push_event(voice_speaking_update_event(VoiceSpeakingUpdateFixture {
         scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(11),
         user_id: Id::new(10),
         speaking: true,
-    });
+    }));
     let backend = TestBackend::new(80, 1);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
@@ -166,24 +163,15 @@ fn header_labels_other_client_voice_connection() {
         user: "muri".to_owned(),
         user_id: Some(Id::new(10)),
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(Id::new(1)),
             position: Some(0),
             name: "Lobby".to_owned(),
             ..ChannelInfo::test(Id::new(11), "GuildVoice")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             session_id: Some("other-client-voice-session".to_owned()),
@@ -343,23 +331,14 @@ fn muted_server_name_is_dimmed() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.push_event(user_guild_settings_init(vec![
         GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::OnlyMentions),
@@ -449,12 +428,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let empty_voice_id = Id::new(11);
     let alice = Id::new(20);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![
             ChannelInfo {
                 guild_id: Some(guild_id),
@@ -479,11 +453,8 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             username: Some("alice".to_owned()),
             ..MemberInfo::test(alice, "Alice")
         }],
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             deaf: true,
@@ -492,18 +463,20 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             ..VoiceStateInfo::test(guild_id, Some(voice_id), alice)
         },
     });
-    state.push_event(AppEvent::VoiceSpeakingUpdate {
+    state.push_event(voice_speaking_update_event(VoiceSpeakingUpdateFixture {
         scope: VoiceScope::Guild(guild_id),
         channel_id: voice_id,
         user_id: alice,
         speaking: true,
-    });
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        scope: VoiceScope::Guild(guild_id),
-        channel_id: Some(voice_id),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
+    }));
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope: VoiceScope::Guild(guild_id),
+            channel_id: Some(voice_id),
+            status: VoiceConnectionStatus::Connecting,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
     state.confirm_selected_guild();
     state.set_channel_view_height(10);
 
@@ -624,12 +597,7 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
     let voice_id = Id::new(10);
     let alice = Id::new(20);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             position: Some(0),
@@ -641,11 +609,8 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
             display_name: "some_really_long_voice_participant_name".to_owned(),
             ..MemberInfo::test(alice, "some_really_long_voice_participant_name")
         }],
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             deaf: true,
@@ -688,12 +653,7 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
     let voice_id = Id::new(10);
     let alice = Id::new(20);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             position: Some(0),
@@ -705,10 +665,8 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
             ..MemberInfo::test(alice, "Alice")
         }],
         presences: vec![(alice, PresenceStatus::Online)],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.push_event(guild_member_list_counts_event(guild_id, 1));
     state.push_event(AppEvent::VoiceStateUpdate {
@@ -724,12 +682,12 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
     let alice_cell = find_cell(buffer, "Alice").expect("member should render");
     assert_eq!(buffer[alice_cell].fg, Color::White);
 
-    state.push_event(AppEvent::VoiceSpeakingUpdate {
+    state.push_event(voice_speaking_update_event(VoiceSpeakingUpdateFixture {
         scope: VoiceScope::Guild(guild_id),
         channel_id: voice_id,
         user_id: alice,
         speaking: true,
-    });
+    }));
     let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
@@ -757,19 +715,10 @@ fn pane_filters_keep_content_width_when_active() {
         })
         .collect();
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels,
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.open_channel_pane_filter();
     for value in matching_name.chars() {
@@ -800,19 +749,10 @@ fn pane_filters_keep_content_width_when_active() {
 
     let guild_id = Id::new(1);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
+    state.push_event(guild_create_event(GuildCreateFixture {
         name: "This is Server 1".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.focus_pane(FocusPane::Guilds);
     state.set_guild_view_height(4);
 
@@ -848,12 +788,7 @@ fn muted_category_and_channel_names_are_dimmed() {
     let guild_id = Id::new(1);
     let category_id = Id::new(10);
     let channel_id = Id::new(11);
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![
             ChannelInfo {
                 guild_id: Some(guild_id),
@@ -869,12 +804,8 @@ fn muted_category_and_channel_names_are_dimmed() {
                 ..ChannelInfo::test(channel_id, "text")
             },
         ],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.push_event(user_guild_settings_init(vec![
         GuildNotificationSettingsInfo {
@@ -1103,24 +1034,18 @@ fn channel_pane_header_shows_guild_boost_line_only_when_boosted() {
         let guild_id = Id::new(1);
         let channel_id = Id::new(9);
         let mut state = DashboardState::new();
-        state.push_event(AppEvent::GuildCreate {
+        state.push_event(guild_create_event(GuildCreateFixture {
             boost_tier,
             boost_count,
-            guild_id,
             name: "My Server".to_owned(),
-            member_count: None,
             channels: vec![ChannelInfo {
                 guild_id: Some(guild_id),
                 position: Some(0),
                 name: "general".to_owned(),
                 ..ChannelInfo::test(channel_id, "GuildText")
             }],
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
+            ..GuildCreateFixture::new(guild_id)
+        }));
         state.confirm_selected_guild();
         state.set_channel_view_height(10);
 
@@ -1168,19 +1093,13 @@ fn boost_line_shrinks_channel_viewport_by_one_row() {
             })
             .collect();
         let mut state = DashboardState::new();
-        state.push_event(AppEvent::GuildCreate {
+        state.push_event(guild_create_event(GuildCreateFixture {
             boost_tier,
             boost_count,
-            guild_id,
             name: "My Server".to_owned(),
-            member_count: None,
             channels,
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
+            ..GuildCreateFixture::new(guild_id)
+        }));
         state.confirm_selected_guild();
         // Runs the full layout, including `sync_view_heights`, at a size where
         // 20 channels overflow the pane.

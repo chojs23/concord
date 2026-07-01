@@ -133,11 +133,11 @@ fn message_ack_clears_outstanding_mentions_and_advances_pointer() {
         ChannelUnreadState::Mentioned(5)
     );
 
-    state.apply_event(&AppEvent::MessageAck {
+    state.apply_event(&message_ack_event(MessageAckFixture {
         channel_id,
         message_id: Id::new(500),
-        mention_count: 0,
-    });
+        ..MessageAckFixture::new()
+    }));
 
     assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
     assert_eq!(
@@ -177,16 +177,16 @@ fn stale_message_ack_does_not_reopen_unread_state() {
     });
     assert_eq!(state.channel_unread_message_count(channel_id), 5);
 
-    state.apply_event(&AppEvent::MessageAck {
+    state.apply_event(&message_ack_event(MessageAckFixture {
         channel_id,
         message_id: Id::new(500),
-        mention_count: 0,
-    });
-    state.apply_event(&AppEvent::MessageAck {
+        ..MessageAckFixture::new()
+    }));
+    state.apply_event(&message_ack_event(MessageAckFixture {
         channel_id,
         message_id: Id::new(100),
         mention_count: 5,
-    });
+    }));
 
     assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
     assert_eq!(state.channel_unread_message_count(channel_id), 0);

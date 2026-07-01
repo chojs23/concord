@@ -509,12 +509,14 @@ fn keymap_executes_canonical_pane_and_voice_commands() {
         mappings,
         ..Default::default()
     });
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        scope: VoiceScope::Guild(Id::new(1)),
-        channel_id: Some(Id::new(11)),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Some(Id::new(11)),
+            status: VoiceConnectionStatus::Connecting,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
 
     assert!(state.is_pane_visible(FocusPane::Guilds));
     handle_key(&mut state, char_key(' '));

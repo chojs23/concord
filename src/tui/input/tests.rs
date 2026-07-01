@@ -6,7 +6,14 @@ use std::{
 
 use crate::discord::ids::Id;
 use crate::discord::test_builders::{
-    MessageCreateFixture, guild_message_create_fixture, message_create_event,
+    CurrentUserReactionAddFixture, ForumPostsLoadedFixture, GuildCreateFixture,
+    MessageCreateFixture, MessageHistoryAfterLoadedFixture, MessageHistoryAroundLoadedFixture,
+    MessageHistoryLoadedFixture, MessagePinnedUpdateFixture, ReactionUsersLoadedFixture,
+    VoiceConnectionStatusChangedFixture, current_user_reaction_add_event, forum_posts_loaded_event,
+    guild_create_event, guild_message_create_fixture, message_create_event,
+    message_history_after_loaded_event, message_history_around_loaded_event,
+    message_history_loaded_event, message_pinned_update_event, reaction_users_loaded_event,
+    voice_connection_status_changed_event,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -21,7 +28,7 @@ use crate::{
     discord::{
         ActivityInfo, AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo,
         AttachmentDownloadId, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
-        CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildBoostTier, GuildFolder,
+        CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildFolder,
         GuildNotificationSettingsInfo, MemberInfo, MessageInfo, MessageReferenceInfo,
         MessageSnapshotInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
         ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, RoleInfo, UserGuildSettingsInfo,
@@ -140,19 +147,10 @@ fn state_with_folder() -> DashboardState {
     let mut state = DashboardState::new();
 
     for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
-        state.push_event(AppEvent::GuildCreate {
-            boost_tier: GuildBoostTier::None,
-            boost_count: 0,
-            guild_id,
+        state.push_event(guild_create_event(GuildCreateFixture {
             name: name.to_owned(),
-            member_count: None,
-            channels: Vec::new(),
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
+            ..GuildCreateFixture::new(guild_id)
+        }));
     }
     state.push_event(AppEvent::UserSettingsUpdate {
         settings: UserSettingsInfo {
@@ -190,12 +188,7 @@ fn state_with_channel_tree() -> DashboardState {
     let random_id = Id::new(12);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![
             ChannelInfo {
                 guild_id: Some(guild_id),
@@ -218,12 +211,8 @@ fn state_with_channel_tree() -> DashboardState {
                 ..ChannelInfo::test(random_id, "text")
             },
         ],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state
 }
@@ -263,23 +252,14 @@ fn state_with_messages_from_state(mut state: DashboardState, count: u64) -> Dash
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     for id in 1..=count {
@@ -308,12 +288,7 @@ fn state_with_members(count: u64) -> DashboardState {
         .map(|id| (Id::new(id), PresenceStatus::Online))
         .collect();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
@@ -321,10 +296,8 @@ fn state_with_members(count: u64) -> DashboardState {
         }],
         members,
         presences,
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state
 }
@@ -335,12 +308,7 @@ fn state_with_thread_created_message() -> DashboardState {
     let thread_id = Id::new(10);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![
             ChannelInfo {
                 guild_id: Some(guild_id),
@@ -357,12 +325,8 @@ fn state_with_thread_created_message() -> DashboardState {
                 ..ChannelInfo::test(thread_id, "thread")
             },
         ],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.push_event(message_create_event(
@@ -410,26 +374,18 @@ fn state_with_custom_emoji_message() -> DashboardState {
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
         emojis: vec![
             CustomEmojiInfo::test(Id::new(50), "party"),
             CustomEmojiInfo::test(Id::new(51), "this"),
         ],
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     push_guild_message(&mut state, 1, "msg 1");
@@ -441,36 +397,27 @@ fn state_with_forum_channel_posts() -> DashboardState {
     let forum_id = Id::new(20);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             position: Some(0),
             name: "announcements".to_owned(),
             ..ChannelInfo::test(forum_id, "forum")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
         roles: vec![RoleInfo {
             permissions: PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES,
             ..RoleInfo::test(Id::new(guild_id.get()), "@everyone")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
 
     // Discord's `/threads/search` returns threads newest-first. Emit them in
     // descending channel-id order so the test sees the same layout.
-    state.push_event(AppEvent::ForumPostsLoaded {
+    state.push_event(forum_posts_loaded_event(ForumPostsLoadedFixture {
         channel_id: forum_id,
         archive_state: crate::discord::ForumPostArchiveState::Active,
-        offset: 0,
         next_offset: 2,
         threads: vec![
             ChannelInfo {
@@ -494,9 +441,8 @@ fn state_with_forum_channel_posts() -> DashboardState {
                 ..ChannelInfo::test(Id::new(30), "GuildPublicThread")
             },
         ],
-        first_messages: Vec::new(),
-        has_more: false,
-    });
+        ..ForumPostsLoadedFixture::new()
+    }));
     state
 }
 
@@ -505,23 +451,14 @@ fn state_with_image_message() -> DashboardState {
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.push_event(message_create_event(

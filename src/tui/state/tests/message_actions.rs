@@ -1,4 +1,10 @@
 use super::*;
+use crate::discord::test_builders::{
+    AttachmentDownloadCompletedFixture, AttachmentDownloadFailedFixture,
+    AttachmentDownloadProgressFixture, AttachmentDownloadStartedFixture,
+    attachment_download_completed_event, attachment_download_failed_event,
+    attachment_download_progress_event, attachment_download_started_event,
+};
 use crate::discord::{
     AppCommand, AttachmentDownloadId, MESSAGE_FLAG_SUPPRESS_EMBEDS, MediaPlaybackSource,
     MediaPlaybackTarget,
@@ -292,29 +298,35 @@ fn attachment_download_events_update_global_progress() {
     state.direct_open_selected_message_attachment_viewer();
     let id = AttachmentDownloadId::new(7);
 
-    state.push_event(AppEvent::AttachmentDownloadStarted {
-        id,
-        filename: "cat.png".to_owned(),
-        total_bytes: Some(100),
-        source: DownloadAttachmentSource::AttachmentViewer,
-    });
+    state.push_event(attachment_download_started_event(
+        AttachmentDownloadStartedFixture {
+            id,
+            filename: "cat.png".to_owned(),
+            total_bytes: Some(100),
+            source: DownloadAttachmentSource::AttachmentViewer,
+        },
+    ));
 
     assert_eq!(state.attachment_downloads().len(), 1);
 
     state.close_attachment_viewer();
-    state.push_event(AppEvent::AttachmentDownloadProgress {
-        id,
-        downloaded_bytes: 40,
-        total_bytes: Some(100),
-    });
+    state.push_event(attachment_download_progress_event(
+        AttachmentDownloadProgressFixture {
+            id,
+            downloaded_bytes: 40,
+            total_bytes: Some(100),
+        },
+    ));
 
     assert_eq!(state.attachment_downloads()[0].downloaded_bytes, 40);
 
-    state.push_event(AppEvent::AttachmentDownloadCompleted {
-        id,
-        path: "/tmp/cat.png".to_owned(),
-        source: DownloadAttachmentSource::AttachmentViewer,
-    });
+    state.push_event(attachment_download_completed_event(
+        AttachmentDownloadCompletedFixture {
+            id,
+            path: "/tmp/cat.png".to_owned(),
+            source: DownloadAttachmentSource::AttachmentViewer,
+        },
+    ));
 
     assert!(state.attachment_downloads().is_empty());
     assert_eq!(
@@ -323,18 +335,22 @@ fn attachment_download_events_update_global_progress() {
     );
 
     let failed_id = AttachmentDownloadId::new(8);
-    state.push_event(AppEvent::AttachmentDownloadStarted {
-        id: failed_id,
-        filename: "dog.png".to_owned(),
-        total_bytes: None,
-        source: DownloadAttachmentSource::AttachmentViewer,
-    });
-    state.push_event(AppEvent::AttachmentDownloadFailed {
-        id: failed_id,
-        filename: "dog.png".to_owned(),
-        message: "network reset".to_owned(),
-        source: DownloadAttachmentSource::AttachmentViewer,
-    });
+    state.push_event(attachment_download_started_event(
+        AttachmentDownloadStartedFixture {
+            id: failed_id,
+            filename: "dog.png".to_owned(),
+            source: DownloadAttachmentSource::AttachmentViewer,
+            ..AttachmentDownloadStartedFixture::new()
+        },
+    ));
+    state.push_event(attachment_download_failed_event(
+        AttachmentDownloadFailedFixture {
+            id: failed_id,
+            filename: "dog.png".to_owned(),
+            message: "network reset".to_owned(),
+            source: DownloadAttachmentSource::AttachmentViewer,
+        },
+    ));
 
     assert!(state.attachment_downloads().is_empty());
     assert_eq!(

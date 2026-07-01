@@ -1,17 +1,18 @@
 use crate::{
     AppError,
     discord::{
-        ActivityInfo, AppEvent, ChannelInfo, GuildBoostTier, MemberInfo, MentionInfo,
-        MessageAttachmentUpload, RoleInfo, UserProfileInfo, VoiceScope, VoiceSoundKind,
-        VoiceStateInfo,
+        ActivityInfo, AppEvent, ChannelInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
+        RoleInfo, UserProfileInfo, VoiceScope, VoiceSoundKind, VoiceStateInfo,
         gateway::GatewayCommand,
         ids::{
             Id,
             marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
         },
         test_builders::{
-            MessageCreateFixture, guild_message_create_fixture,
-            message_create_event as build_message_create_event,
+            GuildCreateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
+            UserProfileLoadFailedFixture, guild_create_event, guild_message_create_fixture,
+            message_create_event as build_message_create_event, message_history_loaded_event,
+            user_profile_load_failed_event,
         },
     },
 };
@@ -30,11 +31,10 @@ async fn publish_event_sends_matching_snapshot_and_effect_revisions() {
     let mut snapshots = client.subscribe_snapshots();
 
     client
-        .publish_event(AppEvent::MessageHistoryLoaded {
+        .publish_event(message_history_loaded_event(MessageHistoryLoadedFixture {
             channel_id: Id::new(1),
-            before: None,
-            messages: Vec::new(),
-        })
+            ..MessageHistoryLoadedFixture::new()
+        }))
         .await;
 
     snapshots.changed().await.expect("snapshot is published");
@@ -206,11 +206,10 @@ async fn concurrent_publishers_emit_ordered_effect_revisions() {
         let client = client.clone();
         tasks.push(tokio::spawn(async move {
             client
-                .publish_event(AppEvent::MessageHistoryLoaded {
+                .publish_event(message_history_loaded_event(MessageHistoryLoadedFixture {
                     channel_id: Id::new(index + 1),
-                    before: None,
-                    messages: Vec::new(),
-                })
+                    ..MessageHistoryLoadedFixture::new()
+                }))
                 .await;
         }));
     }
@@ -590,11 +589,13 @@ async fn user_profile_requests_are_gated_by_backend_lifecycle_and_cache() {
     assert_eq!(client.next_user_profile_request(user_id, guild_id), None);
 
     client
-        .publish_event(AppEvent::UserProfileLoadFailed {
-            user_id,
-            guild_id,
-            message: "temporary failure".to_owned(),
-        })
+        .publish_event(user_profile_load_failed_event(
+            UserProfileLoadFailedFixture {
+                user_id,
+                guild_id,
+                message: "temporary failure".to_owned(),
+            },
+        ))
         .await;
     assert_eq!(
         client.next_user_profile_request(user_id, guild_id),
@@ -811,11 +812,7 @@ async fn publish_permission_fixture(
         })
         .await;
     client
-        .publish_event(AppEvent::GuildCreate {
-            boost_tier: GuildBoostTier::None,
-            boost_count: 0,
-            guild_id: Id::new(1),
-            name: "guild".to_owned(),
+        .publish_event(guild_create_event(GuildCreateFixture {
             member_count: Some(1),
             owner_id: Some(Id::new(99)),
             channels: vec![permission_fixture_channel(
@@ -824,14 +821,13 @@ async fn publish_permission_fixture(
                 channel_kind,
             )],
             members: vec![permission_fixture_member(Id::new(10))],
-            presences: Vec::new(),
             roles: vec![permission_fixture_role(
                 Id::new(1),
                 "@everyone",
                 everyone_permissions,
             )],
-            emojis: Vec::new(),
-        })
+            ..GuildCreateFixture::new(Id::new(1))
+        }))
         .await;
 }
 

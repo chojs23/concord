@@ -2,7 +2,8 @@ use std::io::Cursor;
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::test_builders::{
-    MessageCreateFixture, guild_message_create_fixture, message_create_event,
+    ForumPostsLoadedFixture, GuildCreateFixture, MessageCreateFixture, forum_posts_loaded_event,
+    guild_create_event, guild_message_create_fixture, message_create_event,
 };
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 
@@ -10,7 +11,7 @@ use crate::{
     config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo,
-        ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildBoostTier, MessageInfo, MessageSnapshotInfo,
+        ChannelInfo, CustomEmojiInfo, EmbedInfo, MessageInfo, MessageSnapshotInfo,
         PresenceEventFields, ProfileAvatarUpload, ReactionEmoji, ReactionInfo, UserProfileInfo,
     },
     tui::{
@@ -1721,29 +1722,19 @@ fn emoji_image_targets_include_visible_forum_preview_custom_reactions() {
     let thread_id = Id::new(30);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "forum".to_owned(),
             ..ChannelInfo::test(forum_id, "GuildForum")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
-    state.push_event(AppEvent::ForumPostsLoaded {
+    state.push_event(forum_posts_loaded_event(ForumPostsLoadedFixture {
         channel_id: forum_id,
         archive_state: crate::discord::ForumPostArchiveState::Active,
-        offset: 0,
         next_offset: 1,
         threads: vec![ChannelInfo {
             guild_id: Some(guild_id),
@@ -1781,8 +1772,8 @@ fn emoji_image_targets_include_visible_forum_preview_custom_reactions() {
             forwarded_snapshots: Vec::new(),
             ..MessageInfo::default()
         }],
-        has_more: false,
-    });
+        ..ForumPostsLoadedFixture::new()
+    }));
 
     let targets = visible_emoji_image_targets(&state);
 
@@ -1801,12 +1792,7 @@ fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
     let thread_id = Id::new(30);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "forum".to_owned(),
@@ -1830,18 +1816,13 @@ fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
             ],
             ..ChannelInfo::test(forum_id, "GuildForum")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
-    state.push_event(AppEvent::ForumPostsLoaded {
+    state.push_event(forum_posts_loaded_event(ForumPostsLoadedFixture {
         channel_id: forum_id,
         archive_state: crate::discord::ForumPostArchiveState::Active,
-        offset: 0,
         next_offset: 1,
         threads: vec![ChannelInfo {
             guild_id: Some(guild_id),
@@ -1855,9 +1836,8 @@ fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
             applied_tags: vec![Id::new(101), Id::new(102)],
             ..ChannelInfo::test(thread_id, "GuildPublicThread")
         }],
-        first_messages: Vec::new(),
-        has_more: false,
-    });
+        ..ForumPostsLoadedFixture::new()
+    }));
 
     let targets = visible_emoji_image_targets(&state);
 
@@ -2024,23 +2004,14 @@ fn state_with_image_messages_and_display_options(
     let channel_id = Id::new(2);
     let mut state = DashboardState::new_with_display_options(display_options);
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
 
@@ -2069,23 +2040,14 @@ fn state_with_avatar_messages(count: u64) -> DashboardState {
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
 
@@ -2110,23 +2072,14 @@ fn state_with_cross_day_image_message() -> DashboardState {
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
 

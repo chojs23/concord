@@ -5,7 +5,9 @@ use std::{
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::test_builders::{
-    MessageCreateFixture, guild_message_create_fixture, message_create_event,
+    ForumPostsLoadedFixture, GuildCreateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
+    forum_posts_loaded_event, guild_create_event, guild_message_create_fixture,
+    message_create_event, message_history_loaded_event,
 };
 use ratatui::{
     Terminal,
@@ -291,23 +293,14 @@ fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> Dashbo
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Messages);
@@ -326,19 +319,10 @@ fn state_with_folder_settings() -> DashboardState {
     let mut state = DashboardState::new();
 
     for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
-        state.push_event(AppEvent::GuildCreate {
-            boost_tier: GuildBoostTier::None,
-            boost_count: 0,
-            guild_id,
+        state.push_event(guild_create_event(GuildCreateFixture {
             name: name.to_owned(),
-            member_count: None,
-            channels: Vec::new(),
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-            owner_id: None,
-        });
+            ..GuildCreateFixture::new(guild_id)
+        }));
     }
     state.push_event(AppEvent::UserSettingsUpdate {
         settings: UserSettingsInfo {
@@ -361,23 +345,14 @@ fn state_with_forum_posts(post_count: usize) -> DashboardState {
     let forum_id = Id::new(20);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "forum".to_owned(),
             ..ChannelInfo::test(forum_id, "GuildForum")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Messages);
@@ -398,15 +373,13 @@ fn state_with_forum_posts(post_count: usize) -> DashboardState {
             }
         })
         .collect();
-    state.push_event(AppEvent::ForumPostsLoaded {
+    state.push_event(forum_posts_loaded_event(ForumPostsLoadedFixture {
         channel_id: forum_id,
         archive_state: crate::discord::ForumPostArchiveState::Active,
-        offset: 0,
         next_offset: threads.len(),
         threads,
-        first_messages: Vec::new(),
-        has_more: false,
-    });
+        ..ForumPostsLoadedFixture::new()
+    }));
     state
 }
 
@@ -440,9 +413,8 @@ fn state_with_unread_direct_messages() -> DashboardState {
 
 fn state_with_unread_direct_messages_with_loaded_unread_messages(count: u64) -> DashboardState {
     let mut state = state_with_unread_direct_messages();
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id: Id::new(20),
-        before: None,
         messages: (0..count)
             .map(|offset| MessageInfo {
                 guild_id: None,
@@ -452,7 +424,8 @@ fn state_with_unread_direct_messages_with_loaded_unread_messages(count: u64) -> 
                 ..MessageInfo::test(Id::new(20), Id::new(101 + offset))
             })
             .collect(),
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
     state
 }
 
@@ -537,40 +510,23 @@ fn forwarded_snapshot(
 
 fn state_with_member(user_id: u64, display_name: &str) -> DashboardState {
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         members: vec![member_info(user_id, display_name)],
         presences: vec![(Id::new(user_id), PresenceStatus::Online)],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state
 }
 
 fn state_with_role(role_id: u64, name: &str) -> DashboardState {
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
-        members: Vec::new(),
-        presences: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         roles: vec![RoleInfo {
             position: 1,
             ..RoleInfo::test(Id::new(role_id), name)
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state
 }
 

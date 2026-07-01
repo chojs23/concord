@@ -5,7 +5,21 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
 
-use crate::discord::test_builders::{MessageCreateFixture, message_create_event};
+use crate::discord::test_builders::{
+    ChannelPinsUpdateFixture, CurrentUserPollVoteUpdateFixture, CurrentUserReactionAddFixture,
+    CurrentUserReactionRemoveFixture, GuildCreateFixture, GuildUpdateFixture, MessageAckFixture,
+    MessageCreateFixture, MessageDeleteBulkFixture, MessageHistoryAfterLoadedFixture,
+    MessageHistoryAroundLoadedFixture, MessageHistoryLoadedFixture, MessagePinnedUpdateFixture,
+    MessageReactionAddFixture, MessageReactionRemoveAllFixture, MessageReactionRemoveEmojiFixture,
+    MessageReactionRemoveFixture, UserIdentityUpdateFixture, VoiceSpeakingUpdateFixture,
+    channel_pins_update_event, current_user_poll_vote_update_event,
+    current_user_reaction_add_event, current_user_reaction_remove_event, guild_create_event,
+    guild_update_event, message_ack_event, message_create_event, message_delete_bulk_event,
+    message_history_after_loaded_event, message_history_around_loaded_event,
+    message_history_loaded_event, message_pinned_update_event, message_reaction_add_event,
+    message_reaction_remove_all_event, message_reaction_remove_emoji_event,
+    message_reaction_remove_event, user_identity_update_event, voice_speaking_update_event,
+};
 use crate::discord::{
     ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, BASE_ATTACHMENT_LIMIT_BYTES,
     ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
@@ -27,54 +41,6 @@ mod permissions;
 mod profiles;
 mod reads;
 mod upload_limits;
-
-struct GuildCreateFixture {
-    guild_id: Id<GuildMarker>,
-    name: String,
-    member_count: Option<u64>,
-    owner_id: Option<Id<UserMarker>>,
-    boost_tier: GuildBoostTier,
-    boost_count: u32,
-    channels: Vec<ChannelInfo>,
-    members: Vec<MemberInfo>,
-    presences: Vec<(Id<UserMarker>, PresenceStatus)>,
-    roles: Vec<RoleInfo>,
-    emojis: Vec<CustomEmojiInfo>,
-}
-
-impl GuildCreateFixture {
-    fn new(guild_id: Id<GuildMarker>) -> Self {
-        Self {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            owner_id: None,
-            boost_tier: GuildBoostTier::None,
-            boost_count: 0,
-            channels: Vec::new(),
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-        }
-    }
-}
-
-fn guild_create_event(event: GuildCreateFixture) -> AppEvent {
-    AppEvent::GuildCreate {
-        boost_tier: event.boost_tier,
-        boost_count: event.boost_count,
-        guild_id: event.guild_id,
-        name: event.name,
-        member_count: event.member_count,
-        owner_id: event.owner_id,
-        channels: event.channels,
-        members: event.members,
-        presences: event.presences,
-        roles: event.roles,
-        emojis: event.emojis,
-    }
-}
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
     UserProfileInfo {
@@ -241,11 +207,11 @@ fn read_state_info(
 }
 
 fn latest_history_loaded(channel_id: Id<ChannelMarker>, messages: Vec<MessageInfo>) -> AppEvent {
-    AppEvent::MessageHistoryLoaded {
+    message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
-        before: None,
         messages,
-    }
+        ..MessageHistoryLoadedFixture::new()
+    })
 }
 
 fn notification_settings(

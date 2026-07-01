@@ -1,5 +1,6 @@
 use super::*;
 use crate::discord::AppCommand;
+use crate::discord::test_builders::{TypingStartFixture, guild_create_event, typing_start_event};
 use crate::discord::{
     ApplicationCommandInfo, ApplicationCommandOptionInfo, MessageAttachmentUpload,
 };
@@ -77,11 +78,7 @@ fn state_with_forum_post_tags(tag_names: &[&str]) -> DashboardState {
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: guild,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(1),
         owner_id: Some(me),
         channels: vec![ChannelInfo {
@@ -93,14 +90,13 @@ fn state_with_forum_post_tags(tag_names: &[&str]) -> DashboardState {
             ..ChannelInfo::test(channel, "forum")
         }],
         members: vec![member_with_username(me, "me", "me")],
-        presences: Vec::new(),
         roles: vec![role_info(
             Id::new(guild.get()),
             "@everyone",
             PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES,
         )],
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild)
+    }));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(channel);
     state
@@ -123,11 +119,7 @@ fn state_with_post_parent_channel(kind: &str, required_tag: bool) -> DashboardSt
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: guild,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(1),
         owner_id: Some(me),
         channels: vec![ChannelInfo {
@@ -145,14 +137,13 @@ fn state_with_post_parent_channel(kind: &str, required_tag: bool) -> DashboardSt
             ..ChannelInfo::test(channel, kind)
         }],
         members: vec![member_with_username(me, "me", "me")],
-        presences: Vec::new(),
         roles: vec![role_info(
             Id::new(guild.get()),
             "@everyone",
             PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES,
         )],
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild)
+    }));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(channel);
     state
@@ -177,11 +168,7 @@ fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardStat
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: guild,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(2),
         owner_id: Some(me),
         channels: vec![
@@ -203,8 +190,8 @@ fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardStat
                 ..role_info(Id::new(30), "moderators", 0)
             },
         ],
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild)
+    }));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(general);
     state.push_event(AppEvent::ApplicationCommandsLoaded {
@@ -2061,11 +2048,11 @@ fn typing_footer_resolves_one_user_to_alias() {
     let mut state = state_with_writable_channel_and_members();
     let channel_id = Id::new(2);
     let user_id = Id::new(20);
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id,
         user_id,
         display_name: Some("Live Nick".to_owned()),
-    });
+    }));
 
     assert_eq!(
         state.typing_footer_for_selected_channel(),
@@ -2089,11 +2076,11 @@ fn typing_footer_resolves_one_user_to_alias() {
 fn typing_footer_excludes_current_user() {
     let mut state = state_with_writable_channel_and_members();
     // user_id 10 is the local user in the fixture's READY event.
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(10),
         display_name: Some("Local User".to_owned()),
-    });
+    }));
 
     assert_eq!(state.typing_footer_for_selected_channel(), None);
 }
@@ -2101,37 +2088,37 @@ fn typing_footer_excludes_current_user() {
 #[test]
 fn typing_footer_pluralizes_at_two_three_and_more_typers() {
     let mut state = state_with_writable_channel_and_members();
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(20),
-        display_name: None,
-    });
-    state.push_event(AppEvent::TypingStart {
+        ..TypingStartFixture::new()
+    }));
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(21),
-        display_name: None,
-    });
+        ..TypingStartFixture::new()
+    }));
     let footer = state
         .typing_footer_for_selected_channel()
         .expect("two typers should produce a footer");
     // Newest typer first, so id 21 (Sammy) leads.
     assert_eq!(footer, "Sammy and Sally are typing\u{2026}");
 
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(22),
-        display_name: None,
-    });
+        ..TypingStartFixture::new()
+    }));
     let footer = state
         .typing_footer_for_selected_channel()
         .expect("three typers should produce a footer");
     assert_eq!(footer, "Bob, Sammy, and Sally are typing\u{2026}");
 
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(23),
-        display_name: None,
-    });
+        ..TypingStartFixture::new()
+    }));
     let footer = state
         .typing_footer_for_selected_channel()
         .expect("four typers should still produce a footer");

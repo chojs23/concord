@@ -745,6 +745,707 @@ pub(crate) mod test_builders {
     pub(crate) fn message_create_event(event: MessageCreateFixture) -> AppEvent {
         AppEvent::MessageCreate { message: event }
     }
+
+    use crate::discord::{
+        ChannelInfo, CustomEmojiInfo, GuildBoostTier, MemberInfo, PresenceStatus, RoleInfo,
+    };
+
+    // Single construction seam for `AppEvent::GuildCreate` so a new field on the
+    // variant only touches this fixture, not the ~20 test files that build the event.
+    pub(crate) struct GuildCreateFixture {
+        pub(crate) guild_id: Id<GuildMarker>,
+        pub(crate) name: String,
+        pub(crate) member_count: Option<u64>,
+        pub(crate) owner_id: Option<Id<UserMarker>>,
+        pub(crate) boost_tier: GuildBoostTier,
+        pub(crate) boost_count: u32,
+        pub(crate) channels: Vec<ChannelInfo>,
+        pub(crate) members: Vec<MemberInfo>,
+        pub(crate) presences: Vec<(Id<UserMarker>, PresenceStatus)>,
+        pub(crate) roles: Vec<RoleInfo>,
+        pub(crate) emojis: Vec<CustomEmojiInfo>,
+    }
+
+    impl GuildCreateFixture {
+        pub(crate) fn new(guild_id: Id<GuildMarker>) -> Self {
+            Self {
+                guild_id,
+                name: "guild".to_owned(),
+                member_count: None,
+                owner_id: None,
+                boost_tier: GuildBoostTier::None,
+                boost_count: 0,
+                channels: Vec::new(),
+                members: Vec::new(),
+                presences: Vec::new(),
+                roles: Vec::new(),
+                emojis: Vec::new(),
+            }
+        }
+    }
+
+    pub(crate) fn guild_create_event(event: GuildCreateFixture) -> AppEvent {
+        AppEvent::GuildCreate {
+            guild_id: event.guild_id,
+            name: event.name,
+            member_count: event.member_count,
+            owner_id: event.owner_id,
+            boost_tier: event.boost_tier,
+            boost_count: event.boost_count,
+            channels: event.channels,
+            members: event.members,
+            presences: event.presences,
+            roles: event.roles,
+            emojis: event.emojis,
+        }
+    }
+
+    pub(crate) struct ForumPostsLoadedFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) archive_state: ForumPostArchiveState,
+        pub(crate) offset: usize,
+        pub(crate) next_offset: usize,
+        pub(crate) threads: Vec<ChannelInfo>,
+        pub(crate) first_messages: Vec<MessageInfo>,
+        pub(crate) has_more: bool,
+    }
+
+    impl ForumPostsLoadedFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                channel_id: Id::new(1),
+                archive_state: ForumPostArchiveState::default(),
+                offset: 0,
+                next_offset: 0,
+                threads: Vec::new(),
+                first_messages: Vec::new(),
+                has_more: false,
+            }
+        }
+    }
+
+    pub(crate) fn forum_posts_loaded_event(f: ForumPostsLoadedFixture) -> AppEvent {
+        AppEvent::ForumPostsLoaded {
+            channel_id: f.channel_id,
+            archive_state: f.archive_state,
+            offset: f.offset,
+            next_offset: f.next_offset,
+            threads: f.threads,
+            first_messages: f.first_messages,
+            has_more: f.has_more,
+        }
+    }
+
+    pub(crate) struct MessageHistoryLoadedFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) before: Option<Id<MessageMarker>>,
+        pub(crate) messages: Vec<MessageInfo>,
+    }
+
+    impl MessageHistoryLoadedFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                channel_id: Id::new(1),
+                before: None,
+                messages: Vec::new(),
+            }
+        }
+    }
+
+    pub(crate) fn message_history_loaded_event(f: MessageHistoryLoadedFixture) -> AppEvent {
+        AppEvent::MessageHistoryLoaded {
+            channel_id: f.channel_id,
+            before: f.before,
+            messages: f.messages,
+        }
+    }
+
+    pub(crate) struct MessageHistoryLoadFailedFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) target: MessageHistoryLoadTarget,
+        pub(crate) message: String,
+    }
+    pub(crate) fn message_history_load_failed_event(
+        f: MessageHistoryLoadFailedFixture,
+    ) -> AppEvent {
+        AppEvent::MessageHistoryLoadFailed {
+            channel_id: f.channel_id,
+            target: f.target,
+            message: f.message,
+        }
+    }
+
+    pub(crate) struct TypingStartFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) user_id: Id<UserMarker>,
+        pub(crate) display_name: Option<String>,
+    }
+
+    impl TypingStartFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                channel_id: Id::new(1),
+                user_id: Id::new(1),
+                display_name: None,
+            }
+        }
+    }
+
+    pub(crate) fn typing_start_event(f: TypingStartFixture) -> AppEvent {
+        AppEvent::TypingStart {
+            channel_id: f.channel_id,
+            user_id: f.user_id,
+            display_name: f.display_name,
+        }
+    }
+
+    pub(crate) struct VoiceSpeakingUpdateFixture {
+        pub(crate) scope: VoiceScope,
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) user_id: Id<UserMarker>,
+        pub(crate) speaking: bool,
+    }
+    pub(crate) fn voice_speaking_update_event(f: VoiceSpeakingUpdateFixture) -> AppEvent {
+        AppEvent::VoiceSpeakingUpdate {
+            scope: f.scope,
+            channel_id: f.channel_id,
+            user_id: f.user_id,
+            speaking: f.speaking,
+        }
+    }
+
+    pub(crate) struct MessageHistoryAfterLoadedFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) after: Id<MessageMarker>,
+        pub(crate) messages: Vec<MessageInfo>,
+        pub(crate) has_more: bool,
+        pub(crate) mode: MessageHistoryAfterMode,
+    }
+
+    impl MessageHistoryAfterLoadedFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                channel_id: Id::new(1),
+                after: Id::new(1),
+                messages: Vec::new(),
+                has_more: false,
+                mode: MessageHistoryAfterMode::GapFill,
+            }
+        }
+    }
+
+    pub(crate) fn message_history_after_loaded_event(
+        f: MessageHistoryAfterLoadedFixture,
+    ) -> AppEvent {
+        AppEvent::MessageHistoryAfterLoaded {
+            channel_id: f.channel_id,
+            after: f.after,
+            messages: f.messages,
+            has_more: f.has_more,
+            mode: f.mode,
+        }
+    }
+
+    pub(crate) struct VoiceConnectionStatusChangedFixture {
+        pub(crate) scope: VoiceScope,
+        pub(crate) channel_id: Option<Id<ChannelMarker>>,
+        pub(crate) status: VoiceConnectionStatus,
+        pub(crate) message: Option<String>,
+    }
+
+    impl VoiceConnectionStatusChangedFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                scope: VoiceScope::Guild(Id::new(1)),
+                channel_id: None,
+                status: VoiceConnectionStatus::Connecting,
+                message: None,
+            }
+        }
+    }
+
+    pub(crate) fn voice_connection_status_changed_event(
+        f: VoiceConnectionStatusChangedFixture,
+    ) -> AppEvent {
+        AppEvent::VoiceConnectionStatusChanged {
+            scope: f.scope,
+            channel_id: f.channel_id,
+            status: f.status,
+            message: f.message,
+        }
+    }
+
+    pub(crate) struct MessageReactionAddFixture {
+        pub(crate) guild_id: Option<Id<GuildMarker>>,
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) user_id: Id<UserMarker>,
+        pub(crate) emoji: ReactionEmoji,
+    }
+
+    impl MessageReactionAddFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                guild_id: None,
+                channel_id: Id::new(1),
+                message_id: Id::new(1),
+                user_id: Id::new(1),
+                emoji: ReactionEmoji::Unicode(String::new()),
+            }
+        }
+    }
+
+    pub(crate) fn message_reaction_add_event(f: MessageReactionAddFixture) -> AppEvent {
+        AppEvent::MessageReactionAdd {
+            guild_id: f.guild_id,
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            user_id: f.user_id,
+            emoji: f.emoji,
+        }
+    }
+
+    pub(crate) struct ChannelPinsUpdateFixture {
+        pub(crate) guild_id: Option<Id<GuildMarker>>,
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) last_pin_timestamp: Option<String>,
+    }
+
+    impl ChannelPinsUpdateFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                guild_id: None,
+                channel_id: Id::new(1),
+                last_pin_timestamp: None,
+            }
+        }
+    }
+
+    pub(crate) fn channel_pins_update_event(f: ChannelPinsUpdateFixture) -> AppEvent {
+        AppEvent::ChannelPinsUpdate {
+            guild_id: f.guild_id,
+            channel_id: f.channel_id,
+            last_pin_timestamp: f.last_pin_timestamp,
+        }
+    }
+
+    pub(crate) struct UserProfileLoadFailedFixture {
+        pub(crate) user_id: Id<UserMarker>,
+        pub(crate) guild_id: Option<Id<GuildMarker>>,
+        pub(crate) message: String,
+    }
+
+    impl UserProfileLoadFailedFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                user_id: Id::new(1),
+                guild_id: None,
+                message: String::new(),
+            }
+        }
+    }
+
+    pub(crate) fn user_profile_load_failed_event(f: UserProfileLoadFailedFixture) -> AppEvent {
+        AppEvent::UserProfileLoadFailed {
+            user_id: f.user_id,
+            guild_id: f.guild_id,
+            message: f.message,
+        }
+    }
+
+    pub(crate) struct MessageAckFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) mention_count: u32,
+    }
+
+    impl MessageAckFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                channel_id: Id::new(1),
+                message_id: Id::new(1),
+                mention_count: 0,
+            }
+        }
+    }
+
+    pub(crate) fn message_ack_event(f: MessageAckFixture) -> AppEvent {
+        AppEvent::MessageAck {
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            mention_count: f.mention_count,
+        }
+    }
+
+    pub(crate) struct ReactionUsersLoadedFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) reactions: Vec<ReactionUsersInfo>,
+    }
+    pub(crate) fn reaction_users_loaded_event(f: ReactionUsersLoadedFixture) -> AppEvent {
+        AppEvent::ReactionUsersLoaded {
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            reactions: f.reactions,
+        }
+    }
+
+    pub(crate) struct CurrentUserPollVoteUpdateFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) answer_ids: Vec<u8>,
+    }
+
+    impl CurrentUserPollVoteUpdateFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                channel_id: Id::new(1),
+                message_id: Id::new(1),
+                answer_ids: Vec::new(),
+            }
+        }
+    }
+
+    pub(crate) fn current_user_poll_vote_update_event(
+        f: CurrentUserPollVoteUpdateFixture,
+    ) -> AppEvent {
+        AppEvent::CurrentUserPollVoteUpdate {
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            answer_ids: f.answer_ids,
+        }
+    }
+
+    pub(crate) struct UserIdentityUpdateFixture {
+        pub(crate) user_id: Id<UserMarker>,
+        pub(crate) username: String,
+        pub(crate) global_name: Option<String>,
+        pub(crate) avatar_url: Option<String>,
+        pub(crate) is_bot: bool,
+    }
+
+    impl UserIdentityUpdateFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                user_id: Id::new(1),
+                username: String::new(),
+                global_name: None,
+                avatar_url: None,
+                is_bot: false,
+            }
+        }
+    }
+
+    pub(crate) fn user_identity_update_event(f: UserIdentityUpdateFixture) -> AppEvent {
+        AppEvent::UserIdentityUpdate {
+            user_id: f.user_id,
+            username: f.username,
+            global_name: f.global_name,
+            avatar_url: f.avatar_url,
+            is_bot: f.is_bot,
+        }
+    }
+
+    pub(crate) struct MessagePinnedUpdateFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) pinned: bool,
+    }
+
+    impl MessagePinnedUpdateFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                channel_id: Id::new(1),
+                message_id: Id::new(1),
+                pinned: false,
+            }
+        }
+    }
+
+    pub(crate) fn message_pinned_update_event(f: MessagePinnedUpdateFixture) -> AppEvent {
+        AppEvent::MessagePinnedUpdate {
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            pinned: f.pinned,
+        }
+    }
+
+    pub(crate) struct MessageHistoryAroundLoadedFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) messages: Vec<MessageInfo>,
+    }
+    pub(crate) fn message_history_around_loaded_event(
+        f: MessageHistoryAroundLoadedFixture,
+    ) -> AppEvent {
+        AppEvent::MessageHistoryAroundLoaded {
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            messages: f.messages,
+        }
+    }
+
+    pub(crate) struct CurrentUserReactionAddFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) emoji: ReactionEmoji,
+    }
+    pub(crate) fn current_user_reaction_add_event(f: CurrentUserReactionAddFixture) -> AppEvent {
+        AppEvent::CurrentUserReactionAdd {
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            emoji: f.emoji,
+        }
+    }
+
+    pub(crate) struct GuildUpdateFixture {
+        pub(crate) guild_id: Id<GuildMarker>,
+        pub(crate) name: String,
+        pub(crate) owner_id: Option<Id<UserMarker>>,
+        pub(crate) boost_tier: Option<GuildBoostTier>,
+        pub(crate) boost_count: Option<u32>,
+        pub(crate) roles: Option<Vec<RoleInfo>>,
+        pub(crate) emojis: Option<Vec<CustomEmojiInfo>>,
+    }
+
+    impl GuildUpdateFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                guild_id: Id::new(1),
+                name: String::new(),
+                owner_id: None,
+                boost_tier: None,
+                boost_count: None,
+                roles: None,
+                emojis: None,
+            }
+        }
+    }
+
+    pub(crate) fn guild_update_event(f: GuildUpdateFixture) -> AppEvent {
+        AppEvent::GuildUpdate {
+            guild_id: f.guild_id,
+            name: f.name,
+            owner_id: f.owner_id,
+            boost_tier: f.boost_tier,
+            boost_count: f.boost_count,
+            roles: f.roles,
+            emojis: f.emojis,
+        }
+    }
+
+    pub(crate) struct MessageReactionRemoveFixture {
+        pub(crate) guild_id: Option<Id<GuildMarker>>,
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) user_id: Id<UserMarker>,
+        pub(crate) emoji: ReactionEmoji,
+    }
+
+    impl MessageReactionRemoveFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                guild_id: None,
+                channel_id: Id::new(1),
+                message_id: Id::new(1),
+                user_id: Id::new(1),
+                emoji: ReactionEmoji::Unicode(String::new()),
+            }
+        }
+    }
+
+    pub(crate) fn message_reaction_remove_event(f: MessageReactionRemoveFixture) -> AppEvent {
+        AppEvent::MessageReactionRemove {
+            guild_id: f.guild_id,
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            user_id: f.user_id,
+            emoji: f.emoji,
+        }
+    }
+
+    pub(crate) struct AttachmentDownloadStartedFixture {
+        pub(crate) id: AttachmentDownloadId,
+        pub(crate) filename: String,
+        pub(crate) total_bytes: Option<u64>,
+        pub(crate) source: DownloadAttachmentSource,
+    }
+
+    impl AttachmentDownloadStartedFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                id: AttachmentDownloadId::new(0),
+                filename: String::new(),
+                total_bytes: None,
+                source: DownloadAttachmentSource::AttachmentViewer,
+            }
+        }
+    }
+
+    pub(crate) fn attachment_download_started_event(
+        f: AttachmentDownloadStartedFixture,
+    ) -> AppEvent {
+        AppEvent::AttachmentDownloadStarted {
+            id: f.id,
+            filename: f.filename,
+            total_bytes: f.total_bytes,
+            source: f.source,
+        }
+    }
+
+    pub(crate) struct MessageReactionRemoveAllFixture {
+        pub(crate) guild_id: Option<Id<GuildMarker>>,
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+    }
+
+    impl MessageReactionRemoveAllFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                guild_id: None,
+                channel_id: Id::new(1),
+                message_id: Id::new(1),
+            }
+        }
+    }
+
+    pub(crate) fn message_reaction_remove_all_event(
+        f: MessageReactionRemoveAllFixture,
+    ) -> AppEvent {
+        AppEvent::MessageReactionRemoveAll {
+            guild_id: f.guild_id,
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+        }
+    }
+
+    pub(crate) struct MessageDeleteBulkFixture {
+        pub(crate) guild_id: Option<Id<GuildMarker>>,
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_ids: Vec<Id<MessageMarker>>,
+    }
+    pub(crate) fn message_delete_bulk_event(f: MessageDeleteBulkFixture) -> AppEvent {
+        AppEvent::MessageDeleteBulk {
+            guild_id: f.guild_id,
+            channel_id: f.channel_id,
+            message_ids: f.message_ids,
+        }
+    }
+
+    pub(crate) struct CurrentUserReactionRemoveFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) emoji: ReactionEmoji,
+    }
+    pub(crate) fn current_user_reaction_remove_event(
+        f: CurrentUserReactionRemoveFixture,
+    ) -> AppEvent {
+        AppEvent::CurrentUserReactionRemove {
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            emoji: f.emoji,
+        }
+    }
+
+    pub(crate) struct AttachmentDownloadProgressFixture {
+        pub(crate) id: AttachmentDownloadId,
+        pub(crate) downloaded_bytes: u64,
+        pub(crate) total_bytes: Option<u64>,
+    }
+    pub(crate) fn attachment_download_progress_event(
+        f: AttachmentDownloadProgressFixture,
+    ) -> AppEvent {
+        AppEvent::AttachmentDownloadProgress {
+            id: f.id,
+            downloaded_bytes: f.downloaded_bytes,
+            total_bytes: f.total_bytes,
+        }
+    }
+
+    pub(crate) struct MessageReactionRemoveEmojiFixture {
+        pub(crate) guild_id: Option<Id<GuildMarker>>,
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) message_id: Id<MessageMarker>,
+        pub(crate) emoji: ReactionEmoji,
+    }
+
+    impl MessageReactionRemoveEmojiFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                guild_id: None,
+                channel_id: Id::new(1),
+                message_id: Id::new(1),
+                emoji: ReactionEmoji::Unicode(String::new()),
+            }
+        }
+    }
+
+    pub(crate) fn message_reaction_remove_emoji_event(
+        f: MessageReactionRemoveEmojiFixture,
+    ) -> AppEvent {
+        AppEvent::MessageReactionRemoveEmoji {
+            guild_id: f.guild_id,
+            channel_id: f.channel_id,
+            message_id: f.message_id,
+            emoji: f.emoji,
+        }
+    }
+
+    pub(crate) struct ForumPostsLoadFailedFixture {
+        pub(crate) channel_id: Id<ChannelMarker>,
+        pub(crate) archive_state: ForumPostArchiveState,
+        pub(crate) offset: usize,
+        pub(crate) message: String,
+    }
+
+    impl ForumPostsLoadFailedFixture {
+        pub(crate) fn new() -> Self {
+            Self {
+                channel_id: Id::new(1),
+                archive_state: ForumPostArchiveState::default(),
+                offset: 0,
+                message: String::new(),
+            }
+        }
+    }
+
+    pub(crate) fn forum_posts_load_failed_event(f: ForumPostsLoadFailedFixture) -> AppEvent {
+        AppEvent::ForumPostsLoadFailed {
+            channel_id: f.channel_id,
+            archive_state: f.archive_state,
+            offset: f.offset,
+            message: f.message,
+        }
+    }
+
+    pub(crate) struct AttachmentDownloadFailedFixture {
+        pub(crate) id: AttachmentDownloadId,
+        pub(crate) filename: String,
+        pub(crate) message: String,
+        pub(crate) source: DownloadAttachmentSource,
+    }
+    pub(crate) fn attachment_download_failed_event(f: AttachmentDownloadFailedFixture) -> AppEvent {
+        AppEvent::AttachmentDownloadFailed {
+            id: f.id,
+            filename: f.filename,
+            message: f.message,
+            source: f.source,
+        }
+    }
+    pub(crate) struct AttachmentDownloadCompletedFixture {
+        pub(crate) id: AttachmentDownloadId,
+        pub(crate) path: String,
+        pub(crate) source: DownloadAttachmentSource,
+    }
+    pub(crate) fn attachment_download_completed_event(
+        f: AttachmentDownloadCompletedFixture,
+    ) -> AppEvent {
+        AppEvent::AttachmentDownloadCompleted {
+            id: f.id,
+            path: f.path,
+            source: f.source,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

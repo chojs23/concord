@@ -1,16 +1,21 @@
 use super::*;
+use crate::discord::test_builders::{
+    VoiceConnectionStatusChangedFixture, guild_create_event, voice_connection_status_changed_event,
+};
 use crate::discord::{AppCommand, VoiceScope};
 use crate::tui::keybindings::OptionsCategoryShortcut;
 
 #[test]
 fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     let mut state = DashboardState::new();
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        scope: VoiceScope::Guild(Id::new(1)),
-        channel_id: Some(Id::new(11)),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Some(Id::new(11)),
+            status: VoiceConnectionStatus::Connecting,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
     state.open_options_category_picker();
     state.open_options_category_from_shortcut(OptionsCategoryShortcut::Voice);
 
@@ -116,11 +121,10 @@ fn voice_channel_action_emits_join_then_leave_command() {
         microphone_volume: Default::default(),
         voice_output_volume: Default::default(),
     });
-    state.push_event(guild_create_event(
-        Id::new(1),
-        "guild",
-        vec![voice_channel_info(Id::new(1), Id::new(11), "Lobby")],
-    ));
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![voice_channel_info(Id::new(1), Id::new(11), "Lobby")],
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state.activate_guild(super::ActiveGuildScope::Guild(Id::new(1)));
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
@@ -139,12 +143,14 @@ fn voice_channel_action_emits_join_then_leave_command() {
         })
     );
 
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        scope: VoiceScope::Guild(Id::new(1)),
-        channel_id: Some(Id::new(11)),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Some(Id::new(11)),
+            status: VoiceConnectionStatus::Connecting,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
     state.open_selected_channel_actions();
     let actions = state.selected_channel_action_items();
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
@@ -167,12 +173,14 @@ fn voice_channel_action_emits_join_then_leave_command() {
 #[test]
 fn voice_direct_actions_toggle_state_and_leave_current_voice() {
     let mut state = DashboardState::new();
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        scope: VoiceScope::Guild(Id::new(1)),
-        channel_id: Some(Id::new(11)),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Some(Id::new(11)),
+            status: VoiceConnectionStatus::Connecting,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
 
     state.toggle_voice_mute();
     assert!(state.voice_options().self_mute);
@@ -223,11 +231,10 @@ fn other_client_voice_state_shows_header_only() {
         user: "me".to_owned(),
         user_id: Some(Id::new(10)),
     });
-    state.push_event(guild_create_event(
-        Id::new(1),
-        "guild",
-        vec![voice_channel_info(Id::new(1), Id::new(11), "Lobby")],
-    ));
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![voice_channel_info(Id::new(1), Id::new(11), "Lobby")],
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             session_id: Some("other-client-voice-session".to_owned()),
@@ -262,23 +269,18 @@ fn voice_channel_join_action_requires_connect_permission() {
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(1),
         owner_id: Some(owner),
         channels: vec![voice_channel_info(guild_id, voice_id, "Lobby")],
         members: vec![member_with_username(me, "me", "me")],
-        presences: Vec::new(),
         roles: vec![role_info(
             Id::new(guild_id.get()),
             "@everyone",
             PERM_VIEW_CHANNEL,
         )],
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.activate_guild(super::ActiveGuildScope::Guild(guild_id));
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();

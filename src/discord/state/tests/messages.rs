@@ -276,11 +276,13 @@ fn current_user_poll_vote_update_refreshes_cached_poll_counts() {
         ..MessageCreateFixture::test_fixture_default()
     }));
 
-    state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
-        channel_id,
-        message_id,
-        answer_ids: vec![2],
-    });
+    state.apply_event(&current_user_poll_vote_update_event(
+        CurrentUserPollVoteUpdateFixture {
+            channel_id,
+            message_id,
+            answer_ids: vec![2],
+        },
+    ));
     let poll = state.messages_for_channel(channel_id)[0]
         .poll
         .as_ref()
@@ -291,11 +293,13 @@ fn current_user_poll_vote_update_refreshes_cached_poll_counts() {
     assert!(poll.answers[1].me_voted);
     assert_eq!(poll.total_votes, Some(3));
 
-    state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
-        channel_id,
-        message_id,
-        answer_ids: Vec::new(),
-    });
+    state.apply_event(&current_user_poll_vote_update_event(
+        CurrentUserPollVoteUpdateFixture {
+            channel_id,
+            message_id,
+            ..CurrentUserPollVoteUpdateFixture::new()
+        },
+    ));
     let poll = state.messages_for_channel(channel_id)[0]
         .poll
         .as_ref()
@@ -326,11 +330,13 @@ fn current_user_poll_vote_update_handles_missing_answer_counts() {
         ..MessageCreateFixture::test_fixture_default()
     }));
 
-    state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
-        channel_id,
-        message_id,
-        answer_ids: vec![2],
-    });
+    state.apply_event(&current_user_poll_vote_update_event(
+        CurrentUserPollVoteUpdateFixture {
+            channel_id,
+            message_id,
+            answer_ids: vec![2],
+        },
+    ));
 
     let poll = state.messages_for_channel(channel_id)[0]
         .poll
@@ -609,11 +615,11 @@ fn bulk_delete_removes_messages_from_normal_and_pinned_caches() {
         messages: vec![message_info(channel_id, 20, "pinned delete")],
     });
 
-    state.apply_event(&AppEvent::MessageDeleteBulk {
+    state.apply_event(&message_delete_bulk_event(MessageDeleteBulkFixture {
         guild_id: Some(Id::new(1)),
         channel_id,
         message_ids: vec![Id::new(20), Id::new(30)],
-    });
+    }));
 
     assert_eq!(
         state
@@ -699,19 +705,19 @@ fn message_pinned_update_updates_pinned_cache() {
         channel_id,
         vec![message_info(channel_id, 20, "normal")],
     ));
-    state.apply_event(&AppEvent::MessagePinnedUpdate {
+    state.apply_event(&message_pinned_update_event(MessagePinnedUpdateFixture {
         channel_id,
         message_id: Id::new(20),
         pinned: true,
-    });
+    }));
     assert!(state.messages_for_channel(channel_id)[0].pinned);
     assert_eq!(state.pinned_messages_for_channel(channel_id).len(), 1);
 
-    state.apply_event(&AppEvent::MessagePinnedUpdate {
+    state.apply_event(&message_pinned_update_event(MessagePinnedUpdateFixture {
         channel_id,
         message_id: Id::new(20),
-        pinned: false,
-    });
+        ..MessagePinnedUpdateFixture::new()
+    }));
     assert!(!state.messages_for_channel(channel_id)[0].pinned);
     assert!(state.pinned_messages_for_channel(channel_id).is_empty());
 }
@@ -727,11 +733,11 @@ fn channel_pins_update_invalidates_loaded_pinned_cache() {
     });
     assert_eq!(state.pinned_messages_for_channel(channel_id).len(), 1);
 
-    state.apply_event(&AppEvent::ChannelPinsUpdate {
-        guild_id: None,
+    state.apply_event(&channel_pins_update_event(ChannelPinsUpdateFixture {
         channel_id,
         last_pin_timestamp: Some("2026-05-25T12:34:56.000000+00:00".to_owned()),
-    });
+        ..ChannelPinsUpdateFixture::new()
+    }));
 
     assert!(state.pinned_messages_for_channel(channel_id).is_empty());
 }
@@ -746,24 +752,26 @@ fn reaction_events_update_pinned_cache() {
         channel_id,
         messages: vec![message_info(channel_id, 20, "pin")],
     });
-    state.apply_event(&AppEvent::MessageReactionAdd {
-        guild_id: None,
+    state.apply_event(&message_reaction_add_event(MessageReactionAddFixture {
         channel_id,
         message_id: Id::new(20),
         user_id: Id::new(50),
         emoji: emoji.clone(),
-    });
+        ..MessageReactionAddFixture::new()
+    }));
 
     let pinned = state.pinned_messages_for_channel(channel_id)[0];
     assert_eq!(pinned.reactions.len(), 1);
     assert_eq!(pinned.reactions[0].emoji, emoji);
     assert_eq!(pinned.reactions[0].count, 1);
 
-    state.apply_event(&AppEvent::MessageReactionRemoveAll {
-        guild_id: None,
-        channel_id,
-        message_id: Id::new(20),
-    });
+    state.apply_event(&message_reaction_remove_all_event(
+        MessageReactionRemoveAllFixture {
+            channel_id,
+            message_id: Id::new(20),
+            ..MessageReactionRemoveAllFixture::new()
+        },
+    ));
     assert!(
         state.pinned_messages_for_channel(channel_id)[0]
             .reactions
@@ -782,11 +790,13 @@ fn poll_vote_updates_update_pinned_cache() {
         channel_id,
         messages: vec![message],
     });
-    state.apply_event(&AppEvent::CurrentUserPollVoteUpdate {
-        channel_id,
-        message_id: Id::new(20),
-        answer_ids: vec![2],
-    });
+    state.apply_event(&current_user_poll_vote_update_event(
+        CurrentUserPollVoteUpdateFixture {
+            channel_id,
+            message_id: Id::new(20),
+            answer_ids: vec![2],
+        },
+    ));
 
     let poll = state.pinned_messages_for_channel(channel_id)[0]
         .poll
@@ -1049,11 +1059,11 @@ fn older_history_preserves_existing_messages_when_message_limit_is_reached() {
             message_info(channel_id, 12, "new"),
         ],
     ));
-    state.apply_event(&AppEvent::MessageHistoryLoaded {
+    state.apply_event(&message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(10)),
         messages: vec![message_info(channel_id, 5, "older")],
-    });
+    }));
 
     let messages = state.messages_for_channel(channel_id);
     assert_eq!(
@@ -1078,7 +1088,7 @@ fn older_history_is_bounded_by_extra_window() {
             message_info(channel_id, 12, "new"),
         ],
     ));
-    state.apply_event(&AppEvent::MessageHistoryLoaded {
+    state.apply_event(&message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(10)),
         messages: vec![
@@ -1088,7 +1098,7 @@ fn older_history_is_bounded_by_extra_window() {
             message_info(channel_id, 4, "older 4"),
             message_info(channel_id, 5, "older 5"),
         ],
-    });
+    }));
 
     let messages = state.messages_for_channel(channel_id);
     assert_eq!(messages.len(), 6);
@@ -1114,11 +1124,11 @@ fn live_message_after_older_history_keeps_newer_window() {
             message_info(channel_id, 12, "new"),
         ],
     ));
-    state.apply_event(&AppEvent::MessageHistoryLoaded {
+    state.apply_event(&message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(10)),
         messages: vec![message_info(channel_id, 5, "older")],
-    });
+    }));
     state.apply_event(&message_create_event(MessageCreateFixture {
         guild_id: None,
         channel_id,
@@ -1150,32 +1160,36 @@ fn newer_history_gap_is_recorded_shrunk_and_closed() {
             message_info(channel_id, 101, "newer 101"),
         ],
     ));
-    state.apply_event(&AppEvent::MessageHistoryAroundLoaded {
-        channel_id,
-        message_id: Id::new(11),
-        messages: vec![
-            message_info(channel_id, 10, "around 10"),
-            message_info(channel_id, 11, "around 11"),
-            message_info(channel_id, 12, "around 12"),
-        ],
-    });
+    state.apply_event(&message_history_around_loaded_event(
+        MessageHistoryAroundLoadedFixture {
+            channel_id,
+            message_id: Id::new(11),
+            messages: vec![
+                message_info(channel_id, 10, "around 10"),
+                message_info(channel_id, 11, "around 11"),
+                message_info(channel_id, 12, "around 12"),
+            ],
+        },
+    ));
     assert_eq!(
         state.message_history_gap_after(channel_id, Id::new(12)),
         Some(Id::new(100))
     );
 
-    state.apply_event(&AppEvent::MessageHistoryAfterLoaded {
-        channel_id,
-        after: Id::new(12),
-        messages: vec![
-            message_info(channel_id, 13, "gap 13"),
-            message_info(channel_id, 14, "gap 14"),
-            message_info(channel_id, 15, "gap 15"),
-            message_info(channel_id, 16, "gap 16"),
-        ],
-        has_more: true,
-        mode: MessageHistoryAfterMode::GapFill,
-    });
+    state.apply_event(&message_history_after_loaded_event(
+        MessageHistoryAfterLoadedFixture {
+            channel_id,
+            after: Id::new(12),
+            messages: vec![
+                message_info(channel_id, 13, "gap 13"),
+                message_info(channel_id, 14, "gap 14"),
+                message_info(channel_id, 15, "gap 15"),
+                message_info(channel_id, 16, "gap 16"),
+            ],
+            has_more: true,
+            mode: MessageHistoryAfterMode::GapFill,
+        },
+    ));
     let messages = state.messages_for_channel(channel_id);
     assert_eq!(
         messages
@@ -1189,16 +1203,18 @@ fn newer_history_gap_is_recorded_shrunk_and_closed() {
         Some(Id::new(100))
     );
 
-    state.apply_event(&AppEvent::MessageHistoryAfterLoaded {
-        channel_id,
-        after: Id::new(16),
-        messages: vec![
-            message_info(channel_id, 17, "gap 17"),
-            message_info(channel_id, 100, "upper 100"),
-        ],
-        has_more: false,
-        mode: MessageHistoryAfterMode::GapFill,
-    });
+    state.apply_event(&message_history_after_loaded_event(
+        MessageHistoryAfterLoadedFixture {
+            channel_id,
+            after: Id::new(16),
+            messages: vec![
+                message_info(channel_id, 17, "gap 17"),
+                message_info(channel_id, 100, "upper 100"),
+            ],
+            mode: MessageHistoryAfterMode::GapFill,
+            ..MessageHistoryAfterLoadedFixture::new()
+        },
+    ));
 
     let messages = state.messages_for_channel(channel_id);
     assert_eq!(
@@ -1228,21 +1244,25 @@ fn current_user_reaction_events_update_cached_reaction_summary() {
         ..MessageCreateFixture::test_fixture_default()
     }));
 
-    state.apply_event(&AppEvent::CurrentUserReactionAdd {
-        channel_id,
-        message_id,
-        emoji: ReactionEmoji::Unicode("👍".to_owned()),
-    });
+    state.apply_event(&current_user_reaction_add_event(
+        CurrentUserReactionAddFixture {
+            channel_id,
+            message_id,
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        },
+    ));
     let message = state.messages_for_channel(channel_id)[0];
     assert_eq!(message.reactions.len(), 1);
     assert_eq!(message.reactions[0].count, 1);
     assert!(message.reactions[0].me);
 
-    state.apply_event(&AppEvent::CurrentUserReactionRemove {
-        channel_id,
-        message_id,
-        emoji: ReactionEmoji::Unicode("👍".to_owned()),
-    });
+    state.apply_event(&current_user_reaction_remove_event(
+        CurrentUserReactionRemoveFixture {
+            channel_id,
+            message_id,
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        },
+    ));
     assert!(
         state.messages_for_channel(channel_id)[0]
             .reactions
@@ -1265,33 +1285,35 @@ fn gateway_reaction_events_update_cached_reaction_summary() {
         ..MessageCreateFixture::test_fixture_default()
     }));
 
-    state.apply_event(&AppEvent::MessageReactionAdd {
-        guild_id: None,
+    state.apply_event(&message_reaction_add_event(MessageReactionAddFixture {
         channel_id,
         message_id,
         user_id: Id::new(50),
         emoji: emoji.clone(),
-    });
-    state.apply_event(&AppEvent::MessageReactionAdd {
-        guild_id: None,
+        ..MessageReactionAddFixture::new()
+    }));
+    state.apply_event(&message_reaction_add_event(MessageReactionAddFixture {
         channel_id,
         message_id,
         user_id: Id::new(51),
         emoji: emoji.clone(),
-    });
+        ..MessageReactionAddFixture::new()
+    }));
 
     let message = state.messages_for_channel(channel_id)[0];
     assert_eq!(message.reactions.len(), 1);
     assert_eq!(message.reactions[0].count, 2);
     assert!(!message.reactions[0].me);
 
-    state.apply_event(&AppEvent::MessageReactionRemove {
-        guild_id: None,
-        channel_id,
-        message_id,
-        user_id: Id::new(50),
-        emoji,
-    });
+    state.apply_event(&message_reaction_remove_event(
+        MessageReactionRemoveFixture {
+            channel_id,
+            message_id,
+            user_id: Id::new(50),
+            emoji,
+            ..MessageReactionRemoveFixture::new()
+        },
+    ));
 
     let message = state.messages_for_channel(channel_id)[0];
     assert_eq!(message.reactions.len(), 1);
@@ -1319,41 +1341,47 @@ fn current_user_gateway_reaction_events_reconcile_optimistic_updates() {
         ..MessageCreateFixture::test_fixture_default()
     }));
 
-    state.apply_event(&AppEvent::CurrentUserReactionAdd {
-        channel_id,
-        message_id,
-        emoji: emoji.clone(),
-    });
-    state.apply_event(&AppEvent::MessageReactionAdd {
-        guild_id: None,
+    state.apply_event(&current_user_reaction_add_event(
+        CurrentUserReactionAddFixture {
+            channel_id,
+            message_id,
+            emoji: emoji.clone(),
+        },
+    ));
+    state.apply_event(&message_reaction_add_event(MessageReactionAddFixture {
         channel_id,
         message_id,
         user_id: current_user_id,
         emoji: emoji.clone(),
-    });
+        ..MessageReactionAddFixture::new()
+    }));
     let message = state.messages_for_channel(channel_id)[0];
     assert_eq!(message.reactions[0].count, 1);
     assert!(message.reactions[0].me);
 
-    state.apply_event(&AppEvent::MessageReactionAdd {
-        guild_id: None,
+    state.apply_event(&message_reaction_add_event(MessageReactionAddFixture {
         channel_id,
         message_id,
         user_id: Id::new(50),
         emoji: emoji.clone(),
-    });
-    state.apply_event(&AppEvent::CurrentUserReactionRemove {
-        channel_id,
-        message_id,
-        emoji: emoji.clone(),
-    });
-    state.apply_event(&AppEvent::MessageReactionRemove {
-        guild_id: None,
-        channel_id,
-        message_id,
-        user_id: current_user_id,
-        emoji,
-    });
+        ..MessageReactionAddFixture::new()
+    }));
+    state.apply_event(&current_user_reaction_remove_event(
+        CurrentUserReactionRemoveFixture {
+            channel_id,
+            message_id,
+            emoji: emoji.clone(),
+        },
+    ));
+    state.apply_event(&message_reaction_remove_event(
+        MessageReactionRemoveFixture {
+            channel_id,
+            message_id,
+            user_id: current_user_id,
+            emoji,
+            ..MessageReactionRemoveFixture::new()
+        },
+    ));
 
     let message = state.messages_for_channel(channel_id)[0];
     assert_eq!(message.reactions.len(), 1);
@@ -1383,12 +1411,14 @@ fn gateway_reaction_clear_events_update_cached_reaction_summary() {
         }],
     ));
 
-    state.apply_event(&AppEvent::MessageReactionRemoveEmoji {
-        guild_id: None,
-        channel_id,
-        message_id,
-        emoji: thumbs_up,
-    });
+    state.apply_event(&message_reaction_remove_emoji_event(
+        MessageReactionRemoveEmojiFixture {
+            channel_id,
+            message_id,
+            emoji: thumbs_up,
+            ..MessageReactionRemoveEmojiFixture::new()
+        },
+    ));
 
     let message = state.messages_for_channel(channel_id)[0];
     assert_eq!(message.reactions.len(), 1);
@@ -1397,11 +1427,13 @@ fn gateway_reaction_clear_events_update_cached_reaction_summary() {
         ReactionEmoji::Unicode("🎉".to_owned())
     );
 
-    state.apply_event(&AppEvent::MessageReactionRemoveAll {
-        guild_id: None,
-        channel_id,
-        message_id,
-    });
+    state.apply_event(&message_reaction_remove_all_event(
+        MessageReactionRemoveAllFixture {
+            channel_id,
+            message_id,
+            ..MessageReactionRemoveAllFixture::new()
+        },
+    ));
 
     assert!(
         state.messages_for_channel(channel_id)[0]

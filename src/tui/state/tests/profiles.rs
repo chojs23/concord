@@ -1,4 +1,7 @@
 use super::*;
+use crate::discord::test_builders::{
+    UserProfileLoadFailedFixture, guild_create_event, user_profile_load_failed_event,
+};
 use crate::discord::{
     ActivityInfo, AppCommand, GlobalUserProfileUpdate, GuildUserProfileUpdate,
     MessageAttachmentUpload, ProfileAvatarUpload, UserProfileUpdate,
@@ -60,11 +63,13 @@ fn user_profile_load_failure_marks_open_popup_failed() {
     let mut state = DashboardState::new();
 
     state.open_user_profile_popup(user_id, Some(guild_id));
-    state.push_event(AppEvent::UserProfileLoadFailed {
-        user_id,
-        guild_id: Some(guild_id),
-        message: "network failed".to_owned(),
-    });
+    state.push_event(user_profile_load_failed_event(
+        UserProfileLoadFailedFixture {
+            user_id,
+            guild_id: Some(guild_id),
+            message: "network failed".to_owned(),
+        },
+    ));
 
     assert_eq!(
         state.user_profile_popup_load_error(),
@@ -80,11 +85,13 @@ fn user_profile_load_failure_ignores_stale_popup() {
     let mut state = DashboardState::new();
 
     state.open_user_profile_popup(user_id, Some(open_guild));
-    state.push_event(AppEvent::UserProfileLoadFailed {
-        user_id,
-        guild_id: Some(stale_guild),
-        message: "stale failure".to_owned(),
-    });
+    state.push_event(user_profile_load_failed_event(
+        UserProfileLoadFailedFixture {
+            user_id,
+            guild_id: Some(stale_guild),
+            message: "stale failure".to_owned(),
+        },
+    ));
 
     assert_eq!(state.user_profile_popup_load_error(), None);
 }
@@ -95,19 +102,11 @@ fn user_profile_popup_status_uses_cached_guild_member_status() {
     let guild_id: Id<GuildMarker> = Id::new(1);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         members: vec![member_info(user_id, "neo")],
         presences: vec![(user_id, PresenceStatus::DoNotDisturb)],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.open_user_profile_popup(user_id, Some(guild_id));
 
     assert_eq!(
@@ -550,11 +549,13 @@ fn profile_reload_failure_after_save_clears_saving_state() {
     assert!(state.save_user_profile_settings_command().is_some());
     assert!(state.user_profile_settings_saving());
 
-    state.push_event(AppEvent::UserProfileLoadFailed {
-        user_id,
-        guild_id: None,
-        message: "reload failed".to_owned(),
-    });
+    state.push_event(user_profile_load_failed_event(
+        UserProfileLoadFailedFixture {
+            user_id,
+            message: "reload failed".to_owned(),
+            ..UserProfileLoadFailedFixture::new()
+        },
+    ));
 
     assert!(!state.user_profile_settings_saving());
     assert_eq!(

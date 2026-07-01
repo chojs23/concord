@@ -38,23 +38,15 @@ fn message_author_uses_cached_member_display_name() {
     let author_id = Id::new(4);
     let mut state = DiscordState::default();
 
-    state.apply_event(&AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.apply_event(&guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..channel_info(channel_id, "GuildText", Vec::new())
         }],
         members: vec![member_info(author_id, "server alias")],
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.apply_event(&message_create_event(MessageCreateFixture {
         guild_id: Some(guild_id),
         channel_id,
@@ -145,13 +137,13 @@ fn user_identity_update_refreshes_existing_dm_message_author() {
         content: Some("hello".to_owned()),
         ..MessageCreateFixture::test_fixture_default()
     }));
-    state.apply_event(&AppEvent::UserIdentityUpdate {
+    state.apply_event(&user_identity_update_event(UserIdentityUpdateFixture {
         user_id: author_id,
         username: "alice".to_owned(),
         global_name: Some("Alice New".to_owned()),
         avatar_url: Some("https://cdn.discordapp.com/avatars/4/new.png".to_owned()),
-        is_bot: false,
-    });
+        ..UserIdentityUpdateFixture::new()
+    }));
 
     let messages = state.messages_for_channel(channel_id);
     assert_eq!(messages[0].author, "Alice New");

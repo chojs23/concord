@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::test_builders::guild_create_event;
 
 #[test]
 fn tracks_current_user_from_ready() {
@@ -79,21 +80,13 @@ fn desktop_notification_for_event_respects_notification_opt_out() {
         user: "me".to_owned(),
         user_id: Some(Id::new(10)),
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(1),
-        owner_id: None,
         channels: vec![positioned_text_channel_info(
             guild_id, channel_id, "general", 0,
         )],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.push_event(user_guild_settings_init(vec![
         GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::AllMessages),

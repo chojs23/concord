@@ -1,30 +1,25 @@
 use ratatui::style::Stylize;
 
 use super::*;
+use crate::discord::test_builders::{
+    GuildCreateFixture, MessageHistoryLoadedFixture, MessageReactionAddFixture, guild_create_event,
+    message_history_loaded_event, message_reaction_add_event,
+};
 
 #[test]
 fn server_pane_shows_guild_mention_badge() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             last_message_id: Some(Id::new(10)),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.push_event(AppEvent::ReadStateInit {
         entries: vec![ReadStateInfo {
             last_acked_message_id: Some(Id::new(10)),
@@ -59,24 +54,15 @@ fn active_server_mention_badge_keeps_active_name_style() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             last_message_id: Some(Id::new(10)),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.set_guild_view_height(20);
     assert!(state.select_visible_pane_row(FocusPane::Guilds, 1));
     state.confirm_selected_guild();
@@ -132,12 +118,7 @@ fn message_viewport_author_uses_resolved_role_color() {
     let role_id = Id::new(100);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
@@ -153,9 +134,8 @@ fn message_viewport_author_uses_resolved_role_color() {
             position: 10,
             ..RoleInfo::test(role_id, "Blue")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.push_event(message_create_event(MessageCreateFixture {
@@ -232,12 +212,7 @@ fn history_message_author_uses_channel_guild_for_role_color() {
     let role_id = Id::new(100);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
@@ -253,14 +228,12 @@ fn history_message_author_uses_channel_guild_for_role_color() {
             position: 10,
             ..RoleInfo::test(role_id, "Blue")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
-        before: None,
         messages: vec![MessageInfo {
             guild_id: None,
             channel_id,
@@ -282,7 +255,8 @@ fn history_message_author_uses_channel_guild_for_role_color() {
             forwarded_snapshots: Vec::new(),
             ..MessageInfo::default()
         }],
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
 
     let messages = state.messages();
     let lines = message_viewport_lines(
@@ -1050,25 +1024,17 @@ fn message_content_highlights_current_user_role_mentions_as_self_mentions() {
         user: "neo".to_owned(),
         user_id: Some(Id::new(99)),
     });
-    state.push_event(AppEvent::GuildCreate {
-        boost_tier: GuildBoostTier::None,
-        boost_count: 0,
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         members: vec![MemberInfo {
             role_ids: vec![role_id],
             ..MemberInfo::test(Id::new(99), "neo")
         }],
-        presences: Vec::new(),
         roles: vec![RoleInfo {
             position: 1,
             ..RoleInfo::test(role_id, "moderators")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
 
     let lines = message_item_lines(
         message.author.clone(),
@@ -1555,13 +1521,13 @@ fn message_viewport_lines_start_new_author_group_after_time_gap() {
 #[test]
 fn message_viewport_lines_keep_reactions_below_reacted_grouped_message() {
     let mut state = state_with_message();
-    state.push_event(AppEvent::MessageReactionAdd {
+    state.push_event(message_reaction_add_event(MessageReactionAddFixture {
         guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
         message_id: Id::new(1),
         user_id: Id::new(100),
         emoji: ReactionEmoji::Unicode("👍".to_owned()),
-    });
+    }));
     push_message(&mut state, 2, "follow-up");
     state.jump_top();
     let messages = state.messages();

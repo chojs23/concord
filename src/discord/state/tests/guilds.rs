@@ -57,18 +57,15 @@ fn guild_update_replaces_custom_emojis_when_field_is_present() {
         emojis: vec![CustomEmojiInfo::test(Id::new(50), "party")],
         ..GuildCreateFixture::new(guild_id)
     }));
-    state.apply_event(&AppEvent::GuildUpdate {
-        boost_tier: None,
-        boost_count: None,
+    state.apply_event(&guild_update_event(GuildUpdateFixture {
         guild_id,
         name: "guild renamed".to_owned(),
-        roles: None,
         emojis: Some(vec![CustomEmojiInfo {
             animated: true,
             ..CustomEmojiInfo::test(Id::new(70), "dance")
         }]),
-        owner_id: None,
-    });
+        ..GuildUpdateFixture::new()
+    }));
 
     let emojis = state.custom_emojis_for_guild(guild_id);
     assert_eq!(emojis.len(), 1);
@@ -86,15 +83,11 @@ fn guild_update_without_emoji_field_keeps_cached_custom_emojis() {
         emojis: vec![CustomEmojiInfo::test(Id::new(50), "party")],
         ..GuildCreateFixture::new(guild_id)
     }));
-    state.apply_event(&AppEvent::GuildUpdate {
-        boost_tier: None,
-        boost_count: None,
+    state.apply_event(&guild_update_event(GuildUpdateFixture {
         guild_id,
         name: "guild renamed".to_owned(),
-        roles: None,
-        emojis: None,
-        owner_id: None,
-    });
+        ..GuildUpdateFixture::new()
+    }));
 
     let emojis = state.custom_emojis_for_guild(guild_id);
     assert_eq!(emojis.len(), 1);

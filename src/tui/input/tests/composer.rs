@@ -972,11 +972,13 @@ fn emoji_picker_selection_returns_reaction_command() {
 fn emoji_picker_selection_removes_existing_own_reaction() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
-    state.push_event(AppEvent::CurrentUserReactionAdd {
-        channel_id: Id::new(2),
-        message_id: Id::new(1),
-        emoji: ReactionEmoji::Unicode("👍".to_owned()),
-    });
+    state.push_event(current_user_reaction_add_event(
+        CurrentUserReactionAddFixture {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        },
+    ));
     open_emoji_picker(&mut state);
 
     let command = handle_key(&mut state, key(KeyCode::Enter));

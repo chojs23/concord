@@ -1,5 +1,6 @@
 use super::*;
 use crate::discord::AppCommand;
+use crate::discord::test_builders::{ReactionUsersLoadedFixture, reaction_users_loaded_event};
 
 fn push_foreign_reaction_emojis(state: &mut DashboardState) {
     state.push_event(AppEvent::GuildEmojisUpdate {
@@ -402,14 +403,14 @@ fn show_reacted_users_action_loads_all_reaction_emojis() {
 fn reaction_users_loaded_opens_popup_state() {
     let mut state = state_with_messages(1);
 
-    state.push_event(AppEvent::ReactionUsersLoaded {
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
         reactions: vec![ReactionUsersInfo {
             users: vec![ReactionUserInfo::test(Id::new(10), "neo")],
             ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
         }],
-    });
+    }));
 
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
     assert_eq!(
@@ -423,7 +424,7 @@ fn reaction_users_loaded_opens_popup_state() {
 #[test]
 fn reaction_users_popup_scroll_down_clamps_at_bottom() {
     let mut state = state_with_messages(1);
-    state.push_event(AppEvent::ReactionUsersLoaded {
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
         reactions: vec![ReactionUsersInfo {
@@ -432,7 +433,7 @@ fn reaction_users_popup_scroll_down_clamps_at_bottom() {
                 .collect(),
             ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
         }],
-    });
+    }));
     // 1 header + 6 users = 7 data lines. With a 3-line viewport the
     // furthest the user can scroll is 4.
     state.set_reaction_users_popup_view_height(3);
