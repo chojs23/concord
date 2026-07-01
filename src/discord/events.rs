@@ -13,11 +13,11 @@ use super::commands::{
     MessageHistoryAfterMode, MessageSearchPage, MessageSearchQuery, ReactionEmoji,
 };
 use super::{
-    ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo,
-    GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, PollInfo, PresenceStatus,
-    ReactionUsersInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas, UserProfileInfo,
-    UserSettingsInfo, VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind,
-    VoiceStateInfo, is_thread_kind,
+    ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildBoostTier,
+    GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, PollInfo, PremiumTier,
+    PresenceStatus, ReactionUsersInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas,
+    UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceScope, VoiceServerInfo,
+    VoiceSoundKind, VoiceStateInfo, is_thread_kind,
 };
 
 #[cfg(test)]
@@ -144,7 +144,7 @@ pub enum AppEvent {
     },
     SignedOut,
     CurrentUserCapabilities {
-        has_nitro: bool,
+        premium_tier: PremiumTier,
     },
     UserIdentityUpdate {
         user_id: Id<UserMarker>,
@@ -164,6 +164,8 @@ pub enum AppEvent {
         /// Snowflake of the guild owner. The owner short-circuits permission
         /// checks (sees every channel regardless of overwrites).
         owner_id: Option<Id<UserMarker>>,
+        boost_tier: GuildBoostTier,
+        boost_count: u32,
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
         presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -174,6 +176,10 @@ pub enum AppEvent {
         guild_id: Id<GuildMarker>,
         name: String,
         owner_id: Option<Id<UserMarker>>,
+        // `Some` only when this GUILD_UPDATE payload actually carried the field,
+        // so a rename does not reset a guild's boost state to unboosted.
+        boost_tier: Option<GuildBoostTier>,
+        boost_count: Option<u32>,
         roles: Option<Vec<RoleInfo>>,
         emojis: Option<Vec<CustomEmojiInfo>>,
     },
@@ -879,7 +885,6 @@ impl AppEventKind {
             | AppEventKind::GatewayDispatchReceived
             | AppEventKind::SignedOut
             | AppEventKind::MediaPlaybackWindowReady
-            | AppEventKind::CurrentUserCapabilities
             | AppEventKind::ApplicationCommandsLoaded
             | AppEventKind::AttachmentDownloadStarted
             | AppEventKind::AttachmentDownloadProgress
@@ -908,6 +913,14 @@ impl AppEventKind {
             | AppEventKind::GatewayClosed => AppEventMetadata::effect_only(),
 
             AppEventKind::VoiceServerUpdate => AppEventMetadata::inert(),
+
+            // The current user's Nitro tier is stored in the session (part of
+            // the navigation snapshot area) so the upload-limit check can read
+            // it, and it still needs effect delivery so the TUI can update
+            // Nitro-gated UI such as the emoji picker.
+            AppEventKind::CurrentUserCapabilities => {
+                AppEventMetadata::mutating_effect(SnapshotAreas::navigation())
+            }
 
             AppEventKind::ThreadNotificationLevelUpdate => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation())
@@ -1057,10 +1070,12 @@ mod tests {
     }
 
     #[test]
-    fn current_user_capabilities_are_delivered_as_ui_effect_only() {
-        let event = AppEvent::CurrentUserCapabilities { has_nitro: true };
+    fn current_user_capabilities_mutate_state_and_deliver_ui_effect() {
+        let event = AppEvent::CurrentUserCapabilities {
+            premium_tier: PremiumTier::Nitro,
+        };
 
-        assert!(!event.mutates_discord_state());
+        assert!(event.mutates_discord_state());
         assert!(event.needs_effect_delivery());
     }
 

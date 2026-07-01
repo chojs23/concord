@@ -9,6 +9,8 @@ fn tracks_members_and_presences() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(100),
@@ -75,6 +77,8 @@ fn user_identity_update_preserves_guild_member_avatar() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -125,6 +129,8 @@ fn tracks_voice_participants_join_move_and_leave() {
     });
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(2),
@@ -472,6 +478,8 @@ fn guild_create_replaces_cached_voice_state_snapshot() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -491,6 +499,8 @@ fn guild_create_replaces_cached_voice_state_snapshot() {
     );
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -516,6 +526,8 @@ fn presence_update_does_not_create_fallback_member() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(100),
@@ -547,6 +559,8 @@ fn real_member_add_and_remove_update_known_member_count() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -589,6 +603,8 @@ fn guild_member_remove_decrements_known_count_for_unloaded_member() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(3),
@@ -617,6 +633,8 @@ fn guild_create_caches_roles_and_member_role_ids() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -695,6 +713,8 @@ fn message_author_role_color_uses_history_author_roles_when_member_is_missing() 
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -732,6 +752,8 @@ fn message_author_role_color_uses_live_author_roles_when_member_is_missing() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -774,6 +796,8 @@ fn message_author_role_color_uses_profile_roles_when_message_roles_are_missing()
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -816,6 +840,8 @@ fn message_author_role_color_does_not_use_message_roles_when_member_is_cached() 
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

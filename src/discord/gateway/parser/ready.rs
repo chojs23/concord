@@ -15,7 +15,7 @@ use super::{
     channels::{parse_channel_info, parse_channel_recipient_info},
     guilds::{
         parse_guild_create, parse_role_info, parse_user_guild_settings_entries,
-        parse_user_has_nitro,
+        parse_user_premium_tier,
     },
     members::parse_member_info,
     presence::parse_presence_entry,
@@ -46,8 +46,8 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
             user: name,
             user_id,
         });
-        if let Some(has_nitro) = parse_user_has_nitro(user) {
-            events.push(AppEvent::CurrentUserCapabilities { has_nitro });
+        if let Some(premium_tier) = parse_user_premium_tier(user) {
+            events.push(AppEvent::CurrentUserCapabilities { premium_tier });
         }
         current_user_id = user_id;
         current_user = parse_channel_recipient_info(user);

@@ -2,6 +2,7 @@ use ratatui::layout::Rect;
 
 use super::super::state::{ActiveModalPopupKind, DashboardState, FocusPane};
 use super::{
+    channel_pane_header_height,
     layout::{centered_rect, dashboard_areas, message_areas},
     panel_block, panel_block_owned,
     popups::{
@@ -60,7 +61,7 @@ pub(crate) fn mouse_target_at(
             column,
             row,
             state.channel_pane_filter_query().is_some(),
-            1,
+            channel_pane_header_height(state),
         )
     {
         return Some(target);

@@ -188,6 +188,8 @@ fn member_search_filters_loaded_members_and_opens_profile() {
     let bob = Id::new(20);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(2),

@@ -164,8 +164,15 @@ impl DiscordRest {
         content: &str,
         applied_tags: &[Id<ForumTagMarker>],
         attachments: &[MessageAttachmentUpload],
+        upload_limit: u64,
     ) -> Result<CreatedForumPost> {
-        let body = create_forum_post_request_body(title, content, applied_tags, attachments)?;
+        let body = create_forum_post_request_body(
+            title,
+            content,
+            applied_tags,
+            attachments,
+            upload_limit,
+        )?;
         let request = self.raw_http.post(format!(
             "https://discord.com/api/v9/channels/{}/threads",
             channel_id.get()
@@ -173,7 +180,7 @@ impl DiscordRest {
         let request = if attachments.is_empty() {
             request.json(&body)
         } else {
-            request.multipart(message_multipart_form(body, attachments).await?)
+            request.multipart(message_multipart_form(body, attachments, upload_limit).await?)
         };
 
         let raw: Value = self.send_json(request, "create forum post").await?;
@@ -345,9 +352,10 @@ pub(super) fn create_forum_post_request_body(
     content: &str,
     applied_tags: &[Id<ForumTagMarker>],
     attachments: &[MessageAttachmentUpload],
+    upload_limit: u64,
 ) -> Result<Value> {
     let title = validate_forum_post_title(title)?;
-    validate_message_payload(content, attachments)?;
+    validate_message_payload(content, attachments, upload_limit)?;
 
     let mut body = json!({
         "name": title,

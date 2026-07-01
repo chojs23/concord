@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     config::ImageProtocolPreference,
-    discord::{AppCommand, DiscordClient, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload},
+    discord::{AppCommand, DiscordClient, MAX_UPLOAD_PREVIEW_BYTES, MessageAttachmentUpload},
     tui::{
         commands as command_helpers,
         media::{
@@ -457,7 +457,7 @@ fn local_upload_preview_bytes(
     attachment: &MessageAttachmentUpload,
 ) -> std::result::Result<Vec<u8>, String> {
     if let Some(bytes) = attachment.bytes() {
-        if bytes.len() as u64 > MAX_UPLOAD_FILE_BYTES {
+        if bytes.len() as u64 > MAX_UPLOAD_PREVIEW_BYTES {
             return Err(format!(
                 "attachment preview is too large: {} bytes",
                 bytes.len()
@@ -474,7 +474,7 @@ fn local_upload_preview_bytes(
     if !metadata.is_file() {
         return Err("attachment preview must be a regular file".to_owned());
     }
-    if metadata.len() > MAX_UPLOAD_FILE_BYTES {
+    if metadata.len() > MAX_UPLOAD_PREVIEW_BYTES {
         return Err(format!(
             "attachment preview is too large: {} bytes",
             metadata.len()
@@ -482,12 +482,12 @@ fn local_upload_preview_bytes(
     }
     let file = std::fs::File::open(path)
         .map_err(|error| format!("open attachment preview failed: {error}"))?;
-    let mut reader = file.take(MAX_UPLOAD_FILE_BYTES.saturating_add(1));
+    let mut reader = file.take(MAX_UPLOAD_PREVIEW_BYTES.saturating_add(1));
     let mut bytes = Vec::new();
     reader
         .read_to_end(&mut bytes)
         .map_err(|error| format!("read attachment preview failed: {error}"))?;
-    if bytes.len() as u64 > MAX_UPLOAD_FILE_BYTES {
+    if bytes.len() as u64 > MAX_UPLOAD_PREVIEW_BYTES {
         return Err(format!(
             "attachment preview is too large: {} bytes",
             bytes.len()

@@ -96,6 +96,8 @@ fn user_profile_popup_status_uses_cached_guild_member_status() {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

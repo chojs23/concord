@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use crate::discord::{
-    ChannelInfo, ChannelNotificationOverrideInfo, CustomEmojiInfo, GuildNotificationSettingsInfo,
-    NotificationLevel, RoleInfo, UserGuildSettingsInfo,
+    ChannelInfo, ChannelNotificationOverrideInfo, CustomEmojiInfo, GuildBoostTier,
+    GuildNotificationSettingsInfo, NotificationLevel, PremiumTier, RoleInfo, UserGuildSettingsInfo,
     events::AppEvent,
     ids::{
         Id,
@@ -82,18 +82,34 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .unwrap_or_default();
 
     let owner_id = guild_field(data, "owner_id").and_then(parse_id::<UserMarker>);
+    let boost_tier = parse_guild_boost_tier(data);
+    let boost_count = parse_guild_boost_count(data).unwrap_or(0);
 
     Some(AppEvent::GuildCreate {
         guild_id,
         name,
         member_count,
         owner_id,
+        boost_tier,
+        boost_count,
         channels,
         members,
         presences,
         roles,
         emojis,
     })
+}
+
+fn parse_guild_boost_tier(data: &Value) -> GuildBoostTier {
+    guild_field(data, "premium_tier")
+        .and_then(Value::as_u64)
+        .map_or(GuildBoostTier::None, GuildBoostTier::from_premium_tier)
+}
+
+fn parse_guild_boost_count(data: &Value) -> Option<u32> {
+    guild_field(data, "premium_subscription_count")
+        .and_then(Value::as_u64)
+        .and_then(|count| u32::try_from(count).ok())
 }
 
 pub(super) fn parse_role_info(value: &Value) -> Option<RoleInfo> {
@@ -158,12 +174,10 @@ fn parse_custom_emoji(value: &Value) -> Option<CustomEmojiInfo> {
     })
 }
 
-pub(super) fn parse_user_has_nitro(user: &Value) -> Option<bool> {
-    // Discord exposes `premium_type` on the current user object. Any non-zero
-    // value represents a Nitro tier.
+pub(super) fn parse_user_premium_tier(user: &Value) -> Option<PremiumTier> {
     user.get("premium_type")
         .and_then(Value::as_u64)
-        .map(|premium_type| premium_type != 0)
+        .map(PremiumTier::from_premium_type)
 }
 
 pub(super) fn parse_guild_emojis_update(data: &Value) -> Option<AppEvent> {
@@ -209,10 +223,18 @@ pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_role_info).collect());
     let owner_id = guild_field(data, "owner_id").and_then(parse_id::<UserMarker>);
+    // `None` unless the payload reports it, so an unrelated update does not
+    // reset the stored boost state.
+    let boost_tier = guild_field(data, "premium_tier")
+        .and_then(Value::as_u64)
+        .map(GuildBoostTier::from_premium_tier);
+    let boost_count = parse_guild_boost_count(data);
     Some(AppEvent::GuildUpdate {
         guild_id,
         name,
         owner_id,
+        boost_tier,
+        boost_count,
         roles,
         emojis,
     })

@@ -17,7 +17,9 @@ fn push_foreign_reaction_emojis(state: &mut DashboardState) {
 #[test]
 fn emoji_picker_items_include_available_custom_emojis_for_selected_message_guild() {
     let mut state = state_with_custom_emojis();
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
 
     let items = state.emoji_reaction_items();
 
@@ -54,7 +56,9 @@ fn emoji_picker_items_include_available_custom_emojis_for_selected_message_guild
 #[test]
 fn custom_emoji_reaction_items_expose_cdn_image_url() {
     let mut state = state_with_custom_emojis();
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
 
     let items = state.emoji_reaction_items();
 
@@ -93,7 +97,9 @@ fn emoji_picker_items_include_custom_emojis_from_update_event() {
 fn emoji_picker_items_include_foreign_custom_emojis_for_nitro_users() {
     let mut state = state_with_custom_emojis();
     push_foreign_reaction_emojis(&mut state);
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
 
     let items = state.emoji_reaction_items();
 
@@ -113,7 +119,9 @@ fn emoji_picker_items_include_foreign_custom_emojis_for_nitro_users() {
 fn emoji_picker_selection_returns_foreign_custom_reaction_command_for_nitro_users() {
     let mut state = state_with_custom_emojis();
     push_foreign_reaction_emojis(&mut state);
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.focus_pane(FocusPane::Messages);
     state.open_emoji_reaction_picker();
     state.start_emoji_reaction_filter();
@@ -153,7 +161,9 @@ fn direct_messages_include_foreign_custom_reactions_for_nitro_users() {
         ..guild_message_create_fixture()
     }));
     push_foreign_reaction_emojis(&mut state);
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
 
     let items = state.emoji_reaction_items();
 
@@ -167,7 +177,9 @@ fn direct_messages_include_foreign_custom_reactions_for_nitro_users() {
 #[test]
 fn emoji_picker_uses_channel_guild_when_selected_message_lacks_guild_id() {
     let mut state = state_with_custom_emojis();
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
 
     state.push_event(message_create_event(MessageCreateFixture {
         guild_id: None,

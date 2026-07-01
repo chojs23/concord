@@ -166,8 +166,8 @@ impl DashboardState {
             AppEvent::MediaPlaybackWindowReady { request_id, .. } => {
                 self.clear_media_playback_preparing(*request_id);
             }
-            AppEvent::CurrentUserCapabilities { has_nitro } => {
-                self.discord.current_user_has_nitro = Some(*has_nitro);
+            AppEvent::CurrentUserCapabilities { premium_tier } => {
+                self.discord.current_user_premium_tier = Some(*premium_tier);
             }
             AppEvent::ApplicationCommandsLoaded { guild_id, commands } => {
                 self.discord

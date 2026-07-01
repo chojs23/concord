@@ -202,6 +202,8 @@ fn chat_input_command_message_keeps_embed_text() {
     let role_id = Id::new(100);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

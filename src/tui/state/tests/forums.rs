@@ -209,6 +209,8 @@ fn forum_post_preview_uses_thread_creator_when_starter_is_missing() {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -1409,6 +1411,8 @@ fn manageable_thread_action_menu_state() -> DashboardState {
     // Build the forum + post before announcing the current user, so the guild
     // pane selection is not disturbed by a Direct Messages entry appearing.
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -1544,6 +1548,8 @@ fn forum_post_delete_requires_manage_permission_not_authorship() {
     let forum_id = Id::new(20);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -1718,6 +1724,8 @@ fn thread_edit_tag_picker_lists_parent_forum_tags() {
         },
     ];
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -1792,6 +1800,8 @@ fn thread_edit_tag_picker_keeps_custom_emoji_tags() {
         },
     ];
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

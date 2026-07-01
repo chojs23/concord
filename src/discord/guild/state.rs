@@ -1,8 +1,10 @@
 use crate::discord::ids::{
     Id,
-    marker::{GuildMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crate::discord::{CustomEmojiInfo, GuildFolder};
+use crate::discord::{
+    CustomEmojiInfo, GuildBoostTier, GuildFolder, capabilities::effective_attachment_limit_bytes,
+};
 
 use crate::discord::state::DiscordState;
 
@@ -16,6 +18,8 @@ pub struct GuildState {
     /// (they always see every channel). `None` until the GUILD_CREATE /
     /// GUILD_UPDATE payload supplies it.
     pub owner_id: Option<Id<UserMarker>>,
+    pub boost_tier: GuildBoostTier,
+    pub boost_count: u32,
 }
 
 impl DiscordState {
@@ -29,6 +33,18 @@ impl DiscordState {
 
     pub fn guilds(&self) -> Vec<&GuildState> {
         self.navigation.guilds.values().collect()
+    }
+
+    /// Per-file upload limit for the current user posting in `channel_id`:
+    /// the more generous of their Nitro tier and the channel's guild boost.
+    pub fn attachment_size_limit(&self, channel_id: Id<ChannelMarker>) -> u64 {
+        let user_tier = self.session.current_user_premium_tier.unwrap_or_default();
+        let guild_boost = self
+            .channel(channel_id)
+            .and_then(|channel| channel.guild_id)
+            .and_then(|guild_id| self.guild(guild_id))
+            .map(|guild| guild.boost_tier);
+        effective_attachment_limit_bytes(user_tier, guild_boost)
     }
 
     pub fn all_custom_emojis(

@@ -8,6 +8,8 @@ fn server_pane_shows_guild_mention_badge() {
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -58,6 +60,8 @@ fn active_server_mention_badge_keeps_active_name_style() {
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -129,6 +133,8 @@ fn message_viewport_author_uses_resolved_role_color() {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -227,6 +233,8 @@ fn history_message_author_uses_channel_guild_for_role_color() {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -1043,6 +1051,8 @@ fn message_content_highlights_current_user_role_mentions_as_self_mentions() {
         user_id: Some(Id::new(99)),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: Id::new(1),
         name: "guild".to_owned(),
         member_count: None,

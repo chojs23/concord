@@ -8,8 +8,8 @@ pub(super) use crate::discord::test_builders::{
     MessageCreateFixture, guild_message_create_fixture, message_create_event,
 };
 use crate::discord::{
-    AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder, MemberInfo,
-    MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState,
+    AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildBoostTier, GuildFolder,
+    MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState,
     PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
     ReactionEmoji, ReactionInfo, ReadStateInfo, RoleInfo, ThreadMetadataInfo, VoiceStateInfo,
 };
@@ -188,6 +188,8 @@ pub(super) fn guild_create_event(
     channels: Vec<ChannelInfo>,
 ) -> AppEvent {
     AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: name.into(),
         member_count: None,
@@ -264,6 +266,8 @@ fn state_with_other_user_message_permissions_and_member(
         user_id: Some(me),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -302,6 +306,8 @@ pub(super) fn state_with_hidden_and_visible_channels() -> DashboardState {
         user_id: Some(me),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -342,6 +348,8 @@ pub(super) fn guild_state_with_overwrites(
         user_id: Some(me),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -375,6 +383,8 @@ pub(super) fn state_with_writable_channel_and_members() -> DashboardState {
         user_id: Some(me),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(3),
@@ -461,6 +471,8 @@ pub(super) fn state_with_members(count: u64) -> DashboardState {
         .collect();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -491,6 +503,8 @@ pub(super) fn state_with_grouped_members() -> DashboardState {
         .collect();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -522,6 +536,8 @@ pub(super) fn state_with_channel_tree() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -588,6 +604,8 @@ pub(super) fn state_with_custom_emojis() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

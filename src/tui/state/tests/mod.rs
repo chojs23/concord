@@ -24,12 +24,12 @@ use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo, ChannelInfo,
     ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CustomEmojiInfo, DiscordState, DownloadAttachmentSource,
-    EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, ForumTagInfo, GuildFolder,
+    EmbedFieldInfo, EmbedInfo, ForumPostArchiveState, ForumTagInfo, GuildBoostTier, GuildFolder,
     GuildMemberListUpdateInfo, GuildNotificationSettingsInfo, MessageInfo, MessageKind,
     MessageReferenceInfo, MessageSearchPage, MessageSnapshotInfo, MessageState,
     MessageUpdateDispatchInfo, MessageUpdateEventFields, NotificationLevel,
-    PermissionOverwriteInfo, PermissionOverwriteKind, PresenceStatus, ReactionEmoji, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, SnapshotRevision,
+    PermissionOverwriteInfo, PermissionOverwriteKind, PremiumTier, PresenceStatus, ReactionEmoji,
+    ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, SnapshotRevision,
     ThreadMembersUpdateInfo, UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo,
     VoiceConnectionStatus, VoiceStateInfo,
 };
@@ -400,6 +400,8 @@ fn state_with_voice_channel_participant() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

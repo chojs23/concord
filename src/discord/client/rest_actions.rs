@@ -31,8 +31,9 @@ impl DiscordClient {
         attachments: &[MessageAttachmentUpload],
     ) -> Result<MessageInfo> {
         self.ensure_can_send_message(channel_id, attachments)?;
+        let upload_limit = self.attachment_size_limit(channel_id);
         self.rest
-            .send_message(channel_id, content, reply_to, attachments)
+            .send_message(channel_id, content, reply_to, attachments, upload_limit)
             .await
     }
 
@@ -47,6 +48,7 @@ impl DiscordClient {
 
     pub async fn create_forum_post(&self, post: &ForumPostCreate) -> Result<CreatedForumPost> {
         self.ensure_can_create_forum_post(post)?;
+        let upload_limit = self.attachment_size_limit(post.channel_id);
         self.rest
             .create_forum_post(
                 post.channel_id,
@@ -54,8 +56,19 @@ impl DiscordClient {
                 &post.content,
                 &post.applied_tags,
                 &post.attachments,
+                upload_limit,
             )
             .await
+    }
+
+    /// Effective attachment upload limit for `channel_id`, resolved from the
+    /// current user's Nitro tier and the channel's guild boost level. Reads a
+    /// snapshot of the shared Discord state.
+    fn attachment_size_limit(&self, channel_id: Id<ChannelMarker>) -> u64 {
+        self.state
+            .read()
+            .expect("discord state lock is not poisoned")
+            .attachment_size_limit(channel_id)
     }
 
     pub(super) fn ensure_can_send_message(

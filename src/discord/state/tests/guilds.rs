@@ -58,6 +58,8 @@ fn guild_update_replaces_custom_emojis_when_field_is_present() {
         ..GuildCreateFixture::new(guild_id)
     }));
     state.apply_event(&AppEvent::GuildUpdate {
+        boost_tier: None,
+        boost_count: None,
         guild_id,
         name: "guild renamed".to_owned(),
         roles: None,
@@ -85,6 +87,8 @@ fn guild_update_without_emoji_field_keeps_cached_custom_emojis() {
         ..GuildCreateFixture::new(guild_id)
     }));
     state.apply_event(&AppEvent::GuildUpdate {
+        boost_tier: None,
+        boost_count: None,
         guild_id,
         name: "guild renamed".to_owned(),
         roles: None,

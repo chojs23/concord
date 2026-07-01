@@ -383,6 +383,8 @@ fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
     let mut guild_state = DashboardState::new();
     for id in 1..=8 {
         guild_state.push_event(AppEvent::GuildCreate {
+            boost_tier: GuildBoostTier::None,
+            boost_count: 0,
             guild_id: Id::new(id),
             name: format!("guild {id}"),
             member_count: None,
@@ -406,6 +408,8 @@ fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
 
     let mut channel_state = DashboardState::new();
     channel_state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: Id::new(1),
         name: "guild".to_owned(),
         member_count: None,
@@ -454,6 +458,8 @@ fn viewport_scroll_uses_configured_keys_in_side_panes() {
         ..Default::default()
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: Id::new(1),
         name: "guild".to_owned(),
         member_count: None,

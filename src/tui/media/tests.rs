@@ -10,7 +10,7 @@ use crate::{
     config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo,
-        ChannelInfo, CustomEmojiInfo, EmbedInfo, MessageInfo, MessageSnapshotInfo,
+        ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildBoostTier, MessageInfo, MessageSnapshotInfo,
         PresenceEventFields, ProfileAvatarUpload, ReactionEmoji, ReactionInfo, UserProfileInfo,
     },
     tui::{
@@ -1722,6 +1722,8 @@ fn emoji_image_targets_include_visible_forum_preview_custom_reactions() {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -1800,6 +1802,8 @@ fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -2021,6 +2025,8 @@ fn state_with_image_messages_and_display_options(
     let mut state = DashboardState::new_with_display_options(display_options);
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -2064,6 +2070,8 @@ fn state_with_avatar_messages(count: u64) -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -2103,6 +2111,8 @@ fn state_with_cross_day_image_message() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

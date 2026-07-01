@@ -8,8 +8,8 @@ use super::{
 };
 use crate::discord::{
     ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
-    MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
-    ReactionEmoji, ReplyInfo,
+    MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo, PremiumTier,
+    PresenceStatus, ReactionEmoji, ReplyInfo,
 };
 
 #[test]
@@ -716,7 +716,9 @@ fn raw_ready_parser_exposes_current_user_premium_capability() {
 
     assert!(events.iter().any(|event| matches!(
         event,
-        AppEvent::CurrentUserCapabilities { has_nitro: false }
+        AppEvent::CurrentUserCapabilities {
+            premium_tier: PremiumTier::None
+        }
     )));
 }
 
@@ -737,11 +739,12 @@ fn raw_ready_parser_exposes_current_user_nitro_capabilities() {
         .to_string(),
     );
 
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, AppEvent::CurrentUserCapabilities { has_nitro: true }))
-    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::CurrentUserCapabilities {
+            premium_tier: PremiumTier::Nitro
+        }
+    )));
 }
 
 #[test]

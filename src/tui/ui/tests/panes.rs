@@ -66,6 +66,8 @@ fn header_shows_connected_account() {
         user_id: Some(Id::new(10)),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: Id::new(1),
         name: "guild".to_owned(),
         member_count: None,
@@ -165,6 +167,8 @@ fn header_labels_other_client_voice_connection() {
         user_id: Some(Id::new(10)),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: Id::new(1),
         name: "guild".to_owned(),
         member_count: None,
@@ -340,6 +344,8 @@ fn muted_server_name_is_dimmed() {
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -444,6 +450,8 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let alice = Id::new(20);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -617,6 +625,8 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
     let alice = Id::new(20);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -679,6 +689,8 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
     let alice = Id::new(20);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -746,6 +758,8 @@ fn pane_filters_keep_content_width_when_active() {
         .collect();
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -787,6 +801,8 @@ fn pane_filters_keep_content_width_when_active() {
     let guild_id = Id::new(1);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "This is Server 1".to_owned(),
         member_count: None,
@@ -833,6 +849,8 @@ fn muted_category_and_channel_names_are_dimmed() {
     let category_id = Id::new(10);
     let channel_id = Id::new(11);
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -1077,4 +1095,105 @@ fn server_label_truncates_by_display_width() {
 
     assert_eq!(label, "漢字仮名...");
     assert!(label.width() <= 12);
+}
+
+#[test]
+fn channel_pane_header_shows_guild_boost_line_only_when_boosted() {
+    fn channel_pane_rows(boost_tier: GuildBoostTier, boost_count: u32) -> Vec<String> {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(9);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::GuildCreate {
+            boost_tier,
+            boost_count,
+            guild_id,
+            name: "My Server".to_owned(),
+            member_count: None,
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                position: Some(0),
+                name: "general".to_owned(),
+                ..ChannelInfo::test(channel_id, "GuildText")
+            }],
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        state.set_channel_view_height(10);
+
+        let backend = TestBackend::new(30, 8);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| render_channels(frame, frame.area(), &state))
+            .expect("draw should succeed");
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|row| {
+                (0..buffer.area.width)
+                    .map(|col| buffer[(col, row)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    let boosted = channel_pane_rows(GuildBoostTier::Tier3, 5);
+    assert!(
+        boosted
+            .iter()
+            .any(|row| row.contains("Level 3") && row.contains("5 boosts")),
+        "{}",
+        boosted.join("\n")
+    );
+
+    let unboosted = channel_pane_rows(GuildBoostTier::None, 0);
+    assert!(
+        !unboosted.iter().any(|row| row.contains("boost")),
+        "{}",
+        unboosted.join("\n")
+    );
+}
+
+#[test]
+fn boost_line_shrinks_channel_viewport_by_one_row() {
+    fn visible_channel_count(boost_tier: GuildBoostTier, boost_count: u32) -> usize {
+        let guild_id = Id::new(1);
+        let channels = (0..20u64)
+            .map(|index| ChannelInfo {
+                guild_id: Some(guild_id),
+                name: format!("ch-{index}"),
+                ..ChannelInfo::test(Id::new(100 + index), "GuildText")
+            })
+            .collect();
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::GuildCreate {
+            boost_tier,
+            boost_count,
+            guild_id,
+            name: "My Server".to_owned(),
+            member_count: None,
+            channels,
+            members: Vec::new(),
+            presences: Vec::new(),
+            roles: Vec::new(),
+            emojis: Vec::new(),
+            owner_id: None,
+        });
+        state.confirm_selected_guild();
+        // Runs the full layout, including `sync_view_heights`, at a size where
+        // 20 channels overflow the pane.
+        render_dashboard_dump(120, 10, &mut state);
+        state.visible_channel_pane_entries().len()
+    }
+
+    let unboosted = visible_channel_count(GuildBoostTier::None, 0);
+    let boosted = visible_channel_count(GuildBoostTier::Tier3, 5);
+    assert!(unboosted > 1, "channel pane should overflow so it scrolls");
+    assert_eq!(
+        boosted,
+        unboosted - 1,
+        "boost line should consume exactly one channel row (unboosted={unboosted}, boosted={boosted})"
+    );
 }

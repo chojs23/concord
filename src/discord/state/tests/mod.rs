@@ -7,14 +7,15 @@ use crate::discord::ids::{
 
 use crate::discord::test_builders::{MessageCreateFixture, message_create_event};
 use crate::discord::{
-    ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, ChannelInfo,
-    ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
+    ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, BASE_ATTACHMENT_LIMIT_BYTES,
+    ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CurrentVoiceConnectionState, CustomEmojiInfo, DiscordState,
-    FriendStatus, GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, MessageState, MessageUpdateDispatchInfo,
-    MessageUpdateEventFields, NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind,
-    PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo,
-    RelationshipInfo, ReplyInfo, RoleInfo, UserGuildSettingsInfo, UserProfileInfo, VoiceStateInfo,
+    FriendStatus, GuildBoostTier, GuildNotificationSettingsInfo, MemberInfo, MentionInfo,
+    MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState,
+    MessageUpdateDispatchInfo, MessageUpdateEventFields, NotificationLevel,
+    PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PremiumTier,
+    PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, RelationshipInfo, ReplyInfo,
+    RoleInfo, UserGuildSettingsInfo, UserProfileInfo, VoiceStateInfo,
 };
 
 mod channels;
@@ -25,12 +26,15 @@ mod notifications;
 mod permissions;
 mod profiles;
 mod reads;
+mod upload_limits;
 
 struct GuildCreateFixture {
     guild_id: Id<GuildMarker>,
     name: String,
     member_count: Option<u64>,
     owner_id: Option<Id<UserMarker>>,
+    boost_tier: GuildBoostTier,
+    boost_count: u32,
     channels: Vec<ChannelInfo>,
     members: Vec<MemberInfo>,
     presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -45,6 +49,8 @@ impl GuildCreateFixture {
             name: "guild".to_owned(),
             member_count: None,
             owner_id: None,
+            boost_tier: GuildBoostTier::None,
+            boost_count: 0,
             channels: Vec::new(),
             members: Vec::new(),
             presences: Vec::new(),
@@ -56,6 +62,8 @@ impl GuildCreateFixture {
 
 fn guild_create_event(event: GuildCreateFixture) -> AppEvent {
     AppEvent::GuildCreate {
+        boost_tier: event.boost_tier,
+        boost_count: event.boost_count,
         guild_id: event.guild_id,
         name: event.name,
         member_count: event.member_count,

@@ -69,13 +69,15 @@ use self::layout::{
 #[cfg(test)]
 use self::layout::{composer_content_line_count, composer_prompt_line_count};
 use self::message::list::{MessageMedia, render_messages};
+use self::panes::{
+    channel_pane_header_height, render_channels, render_guilds, render_header, render_members,
+};
 #[cfg(test)]
 use self::panes::{
     composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
     composer_text, emoji_picker_lines, member_display_label, member_name_style,
     primary_activity_summary,
 };
-use self::panes::{render_channels, render_guilds, render_header, render_members};
 use self::popups::{
     channel_switcher_visible_items, emoji_reaction_picker_visible_items_for_area,
     forum_post_composer_metrics, forum_post_composer_popup_area,
@@ -143,17 +145,19 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         )
         .saturating_sub(guild_filter_row),
     );
-    let channel_filter_row = usize::from(
-        state.is_channel_pane_filter_active() && state.is_pane_visible(FocusPane::Channels),
-    );
+    let channel_visible = state.is_pane_visible(FocusPane::Channels);
+    let channel_filter_row = usize::from(state.is_channel_pane_filter_active() && channel_visible);
+    // Reserve the header rows the renderer actually draws. A fixed 1 would
+    // leave the scroll viewport a row too tall and clip the last channel.
+    let channel_header_rows = if channel_visible {
+        usize::from(channel_pane_header_height(state))
+    } else {
+        0
+    };
     state.set_channel_view_height(
-        visible_panel_content_height(
-            areas.channels,
-            "Channels",
-            state.is_pane_visible(FocusPane::Channels),
-        )
-        .saturating_sub(usize::from(state.is_pane_visible(FocusPane::Channels)))
-        .saturating_sub(channel_filter_row),
+        visible_panel_content_height(areas.channels, "Channels", channel_visible)
+            .saturating_sub(channel_header_rows)
+            .saturating_sub(channel_filter_row),
     );
     state.set_message_view_height(message_list_area(areas.messages, state).height as usize);
     state.set_member_view_height(visible_panel_content_height(

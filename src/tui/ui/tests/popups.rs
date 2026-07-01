@@ -1181,6 +1181,8 @@ fn leader_action_popup_renders_modified_action_shortcut_labels() {
         Default::default(),
     );
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

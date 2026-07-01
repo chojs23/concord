@@ -388,7 +388,7 @@ mod tests {
 
     use crate::discord::ids::Id;
     use crate::discord::{
-        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo,
+        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, GuildBoostTier, MemberInfo,
         MessageHistoryAfterMode, MessageInfo, RoleInfo,
     };
 
@@ -558,6 +558,8 @@ mod tests {
         channel: ChannelInfo,
     ) {
         state.push_event(AppEvent::GuildCreate {
+            boost_tier: GuildBoostTier::None,
+            boost_count: 0,
             guild_id,
             name: "guild".to_owned(),
             member_count: None,

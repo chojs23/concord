@@ -263,6 +263,8 @@ fn voice_channel_join_action_requires_connect_permission() {
         user_id: Some(me),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(1),

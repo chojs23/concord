@@ -46,7 +46,7 @@ mod header;
 mod members;
 mod shared;
 
-pub(super) use channels::render_channels;
+pub(super) use channels::{channel_pane_header_height, render_channels};
 pub(super) use composer::{
     active_composer_picker_area, render_composer, render_composer_command_picker,
     render_composer_emoji_picker, render_composer_mention_picker,

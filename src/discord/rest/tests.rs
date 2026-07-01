@@ -12,7 +12,7 @@ use crate::{
     AppError,
     discord::{
         ApplicationCommandInfo, ApplicationCommandInteraction, ApplicationCommandInteractionOption,
-        ChannelInfo, GuildFolder, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload,
+        BASE_ATTACHMENT_LIMIT_BYTES, ChannelInfo, GuildFolder, MessageAttachmentUpload,
         MessageSearchAuthorType, MessageSearchHas, MessageSearchQuery, ReactionEmoji,
         ReplyReference,
     },
@@ -59,7 +59,8 @@ fn validates_attachment_only_message_payload() {
         2_048,
     )];
 
-    validate_message_payload("   ", &attachments).expect("file-only messages should be valid");
+    validate_message_payload("   ", &attachments, BASE_ATTACHMENT_LIMIT_BYTES)
+        .expect("file-only messages should be valid");
 
     let body = message_request_body(
         "",
@@ -98,6 +99,7 @@ fn forum_post_request_body_nests_message_and_tags() {
         "The client crashes",
         &[Id::new(101), Id::new(102)],
         &[],
+        BASE_ATTACHMENT_LIMIT_BYTES,
     )
     .expect("forum post body should build");
 
@@ -108,20 +110,26 @@ fn forum_post_request_body_nests_message_and_tags() {
 
 #[test]
 fn forum_post_request_body_trims_title_once() {
-    let body = create_forum_post_request_body("  Need help  ", "Body", &[], &[])
-        .expect("padded title should build");
+    let body = create_forum_post_request_body(
+        "  Need help  ",
+        "Body",
+        &[],
+        &[],
+        BASE_ATTACHMENT_LIMIT_BYTES,
+    )
+    .expect("padded title should build");
 
     assert_eq!(body["name"], "Need help");
 }
 
 #[test]
 fn forum_post_request_body_validates_title_and_message() {
-    let error =
-        create_forum_post_request_body(" ", "body", &[], &[]).expect_err("empty title must fail");
+    let error = create_forum_post_request_body(" ", "body", &[], &[], BASE_ATTACHMENT_LIMIT_BYTES)
+        .expect_err("empty title must fail");
     assert!(matches!(error, AppError::DiscordRequest(_)));
 
-    let error =
-        create_forum_post_request_body("title", " ", &[], &[]).expect_err("empty body must fail");
+    let error = create_forum_post_request_body("title", " ", &[], &[], BASE_ATTACHMENT_LIMIT_BYTES)
+        .expect_err("empty body must fail");
     assert!(matches!(error, AppError::EmptyMessageContent));
 }
 
@@ -341,36 +349,28 @@ fn application_command_option_body_keeps_value_and_options_exclusive() {
 }
 
 #[test]
-fn rejects_attachment_upload_limits() {
+fn enforces_per_file_upload_limit() {
     let too_large_file = vec![MessageAttachmentUpload::from_path(
         "/tmp/large.bin".into(),
         "large.bin".to_owned(),
-        MAX_UPLOAD_FILE_BYTES + 1,
+        BASE_ATTACHMENT_LIMIT_BYTES + 1,
     )];
-    let error =
-        validate_message_payload("", &too_large_file).expect_err("oversized attachment must fail");
+    let error = validate_message_payload("", &too_large_file, BASE_ATTACHMENT_LIMIT_BYTES)
+        .expect_err("oversized attachment must fail");
     assert!(matches!(error, AppError::AttachmentTooLarge { .. }));
 
-    let too_large_total = vec![
-        MessageAttachmentUpload::from_path(
-            "/tmp/a.bin".into(),
-            "a.bin".to_owned(),
-            MAX_UPLOAD_FILE_BYTES - 1,
-        ),
-        MessageAttachmentUpload::from_path(
-            "/tmp/b.bin".into(),
-            "b.bin".to_owned(),
-            MAX_UPLOAD_FILE_BYTES - 1,
-        ),
-        MessageAttachmentUpload::from_path(
-            "/tmp/c.bin".into(),
-            "c.bin".to_owned(),
-            MAX_UPLOAD_FILE_BYTES - 1,
-        ),
-    ];
-    let error = validate_message_payload("", &too_large_total)
-        .expect_err("oversized attachment total must fail");
-    assert!(matches!(error, AppError::AttachmentsTooLarge { .. }));
+    let many_sub_limit_files = ["a.bin", "b.bin", "c.bin"]
+        .into_iter()
+        .map(|name| {
+            MessageAttachmentUpload::from_path(
+                format!("/tmp/{name}").into(),
+                name.to_owned(),
+                BASE_ATTACHMENT_LIMIT_BYTES - 1,
+            )
+        })
+        .collect::<Vec<_>>();
+    validate_message_payload("", &many_sub_limit_files, BASE_ATTACHMENT_LIMIT_BYTES)
+        .expect("files each under the per-file limit are accepted even if their sum exceeds it");
 }
 
 #[tokio::test]
@@ -384,12 +384,16 @@ async fn multipart_form_rechecks_current_file_size() {
     let path = directory.join("changed.bin");
     std::fs::write(&path, [0_u8]).expect("small temp file can be written");
     let attachment = MessageAttachmentUpload::from_path(path.clone(), "changed.bin".to_owned(), 1);
-    std::fs::write(&path, vec![0_u8; (MAX_UPLOAD_FILE_BYTES + 1) as usize])
-        .expect("oversized temp file can be written");
+    std::fs::write(
+        &path,
+        vec![0_u8; (BASE_ATTACHMENT_LIMIT_BYTES + 1) as usize],
+    )
+    .expect("oversized temp file can be written");
 
     let result = message_multipart_form(
         message_request_body("", None, std::slice::from_ref(&attachment)),
         &[attachment],
+        BASE_ATTACHMENT_LIMIT_BYTES,
     )
     .await;
     let Err(error) = result else {
@@ -405,10 +409,10 @@ async fn multipart_form_rechecks_current_file_size() {
 fn rejects_oversized_memory_backed_attachment() {
     let attachment = MessageAttachmentUpload::from_bytes(
         "clipboard-image.png".to_owned(),
-        vec![0_u8; (MAX_UPLOAD_FILE_BYTES + 1) as usize],
+        vec![0_u8; (BASE_ATTACHMENT_LIMIT_BYTES + 1) as usize],
     );
 
-    let error = validate_message_payload("", &[attachment])
+    let error = validate_message_payload("", &[attachment], BASE_ATTACHMENT_LIMIT_BYTES)
         .expect_err("oversized memory-backed attachment must fail");
 
     assert!(matches!(error, AppError::AttachmentTooLarge { .. }));

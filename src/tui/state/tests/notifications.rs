@@ -80,6 +80,8 @@ fn desktop_notification_for_event_respects_notification_opt_out() {
         user_id: Some(Id::new(10)),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(1),

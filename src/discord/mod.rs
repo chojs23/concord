@@ -1,6 +1,7 @@
 mod application_commands;
 mod auth_http;
 mod builtin_commands;
+mod capabilities;
 mod captcha;
 mod channel;
 mod client;
@@ -40,6 +41,9 @@ pub use builtin_commands::{
     BuiltinSlashCommandInfo, BuiltinSlashCommandParse, BuiltinSlashCommandSubmit,
     builtin_slash_commands, parse_builtin_slash_command,
 };
+pub use capabilities::{
+    BASE_ATTACHMENT_LIMIT_BYTES, GuildBoostTier, PremiumTier, effective_attachment_limit_bytes,
+};
 pub(crate) use channel::is_thread_kind;
 pub use channel::{
     ChannelInfo, ChannelRecipientInfo, ForumTagInfo, PermissionOverwriteInfo,
@@ -55,8 +59,8 @@ pub use commands::{
     ReplyReference, UserProfileUpdate,
 };
 pub use commands::{
-    MAX_PROFILE_AVATAR_BYTES, MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES,
-    MAX_UPLOAD_TOTAL_BYTES, MessageAttachmentUpload, ReactionEmoji,
+    MAX_PROFILE_AVATAR_BYTES, MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_PREVIEW_BYTES,
+    MessageAttachmentUpload, ReactionEmoji,
 };
 #[cfg(test)]
 pub(crate) use events::test_builders;

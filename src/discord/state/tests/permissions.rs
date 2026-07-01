@@ -49,6 +49,8 @@ fn guild_with_permissions(
         user_id: Some(my_id),
     });
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -635,6 +637,8 @@ fn manage_messages_defaults_permissive_while_guild_member_roles_hydrate() {
         user_id: Some(me),
     });
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -826,6 +830,8 @@ fn channel_visibility_stats_count_only_top_level() {
         user_id: Some(me),
     });
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -878,6 +884,8 @@ fn missing_current_user_id_falls_back_to_visible() {
     // not empty during the brief window between connect and READY.
     let mut state = DiscordState::default();
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: Id::new(1),
         name: "guild".to_owned(),
         member_count: None,

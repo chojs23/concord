@@ -52,9 +52,9 @@ use crate::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, ApplicationCommandInfo,
         ApplicationCommandOptionInfo, AttachmentDownloadId, AttachmentInfo, ChannelInfo,
         ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
-        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildFolder, GuildMemberListUpdateInfo,
-        GuildMemberState, GuildNotificationSettingsInfo, MemberInfo, MentionInfo,
-        MessageAttachmentUpload, MessageInfo, MessageInteractionInfo, MessageKind,
+        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildBoostTier, GuildFolder,
+        GuildMemberListUpdateInfo, GuildMemberState, GuildNotificationSettingsInfo, MemberInfo,
+        MentionInfo, MessageAttachmentUpload, MessageInfo, MessageInteractionInfo, MessageKind,
         MessageSearchPage, MessageSearchQuery, MessageSnapshotInfo, MessageState, MutualGuildInfo,
         NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
         ReactionUserInfo, ReactionUsersInfo, ReadStateInfo, ReplyInfo, RoleInfo,
@@ -292,6 +292,8 @@ fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> Dashbo
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -325,6 +327,8 @@ fn state_with_folder_settings() -> DashboardState {
 
     for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
         state.push_event(AppEvent::GuildCreate {
+            boost_tier: GuildBoostTier::None,
+            boost_count: 0,
             guild_id,
             name: name.to_owned(),
             member_count: None,
@@ -358,6 +362,8 @@ fn state_with_forum_posts(post_count: usize) -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -532,6 +538,8 @@ fn forwarded_snapshot(
 fn state_with_member(user_id: u64, display_name: &str) -> DashboardState {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: Id::new(1),
         name: "guild".to_owned(),
         member_count: None,
@@ -548,6 +556,8 @@ fn state_with_member(user_id: u64, display_name: &str) -> DashboardState {
 fn state_with_role(role_id: u64, name: &str) -> DashboardState {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: Id::new(1),
         name: "guild".to_owned(),
         member_count: None,

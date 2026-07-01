@@ -8,20 +8,29 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Guild name, plus a boost line for boosted guilds when the pane can spare
+    // the row. A short pane keeps the name only and still shows every channel.
+    let boost_label = selected_channel_boost_label(state);
     let header_area = Rect {
-        height: inner.height.min(1),
+        height: inner.height.min(channel_pane_header_height(state)),
         ..inner
     };
     if header_area.height > 0 {
+        let width = header_area.width as usize;
         let server_name = selected_channel_server_label(state);
-        let label = truncate_display_width(&server_name, header_area.width as usize);
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                label,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-            ))),
-            header_area,
-        );
+        let mut lines = vec![Line::from(Span::styled(
+            truncate_display_width(&server_name, width),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))];
+        if header_area.height >= 2 {
+            if let Some(boost) = &boost_label {
+                lines.push(Line::from(Span::styled(
+                    truncate_display_width(boost, width),
+                    Style::default().fg(DIM),
+                )));
+            }
+        }
+        frame.render_widget(Paragraph::new(lines), header_area);
     }
 
     let channels_area = Rect {
@@ -291,6 +300,33 @@ fn selected_channel_server_label(state: &DashboardState) -> String {
         .and_then(|guild_id| state.guild_name(guild_id))
         .unwrap_or("Direct Messages")
         .to_owned()
+}
+
+fn selected_guild_is_boosted(state: &DashboardState) -> bool {
+    matches!(
+        state.selected_guild_boost(),
+        Some((tier, count)) if tier.level() != 0 || count != 0
+    )
+}
+
+/// Header rows the channel pane reserves: the guild name, plus one for the boost
+/// line. Single source shared by the renderer, the scroll viewport, and
+/// hit-testing so they cannot drift and clip the last channel row.
+pub(in crate::tui::ui) fn channel_pane_header_height(state: &DashboardState) -> u16 {
+    if selected_guild_is_boosted(state) {
+        2
+    } else {
+        1
+    }
+}
+
+fn selected_channel_boost_label(state: &DashboardState) -> Option<String> {
+    if !selected_guild_is_boosted(state) {
+        return None;
+    }
+    let (tier, count) = state.selected_guild_boost()?;
+    let boosts = if count == 1 { "boost" } else { "boosts" };
+    Some(format!("⚡ Level {} · {count} {boosts}", tier.level()))
 }
 
 fn voice_participant_label(

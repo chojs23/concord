@@ -78,6 +78,8 @@ fn state_with_forum_post_tags(tag_names: &[&str]) -> DashboardState {
         user_id: Some(me),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -122,6 +124,8 @@ fn state_with_post_parent_channel(kind: &str, required_tag: bool) -> DashboardSt
         user_id: Some(me),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(1),
@@ -174,6 +178,8 @@ fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardStat
         user_id: Some(me),
     });
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id: guild,
         name: "guild".to_owned(),
         member_count: Some(2),
@@ -1586,7 +1592,12 @@ fn unavailable_custom_emojis_stay_visible_but_not_selectable() {
     ] {
         let mut state = state_with_custom_emojis();
         if let Some(has_nitro) = set_capability {
-            state.push_event(AppEvent::CurrentUserCapabilities { has_nitro });
+            let premium_tier = if has_nitro {
+                PremiumTier::Nitro
+            } else {
+                PremiumTier::None
+            };
+            state.push_event(AppEvent::CurrentUserCapabilities { premium_tier });
         }
         state.start_composer();
         for ch in query.chars() {
@@ -1629,7 +1640,9 @@ fn active_emoji_candidates_refresh_when_nitro_capability_changes() {
     assert!(!before.available);
     assert!(!before.available_as_link);
 
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
 
     let after = state
         .composer_emoji_candidates()
@@ -1681,7 +1694,9 @@ fn emoji_picker_keeps_more_than_visible_candidates_selectable() {
 #[test]
 fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     let mut state = state_with_custom_emojis();
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.start_composer();
     for ch in ":pa".chars() {
         state.push_composer_char(ch);
@@ -1737,7 +1752,9 @@ fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
 fn animated_current_guild_emoji_sends_link_without_nitro_when_enabled() {
     let mut state = state_with_custom_emojis();
     state.options.composer_options.emojis_as_links = true;
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: false });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::None,
+    });
     state.start_composer();
     for ch in ":pa".chars() {
         state.push_composer_char(ch);
@@ -1769,7 +1786,9 @@ fn animated_current_guild_emoji_sends_link_without_nitro_when_enabled() {
 fn nitro_user_sends_foreign_custom_emojis_as_native_markup() {
     let mut state = state_with_custom_emojis();
     push_foreign_custom_emojis(&mut state);
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.start_composer();
     for ch in ":wa".chars() {
         state.push_composer_char(ch);
@@ -1790,7 +1809,9 @@ fn nitro_user_sends_foreign_custom_emojis_as_native_markup() {
 
     let mut state = state_with_custom_emojis();
     push_foreign_custom_emojis(&mut state);
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.start_composer();
     for ch in ":da".chars() {
         state.push_composer_char(ch);
@@ -1823,7 +1844,9 @@ fn foreign_custom_emoji_uses_link_fallback_without_nitro_when_enabled() {
     let mut state = state_with_custom_emojis();
     push_foreign_custom_emojis(&mut state);
     state.options.composer_options.emojis_as_links = true;
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: false });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::None,
+    });
     state.start_composer();
     for ch in ":wa".chars() {
         state.push_composer_char(ch);
@@ -1856,7 +1879,9 @@ fn foreign_animated_emoji_uses_link_fallback_without_nitro_when_enabled() {
     let mut state = state_with_custom_emojis();
     push_foreign_custom_emojis(&mut state);
     state.options.composer_options.emojis_as_links = true;
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: false });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::None,
+    });
     state.start_composer();
     for ch in ":da".chars() {
         state.push_composer_char(ch);
@@ -1887,7 +1912,9 @@ fn foreign_animated_emoji_uses_link_fallback_without_nitro_when_enabled() {
 #[test]
 fn submit_expands_mention_and_following_custom_emoji_without_stale_ranges() {
     let mut state = state_with_writable_channel_and_members();
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.push_event(AppEvent::GuildEmojisUpdate {
         guild_id: Id::new(1),
         emojis: vec![CustomEmojiInfo {

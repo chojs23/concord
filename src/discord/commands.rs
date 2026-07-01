@@ -12,10 +12,13 @@ use super::application_commands::ApplicationCommandInvocation;
 use super::message::MessageInfo;
 use super::{ActivityInfo, PresenceStatus, VoiceScope};
 
-pub const MAX_UPLOAD_FILE_BYTES: u64 = 10 * 1024 * 1024;
-pub const MAX_UPLOAD_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
 pub const MAX_UPLOAD_ATTACHMENT_COUNT: usize = 10;
 pub const MAX_PROFILE_AVATAR_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Memory bound for decoding a local attachment preview thumbnail, kept
+/// separate from the upload limit (now up to 500 MiB) so a preview of a huge
+/// file is skipped rather than loaded into RAM. The upload still proceeds.
+pub const MAX_UPLOAD_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AttachmentDownloadId(u64);

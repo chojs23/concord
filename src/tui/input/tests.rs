@@ -21,7 +21,7 @@ use crate::{
     discord::{
         ActivityInfo, AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo,
         AttachmentDownloadId, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
-        CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildFolder,
+        CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildBoostTier, GuildFolder,
         GuildNotificationSettingsInfo, MemberInfo, MessageInfo, MessageReferenceInfo,
         MessageSnapshotInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
         ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, RoleInfo, UserGuildSettingsInfo,
@@ -141,6 +141,8 @@ fn state_with_folder() -> DashboardState {
 
     for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
         state.push_event(AppEvent::GuildCreate {
+            boost_tier: GuildBoostTier::None,
+            boost_count: 0,
             guild_id,
             name: name.to_owned(),
             member_count: None,
@@ -189,6 +191,8 @@ fn state_with_channel_tree() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -260,6 +264,8 @@ fn state_with_messages_from_state(mut state: DashboardState, count: u64) -> Dash
     let channel_id = Id::new(2);
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -303,6 +309,8 @@ fn state_with_members(count: u64) -> DashboardState {
         .collect();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -328,6 +336,8 @@ fn state_with_thread_created_message() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -401,6 +411,8 @@ fn state_with_custom_emoji_message() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -430,6 +442,8 @@ fn state_with_forum_channel_posts() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,
@@ -492,6 +506,8 @@ fn state_with_image_message() -> DashboardState {
     let mut state = DashboardState::new();
 
     state.push_event(AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

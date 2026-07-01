@@ -29,7 +29,7 @@ use crate::discord::ids::{
 
 use super::{
     ActivityInfo, AppEvent, ChannelInfo, CustomEmojiInfo, FriendStatus, GuildFolder, MemberInfo,
-    PresenceStatus, RelationshipInfo, UserProfileInfo,
+    PremiumTier, PresenceStatus, RelationshipInfo, UserProfileInfo,
     display_name::display_name_from_parts_or_unknown,
 };
 
@@ -168,6 +168,7 @@ pub(in crate::discord) struct SessionState {
     /// match member-level permission overwrites.
     pub(in crate::discord) current_user_id: Option<Id<UserMarker>>,
     pub(in crate::discord) current_user: Option<String>,
+    pub(in crate::discord) current_user_premium_tier: Option<PremiumTier>,
     pub(in crate::discord) selected_message_channel_known: bool,
     pub(in crate::discord) selected_message_channel_id: Option<Id<ChannelMarker>>,
 }
@@ -550,6 +551,8 @@ impl DiscordState {
                 guild_id,
                 name,
                 owner_id,
+                boost_tier,
+                boost_count,
                 roles,
                 emojis,
             } => {
@@ -557,6 +560,12 @@ impl DiscordState {
                     guild.name = name.clone();
                     if let Some(owner_id) = owner_id {
                         guild.owner_id = Some(*owner_id);
+                    }
+                    if let Some(boost_tier) = boost_tier {
+                        guild.boost_tier = *boost_tier;
+                    }
+                    if let Some(boost_count) = boost_count {
+                        guild.boost_count = *boost_count;
                     }
                 }
                 if let Some(roles) = roles {
@@ -951,7 +960,9 @@ impl DiscordState {
                     self.refresh_current_user_role_cache();
                 }
             }
-            AppEvent::CurrentUserCapabilities { .. } => {}
+            AppEvent::CurrentUserCapabilities { premium_tier } => {
+                self.session.current_user_premium_tier = Some(*premium_tier);
+            }
             AppEvent::ReadStateInit { .. } => self.apply_read_state_init_event(event),
             AppEvent::MessageAck { .. } => self.apply_message_ack_event(event),
             AppEvent::UserGuildSettingsInit { settings } => {
@@ -1001,6 +1012,8 @@ impl DiscordState {
             name,
             member_count,
             owner_id,
+            boost_tier,
+            boost_count,
             channels,
             members,
             presences,
@@ -1020,6 +1033,8 @@ impl DiscordState {
                 member_count: *member_count,
                 online_count: None,
                 owner_id: *owner_id,
+                boost_tier: *boost_tier,
+                boost_count: *boost_count,
             },
         );
 

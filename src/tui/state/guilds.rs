@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::discord::ids::{Id, marker::GuildMarker};
-use crate::discord::{GuildFolder, GuildState, MuteDuration};
+use crate::discord::{GuildBoostTier, GuildFolder, GuildState, MuteDuration};
 
 use super::navigation::FolderSettingsField;
 use super::{ActiveGuildScope, DashboardState, FolderKey, FolderSettingsState};
@@ -18,6 +18,14 @@ impl DashboardState {
             .cache
             .guild(guild_id)
             .map(|state| state.name.as_str())
+    }
+
+    /// Server boost level and active-boost count for the currently selected
+    /// guild, or `None` when viewing DMs or the guild is unknown. The channel
+    /// pane header uses this to show a boost line under the guild name.
+    pub fn selected_guild_boost(&self) -> Option<(GuildBoostTier, u32)> {
+        let guild = self.discord.cache.guild(self.selected_guild_id()?)?;
+        Some((guild.boost_tier, guild.boost_count))
     }
 
     /// Builds the guild pane in display order: a virtual "Direct Messages"

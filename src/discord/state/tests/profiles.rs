@@ -39,6 +39,8 @@ fn message_author_uses_cached_member_display_name() {
     let mut state = DiscordState::default();
 
     state.apply_event(&AppEvent::GuildCreate {
+        boost_tier: GuildBoostTier::None,
+        boost_count: 0,
         guild_id,
         name: "guild".to_owned(),
         member_count: None,

@@ -1,8 +1,9 @@
 use crate::{
     AppError,
     discord::{
-        ActivityInfo, AppEvent, ChannelInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
-        RoleInfo, UserProfileInfo, VoiceScope, VoiceSoundKind, VoiceStateInfo,
+        ActivityInfo, AppEvent, ChannelInfo, GuildBoostTier, MemberInfo, MentionInfo,
+        MessageAttachmentUpload, RoleInfo, UserProfileInfo, VoiceScope, VoiceSoundKind,
+        VoiceStateInfo,
         gateway::GatewayCommand,
         ids::{
             Id,
@@ -811,6 +812,8 @@ async fn publish_permission_fixture(
         .await;
     client
         .publish_event(AppEvent::GuildCreate {
+            boost_tier: GuildBoostTier::None,
+            boost_count: 0,
             guild_id: Id::new(1),
             name: "guild".to_owned(),
             member_count: Some(1),
