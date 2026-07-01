@@ -9,7 +9,7 @@ use crate::{
     AppError, Result,
     discord::{
         MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
-        MessageAttachmentUpload, MessageInfo, gateway::parse_message_info,
+        MessageAttachmentUpload, MessageInfo, ReplyReference, gateway::parse_message_info,
     },
 };
 
@@ -25,7 +25,7 @@ impl DiscordRest {
         &self,
         channel_id: Id<ChannelMarker>,
         content: &str,
-        reply_to: Option<Id<MessageMarker>>,
+        reply_to: Option<ReplyReference>,
         attachments: &[MessageAttachmentUpload],
     ) -> Result<MessageInfo> {
         validate_message_payload(content, attachments)?;
@@ -306,7 +306,7 @@ fn parse_message_list_response(
 
 pub(super) fn message_request_body(
     content: &str,
-    reply_to: Option<Id<MessageMarker>>,
+    reply_to: Option<ReplyReference>,
     attachments: &[MessageAttachmentUpload],
 ) -> Value {
     message_request_body_with_tts(content, reply_to, attachments, false)
@@ -314,7 +314,7 @@ pub(super) fn message_request_body(
 
 pub(super) fn message_request_body_with_tts(
     content: &str,
-    reply_to: Option<Id<MessageMarker>>,
+    reply_to: Option<ReplyReference>,
     attachments: &[MessageAttachmentUpload],
     tts: bool,
 ) -> Value {
@@ -322,8 +322,16 @@ pub(super) fn message_request_body_with_tts(
     if tts {
         body["tts"] = Value::Bool(true);
     }
-    if let Some(message_id) = reply_to {
-        body["message_reference"] = json!({ "message_id": message_id.to_string() });
+    if let Some(reply) = reply_to {
+        body["message_reference"] = json!({ "message_id": reply.message_id.to_string() });
+        // `parse` must be spelled out here: without it, dropping the reply ping
+        // would also silence every in-content mention.
+        if !reply.mention_author {
+            body["allowed_mentions"] = json!({
+                "parse": ["users", "roles", "everyone"],
+                "replied_user": false,
+            });
+        }
     }
     if !attachments.is_empty() {
         body["attachments"] = Value::Array(

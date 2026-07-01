@@ -3,7 +3,8 @@ use chrono::{DateTime, Utc};
 use super::DiscordClient;
 use crate::discord::{
     ForumPostCreate, GuildFolder, MESSAGE_FLAG_SUPPRESS_EMBEDS, MessageAttachmentUpload,
-    MessageInfo, ReactionEmoji, ReactionUserInfo, UserProfileInfo, UserProfileUpdate,
+    MessageInfo, ReactionEmoji, ReactionUserInfo, ReplyReference, UserProfileInfo,
+    UserProfileUpdate,
     commands::ForumPostArchiveState,
     ids::{
         Id,
@@ -26,7 +27,7 @@ impl DiscordClient {
         &self,
         channel_id: Id<ChannelMarker>,
         content: &str,
-        reply_to: Option<Id<MessageMarker>>,
+        reply_to: Option<ReplyReference>,
         attachments: &[MessageAttachmentUpload],
     ) -> Result<MessageInfo> {
         self.ensure_can_send_message(channel_id, attachments)?;

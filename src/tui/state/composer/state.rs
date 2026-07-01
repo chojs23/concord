@@ -32,7 +32,7 @@ use super::completions::{
     expand_emoji_shortcodes, is_command_query_char, is_mention_query_char, move_picker_selection,
     should_start_completion_query,
 };
-use crate::discord::AppCommand;
+use crate::discord::{AppCommand, ReplyReference};
 use crate::tui::text_cursor::{previous_char_boundary, previous_word_boundary};
 use crate::tui::text_input::TextInputState;
 
@@ -129,6 +129,15 @@ impl ComposerPickerState {
 impl DashboardState {
     pub fn is_composing(&self) -> bool {
         self.composer.composer_active
+    }
+
+    pub fn ping_on_reply(&self) -> bool {
+        self.options.composer_options.ping_on_reply
+    }
+
+    pub fn toggle_ping_on_reply(&mut self) {
+        self.options.composer_options.ping_on_reply = !self.options.composer_options.ping_on_reply;
+        self.options.config_save_pending = true;
     }
 
     pub(in crate::tui::state) fn start_reply_composer(&mut self) {
@@ -607,7 +616,15 @@ impl DashboardState {
         }
 
         self.clear_submitted_composer_text();
-        let reply_to = self.composer.reply_target_message_id.take();
+        let mention_author = self.options.composer_options.ping_on_reply;
+        let reply_to = self
+            .composer
+            .reply_target_message_id
+            .take()
+            .map(|message_id| ReplyReference {
+                message_id,
+                mention_author,
+            });
         let attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
         self.composer.pending_composer_attachment_previews.clear();
         // Stay in insert mode so the user can send several messages in a

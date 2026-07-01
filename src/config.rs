@@ -30,10 +30,20 @@ pub struct DisplayOptions {
     pub circular_avatars: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ComposerOptions {
     pub emojis_as_links: bool,
+    pub ping_on_reply: bool,
+}
+
+impl Default for ComposerOptions {
+    fn default() -> Self {
+        Self {
+            emojis_as_links: false,
+            ping_on_reply: true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -1289,6 +1299,7 @@ mod tests {
             },
             composer: ComposerOptions {
                 emojis_as_links: true,
+                ping_on_reply: false,
             },
             credentials: CredentialOptions {
                 store: CredentialStoreMode::Plain,

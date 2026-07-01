@@ -292,7 +292,10 @@ fn message_pane_shortcuts_reuse_message_actions() {
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
             content: "o".to_owned(),
-            reply_to: Some(Id::new(1)),
+            reply_to: Some(crate::discord::ReplyReference {
+                message_id: Id::new(1),
+                mention_author: true,
+            }),
             attachments: Vec::new(),
         })
     );

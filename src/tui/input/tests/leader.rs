@@ -79,7 +79,10 @@ fn keymap_nested_leader_m_r_replies_to_message() {
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
             content: "ok".to_owned(),
-            reply_to: Some(Id::new(1)),
+            reply_to: Some(crate::discord::ReplyReference {
+                message_id: Id::new(1),
+                mention_author: true,
+            }),
             attachments: Vec::new(),
         })
     );

@@ -196,25 +196,26 @@ editing title/body, removes the selected attachment while choosing attachments,
 or toggles the selected tag. Paste files or images while editing the body to add
 attachments. Press `s` outside edit mode to create the post.
 
-| Composer action        | Default config                                     | Action                               |
-| ---------------------- | -------------------------------------------------- | ------------------------------------ |
-| `OpenEditor`           | `"<C-e>"`                                          | Open the current draft in `$EDITOR`. |
-| `PasteClipboard`       | `"<C-v>"`                                          | Request clipboard paste.             |
-| `InsertNewline`        | `["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"]` | Insert a newline.                    |
-| `Submit`               | `"enter"`                                          | Submit the composer.                 |
-| `Close`                | `"esc"`                                            | Close the composer.                  |
-| `ClearInput`           | `"<C-c>"`                                          | Clear the composer input.            |
-| `RemoveLastAttachment` | `"delete"`                                         | Remove the last pending attachment.  |
-| `DeletePreviousChar`   | `"backspace"`                                      | Delete the previous character.       |
-| `DeletePreviousWord`   | `["<A-backspace>", "<C-backspace>", "<C-w>"]`      | Delete the word before the cursor.   |
-| `MoveCursorUp`         | `"up"`                                             | Move the cursor up.                  |
-| `MoveCursorDown`       | `"down"`                                           | Move the cursor down.                |
-| `MoveCursorWordLeft`   | `"<C-left>"`                                       | Move the cursor one word left.       |
-| `MoveCursorLeft`       | `"left"`                                           | Move the cursor left.                |
-| `MoveCursorWordRight`  | `"<C-right>"`                                      | Move the cursor one word right.      |
-| `MoveCursorRight`      | `"right"`                                          | Move the cursor right.               |
-| `MoveCursorHome`       | `"home"`                                           | Move the cursor to the start.        |
-| `MoveCursorEnd`        | `"end"`                                            | Move the cursor to the end.          |
+| Composer action        | Default config                                     | Action                                  |
+| ---------------------- | -------------------------------------------------- | --------------------------------------- |
+| `OpenEditor`           | `"<C-e>"`                                          | Open the current draft in `$EDITOR`.    |
+| `PasteClipboard`       | `"<C-v>"`                                          | Request clipboard paste.                |
+| `InsertNewline`        | `["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"]` | Insert a newline.                       |
+| `Submit`               | `"enter"`                                          | Submit the composer.                    |
+| `Close`                | `"esc"`                                            | Close the composer.                     |
+| `ClearInput`           | `"<C-c>"`                                          | Clear the composer input.               |
+| `RemoveLastAttachment` | `"delete"`                                         | Remove the last pending attachment.     |
+| `DeletePreviousChar`   | `"backspace"`                                      | Delete the previous character.          |
+| `DeletePreviousWord`   | `["<A-backspace>", "<C-backspace>", "<C-w>"]`      | Delete the word before the cursor.      |
+| `MoveCursorUp`         | `"up"`                                             | Move the cursor up.                     |
+| `MoveCursorDown`       | `"down"`                                           | Move the cursor down.                   |
+| `MoveCursorWordLeft`   | `"<C-left>"`                                       | Move the cursor one word left.          |
+| `MoveCursorLeft`       | `"left"`                                           | Move the cursor left.                   |
+| `MoveCursorWordRight`  | `"<C-right>"`                                      | Move the cursor one word right.         |
+| `MoveCursorRight`      | `"right"`                                          | Move the cursor right.                  |
+| `MoveCursorHome`       | `"home"`                                           | Move the cursor to the start.           |
+| `MoveCursorEnd`        | `"end"`                                            | Move the cursor to the end.             |
+| `ToggleReplyPing`      | `"<A-p>"`                                          | Toggle whether replies ping the author. |
 
 ## Focused pane actions
 

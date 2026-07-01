@@ -379,6 +379,7 @@ pub(in crate::tui) enum ComposerAction {
     MoveCursorRight,
     MoveCursorHome,
     MoveCursorEnd,
+    ToggleReplyPing,
     InsertChar(char),
     Ignore,
 }

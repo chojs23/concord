@@ -78,11 +78,11 @@ fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
         Some("newer selected message")
     );
 
-    assert_eq!(composer_text(&state, 80), "reply to hello\n> ");
+    assert_eq!(composer_text(&state, 80), "reply to hello  @ on\n> ");
 }
 
 #[test]
-fn reply_composer_hint_line_is_dim() {
+fn reply_composer_hint_line_shows_dim_excerpt_and_accented_ping_indicator() {
     let mut state = state_with_message();
     state.direct_reply_to_selected_message();
 
@@ -90,10 +90,19 @@ fn reply_composer_hint_line_is_dim() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["reply to hello", "> "]
+        vec!["reply to hello  @ on", "> "]
     );
     assert_eq!(lines[0].spans[0].style.fg, Some(DIM));
+    assert_eq!(lines[0].spans.last().unwrap().style.fg, Some(ACCENT));
     assert_eq!(lines[1].spans[0].style.fg, None);
+
+    state.toggle_ping_on_reply();
+    let lines = composer_lines(&state, 80);
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["reply to hello  @ off", "> "]
+    );
+    assert_eq!(lines[0].spans.last().unwrap().style.fg, Some(DIM));
 }
 
 #[test]
