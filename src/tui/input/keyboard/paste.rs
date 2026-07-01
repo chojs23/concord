@@ -34,6 +34,10 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
     }
 
     if !state.is_composing() {
+        if state.composer_accepts_attachments() && pasted_file_attachments(text).is_some() {
+            state.start_composer();
+            return handle_pasted_file_attachments(state, text);
+        }
         return false;
     }
 
