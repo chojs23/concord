@@ -39,6 +39,7 @@ enum ComposerShortcutAction {
     MoveCursorRight,
     MoveCursorHome,
     MoveCursorEnd,
+    ToggleReplyPing,
 }
 
 impl Default for ComposerKeyBindings {
@@ -149,6 +150,7 @@ impl ComposerShortcutAction {
             "MoveCursorRight" => Some(Self::MoveCursorRight),
             "MoveCursorHome" => Some(Self::MoveCursorHome),
             "MoveCursorEnd" => Some(Self::MoveCursorEnd),
+            "ToggleReplyPing" => Some(Self::ToggleReplyPing),
             _ => None,
         }
     }
@@ -172,6 +174,7 @@ impl ComposerShortcutAction {
             Self::MoveCursorRight => "MoveCursorRight",
             Self::MoveCursorHome => "MoveCursorHome",
             Self::MoveCursorEnd => "MoveCursorEnd",
+            Self::ToggleReplyPing => "ToggleReplyPing",
         }
     }
 
@@ -194,6 +197,7 @@ impl ComposerShortcutAction {
             Self::MoveCursorRight => ComposerAction::MoveCursorRight,
             Self::MoveCursorHome => ComposerAction::MoveCursorHome,
             Self::MoveCursorEnd => ComposerAction::MoveCursorEnd,
+            Self::ToggleReplyPing => ComposerAction::ToggleReplyPing,
         }
     }
 }
@@ -305,6 +309,10 @@ fn default_composer_key_bindings() -> BTreeMap<ComposerShortcutAction, Vec<KeyCh
         (
             ComposerShortcutAction::MoveCursorEnd,
             vec![key_chord(KeyCode::End)],
+        ),
+        (
+            ComposerShortcutAction::ToggleReplyPing,
+            vec![modified_key_chord(KeyCode::Char('p'), KeyModifiers::ALT)],
         ),
     ])
 }

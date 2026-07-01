@@ -671,6 +671,7 @@ MoveCursorWordRight = "<C-right>"
 MoveCursorRight = "right"
 MoveCursorHome = "home"
 MoveCursorEnd = "end"
+ToggleReplyPing = "<A-p>"
 ```
 
 </details><br>

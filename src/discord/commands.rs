@@ -411,6 +411,13 @@ impl MessageHistoryAfterMode {
     }
 }
 
+/// A reply target paired with whether it should ping the referenced author.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReplyReference {
+    pub message_id: Id<MessageMarker>,
+    pub mention_author: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppCommand {
     SignOut,
@@ -517,7 +524,7 @@ pub enum AppCommand {
     SendMessage {
         channel_id: Id<ChannelMarker>,
         content: String,
-        reply_to: Option<Id<MessageMarker>>,
+        reply_to: Option<ReplyReference>,
         attachments: Vec<MessageAttachmentUpload>,
     },
     CreateForumPost {

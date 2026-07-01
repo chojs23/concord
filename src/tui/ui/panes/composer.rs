@@ -540,10 +540,15 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
         if state.is_composing()
             && let Some(message) = state.reply_target_message_state()
         {
-            lines.push(Line::from(Span::styled(
-                reply_target_hint(message, state, width),
-                Style::default().fg(DIM),
-            )));
+            let (ping_label, ping_style) = reply_ping_indicator(state);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    reply_target_hint(message, state, width),
+                    Style::default().fg(DIM),
+                ),
+                Span::raw(REPLY_PING_SEPARATOR),
+                Span::styled(ping_label, ping_style),
+            ]));
         }
         let prefixed_input = prefixed_composer_input(&display_input.input);
         let wrapped = wrap_text_lines(&prefixed_input, width as usize);
@@ -888,7 +893,11 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
         append_composer_upload_preview_texts(&mut lines, state, width);
         let input = prefixed_composer_input(state.composer_input());
         if let Some(message) = state.reply_target_message_state() {
-            lines.push(reply_target_hint(message, state, width));
+            let (ping_label, _) = reply_ping_indicator(state);
+            lines.push(format!(
+                "{}{REPLY_PING_SEPARATOR}{ping_label}",
+                reply_target_hint(message, state, width)
+            ));
         }
         lines.push(input);
         return lines.join("\n");
@@ -960,13 +969,27 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
     "select a channel to write a message".to_owned()
 }
 
+const REPLY_PING_SEPARATOR: &str = "  ";
+
 fn reply_target_hint(message: &MessageState, state: &DashboardState, width: u16) -> String {
     const PREFIX: &str = "reply to ";
-    let excerpt_width = usize::from(width).saturating_sub(PREFIX.width()).max(1);
+    // Reserve room for the trailing ping indicator so the excerpt never runs
+    // into it.
+    let (ping_label, _) = reply_ping_indicator(state);
+    let reserved = PREFIX.width() + REPLY_PING_SEPARATOR.width() + ping_label.width();
+    let excerpt_width = usize::from(width).saturating_sub(reserved).max(1);
     format!(
         "{PREFIX}{}",
         truncate_display_width(&reply_target_excerpt(message, state), excerpt_width)
     )
+}
+
+fn reply_ping_indicator(state: &DashboardState) -> (&'static str, Style) {
+    if state.ping_on_reply() {
+        ("@ on", Style::default().fg(ACCENT))
+    } else {
+        ("@ off", Style::default().fg(DIM))
+    }
 }
 
 fn reply_target_excerpt(message: &MessageState, state: &DashboardState) -> String {

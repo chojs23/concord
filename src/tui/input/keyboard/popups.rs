@@ -157,6 +157,7 @@ pub(super) fn handle_forum_post_composer_key(
         | ComposerAction::MoveCursorHome
         | ComposerAction::MoveCursorEnd
         | ComposerAction::InsertChar(_)
+        | ComposerAction::ToggleReplyPing
         | ComposerAction::Ignore => {}
     }
     None
@@ -196,6 +197,7 @@ fn handle_forum_post_tag_picker_key(
         | ComposerAction::MoveCursorHome
         | ComposerAction::MoveCursorEnd
         | ComposerAction::InsertChar(_)
+        | ComposerAction::ToggleReplyPing
         | ComposerAction::Ignore => {}
     }
     None
@@ -224,6 +226,7 @@ fn handle_forum_post_composer_edit_key(
         ComposerAction::InsertChar(value) => state.push_forum_post_char(value),
         ComposerAction::RemoveLastAttachment => state.pop_pending_forum_post_attachment(),
         ComposerAction::OpenInEditor => state.request_open_forum_post_body_in_editor(),
+        ComposerAction::ToggleReplyPing => {}
         ComposerAction::Ignore => {}
     }
     None
@@ -313,6 +316,7 @@ pub(super) fn handle_thread_edit_key(
         | ComposerAction::MoveCursorHome
         | ComposerAction::MoveCursorEnd
         | ComposerAction::InsertChar(_)
+        | ComposerAction::ToggleReplyPing
         | ComposerAction::Ignore => {}
     }
     None
@@ -352,6 +356,7 @@ fn handle_thread_edit_tag_picker_key(
         | ComposerAction::MoveCursorHome
         | ComposerAction::MoveCursorEnd
         | ComposerAction::InsertChar(_)
+        | ComposerAction::ToggleReplyPing
         | ComposerAction::Ignore => {}
     }
     None
@@ -379,6 +384,7 @@ fn handle_thread_edit_title_key(state: &mut DashboardState, key: KeyEvent) -> Op
         | ComposerAction::MoveCursorDown
         | ComposerAction::RemoveLastAttachment
         | ComposerAction::OpenInEditor
+        | ComposerAction::ToggleReplyPing
         | ComposerAction::Ignore => {}
     }
     None

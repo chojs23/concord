@@ -383,6 +383,7 @@ impl KeyBindings {
             | ComposerAction::RemoveLastAttachment
             | ComposerAction::MoveCursorUp
             | ComposerAction::MoveCursorDown
+            | ComposerAction::ToggleReplyPing
             | ComposerAction::Ignore => None,
         }
     }

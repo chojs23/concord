@@ -14,6 +14,7 @@ use crate::{
         ApplicationCommandInfo, ApplicationCommandInteraction, ApplicationCommandInteractionOption,
         ChannelInfo, GuildFolder, MAX_UPLOAD_FILE_BYTES, MessageAttachmentUpload,
         MessageSearchAuthorType, MessageSearchHas, MessageSearchQuery, ReactionEmoji,
+        ReplyReference,
     },
 };
 
@@ -60,11 +61,34 @@ fn validates_attachment_only_message_payload() {
 
     validate_message_payload("   ", &attachments).expect("file-only messages should be valid");
 
-    let body = message_request_body("", Some(Id::new(44)), &attachments);
+    let body = message_request_body(
+        "",
+        Some(ReplyReference {
+            message_id: Id::new(44),
+            mention_author: true,
+        }),
+        &attachments,
+    );
     assert_eq!(body["content"], "");
     assert_eq!(body["message_reference"]["message_id"], "44");
+    assert!(body.get("allowed_mentions").is_none());
     assert_eq!(body["attachments"][0]["id"], 0);
     assert_eq!(body["attachments"][0]["filename"], "cat.png");
+}
+
+#[test]
+fn message_request_body_suppresses_reply_ping_when_disabled() {
+    let body = message_request_body(
+        "hi",
+        Some(ReplyReference {
+            message_id: Id::new(44),
+            mention_author: false,
+        }),
+        &[],
+    );
+    assert_eq!(body["message_reference"]["message_id"], "44");
+    assert_eq!(body["allowed_mentions"]["replied_user"], false);
+    assert_eq!(body["allowed_mentions"]["parse"][0], "users");
 }
 
 #[test]

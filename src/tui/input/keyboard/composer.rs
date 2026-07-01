@@ -77,6 +77,10 @@ pub(super) fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
             state.move_composer_cursor_end();
             None
         }
+        ComposerAction::ToggleReplyPing => {
+            state.toggle_ping_on_reply();
+            None
+        }
         ComposerAction::InsertChar(value) => {
             if value != ':' || !state.open_composer_reaction_picker_from_plus_colon() {
                 state.push_composer_char(value);
