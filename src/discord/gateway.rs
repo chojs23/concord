@@ -36,6 +36,7 @@ use crate::logging;
 
 mod parser;
 
+pub(in crate::discord) use parser::parse_activity;
 use parser::parse_user_account_dispatch;
 pub(crate) use parser::{parse_channel_info, parse_message_info};
 
@@ -806,7 +807,11 @@ async fn dispatch_command(
         GatewayCommand::UpdatePresence { status, activities } => {
             logging::debug(
                 "gateway",
-                format!("updating presence status: {}", status.label()),
+                format!(
+                    "updating presence status: {} activities={}",
+                    status.label(),
+                    activities.len()
+                ),
             );
             presence_update_payload(status, &activities)
         }
@@ -1015,8 +1020,73 @@ fn activity_gateway_payload(activity: &ActivityInfo) -> Value {
     if let Some(url) = activity.url.as_deref() {
         value["url"] = json!(url);
     }
+    // A Custom status carries its emoji here. Without it a status change would
+    // re-broadcast the activity and drop the emoji.
+    if let Some(emoji) = activity.emoji.as_ref() {
+        let mut node = json!({ "name": emoji.name.as_str() });
+        if let Some(id) = emoji.id {
+            node["id"] = json!(id.get().to_string());
+        }
+        if emoji.animated {
+            node["animated"] = json!(true);
+        }
+        value["emoji"] = node;
+    }
     if let Some(application_id) = activity.application_id.as_deref() {
         value["application_id"] = json!(application_id);
+    }
+    if let Some(timestamps) = activity.timestamps.as_ref() {
+        let mut node = json!({});
+        if let Some(start) = timestamps.start {
+            node["start"] = json!(start);
+        }
+        if let Some(end) = timestamps.end {
+            node["end"] = json!(end);
+        }
+        value["timestamps"] = node;
+    }
+    if let Some(assets) = activity.assets.as_ref() {
+        let mut node = json!({});
+        if let Some(large_image) = assets.large_image.as_deref() {
+            node["large_image"] = json!(large_image);
+        }
+        if let Some(large_text) = assets.large_text.as_deref() {
+            node["large_text"] = json!(large_text);
+        }
+        if let Some(small_image) = assets.small_image.as_deref() {
+            node["small_image"] = json!(small_image);
+        }
+        if let Some(small_text) = assets.small_text.as_deref() {
+            node["small_text"] = json!(small_text);
+        }
+        value["assets"] = node;
+    }
+    if let Some(party) = activity.party.as_ref() {
+        let mut node = json!({});
+        if let Some(id) = party.id.as_deref() {
+            node["id"] = json!(id);
+        }
+        if let Some((current, max)) = party.size {
+            node["size"] = json!([current, max]);
+        }
+        value["party"] = node;
+    }
+    // User-account presence encodes buttons as a parallel pair: an array of
+    // labels under `buttons` and their URLs under `metadata.button_urls`. This
+    // differs from the bot `[{label, url}]` shape.
+    if !activity.buttons.is_empty() {
+        let labels: Vec<&str> = activity
+            .buttons
+            .iter()
+            .map(|button| button.label.as_str())
+            .collect();
+        let urls: Vec<&str> = activity
+            .buttons
+            .iter()
+            .map(|button| button.url.as_str())
+            .collect();
+        value["buttons"] = json!(labels);
+        value["metadata"] = json!({ "button_urls": urls });
     }
     value
 }
@@ -1029,9 +1099,9 @@ mod tests {
     };
     use crate::discord::ids::{
         Id,
-        marker::{ChannelMarker, GuildMarker, UserMarker},
+        marker::{ChannelMarker, EmojiMarker, GuildMarker, UserMarker},
     };
-    use crate::discord::{ActivityInfo, PresenceStatus};
+    use crate::discord::{ActivityEmoji, ActivityInfo, ActivityKind, PresenceStatus};
     use serde_json::json;
 
     use super::{
@@ -1117,6 +1187,25 @@ mod tests {
     }
 
     #[test]
+    fn presence_update_payload_carries_custom_status_emoji() {
+        let mut activity = ActivityInfo::test(ActivityKind::Custom, "");
+        activity.emoji = Some(ActivityEmoji {
+            name: "wave".to_owned(),
+            id: Some(Id::<EmojiMarker>::new(50)),
+            animated: true,
+        });
+        let payload: serde_json::Value = serde_json::from_str(&presence_update_payload(
+            PresenceStatus::Online,
+            &[activity],
+        ))
+        .expect("presence payload should be valid json");
+        let emoji = &payload["d"]["activities"][0]["emoji"];
+        assert_eq!(emoji["name"].as_str(), Some("wave"));
+        assert_eq!(emoji["id"].as_str(), Some("50"));
+        assert_eq!(emoji["animated"].as_bool(), Some(true));
+    }
+
+    #[test]
     fn presence_update_payload_includes_manual_activity() {
         let activity = ActivityInfo::playing("Concord");
         let payload: serde_json::Value = serde_json::from_str(&presence_update_payload(
@@ -1130,6 +1219,56 @@ mod tests {
             Some("Concord")
         );
         assert_eq!(payload["d"]["activities"][0]["type"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn presence_update_payload_serializes_rich_activity_fields() {
+        let activity = ActivityInfo {
+            timestamps: Some(crate::discord::ActivityTimestamps {
+                start: Some(1_700_000_000_000),
+                end: None,
+            }),
+            assets: Some(crate::discord::ActivityAssets {
+                large_image: Some("cover".to_owned()),
+                large_text: Some("On the main menu".to_owned()),
+                small_image: None,
+                small_text: None,
+            }),
+            party: Some(crate::discord::ActivityParty {
+                id: Some("party-1".to_owned()),
+                size: Some((2, 5)),
+            }),
+            buttons: vec![crate::discord::ActivityButton {
+                label: "Join".to_owned(),
+                url: "https://example.com/join".to_owned(),
+            }],
+            ..ActivityInfo::playing("Concord")
+        };
+        let payload: serde_json::Value = serde_json::from_str(&presence_update_payload(
+            PresenceStatus::Online,
+            &[activity],
+        ))
+        .expect("presence payload should be valid json");
+        let entry = &payload["d"]["activities"][0];
+
+        assert_eq!(
+            entry["timestamps"]["start"].as_i64(),
+            Some(1_700_000_000_000)
+        );
+        assert!(entry["timestamps"].get("end").is_none());
+        assert_eq!(entry["assets"]["large_image"].as_str(), Some("cover"));
+        assert_eq!(
+            entry["assets"]["large_text"].as_str(),
+            Some("On the main menu")
+        );
+        assert!(entry["assets"].get("small_image").is_none());
+        assert_eq!(entry["party"]["id"].as_str(), Some("party-1"));
+        assert_eq!(entry["party"]["size"], json!([2, 5]));
+        assert_eq!(entry["buttons"], json!(["Join"]));
+        assert_eq!(
+            entry["metadata"]["button_urls"],
+            json!(["https://example.com/join"])
+        );
     }
 
     #[test]

@@ -619,6 +619,9 @@ pub enum AppCommand {
     UpdateCurrentUserActivity {
         status: PresenceStatus,
         activities: Vec<ActivityInfo>,
+        /// RPC `client_id` whose live activity this is, so the RPC server keeps
+        /// re-broadcasting it. `None` for a manual activity, which RPC must not override.
+        track_client_id: Option<String>,
     },
     AckChannel {
         channel_id: Id<ChannelMarker>,

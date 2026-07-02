@@ -146,6 +146,10 @@ fn record_media_event(event: &AppEvent, ctx: &mut EffectContext<'_>) {
 }
 
 fn push_dashboard_effect(event: AppEvent, ctx: &mut EffectContext<'_>) {
+    if let AppEvent::RichPresenceDetected { activities } = event {
+        ctx.state.set_detected_rich_presence(activities);
+        return;
+    }
     if matches!(event, AppEvent::GatewayClosed) {
         handle_gateway_closed(ctx.state);
         return;

@@ -157,7 +157,15 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                 }
             }
         }
-        AppCommand::UpdateCurrentUserActivity { status, activities } => {
+        AppCommand::UpdateCurrentUserActivity {
+            status,
+            mut activities,
+            track_client_id,
+        } => {
+            client.select_rich_presence(track_client_id);
+            for activity in &mut activities {
+                client.resolve_activity_external_assets(activity).await;
+            }
             if let Err(error) = client.update_presence_activity(status, activities.clone()) {
                 log_app_error("update presence activity failed", &error);
                 client

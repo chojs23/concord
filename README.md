@@ -246,6 +246,15 @@ options menu.
 - Presence indicators (Online, Idle, DND, Offline)
 - Configure user profile and custom activity status
 
+### Rich Presence
+
+- Concord serves the local `discord-ipc` socket, detects connected apps, and
+  lets you pick which one to share from your profile's activity picker
+- Only apps that speak Discord's Rich Presence (RPC/IPC) protocol are detected.
+- Detection needs the official Discord client closed, since only one program can
+  own the socket and the official client claims it first
+- Toggle with `share_rich_presence` under `[presence]` in `config.toml`
+
 ### Typing Indicators & Read State
 
 - Live "user is typing..." indicators
@@ -488,6 +497,10 @@ circular_avatars = false
 [composer]
 # Send custom emoji your account cannot use directly as image links.
 emojis_as_links = false
+
+[presence]
+# Relay Rich Presence from local apps as your activity.
+share_rich_presence = true
 
 [credentials]
 # Credential storage: auto, keychain, or plain.

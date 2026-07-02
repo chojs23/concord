@@ -742,6 +742,26 @@ pub(super) fn handle_user_profile_popup_key(
         return None;
     }
 
+    if state.is_user_profile_activity_picker_open() {
+        if state.key_bindings().is_popup_close_key(key) {
+            state.close_user_profile_activity_picker();
+            return None;
+        }
+        if key.code == KeyCode::Enter {
+            return state.activate_user_profile_activity_picker();
+        }
+        if let Some(action) = state
+            .key_bindings()
+            .selection_action(key, SelectionKeySet::Navigation)
+        {
+            match action {
+                SelectionAction::Next => state.move_user_profile_activity_picker_down(),
+                SelectionAction::Previous => state.move_user_profile_activity_picker_up(),
+            }
+        }
+        return None;
+    }
+
     match state
         .key_bindings()
         .profile_popup_action(key, state.is_user_profile_popup_editing())

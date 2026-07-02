@@ -24,6 +24,7 @@ pub mod qr_auth;
 mod read;
 mod request_lifecycle;
 mod rest;
+mod rpc;
 mod state;
 mod upload;
 mod user_settings;
@@ -83,7 +84,10 @@ pub use message::{
 pub use notification::{
     ChannelNotificationOverrideInfo, GuildNotificationSettingsInfo, NotificationLevel,
 };
-pub use presence::{ActivityEmoji, ActivityInfo, ActivityKind, PresenceStatus};
+pub use presence::{
+    ActivityAssets, ActivityButton, ActivityEmoji, ActivityInfo, ActivityKind, ActivityParty,
+    ActivityTimestamps, PresenceStatus,
+};
 pub use profile::{FriendStatus, MutualGuildInfo, RelationshipInfo, UserProfileInfo};
 pub use read::ReadStateInfo;
 pub use rest::{ForumPostPage, ReactionUsersPage};

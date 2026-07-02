@@ -184,6 +184,20 @@ impl<'de> Deserialize<'de> for KeymapBinding {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PresenceOptions {
+    pub share_rich_presence: bool,
+}
+
+impl Default for PresenceOptions {
+    fn default() -> Self {
+        Self {
+            share_rich_presence: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AppOptions {
@@ -192,6 +206,7 @@ pub struct AppOptions {
     pub credentials: CredentialOptions,
     pub notifications: NotificationOptions,
     pub voice: VoiceOptions,
+    pub presence: PresenceOptions,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
@@ -531,6 +546,7 @@ fn parse_app_options(content: &str) -> Result<(AppOptions, Vec<String>)> {
         credentials: section(&root, "credentials", &mut warnings),
         notifications: section(&root, "notifications", &mut warnings),
         voice: section(&root, "voice", &mut warnings),
+        presence: section(&root, "presence", &mut warnings),
     };
 
     Ok((options, warnings))
@@ -741,7 +757,7 @@ mod tests {
     use super::{
         AppOptions, ComposerOptions, CredentialOptions, CredentialStoreMode, DisplayOptions,
         ImagePreviewQualityPreset, ImageProtocolPreference, KeymapBinding, KeymapFileOptions,
-        KeymapOptions, MicrophoneSensitivityDb, NotificationOptions, VoiceOptions,
+        KeymapOptions, MicrophoneSensitivityDb, NotificationOptions, PresenceOptions, VoiceOptions,
         VoiceVolumePercent, load_keymap_options_from_path, load_options_from_path,
         parse_app_options, save_options_to_path,
     };
@@ -1338,6 +1354,9 @@ mod tests {
                 microphone_volume: VoiceVolumePercent::new(80),
                 voice_output_volume: VoiceVolumePercent::new(60),
             },
+            presence: PresenceOptions {
+                share_rich_presence: false,
+            },
         };
 
         save_options_to_path(&path, &options).expect("config should save");
@@ -1351,6 +1370,7 @@ mod tests {
         assert_eq!(loaded.composer, options.composer);
         assert_eq!(loaded.notifications, options.notifications);
         assert_eq!(loaded.voice, options.voice);
+        assert_eq!(loaded.presence, options.presence);
         let _ = fs::remove_file(&path);
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir_all(parent);

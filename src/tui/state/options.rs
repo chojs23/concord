@@ -1,6 +1,6 @@
 use crate::config::{
     AppOptions, ComposerOptions, CredentialOptions, DisplayOptions, ImagePreviewQualityPreset,
-    KeymapOptions, NotificationOptions, UiStateOptions, VoiceOptions,
+    KeymapOptions, NotificationOptions, PresenceOptions, UiStateOptions, VoiceOptions,
 };
 use crate::discord::AppCommand;
 use crate::tui::keybindings::KeyBindings;
@@ -39,6 +39,9 @@ pub(super) struct SettingsState {
     pub(super) credential_options: CredentialOptions,
     pub(super) notification_options: NotificationOptions,
     pub(super) voice_options: VoiceOptions,
+    // Not editable in the TUI: kept only so saving unrelated options round-trips
+    // the user's Rich Presence choice instead of resetting it to the default.
+    pub(super) presence_options: PresenceOptions,
     pub(super) key_bindings: KeyBindings,
     pub(super) config_save_pending: bool,
     pub(super) ui_state_save_pending: bool,
@@ -69,6 +72,10 @@ impl DashboardState {
         state.options.key_bindings = KeyBindings::from_options(&keymap_options);
         state.apply_ui_state_options(ui_state_options);
         state
+    }
+
+    pub(in crate::tui) fn apply_presence_options(&mut self, presence_options: PresenceOptions) {
+        self.options.presence_options = presence_options;
     }
 
     #[cfg(test)]
@@ -259,6 +266,7 @@ impl DashboardState {
             credentials: self.options.credential_options,
             notifications: self.options.notification_options.clone(),
             voice: self.options.voice_options,
+            presence: self.options.presence_options,
         })
     }
 

@@ -1,7 +1,8 @@
 use serde_json::Value;
 
 use crate::discord::{
-    ActivityEmoji, ActivityInfo, ActivityKind,
+    ActivityAssets, ActivityButton, ActivityEmoji, ActivityInfo, ActivityKind, ActivityParty,
+    ActivityTimestamps,
     events::{AppEvent, PresenceEventFields},
     ids::{
         Id,
@@ -85,7 +86,7 @@ pub(super) fn parse_activities(value: &Value) -> Vec<ActivityInfo> {
         .unwrap_or_default()
 }
 
-fn parse_activity(value: &Value) -> Option<ActivityInfo> {
+pub(in crate::discord) fn parse_activity(value: &Value) -> Option<ActivityInfo> {
     let kind = ActivityKind::from_code(value.get("type").and_then(Value::as_u64).unwrap_or(0));
     let name = value
         .get("name")
@@ -117,6 +118,10 @@ fn parse_activity(value: &Value) -> Option<ActivityInfo> {
         })
         .filter(|s| !s.is_empty());
     let emoji = value.get("emoji").and_then(parse_activity_emoji);
+    let timestamps = value.get("timestamps").and_then(parse_activity_timestamps);
+    let assets = value.get("assets").and_then(parse_activity_assets);
+    let party = value.get("party").and_then(parse_activity_party);
+    let buttons = parse_activity_buttons(value);
 
     if kind == ActivityKind::Unknown && name.is_empty() && state.is_none() && emoji.is_none() {
         return None;
@@ -130,7 +135,101 @@ fn parse_activity(value: &Value) -> Option<ActivityInfo> {
         url,
         application_id,
         emoji,
+        timestamps,
+        assets,
+        party,
+        buttons,
     })
+}
+
+fn parse_activity_timestamps(value: &Value) -> Option<ActivityTimestamps> {
+    let start = value.get("start").and_then(Value::as_i64);
+    let end = value.get("end").and_then(Value::as_i64);
+    if start.is_none() && end.is_none() {
+        return None;
+    }
+    Some(ActivityTimestamps { start, end })
+}
+
+fn parse_activity_assets(value: &Value) -> Option<ActivityAssets> {
+    let text = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let assets = ActivityAssets {
+        large_image: text("large_image"),
+        large_text: text("large_text"),
+        small_image: text("small_image"),
+        small_text: text("small_text"),
+    };
+    if assets.large_image.is_none()
+        && assets.large_text.is_none()
+        && assets.small_image.is_none()
+        && assets.small_text.is_none()
+    {
+        return None;
+    }
+    Some(assets)
+}
+
+fn parse_activity_party(value: &Value) -> Option<ActivityParty> {
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let size = value
+        .get("size")
+        .and_then(Value::as_array)
+        .and_then(|entries| {
+            let current = entries.first()?.as_u64()? as u32;
+            let max = entries.get(1)?.as_u64()? as u32;
+            Some((current, max))
+        });
+    if id.is_none() && size.is_none() {
+        return None;
+    }
+    Some(ActivityParty { id, size })
+}
+
+/// Received presences encode buttons as an array of label strings with URLs in
+/// `metadata.button_urls`, whereas RPC `SET_ACTIVITY` sends `[{ label, url }]`.
+/// We accept both so this parser is reusable for the RPC path.
+fn parse_activity_buttons(value: &Value) -> Vec<ActivityButton> {
+    let Some(entries) = value.get("buttons").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let metadata_urls = value
+        .get("metadata")
+        .and_then(|metadata| metadata.get("button_urls"))
+        .and_then(Value::as_array);
+    entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            if let Some(label) = entry.as_str() {
+                let url = metadata_urls
+                    .and_then(|urls| urls.get(index))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                return Some(ActivityButton {
+                    label: label.to_owned(),
+                    url,
+                });
+            }
+            let label = entry.get("label").and_then(Value::as_str)?.to_owned();
+            let url = entry
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            Some(ActivityButton { label, url })
+        })
+        .collect()
 }
 
 fn parse_activity_emoji(value: &Value) -> Option<ActivityEmoji> {

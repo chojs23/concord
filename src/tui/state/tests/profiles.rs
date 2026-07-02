@@ -422,7 +422,7 @@ fn profile_settings_status_picker_dispatches_presence_update() {
 }
 
 #[test]
-fn profile_settings_activity_edit_dispatches_presence_update() {
+fn profile_settings_activity_manual_entry_dispatches_presence_update() {
     let user_id = Id::new(10);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
@@ -438,12 +438,19 @@ fn profile_settings_activity_edit_dispatches_presence_update() {
         },
     });
     state.open_current_user_profile_popup();
-    state.next_user_profile_settings_field();
-    state.next_user_profile_settings_field();
-    state.next_user_profile_settings_field();
-    state.next_user_profile_settings_field();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
 
-    let _ = state.start_or_commit_user_profile_edit();
+    assert_eq!(state.start_or_commit_user_profile_edit(), None);
+    assert!(state.is_user_profile_activity_picker_open());
+    assert_eq!(state.activate_user_profile_activity_picker(), None);
+    assert!(!state.is_user_profile_activity_picker_open());
+    assert_eq!(
+        state.user_profile_settings_editing_field(),
+        Some(UserProfileSettingsField::ManualActivity),
+        "manual entry should switch to the text editor"
+    );
     for value in "Concord".chars() {
         state.push_user_profile_edit_char(value);
     }
@@ -453,8 +460,52 @@ fn profile_settings_activity_edit_dispatches_presence_update() {
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![ActivityInfo::playing("Concord")],
+            track_client_id: None,
         })
     );
+}
+
+#[test]
+fn profile_settings_activity_picker_selects_detected_app() {
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
+    });
+    let detected = ActivityInfo {
+        application_id: Some("client-123".to_owned()),
+        ..ActivityInfo::playing("Visual Studio Code")
+    };
+    state.set_detected_rich_presence(vec![detected.clone()]);
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
+
+    assert_eq!(state.start_or_commit_user_profile_edit(), None);
+    let rows = state.user_profile_activity_picker_rows();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, "Visual Studio Code");
+    assert!(rows[0].1, "detected app is selected first");
+
+    assert_eq!(
+        state.activate_user_profile_activity_picker(),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![detected],
+            track_client_id: Some("client-123".to_owned()),
+        })
+    );
+    assert!(!state.is_user_profile_activity_picker_open());
 }
 
 #[test]

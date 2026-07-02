@@ -80,9 +80,8 @@ pub struct ActivityEmoji {
 }
 
 impl ActivityEmoji {
-    /// CDN URL for the emoji image, when this is a custom emoji (i.e. carries
-    /// an `id`). Returns `None` for unicode-only emojis, which render as text
-    /// and don't need a network fetch.
+    /// CDN URL for a custom emoji (one with an `id`). `None` for unicode emojis,
+    /// which render as text.
     pub fn image_url(&self) -> Option<String> {
         let id = self.id?;
         let ext = if self.animated { "gif" } else { "png" };
@@ -94,6 +93,38 @@ impl ActivityEmoji {
     }
 }
 
+/// Start/end of the activity in Unix **milliseconds**.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ActivityTimestamps {
+    pub start: Option<i64>,
+    pub end: Option<i64>,
+}
+
+/// Image slots of a rich presence card. Each `*_image` is an app-asset key, a
+/// numeric asset id, or an `mp:` external ref.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActivityAssets {
+    pub large_image: Option<String>,
+    pub large_text: Option<String>,
+    pub small_image: Option<String>,
+    pub small_text: Option<String>,
+}
+
+/// Party grouping for an activity. `size` is `(current, max)` members.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActivityParty {
+    pub id: Option<String>,
+    pub size: Option<(u32, u32)>,
+}
+
+/// A clickable button. User-account gateway presence encodes these differently
+/// from RPC's `{ label, url }` (see `activity_gateway_payload`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActivityButton {
+    pub label: String,
+    pub url: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActivityInfo {
     pub kind: ActivityKind,
@@ -103,6 +134,10 @@ pub struct ActivityInfo {
     pub url: Option<String>,
     pub application_id: Option<String>,
     pub emoji: Option<ActivityEmoji>,
+    pub timestamps: Option<ActivityTimestamps>,
+    pub assets: Option<ActivityAssets>,
+    pub party: Option<ActivityParty>,
+    pub buttons: Vec<ActivityButton>,
 }
 
 impl ActivityInfo {
@@ -115,6 +150,10 @@ impl ActivityInfo {
             url: None,
             application_id: None,
             emoji: None,
+            timestamps: None,
+            assets: None,
+            party: None,
+            buttons: Vec::new(),
         }
     }
 }
@@ -131,6 +170,10 @@ impl ActivityInfo {
             url: None,
             application_id: None,
             emoji: None,
+            timestamps: None,
+            assets: None,
+            party: None,
+            buttons: Vec::new(),
         }
     }
 }

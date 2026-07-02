@@ -422,6 +422,11 @@ fn user_profile_settings_popup_text(
         push_profile_status_picker_lines(&mut lines, width, &status_rows);
     }
 
+    let activity_rows = state.user_profile_activity_picker_rows();
+    if !activity_rows.is_empty() {
+        push_profile_activity_picker_lines(&mut lines, width, &activity_rows);
+    }
+
     lines.push(Line::from(Span::raw(String::new())));
     let status = if state.user_profile_settings_saving() {
         Some("Saving profile changes...".to_owned())
@@ -475,6 +480,24 @@ fn push_profile_status_picker_lines(
                 truncate_display_width(status.label(), width.saturating_sub(2)),
                 Style::default().fg(presence_color(*status)),
             ),
+        ]));
+    }
+}
+
+fn push_profile_activity_picker_lines(
+    lines: &mut Vec<Line<'static>>,
+    width: usize,
+    rows: &[(String, bool)],
+) {
+    lines.push(Line::from(Span::raw(String::new())));
+    lines.push(Line::from(Span::styled(
+        "Choose activity",
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    )));
+    for (label, selected) in rows {
+        lines.push(Line::from(vec![
+            selectable_popup_marker(*selected),
+            Span::raw(truncate_display_width(label, width.saturating_sub(2))),
         ]));
     }
 }

@@ -329,6 +329,12 @@ pub enum AppEvent {
         guild_id: Option<Id<GuildMarker>>,
         presence: PresenceEventFields,
     },
+    /// Rich Presence activities published by local apps over the RPC socket. Not a
+    /// gateway dispatch: emitted so the profile popup can list detectable apps. It
+    /// does not change presence on its own.
+    RichPresenceDetected {
+        activities: Vec<ActivityInfo>,
+    },
     VoiceStateUpdate {
         state: VoiceStateInfo,
     },
@@ -607,6 +613,7 @@ define_app_event_kinds! {
     GuildMemberAdd: AppEvent::GuildMemberAdd { .. },
     GuildMemberRemove: AppEvent::GuildMemberRemove { .. },
     PresenceUpdate: AppEvent::PresenceUpdate { .. },
+    RichPresenceDetected: AppEvent::RichPresenceDetected { .. },
     VoiceStateUpdate: AppEvent::VoiceStateUpdate { .. },
     VoiceSpeakingUpdate: AppEvent::VoiceSpeakingUpdate { .. },
     VoiceServerUpdate: AppEvent::VoiceServerUpdate { .. },
@@ -1627,6 +1634,7 @@ impl AppEventKind {
             | AppEventKind::VoiceConnectionStatusChanged
             | AppEventKind::VoiceSound
             | AppEventKind::ActivateChannel
+            | AppEventKind::RichPresenceDetected
             | AppEventKind::GatewayResumed
             | AppEventKind::GatewayReidentified
             | AppEventKind::GatewayClosed => AppEventMetadata::effect_only(),

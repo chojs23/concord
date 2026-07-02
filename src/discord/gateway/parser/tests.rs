@@ -1182,6 +1182,47 @@ fn raw_presence_update_accepts_user_id_field() {
 }
 
 #[test]
+fn raw_presence_update_parses_rich_activity_fields() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "PRESENCE_UPDATE",
+            "d": {
+                "user": { "id": "20" },
+                "status": "online",
+                "activities": [{
+                    "type": 0,
+                    "name": "Concord",
+                    "application_id": "12345",
+                    "timestamps": { "start": 1_700_000_000_000i64 },
+                    "assets": { "large_image": "cover", "large_text": "Main menu" },
+                    "party": { "id": "party-1", "size": [2, 5] },
+                    "buttons": ["Join"],
+                    "metadata": { "button_urls": ["https://example.com/join"] }
+                }]
+            }
+        })
+        .to_string(),
+    );
+
+    let [AppEvent::PresenceUpdate { presence, .. }] = events.as_slice() else {
+        panic!("expected a single presence update, got {events:?}");
+    };
+    let activity = &presence.activities[0];
+    assert_eq!(
+        activity.timestamps.and_then(|t| t.start),
+        Some(1_700_000_000_000)
+    );
+    let assets = activity.assets.as_ref().expect("assets parsed");
+    assert_eq!(assets.large_image.as_deref(), Some("cover"));
+    assert_eq!(assets.large_text.as_deref(), Some("Main menu"));
+    let party = activity.party.as_ref().expect("party parsed");
+    assert_eq!(party.size, Some((2, 5)));
+    assert_eq!(activity.buttons.len(), 1);
+    assert_eq!(activity.buttons[0].label, "Join");
+    assert_eq!(activity.buttons[0].url, "https://example.com/join");
+}
+
+#[test]
 fn thread_channel_parser_keeps_counts_and_status() {
     let channel = parse_channel_info(
         &json!({

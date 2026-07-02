@@ -206,6 +206,7 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, key(KeyCode::Enter));
 
     for value in "Concord".chars() {
         handle_key(&mut state, char_key(value));
@@ -216,6 +217,7 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![ActivityInfo::playing("Concord")],
+            track_client_id: None,
         })
     );
 }

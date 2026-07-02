@@ -106,6 +106,7 @@ pub(super) fn view_signature(state: &DashboardState) -> u64 {
     hash_dbg(&mut hasher, &state.user_profile_popup_load_error());
     hash_dbg(&mut hasher, &state.user_profile_popup_avatar_url());
     hash_dbg(&mut hasher, &state.user_profile_popup_activities());
+    hash_dbg(&mut hasher, &state.user_profile_activity_picker_rows());
     hash_dbg(&mut hasher, &state.attachment_downloads());
     hash_dbg(&mut hasher, &state.reaction_users_popup());
     hash_dbg(&mut hasher, &state.existing_emoji_reactions());
