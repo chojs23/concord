@@ -1676,6 +1676,10 @@ fn emoji_image_targets_keep_profile_popup_activity_emoji_while_modal_is_open() {
                     id: Some(Id::new(60)),
                     animated: false,
                 }),
+                timestamps: None,
+                assets: None,
+                party: None,
+                buttons: Vec::new(),
             }],
         },
     });

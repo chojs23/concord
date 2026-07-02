@@ -31,6 +31,7 @@ use messages::{
     parse_message_delete_bulk, parse_message_reaction_add, parse_message_reaction_remove,
     parse_message_reaction_remove_all, parse_message_reaction_remove_emoji, parse_message_update,
 };
+pub(in crate::discord) use presence::parse_activity;
 use presence::{parse_presence_update, parse_typing_start};
 use ready::{parse_ready, parse_ready_supplemental};
 use relationships::{parse_relationship_add, parse_relationship_remove, parse_relationship_update};

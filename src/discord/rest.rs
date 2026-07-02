@@ -7,6 +7,7 @@ use reqwest::{RequestBuilder, header::AUTHORIZATION};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+mod application;
 mod application_commands;
 mod connection;
 mod forum;

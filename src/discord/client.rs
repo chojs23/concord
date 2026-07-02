@@ -57,6 +57,10 @@ pub struct DiscordClient {
     snapshots_tx: watch::Sender<SnapshotRevision>,
     state: Arc<RwLock<DiscordState>>,
     requested_voice: Arc<RwLock<Option<CurrentVoiceConnectionState>>>,
+    selected_rich_presence: Arc<RwLock<Option<String>>>,
+    /// `application_id -> (external image url -> media-proxy path)`, so a url is
+    /// registered with Discord only once.
+    external_assets: Arc<Mutex<HashMap<String, HashMap<String, String>>>>,
     gateway_session_id: Arc<RwLock<Option<String>>>,
     application_command_requests: Arc<Mutex<HashMap<Option<Id<GuildMarker>>, RequestState>>>,
     application_commands: Arc<Mutex<ApplicationCommandCache>>,
@@ -87,6 +91,8 @@ impl DiscordClient {
             snapshots_tx,
             state: Arc::new(RwLock::new(initial_state)),
             requested_voice: Arc::new(RwLock::new(None)),
+            selected_rich_presence: Arc::new(RwLock::new(None)),
+            external_assets: Arc::new(Mutex::new(HashMap::new())),
             gateway_session_id: Arc::new(RwLock::new(None)),
             application_command_requests: Arc::new(Mutex::new(HashMap::new())),
             application_commands: Arc::new(Mutex::new(HashMap::new())),
@@ -131,6 +137,18 @@ impl DiscordClient {
             .current_user_id()
     }
 
+    /// Current user `(id, username)` for the RPC READY handshake. RPC clients read
+    /// `data.user.username` from it.
+    pub fn current_user_rpc_identity(&self) -> Option<(String, String)> {
+        let state = self
+            .state
+            .read()
+            .expect("discord state lock is not poisoned");
+        let id = state.current_user_id()?;
+        let username = state.current_user().unwrap_or_default().to_owned();
+        Some((id.to_string(), username))
+    }
+
     pub async fn publish_event(&self, event: AppEvent) {
         self.record_request_lifecycle_event(&event);
         publish_app_event(
@@ -145,7 +163,7 @@ impl DiscordClient {
         voice::forward_app_event(&self.voice_events_tx, &event);
     }
 
-    pub fn start_gateway(&self) -> JoinHandle<()> {
+    pub fn start_gateway(&self, serve_rich_presence: bool) -> JoinHandle<()> {
         let token = self.token.clone();
         let effects_tx = self.effects_tx.clone();
         let snapshots_tx = self.snapshots_tx.clone();
@@ -178,6 +196,11 @@ impl DiscordClient {
                 voice_events_tx.clone(),
                 voice_status_publisher,
             ));
+        }
+
+        // Best-effort, so it never blocks the gateway from starting.
+        if serve_rich_presence {
+            tokio::spawn(crate::discord::rpc::run_rpc_server(self.clone()));
         }
 
         tokio::spawn(async move {
@@ -415,6 +438,141 @@ impl DiscordClient {
             .current_user_id()
             .map(|user_id| state.user_activities(user_id).to_vec())
             .unwrap_or_default()
+    }
+
+    pub async fn application_display_name(&self, application_id: &str) -> Option<String> {
+        match self.rest.application_rpc(application_id).await {
+            Ok(info) => Some(info.name),
+            Err(error) => {
+                crate::logging::debug(
+                    "rpc",
+                    format!("resolve application {application_id} failed: {error}"),
+                );
+                None
+            }
+        }
+    }
+
+    /// Resolve an app's art assets to a `key -> id` map. `None` on failure (so the
+    /// caller can retry). `Some` (possibly empty) means the asset set is known.
+    pub async fn application_asset_ids(
+        &self,
+        application_id: &str,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        match self.rest.application_assets(application_id).await {
+            Ok(assets) => Some(
+                assets
+                    .into_iter()
+                    .map(|asset| (asset.name, asset.id))
+                    .collect(),
+            ),
+            Err(error) => {
+                crate::logging::debug(
+                    "rpc",
+                    format!("resolve application {application_id} assets failed: {error}"),
+                );
+                None
+            }
+        }
+    }
+
+    /// Register an external image `url` and return its media-proxy path (used as
+    /// `mp:{path}`). Only successful results are cached, so failures are retried.
+    pub async fn register_external_asset(&self, application_id: &str, url: &str) -> Option<String> {
+        if let Some(path) = self
+            .external_assets
+            .lock()
+            .expect("external asset cache lock is not poisoned")
+            .get(application_id)
+            .and_then(|per_app| per_app.get(url))
+        {
+            return Some(path.clone());
+        }
+        let path = match self
+            .rest
+            .application_external_assets(application_id, &[url])
+            .await
+        {
+            Ok(assets) => assets
+                .into_iter()
+                .next()
+                .map(|asset| asset.external_asset_path)?,
+            Err(error) => {
+                crate::logging::debug(
+                    "rpc",
+                    format!("register external asset for {application_id} failed: {error}"),
+                );
+                return None;
+            }
+        };
+        self.external_assets
+            .lock()
+            .expect("external asset cache lock is not poisoned")
+            .entry(application_id.to_owned())
+            .or_default()
+            .insert(url.to_owned(), path.clone());
+        Some(path)
+    }
+
+    /// Rewrite an activity's external image URLs to `mp:{path}` refs (asset keys and
+    /// ids are left alone). Run before broadcasting. The gateway cannot render a raw URL.
+    pub async fn resolve_activity_external_assets(&self, activity: &mut ActivityInfo) {
+        let Some(application_id) = activity.application_id.clone() else {
+            return;
+        };
+        let images = {
+            let Some(assets) = activity.assets.as_ref() else {
+                return;
+            };
+            [assets.large_image.clone(), assets.small_image.clone()]
+        };
+        let mut resolved: [Option<String>; 2] = [None, None];
+        for (slot, image) in images.into_iter().enumerate() {
+            let Some(url) = image else {
+                continue;
+            };
+            if (url.starts_with("https://") || url.starts_with("http://"))
+                && let Some(path) = self.register_external_asset(&application_id, &url).await
+            {
+                resolved[slot] = Some(format!("mp:{path}"));
+            }
+        }
+        if let Some(assets) = activity.assets.as_mut() {
+            if let Some(large) = resolved[0].take() {
+                assets.large_image = Some(large);
+            }
+            if let Some(small) = resolved[1].take() {
+                assets.small_image = Some(small);
+            }
+        }
+    }
+
+    /// Record which app's activity to broadcast. `None` means a manual/no
+    /// activity that RPC updates must not override.
+    pub fn select_rich_presence(&self, client_id: Option<String>) {
+        *self
+            .selected_rich_presence
+            .write()
+            .expect("selected rich presence lock is not poisoned") = client_id;
+    }
+
+    pub fn selected_rich_presence(&self) -> Option<String> {
+        self.selected_rich_presence
+            .read()
+            .expect("selected rich presence lock is not poisoned")
+            .clone()
+    }
+
+    /// So the RPC server can relay an activity without clobbering a manually chosen status.
+    pub fn current_user_status(&self) -> PresenceStatus {
+        let state = self
+            .state
+            .read()
+            .expect("discord state lock is not poisoned");
+        state
+            .current_user_id()
+            .and_then(|user_id| state.user_presence(user_id))
+            .unwrap_or(PresenceStatus::Online)
     }
 
     pub fn update_presence_activity(

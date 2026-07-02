@@ -15,7 +15,7 @@ mod voice_commands;
 
 use tokio::sync::mpsc;
 
-use crate::{DiscordClient, Result, discord::AppEvent, logging, tui, version_check};
+use crate::{DiscordClient, Result, config, discord::AppEvent, logging, tui, version_check};
 
 use self::{
     command_loop::start_command_loop,
@@ -40,7 +40,10 @@ impl App {
             let effects = client.take_effects();
             let snapshots = client.subscribe_snapshots();
             let (commands_tx, commands_rx) = mpsc::channel(64);
-            let gateway_task = client.start_gateway();
+            let serve_rich_presence = config::load_options()
+                .map(|options| options.presence.share_rich_presence)
+                .unwrap_or(true);
+            let gateway_task = client.start_gateway(serve_rich_presence);
             let command_task = start_command_loop(client.clone(), commands_rx);
 
             // Warm the REST pool before the first user-triggered request pays the

@@ -18,6 +18,7 @@ fn options_popup_toggles_selected_setting() {
             credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            presence: Default::default(),
         })
     );
 }
@@ -45,6 +46,7 @@ fn options_popup_cycles_image_preview_quality() {
             credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            presence: Default::default(),
         })
     );
 }
@@ -72,6 +74,7 @@ fn options_popup_cycles_attachment_viewer_quality() {
             credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            presence: Default::default(),
         })
     );
 }
@@ -96,6 +99,7 @@ fn options_popup_toggles_media_playback() {
             credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            presence: Default::default(),
         })
     );
 }
@@ -155,6 +159,7 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
             credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            presence: Default::default(),
         })
     );
 }
@@ -259,6 +264,7 @@ fn options_popup_toggles_composer_emoji_links() {
             credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
+            presence: Default::default(),
         })
     );
 }

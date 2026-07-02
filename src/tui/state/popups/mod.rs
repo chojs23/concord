@@ -675,6 +675,7 @@ pub(super) struct UserProfileSettingsState {
     pub(super) presence_status: Option<PresenceStatus>,
     pub(super) manual_activity: Option<String>,
     pub(super) status_picker: Option<SelectablePopupState>,
+    pub(super) activity_picker: Option<SelectablePopupState>,
     pub(super) guild_nickname: Option<String>,
     pub(super) guild_pronouns: Option<String>,
     pub(super) saving: bool,

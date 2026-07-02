@@ -167,6 +167,11 @@ impl DashboardState {
             return;
         }
         if let Some(popup) = self.popups.user_profile_popup_mut()
+            && popup.settings.activity_picker.take().is_some()
+        {
+            return;
+        }
+        if let Some(popup) = self.popups.user_profile_popup_mut()
             && popup.settings.editing.take().is_some()
         {
             popup.settings.edit_input.clear();
@@ -406,12 +411,22 @@ impl DashboardState {
             if field == UserProfileSettingsField::ManualActivity {
                 let status = self.user_profile_settings_presence_status();
                 let activities = self.user_profile_settings_manual_activities();
-                return Some(AppCommand::UpdateCurrentUserActivity { status, activities });
+                // track_client_id None: a manually-typed activity is not tracked,
+                // so RPC updates must not override it.
+                return Some(AppCommand::UpdateCurrentUserActivity {
+                    status,
+                    activities,
+                    track_client_id: None,
+                });
             }
             return None;
         }
         if field == UserProfileSettingsField::CurrentStatus {
             self.open_user_profile_status_picker();
+            return None;
+        }
+        if field == UserProfileSettingsField::ManualActivity {
+            self.open_user_profile_activity_picker();
             return None;
         }
         let value = self.user_profile_settings_field_value(field);
@@ -494,6 +509,110 @@ impl DashboardState {
             .enumerate()
             .map(|(index, status)| (status, index == selected))
             .collect()
+    }
+
+    fn user_profile_activity_picker_len(&self) -> usize {
+        self.detected_rich_presence().len() + 1
+    }
+
+    pub fn open_user_profile_activity_picker(&mut self) {
+        if !self.is_current_user_profile_popup() {
+            return;
+        }
+        if let Some(popup) = self.popups.user_profile_popup_mut() {
+            let mut picker = SelectablePopupState::default();
+            picker.select(0);
+            popup.settings.editing = None;
+            popup.settings.edit_input.clear();
+            popup.settings.activity_picker = Some(picker);
+        }
+    }
+
+    pub fn close_user_profile_activity_picker(&mut self) {
+        if let Some(popup) = self.popups.user_profile_popup_mut() {
+            popup.settings.activity_picker = None;
+        }
+    }
+
+    pub fn move_user_profile_activity_picker_down(&mut self) {
+        let len = self.user_profile_activity_picker_len();
+        if let Some(popup) = self.popups.user_profile_popup_mut()
+            && let Some(picker) = popup.settings.activity_picker.as_mut()
+        {
+            picker.move_down(len);
+        }
+    }
+
+    pub fn move_user_profile_activity_picker_up(&mut self) {
+        if let Some(popup) = self.popups.user_profile_popup_mut()
+            && let Some(picker) = popup.settings.activity_picker.as_mut()
+        {
+            picker.move_up();
+        }
+    }
+
+    pub fn is_user_profile_activity_picker_open(&self) -> bool {
+        self.popups
+            .user_profile_popup()
+            .is_some_and(|popup| popup.settings.activity_picker.is_some())
+    }
+
+    pub fn activate_user_profile_activity_picker(&mut self) -> Option<AppCommand> {
+        if !self.is_current_user_profile_popup() {
+            return None;
+        }
+        let detected = self.detected_rich_presence().to_vec();
+        let len = detected.len() + 1;
+        let selected = {
+            let popup = self.popups.user_profile_popup()?;
+            let picker = popup.settings.activity_picker.as_ref()?;
+            picker.selected_for_len(len)
+        };
+
+        if let Some(activity) = detected.get(selected).cloned() {
+            let status = self.user_profile_settings_presence_status();
+            let track_client_id = activity.application_id.clone();
+            if let Some(popup) = self.popups.user_profile_popup_mut() {
+                popup.settings.activity_picker = None;
+                popup.settings.manual_activity = Some(activity.name.clone());
+            }
+            return Some(AppCommand::UpdateCurrentUserActivity {
+                status,
+                activities: vec![activity],
+                track_client_id,
+            });
+        }
+
+        let value =
+            self.user_profile_settings_field_value(UserProfileSettingsField::ManualActivity);
+        if let Some(popup) = self.popups.user_profile_popup_mut() {
+            popup.settings.activity_picker = None;
+            popup.settings.editing = Some(UserProfileSettingsField::ManualActivity);
+            popup.settings.edit_input.set_value(value);
+        }
+        None
+    }
+
+    pub(in crate::tui) fn user_profile_activity_picker_rows(&self) -> Vec<(String, bool)> {
+        let Some(popup) = self.popups.user_profile_popup() else {
+            return Vec::new();
+        };
+        let Some(picker) = popup.settings.activity_picker.as_ref() else {
+            return Vec::new();
+        };
+        let detected = self.detected_rich_presence();
+        let len = detected.len() + 1;
+        let selected = picker.selected_for_len(len);
+        let mut rows: Vec<(String, bool)> = detected
+            .iter()
+            .enumerate()
+            .map(|(index, activity)| (activity_picker_label(activity), index == selected))
+            .collect();
+        rows.push((
+            MANUAL_ACTIVITY_PICKER_LABEL.to_owned(),
+            selected == detected.len(),
+        ));
+        rows
     }
 
     pub fn push_user_profile_edit_char(&mut self, value: char) {
@@ -648,6 +767,7 @@ impl DashboardState {
             popup.settings.editing = None;
             popup.settings.edit_input.clear();
             popup.settings.status_picker = None;
+            popup.settings.activity_picker = None;
             popup.settings.status = Some("Signing out...".to_owned());
         }
         Some(AppCommand::SignOut)
@@ -802,12 +922,27 @@ impl DashboardState {
     }
 }
 
+const MANUAL_ACTIVITY_PICKER_LABEL: &str = "Set manually…";
+
 fn manual_activity_from_text(value: &str) -> Vec<ActivityInfo> {
     let value = value.trim();
     if value.is_empty() {
         Vec::new()
     } else {
         vec![ActivityInfo::playing(value)]
+    }
+}
+
+/// Appends details/state so two instances of the same app are distinguishable.
+fn activity_picker_label(activity: &ActivityInfo) -> String {
+    let name = if activity.name.trim().is_empty() {
+        "Unknown app"
+    } else {
+        activity.name.trim()
+    };
+    match activity.details.as_deref().or(activity.state.as_deref()) {
+        Some(detail) if !detail.trim().is_empty() => format!("{name} — {}", detail.trim()),
+        _ => name.to_owned(),
     }
 }
 

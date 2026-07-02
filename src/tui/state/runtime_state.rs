@@ -2,7 +2,8 @@ use std::time::Instant;
 
 use crate::discord::ids::{Id, marker::ChannelMarker};
 use crate::discord::{
-    AttachmentDownloadId, DownloadAttachmentSource, MediaPlaybackRequestId, VoiceScope,
+    ActivityInfo, AttachmentDownloadId, DownloadAttachmentSource, MediaPlaybackRequestId,
+    VoiceScope,
 };
 
 use super::{AttachmentDownloadProgressView, DashboardState, ToastKind};
@@ -56,6 +57,7 @@ pub(super) struct RuntimeUiState {
     /// Inverted so the `Default` of `false` means "focused"; terminals that
     /// never report focus events keep the current notification behavior.
     pub(super) terminal_focus_lost: bool,
+    pub(super) detected_rich_presence: Vec<ActivityInfo>,
 }
 
 impl DashboardState {
@@ -81,6 +83,14 @@ impl DashboardState {
 
     pub(super) fn terminal_focused(&self) -> bool {
         !self.runtime.terminal_focus_lost
+    }
+
+    pub(in crate::tui) fn set_detected_rich_presence(&mut self, activities: Vec<ActivityInfo>) {
+        self.runtime.detected_rich_presence = activities;
+    }
+
+    pub(in crate::tui) fn detected_rich_presence(&self) -> &[ActivityInfo] {
+        &self.runtime.detected_rich_presence
     }
 
     pub(in crate::tui) fn next_attachment_download_id(&mut self) -> AttachmentDownloadId {
