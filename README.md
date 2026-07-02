@@ -173,6 +173,7 @@ aplay -D pulse /usr/share/sounds/alsa/Front_Center.wav
 - **Token** : paste an existing Discord token.
 - **Email / Password** : login with credentials. MFA (TOTP, SMS) is fully supported.
 - **QR Code** : scan the code from the Discord mobile app.
+- **CONCORD_TOKEN env var** : set `CONCORD_TOKEN=your-token` before launching Concord. Takes precedence over the plaintext credential file when `credentials.store = "auto"`, but the keychain is checked first.
 
 Email and QR code logins may trigger a CAPTCHA challenge on Discord's side. We cannot solve that, so I strongly recommend using token authentication.
 
@@ -751,6 +752,7 @@ No. If Discord requires a CAPTCHA during login, use token login instead.
 
 - By default, tokens are stored in the system keychain when available.
 - On Linux, keychain storage uses Secret Service when a compatible service is available.
+- The `CONCORD_TOKEN` environment variable lets you provide a token without writing it to disk. This avoids leaving plaintext on disk, but the token is visible in `/proc/<pid>/environ` and in process listings while Concord is running.
 - In `credentials.store = "auto"`, Concord falls back to **plain text** credentials under Concord's state directory when keychain storage is unavailable. In `keychain` mode, Concord does not fall back to plain storage. Keep fallback credential files secure and do not share them. You can use a token from that file to log in to the official Discord client, so treat it like a password.
 - On Unix, the fallback credential's parent directory is created with `0700` and the credential file with `0600` permissions.
 
