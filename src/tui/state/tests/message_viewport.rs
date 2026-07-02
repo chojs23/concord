@@ -1064,3 +1064,38 @@ fn older_history_request_leaves_empty_page_exhaustion_to_backend() {
         })
     );
 }
+
+#[test]
+fn clicking_message_toggles_spoiler_reveal() {
+    let mut state = state_with_single_message_content("psst ||secret|| ok");
+    state.focus_pane(FocusPane::Messages);
+    let message_id = state
+        .selected_message_state()
+        .expect("single message is selected")
+        .id;
+
+    // Hidden by default.
+    assert!(!state.message_spoilers_revealed(message_id));
+
+    // First click reveals the spoiler.
+    assert!(state.toggle_selected_message_spoilers());
+    assert!(state.message_spoilers_revealed(message_id));
+
+    // Clicking again hides it.
+    assert!(state.toggle_selected_message_spoilers());
+    assert!(!state.message_spoilers_revealed(message_id));
+}
+
+#[test]
+fn toggling_message_without_spoiler_is_a_noop() {
+    let mut state = state_with_single_message_content("just plain text");
+    state.focus_pane(FocusPane::Messages);
+    let message_id = state
+        .selected_message_state()
+        .expect("single message is selected")
+        .id;
+
+    // No spoiler content, so the toggle reports no change and stores nothing.
+    assert!(!state.toggle_selected_message_spoilers());
+    assert!(!state.message_spoilers_revealed(message_id));
+}

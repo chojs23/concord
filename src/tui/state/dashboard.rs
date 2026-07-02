@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+
+use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::tui::message::syntax_highlight::SyntaxHighlightCache;
 
 use super::{
@@ -19,6 +22,9 @@ pub struct DashboardState {
     pub(super) requests: RequestTrackingState,
     pub(super) layout_cache: LayoutCacheState,
     pub(in crate::tui) syntax_highlight_cache: SyntaxHighlightCache,
+    /// Messages whose `||spoiler||` spans the reader has revealed this session.
+    /// Ephemeral by design: spoilers re-hide on restart, matching Discord.
+    pub(super) revealed_spoilers: HashSet<Id<MessageMarker>>,
 }
 
 impl DashboardState {

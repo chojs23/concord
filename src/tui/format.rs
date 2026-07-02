@@ -131,6 +131,60 @@ fn next_url_start(value: &str, cursor: usize) -> Option<usize> {
     }
 }
 
+/// Byte ranges of `||spoiler||` spans, pipes included. Discord treats a pair of
+/// double pipes wrapping non-empty text as a spoiler; empty `||||` and an
+/// unclosed opener are ignored. `|` is ASCII so byte offsets are always char
+/// boundaries.
+pub(crate) fn spoiler_ranges(value: &str) -> Vec<(usize, usize)> {
+    let bytes = value.as_bytes();
+    let mut ranges = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(open) = next_double_pipe(bytes, cursor) {
+        let content_start = open.saturating_add(2);
+        match next_double_pipe(bytes, content_start) {
+            // Non-empty content between the pipe pairs is a spoiler.
+            Some(close) if close > content_start => {
+                ranges.push((open, close.saturating_add(2)));
+                cursor = close.saturating_add(2);
+            }
+            // Empty `||||`; step past the first pair and keep scanning.
+            Some(close) => cursor = close.saturating_add(2),
+            None => break,
+        }
+    }
+
+    ranges
+}
+
+fn next_double_pipe(bytes: &[u8], from: usize) -> Option<usize> {
+    (from..bytes.len().saturating_sub(1))
+        .find(|&index| bytes[index] == b'|' && bytes[index + 1] == b'|')
+}
+
+#[cfg(test)]
+mod spoiler_tests {
+    use super::spoiler_ranges;
+
+    #[test]
+    fn detects_single_spoiler_including_pipes() {
+        // `||secret||` occupies bytes 2..12 of the input.
+        assert_eq!(spoiler_ranges("a ||secret|| b"), vec![(2, 12)]);
+    }
+
+    #[test]
+    fn detects_multiple_spoilers() {
+        assert_eq!(spoiler_ranges("||x|| and ||y||"), vec![(0, 5), (10, 15)]);
+    }
+
+    #[test]
+    fn ignores_empty_unclosed_and_plain_text() {
+        assert!(spoiler_ranges("|||| nothing").is_empty());
+        assert!(spoiler_ranges("||unclosed").is_empty());
+        assert!(spoiler_ranges("no spoiler here").is_empty());
+    }
+}
+
 fn grapheme_is_likely_wide_emoji(grapheme: &str) -> bool {
     grapheme.chars().any(|c| {
         let cp = c as u32;
@@ -257,6 +311,8 @@ pub enum TextHighlightKind {
     OtherMention,
     /// A detected URL that can be opened from message actions.
     Url,
+    /// A `||spoiler||` span that is masked until the reader reveals the message.
+    Spoiler,
 }
 
 pub fn render_user_mentions_with_highlights<U, R, C, H>(

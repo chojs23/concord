@@ -1765,6 +1765,31 @@ impl DashboardState {
         self.messages().get(self.selected_message()).copied()
     }
 
+    pub(in crate::tui) fn message_spoilers_revealed(&self, message_id: Id<MessageMarker>) -> bool {
+        self.revealed_spoilers.contains(&message_id)
+    }
+
+    /// Toggle `||spoiler||` reveal for the selected message. Returns `true` only
+    /// when that message actually contains a spoiler, so clicking an ordinary
+    /// message never accumulates reveal state.
+    pub(in crate::tui) fn toggle_selected_message_spoilers(&mut self) -> bool {
+        let Some((message_id, has_spoiler)) = self.selected_message_state().map(|message| {
+            let has_spoiler = message.content.as_deref().is_some_and(|content| {
+                !crate::tui::format::spoiler_ranges(content).is_empty()
+            });
+            (message.id, has_spoiler)
+        }) else {
+            return false;
+        };
+        if !has_spoiler {
+            return false;
+        }
+        if !self.revealed_spoilers.remove(&message_id) {
+            self.revealed_spoilers.insert(message_id);
+        }
+        true
+    }
+
     pub(crate) fn reply_target_message_state(&self) -> Option<&MessageState> {
         let message_id = self.composer.reply_target_message_id?;
         self.messages()
