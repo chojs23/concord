@@ -11,7 +11,7 @@ use crate::discord::ids::{
 use crate::discord::{AppCommand, MessageAttachmentUpload, ReactionEmoji};
 use crate::discord::{PresenceStatus, ProfileAvatarUpload};
 
-use crate::discord::ReactionUsersInfo;
+use crate::discord::ReactionUserInfo;
 use crate::tui::keybindings::{KeyBindings, KeyChord, LeaderShortcutItem, SelectionAction};
 use crate::tui::text_input::TextInputState;
 
@@ -434,6 +434,17 @@ impl ScrollablePopupState {
         let visible = self.view_height.min(self.total_lines);
         self.scroll = self.scroll.min(self.total_lines.saturating_sub(visible));
     }
+
+    pub(super) fn scroll_to_top(&mut self) {
+        self.scroll = 0;
+    }
+
+    pub(super) fn is_near_bottom(&self, threshold: usize) -> bool {
+        self.scroll
+            .saturating_add(self.view_height)
+            .saturating_add(threshold)
+            >= self.total_lines
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -840,54 +851,268 @@ impl PollVotePickerState {
     }
 }
 
+const REACTION_USERS_LOAD_MORE_THRESHOLD: usize = 3;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReactionUsersEntry {
+    pub(super) emoji: ReactionEmoji,
+    pub(super) count: u64,
+    pub(super) users: Vec<ReactionUserInfo>,
+    pub(super) next_after: Option<Id<UserMarker>>,
+    pub(super) loading: bool,
+    pub(super) loaded_once: bool,
+}
+
+impl ReactionUsersEntry {
+    pub fn emoji(&self) -> &ReactionEmoji {
+        &self.emoji
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    pub fn users(&self) -> &[ReactionUserInfo] {
+        &self.users
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    pub fn loaded_once(&self) -> bool {
+        self.loaded_once
+    }
+
+    pub fn has_more(&self) -> bool {
+        self.next_after.is_some()
+    }
+}
+
+/// `viewing` is the opened entry's index, or `None` while the reaction list shows.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReactionUsersPopupState {
     pub(super) channel_id: Id<ChannelMarker>,
     pub(super) message_id: Id<MessageMarker>,
-    pub(super) reactions: Vec<ReactionUsersInfo>,
-    pub(super) scroll: ScrollablePopupState,
+    pub(super) entries: Vec<ReactionUsersEntry>,
+    pub(super) list: SelectablePopupState,
+    pub(super) viewing: Option<usize>,
+    pub(super) user_scroll: ScrollablePopupState,
 }
 
 impl ReactionUsersPopupState {
     pub(super) fn new(
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        reactions: Vec<ReactionUsersInfo>,
+        reactions: Vec<(ReactionEmoji, u64)>,
     ) -> Self {
-        let mut scroll = ScrollablePopupState::default();
-        scroll.set_total_lines(reaction_users_line_count(&reactions));
+        let entries = reactions
+            .into_iter()
+            .map(|(emoji, count)| ReactionUsersEntry {
+                emoji,
+                count,
+                users: Vec::new(),
+                next_after: None,
+                loading: false,
+                loaded_once: false,
+            })
+            .collect();
         Self {
             channel_id,
             message_id,
-            reactions,
-            scroll,
+            entries,
+            list: SelectablePopupState::default(),
+            viewing: None,
+            user_scroll: ScrollablePopupState::default(),
         }
     }
 
-    pub fn reactions(&self) -> &[ReactionUsersInfo] {
-        &self.reactions
+    pub fn entries(&self) -> &[ReactionUsersEntry] {
+        &self.entries
     }
 
-    pub fn scroll(&self) -> usize {
-        self.scroll.scroll()
+    pub fn is_viewing_users(&self) -> bool {
+        self.viewing.is_some()
     }
 
-    /// Total renderable data lines for the current reactions, mirroring the
-    /// layout produced by `reaction_users_popup_data_lines` in `ui.rs` so the
-    /// scroll bound here stays in sync with what the user actually sees.
-    pub fn data_line_count(&self) -> usize {
-        reaction_users_line_count(&self.reactions)
+    pub fn list_selected(&self) -> usize {
+        self.list.selected_for_len(self.entries.len())
+    }
+
+    pub fn list_scroll(&self) -> usize {
+        self.list.scroll()
+    }
+
+    pub(super) fn move_selection(&mut self, action: SelectionAction) {
+        match action {
+            SelectionAction::Next => self.list.move_down(self.entries.len()),
+            SelectionAction::Previous => self.list.move_up(),
+        }
+    }
+
+    pub(super) fn set_list_view_height(&mut self, height: usize) {
+        self.list
+            .set_view_height_and_sync(height, self.entries.len());
+    }
+
+    pub fn viewed_entry(&self) -> Option<&ReactionUsersEntry> {
+        self.viewing.and_then(|index| self.entries.get(index))
+    }
+
+    pub fn user_scroll(&self) -> usize {
+        self.user_scroll.scroll()
+    }
+
+    pub fn user_line_count(&self) -> usize {
+        self.viewed_entry()
+            .map(|entry| entry.users.len().max(1))
+            .unwrap_or(1)
+    }
+
+    pub(super) fn set_user_view_height(&mut self, height: usize) {
+        let total = self.user_line_count();
+        self.user_scroll.set_view_height(height);
+        self.user_scroll.set_total_lines(total);
+    }
+
+    pub(super) fn open_selected(&mut self) -> Option<ReactionEmoji> {
+        let index = self.list_selected();
+        if index >= self.entries.len() {
+            return None;
+        }
+        self.viewing = Some(index);
+        self.user_scroll.scroll_to_top();
+        let total = self.user_line_count();
+        self.user_scroll.set_total_lines(total);
+        self.begin_load(index)
+    }
+
+    pub(super) fn back_to_list(&mut self) -> bool {
+        if self.viewing.is_some() {
+            self.viewing = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn begin_load(&mut self, index: usize) -> Option<ReactionEmoji> {
+        let entry = self.entries.get_mut(index)?;
+        if entry.loaded_once || entry.loading {
+            return None;
+        }
+        entry.loading = true;
+        Some(entry.emoji.clone())
+    }
+
+    pub(super) fn take_load_more(&mut self) -> Option<(ReactionEmoji, Id<UserMarker>)> {
+        if !self
+            .user_scroll
+            .is_near_bottom(REACTION_USERS_LOAD_MORE_THRESHOLD)
+        {
+            return None;
+        }
+        let index = self.viewing?;
+        let entry = self.entries.get_mut(index)?;
+        if entry.loading {
+            return None;
+        }
+        let after = entry.next_after?;
+        entry.loading = true;
+        Some((entry.emoji.clone(), after))
+    }
+
+    pub(super) fn apply_loaded(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: &ReactionEmoji,
+        users: Vec<ReactionUserInfo>,
+        next_after: Option<Id<UserMarker>>,
+        after: Option<Id<UserMarker>>,
+    ) {
+        if self.channel_id != channel_id || self.message_id != message_id {
+            return;
+        }
+        let Some(entry) = self.entries.iter_mut().find(|entry| &entry.emoji == emoji) else {
+            return;
+        };
+        // after == None replaces the users (first page). Some appends the next.
+        if after.is_none() {
+            entry.users = users;
+        } else {
+            entry.users.extend(users);
+        }
+        entry.next_after = next_after;
+        entry.loading = false;
+        entry.loaded_once = true;
+        let total = self.user_line_count();
+        self.user_scroll.set_total_lines(total);
+    }
+
+    pub(super) fn apply_load_failed(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: &ReactionEmoji,
+    ) {
+        if self.channel_id != channel_id || self.message_id != message_id {
+            return;
+        }
+        if let Some(entry) = self.entries.iter_mut().find(|entry| &entry.emoji == emoji) {
+            entry.loading = false;
+        }
     }
 }
 
-fn reaction_users_line_count(reactions: &[ReactionUsersInfo]) -> usize {
-    if reactions.is_empty() {
-        return 1;
+#[cfg(test)]
+type ReactionUsersTestEntry = (
+    ReactionEmoji,
+    u64,
+    Vec<ReactionUserInfo>,
+    Option<Id<UserMarker>>,
+);
+
+#[cfg(test)]
+impl ReactionUsersPopupState {
+    pub(crate) fn test_list(
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        reactions: Vec<(ReactionEmoji, u64)>,
+    ) -> Self {
+        Self::new(channel_id, message_id, reactions)
     }
-    reactions
-        .iter()
-        .map(|reaction| 1 + reaction.users.len().max(1))
-        .sum()
+
+    /// Tuple order is (emoji, count, users, next_after).
+    pub(crate) fn test_viewing(
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        entries: Vec<ReactionUsersTestEntry>,
+        viewing: usize,
+    ) -> Self {
+        let entries = entries
+            .into_iter()
+            .map(|(emoji, count, users, next_after)| ReactionUsersEntry {
+                emoji,
+                count,
+                users,
+                next_after,
+                loading: false,
+                loaded_once: true,
+            })
+            .collect();
+        let mut state = Self {
+            channel_id,
+            message_id,
+            entries,
+            list: SelectablePopupState::default(),
+            viewing: Some(viewing),
+            user_scroll: ScrollablePopupState::default(),
+        };
+        let total = state.user_line_count();
+        state.user_scroll.set_total_lines(total);
+        state
+    }
 }
 
 macro_rules! modal_popup_accessors {
@@ -1284,7 +1509,12 @@ impl DashboardState {
             }
             Some(ActiveModalPopupKind::ReactionUsers) => {
                 if let Some(popup) = self.popups.reaction_users_popup_mut() {
-                    popup.scroll.page(action);
+                    if popup.viewing.is_some() {
+                        popup.user_scroll.page(action);
+                    } else {
+                        let len = popup.entries.len();
+                        popup.list.page(len, action);
+                    }
                 }
                 true
             }

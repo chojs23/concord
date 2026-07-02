@@ -15,7 +15,7 @@ use super::commands::{
 use super::{
     ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildBoostTier,
     GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, PollInfo, PremiumTier,
-    PresenceStatus, ReactionUsersInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas,
+    PresenceStatus, ReactionUserInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas,
     UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceScope, VoiceServerInfo,
     VoiceSoundKind, VoiceStateInfo, is_thread_kind,
 };
@@ -423,7 +423,17 @@ pub enum AppEvent {
     ReactionUsersLoaded {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        reactions: Vec<ReactionUsersInfo>,
+        emoji: ReactionEmoji,
+        users: Vec<ReactionUserInfo>,
+        next_after: Option<Id<UserMarker>>,
+        /// The cursor this page was requested with: `None` replaces the emoji's
+        /// users (first page), `Some` appends (next page).
+        after: Option<Id<UserMarker>>,
+    },
+    ReactionUsersLoadFailed {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        emoji: ReactionEmoji,
     },
     UserSettingsUpdate {
         settings: UserSettingsInfo,
@@ -616,6 +626,7 @@ define_app_event_kinds! {
     PinnedMessagesLoadFailed: AppEvent::PinnedMessagesLoadFailed { .. },
     CurrentUserPollVoteUpdate: AppEvent::CurrentUserPollVoteUpdate { .. },
     ReactionUsersLoaded: AppEvent::ReactionUsersLoaded { .. },
+    ReactionUsersLoadFailed: AppEvent::ReactionUsersLoadFailed { .. },
     UserSettingsUpdate: AppEvent::UserSettingsUpdate { .. },
     UserGuildSettingsInit: AppEvent::UserGuildSettingsInit { .. },
     UserGuildSettingsUpdate: AppEvent::UserGuildSettingsUpdate { .. },
@@ -1080,13 +1091,19 @@ pub(crate) mod test_builders {
     pub(crate) struct ReactionUsersLoadedFixture {
         pub(crate) channel_id: Id<ChannelMarker>,
         pub(crate) message_id: Id<MessageMarker>,
-        pub(crate) reactions: Vec<ReactionUsersInfo>,
+        pub(crate) emoji: ReactionEmoji,
+        pub(crate) users: Vec<ReactionUserInfo>,
+        pub(crate) next_after: Option<Id<UserMarker>>,
+        pub(crate) after: Option<Id<UserMarker>>,
     }
     pub(crate) fn reaction_users_loaded_event(f: ReactionUsersLoadedFixture) -> AppEvent {
         AppEvent::ReactionUsersLoaded {
             channel_id: f.channel_id,
             message_id: f.message_id,
-            reactions: f.reactions,
+            emoji: f.emoji,
+            users: f.users,
+            next_after: f.next_after,
+            after: f.after,
         }
     }
 
@@ -1593,6 +1610,7 @@ impl AppEventKind {
             | AppEventKind::AttachmentDownloadFailed
             | AppEventKind::UpdateAvailable
             | AppEventKind::ReactionUsersLoaded
+            | AppEventKind::ReactionUsersLoadFailed
             | AppEventKind::AttachmentPreviewLoaded
             | AppEventKind::AttachmentPreviewLoadFailed
             | AppEventKind::ThreadPreviewLoadFailed

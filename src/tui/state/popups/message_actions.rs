@@ -429,16 +429,13 @@ impl DashboardState {
                 let reactions = message
                     .reactions
                     .iter()
-                    .map(|reaction| reaction.emoji.clone())
+                    .map(|reaction| (reaction.emoji.clone(), reaction.count))
                     .collect::<Vec<_>>();
                 if reactions.is_empty() {
                     return None;
                 }
-                Some(AppCommand::LoadReactionUsers {
-                    channel_id,
-                    message_id,
-                    reactions,
-                })
+                self.open_reaction_users_popup(channel_id, message_id, reactions);
+                None
             }
             MessageActionKind::OpenPollVotePicker => {
                 self.open_poll_vote_picker();

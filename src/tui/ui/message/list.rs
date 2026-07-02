@@ -9,6 +9,7 @@ use crate::tui::message::{
     layout::{MessageViewportPlan, MessageViewportRow},
     time::{format_message_local_time, message_local_date, message_local_datetime},
 };
+use crate::tui::ui::emoji_overlay::{EmojiSlot, intersects_any, overlay_emoji_slots};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InlinePreviewSpacer {
@@ -453,63 +454,30 @@ fn render_inline_reaction_emojis(
     emoji_images: &[EmojiImage<'_>],
     media_occlusion_areas: &[Rect],
 ) {
-    if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
-        return;
-    }
-
-    let list_top = list.y as isize;
-    let list_bottom = list_top + list.height as isize;
-    let list_left = list.x as isize;
-    let list_right = list_left + list.width as isize;
     let avatar_offset = MESSAGE_AVATAR_OFFSET as isize;
-
-    for row in plan.rows.rows() {
-        if row.message_top >= list.height as isize {
-            break;
-        }
-
-        let layout = lay_out_reaction_chips_with_custom_emoji_images(
-            &row.message.reactions,
-            plan.layout.content_width,
-            true,
-        );
-        if !layout.slots.is_empty() {
-            for slot in layout.slots {
-                let row_in_list = row.reaction_top + slot.line as isize;
-                if row_in_list < 0 || row_in_list >= list.height as isize {
-                    continue;
-                }
-                let Some(image) = emoji_images.iter().find(|img| img.url == slot.url) else {
-                    continue;
-                };
-                let absolute_row = list_top + row_in_list;
-                let absolute_col = list_left
-                    + avatar_offset
-                    + selected_message_content_x_offset(row.selected) as isize
-                    + slot.col as isize;
-                if absolute_col >= list_right {
-                    continue;
-                }
-                let max_width = (list_right - absolute_col).max(0) as u16;
-                let image_width = EMOJI_REACTION_IMAGE_WIDTH.min(max_width);
-                if image_width == 0 {
-                    continue;
-                }
-                let image_area = Rect {
-                    x: absolute_col as u16,
-                    y: absolute_row as u16,
-                    width: image_width,
-                    height: 1,
-                };
-                if image_area.y >= list_bottom as u16
-                    || intersects_any(image_area, media_occlusion_areas)
-                {
-                    continue;
-                }
-                frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-            }
-        }
-    }
+    let slots = plan
+        .rows
+        .rows()
+        .iter()
+        .take_while(|row| row.message_top < list.height as isize)
+        .flat_map(|row| {
+            let layout = lay_out_reaction_chips_with_custom_emoji_images(
+                &row.message.reactions,
+                plan.layout.content_width,
+                true,
+            );
+            let base_col = list.x as isize
+                + avatar_offset
+                + selected_message_content_x_offset(row.selected) as isize;
+            let reaction_top = row.reaction_top;
+            layout.slots.into_iter().map(move |slot| EmojiSlot {
+                row_in_list: reaction_top + slot.line as isize,
+                col: base_col + slot.col as isize,
+                max_width: u16::MAX,
+                url: slot.url,
+            })
+        });
+    overlay_emoji_slots(frame, list, emoji_images, media_occlusion_areas, slots);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -522,85 +490,38 @@ fn render_inline_message_body_emojis(
     loaded_custom_emoji_urls: &[String],
     media_occlusion_areas: &[Rect],
 ) {
-    if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
-        return;
-    }
-
-    let list_top = list.y as isize;
-    let list_bottom = list_top + list.height as isize;
-    let list_left = list.x as isize;
-    let list_right = list_left + list.width as isize;
     let avatar_offset = MESSAGE_AVATAR_OFFSET as isize;
-
-    for row in plan.rows.rows() {
-        if row.message_top >= list.height as isize {
-            break;
-        }
-
-        let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-            row.message,
-            state,
-            plan.layout.content_width.max(8),
-            loaded_custom_emoji_urls,
-        );
-        for (line_idx, line) in body_lines.iter().enumerate() {
-            if line.image_slots.is_empty() {
-                continue;
-            }
-            let row_in_list = row.body_top
-                + state.message_header_line_count_at(row.global_index) as isize
-                + line_idx as isize;
-            if row_in_list < 0 || row_in_list >= list.height as isize {
-                continue;
-            }
-            let absolute_row = list_top + row_in_list;
-            if absolute_row >= list_bottom {
-                continue;
-            }
-            for slot in &line.image_slots {
-                let absolute_col = list_left
-                    + avatar_offset
-                    + selected_message_content_x_offset(row.selected) as isize
-                    + slot.col as isize;
-                if absolute_col >= list_right {
-                    continue;
-                }
-                let Some(image) = emoji_images.iter().find(|img| img.url == slot.url) else {
-                    continue;
-                };
-                let max_width = (list_right - absolute_col).max(0) as u16;
-                let image_width = EMOJI_REACTION_IMAGE_WIDTH.min(max_width);
-                if image_width == 0 {
-                    continue;
-                }
-                let image_area = Rect {
-                    x: absolute_col as u16,
-                    y: absolute_row as u16,
-                    width: image_width,
-                    height: 1,
-                };
-                if intersects_any(image_area, media_occlusion_areas) {
-                    continue;
-                }
-                frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-            }
-        }
-    }
-}
-
-fn intersects_any(area: Rect, occlusion_areas: &[Rect]) -> bool {
-    occlusion_areas
+    let slots = plan
+        .rows
+        .rows()
         .iter()
-        .any(|occlusion| rects_intersect(area, *occlusion))
-}
-
-fn rects_intersect(a: Rect, b: Rect) -> bool {
-    !a.is_empty()
-        && !b.is_empty()
-        && a.x < b.x.saturating_add(b.width)
-        && b.x < a.x.saturating_add(a.width)
-        && a.y < b.y.saturating_add(b.height)
-        && b.y < a.y.saturating_add(a.height)
+        .take_while(|row| row.message_top < list.height as isize)
+        .flat_map(|row| {
+            let base_col = list.x as isize
+                + avatar_offset
+                + selected_message_content_x_offset(row.selected) as isize;
+            let body_top =
+                row.body_top + state.message_header_line_count_at(row.global_index) as isize;
+            let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+                row.message,
+                state,
+                plan.layout.content_width.max(8),
+                loaded_custom_emoji_urls,
+            );
+            body_lines
+                .into_iter()
+                .enumerate()
+                .flat_map(move |(line_idx, line)| {
+                    let row_in_list = body_top + line_idx as isize;
+                    line.image_slots.into_iter().map(move |slot| EmojiSlot {
+                        row_in_list,
+                        col: base_col + slot.col as isize,
+                        max_width: u16::MAX,
+                        url: slot.url,
+                    })
+                })
+        });
+    overlay_emoji_slots(frame, list, emoji_images, media_occlusion_areas, slots);
 }
 
 #[cfg(test)]

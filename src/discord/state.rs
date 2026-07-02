@@ -990,6 +990,7 @@ impl DiscordState {
             | AppEvent::AttachmentDownloadFailed { .. }
             | AppEvent::UpdateAvailable { .. }
             | AppEvent::ReactionUsersLoaded { .. }
+            | AppEvent::ReactionUsersLoadFailed { .. }
             | AppEvent::AttachmentPreviewLoaded { .. }
             | AppEvent::AttachmentPreviewLoadFailed { .. }
             | AppEvent::ThreadPreviewLoadFailed { .. }

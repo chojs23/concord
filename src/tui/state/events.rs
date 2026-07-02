@@ -7,9 +7,7 @@ use crate::discord::ids::{
 use crate::discord::{AppEvent, VoiceConnectionStatus, VoiceScope};
 use crate::logging;
 
-use super::{
-    ActiveGuildScope, DashboardState, ModalPopup, ReactionUsersPopupState, VoiceConnectionUiState,
-};
+use super::{ActiveGuildScope, DashboardState, VoiceConnectionUiState};
 
 struct EventViewportContext {
     was_at_latest: bool,
@@ -219,13 +217,30 @@ impl DashboardState {
             AppEvent::ReactionUsersLoaded {
                 channel_id,
                 message_id,
-                reactions,
+                emoji,
+                users,
+                next_after,
+                after,
             } => {
-                self.popups.modal = Some(ModalPopup::ReactionUsers(ReactionUsersPopupState::new(
-                    *channel_id,
-                    *message_id,
-                    reactions.clone(),
-                )));
+                if let Some(popup) = self.popups.reaction_users_popup_mut() {
+                    popup.apply_loaded(
+                        *channel_id,
+                        *message_id,
+                        emoji,
+                        users.clone(),
+                        *next_after,
+                        *after,
+                    );
+                }
+            }
+            AppEvent::ReactionUsersLoadFailed {
+                channel_id,
+                message_id,
+                emoji,
+            } => {
+                if let Some(popup) = self.popups.reaction_users_popup_mut() {
+                    popup.apply_load_failed(*channel_id, *message_id, emoji);
+                }
             }
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::ForumPostsLoaded {

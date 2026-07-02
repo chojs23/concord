@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
 pub(in crate::tui::ui) fn render_members(
     frame: &mut Frame,
@@ -138,24 +139,23 @@ pub(in crate::tui::ui) fn render_members(
     let content_area = block.inner(area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 
-    // Overlay custom emoji images on top of their placeholder cells.
     if state.show_custom_emoji() {
-        for (line_idx, url) in &emoji_line_urls {
-            let Some(image) = emoji_images.iter().find(|img| img.url == *url) else {
-                continue;
-            };
-            let Some(visible_offset) = line_idx.checked_sub(scroll) else {
-                continue;
-            };
-            if visible_offset >= content_height {
-                continue;
-            }
-            let y = content_area.y.saturating_add(visible_offset as u16);
-            frame.render_widget(
-                ratatui_image::Image::new(image.protocol),
-                Rect::new(content_area.x.saturating_add(3), y, 2, 1),
-            );
-        }
+        let list = Rect {
+            height: content_height as u16,
+            ..content_area
+        };
+        overlay_emoji_slots(
+            frame,
+            list,
+            emoji_images,
+            &[],
+            emoji_line_urls.iter().map(|(line_idx, url)| EmojiSlot {
+                row_in_list: *line_idx as isize - scroll as isize,
+                col: content_area.x as isize + 3,
+                max_width: u16::MAX,
+                url: url.clone(),
+            }),
+        );
     }
 
     render_vertical_scrollbar(

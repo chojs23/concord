@@ -1,6 +1,7 @@
 use super::*;
 use crate::tui::selection;
 use crate::tui::state::{ThreadEditField, ThreadEditTagView, ThreadEditView};
+use crate::tui::ui::emoji_overlay::overlay_emoji_column;
 
 const FORUM_POST_EDIT_POPUP_WIDTH: u16 = 78;
 const FORUM_POST_EDIT_POPUP_HEIGHT: u16 = 18;
@@ -298,31 +299,13 @@ pub(super) fn render_tag_picker_emojis<'a>(
     row_custom_emoji_urls: impl IntoIterator<Item = Option<&'a str>>,
     emoji_images: &[EmojiImage<'_>],
 ) {
-    let emoji_col = tag_line_emoji_column();
-    if area.width <= emoji_col || area.height == 0 {
-        return;
-    }
-    for (offset, url) in row_custom_emoji_urls.into_iter().enumerate() {
-        let Some(url) = url else {
-            continue;
-        };
-        let Some(image) = emoji_images.iter().find(|image| image.url == url) else {
-            continue;
-        };
-        let y = area
-            .y
-            .saturating_add(u16::try_from(offset).unwrap_or(u16::MAX));
-        if y >= area.y.saturating_add(area.height) {
-            continue;
-        }
-        let image_area = Rect::new(
-            area.x.saturating_add(emoji_col),
-            y,
-            EMOJI_REACTION_IMAGE_WIDTH.min(area.width.saturating_sub(emoji_col)),
-            1,
-        );
-        frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-    }
+    overlay_emoji_column(
+        frame,
+        area,
+        tag_line_emoji_column(),
+        row_custom_emoji_urls.into_iter(),
+        emoji_images,
+    );
 }
 
 fn thread_edit_tag_picker_popup_area(area: Rect, tag_count: usize) -> Rect {

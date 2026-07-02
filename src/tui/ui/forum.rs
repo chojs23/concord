@@ -1,5 +1,6 @@
 use super::message::list::message_author_style;
 use super::*;
+use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
 #[cfg(test)]
 pub(super) fn forum_post_viewport_lines(
@@ -412,15 +413,11 @@ pub(super) fn render_forum_post_reaction_emojis(
     emoji_images: &[EmojiImage<'_>],
     occlusion_areas: &[Rect],
 ) {
-    if emoji_images.is_empty() || list.height == 0 || list.width == 0 {
-        return;
-    }
-
     let list_left = list.x as isize;
-    let list_right = list_left + list.width as isize;
     let content_start = 4isize;
     let inner_width = forum_post_inner_width_for_reactions(width);
 
+    let mut slots = Vec::new();
     for (row, reaction_start_col, layout) in
         forum_post_reaction_render_layouts(posts, width, usize::from(list.height))
     {
@@ -429,33 +426,21 @@ pub(super) fn render_forum_post_reaction_emojis(
             if slot_col >= inner_width {
                 continue;
             }
-            let Some(image) = emoji_images.iter().find(|img| img.url == slot.url) else {
-                continue;
-            };
-            let absolute_col = list_left + content_start + slot_col as isize;
-            if absolute_col >= list_right {
-                continue;
-            }
-            let remaining_content_width = inner_width.saturating_sub(slot_col) as u16;
-            let remaining_list_width = (list_right - absolute_col).max(0) as u16;
-            let image_width = EMOJI_REACTION_IMAGE_WIDTH
-                .min(remaining_content_width)
-                .min(remaining_list_width);
-            if image_width == 0 {
-                continue;
-            }
-            let image_area = Rect {
-                x: absolute_col as u16,
-                y: list.y.saturating_add(row as u16),
-                width: image_width,
-                height: 1,
-            };
-            if intersects_any(image_area, occlusion_areas) {
-                continue;
-            }
-            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+            slots.push(EmojiSlot {
+                row_in_list: row as isize,
+                col: list_left + content_start + slot_col as isize,
+                max_width: inner_width.saturating_sub(slot_col) as u16,
+                url: slot.url,
+            });
         }
     }
+    overlay_emoji_slots(
+        frame,
+        list,
+        emoji_images,
+        occlusion_areas,
+        slots.into_iter(),
+    );
 }
 
 /// Column offsets (from the card's inner content start) and urls of each
@@ -511,16 +496,12 @@ pub(super) fn render_forum_post_tag_emojis(
     emoji_images: &[EmojiImage<'_>],
     occlusion_areas: &[Rect],
 ) {
-    if emoji_images.is_empty() || list.height == 0 || list.width == 0 {
-        return;
-    }
-
     let list_left = list.x as isize;
-    let list_right = list_left + list.width as isize;
     let content_start = 4isize;
     let inner_width = forum_post_inner_width_for_reactions(width);
     let list_height = usize::from(list.height);
 
+    let mut slots = Vec::new();
     let mut rendered_row = 0usize;
     for post in posts {
         if post.section_label.is_some() {
@@ -538,34 +519,22 @@ pub(super) fn render_forum_post_tag_emojis(
             if slot_col >= inner_width {
                 continue;
             }
-            let Some(image) = emoji_images.iter().find(|img| img.url == url) else {
-                continue;
-            };
-            let absolute_col = list_left + content_start + slot_col as isize;
-            if absolute_col >= list_right {
-                continue;
-            }
-            let remaining_content_width = inner_width.saturating_sub(slot_col) as u16;
-            let remaining_list_width = (list_right - absolute_col).max(0) as u16;
-            let image_width = EMOJI_REACTION_IMAGE_WIDTH
-                .min(remaining_content_width)
-                .min(remaining_list_width);
-            if image_width == 0 {
-                continue;
-            }
-            let image_area = Rect {
-                x: absolute_col as u16,
-                y: list.y.saturating_add(row as u16),
-                width: image_width,
-                height: 1,
-            };
-            if intersects_any(image_area, occlusion_areas) {
-                continue;
-            }
-            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
+            slots.push(EmojiSlot {
+                row_in_list: row as isize,
+                col: list_left + content_start + slot_col as isize,
+                max_width: inner_width.saturating_sub(slot_col) as u16,
+                url,
+            });
         }
         rendered_row = rendered_row.saturating_add(post.card_height());
     }
+    overlay_emoji_slots(
+        frame,
+        list,
+        emoji_images,
+        occlusion_areas,
+        slots.into_iter(),
+    );
 }
 
 #[cfg(test)]
@@ -597,21 +566,6 @@ pub(super) fn forum_post_tag_rows_for_test(
         rendered_row = rendered_row.saturating_add(post.card_height());
     }
     result
-}
-
-fn intersects_any(area: Rect, occlusion_areas: &[Rect]) -> bool {
-    occlusion_areas
-        .iter()
-        .any(|occlusion| rects_intersect(area, *occlusion))
-}
-
-fn rects_intersect(a: Rect, b: Rect) -> bool {
-    !a.is_empty()
-        && !b.is_empty()
-        && a.x < b.x.saturating_add(b.width)
-        && b.x < a.x.saturating_add(a.width)
-        && a.y < b.y.saturating_add(b.height)
-        && b.y < a.y.saturating_add(a.height)
 }
 
 fn forum_post_inner_width_for_reactions(width: usize) -> usize {

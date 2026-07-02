@@ -582,7 +582,8 @@ pub enum AppCommand {
     LoadReactionUsers {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        reactions: Vec<ReactionEmoji>,
+        emoji: ReactionEmoji,
+        after: Option<Id<UserMarker>>,
     },
     LoadPinnedMessages {
         channel_id: Id<ChannelMarker>,

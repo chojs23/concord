@@ -1,6 +1,7 @@
 use super::*;
 use crate::tui::media::{PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH};
 use crate::tui::state::{UserProfileSettingsField, UserProfileSettingsTab};
+use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
 pub(in crate::tui::ui) fn render_user_profile_popup(
     frame: &mut Frame,
@@ -60,22 +61,25 @@ pub(in crate::tui::ui) fn render_user_profile_popup(
     }
 
     if state.show_custom_emoji() {
-        for (line_idx, url) in &popup_text.emoji_overlays {
-            let Some(image) = emoji_images.iter().find(|img| img.url == *url) else {
-                continue;
-            };
-            let Some(visible_offset) = line_idx.checked_sub(scroll_position) else {
-                continue;
-            };
-            if visible_offset >= viewport {
-                continue;
-            }
-            let y = text_area.y.saturating_add(visible_offset as u16);
-            frame.render_widget(
-                ratatui_image::Image::new(image.protocol),
-                Rect::new(text_area.x, y, 2, 1),
-            );
-        }
+        let list = Rect {
+            height: viewport as u16,
+            ..text_area
+        };
+        overlay_emoji_slots(
+            frame,
+            list,
+            emoji_images,
+            &[],
+            popup_text
+                .emoji_overlays
+                .iter()
+                .map(|(line_idx, url)| EmojiSlot {
+                    row_in_list: *line_idx as isize - scroll_position as isize,
+                    col: text_area.x as isize,
+                    max_width: u16::MAX,
+                    url: url.clone(),
+                }),
+        );
     }
 
     if let Some(avatar) = avatar.filter(|_| has_avatar) {

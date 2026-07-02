@@ -381,23 +381,6 @@ impl ReactionUserInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReactionUsersInfo {
-    pub emoji: ReactionEmoji,
-    pub users: Vec<ReactionUserInfo>,
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-impl ReactionUsersInfo {
-    pub(crate) fn test(emoji: ReactionEmoji) -> Self {
-        Self {
-            emoji,
-            users: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageInfo {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,

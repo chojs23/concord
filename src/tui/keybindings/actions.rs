@@ -335,7 +335,9 @@ pub(in crate::tui) enum PollVotePickerAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum ReactionUsersPopupAction {
     Close,
-    Scroll(ScrollAction),
+    Back,
+    Activate,
+    Navigate(SelectionAction),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

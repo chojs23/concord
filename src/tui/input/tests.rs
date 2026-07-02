@@ -31,8 +31,8 @@ use crate::{
         CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildFolder,
         GuildNotificationSettingsInfo, MemberInfo, MessageInfo, MessageReferenceInfo,
         MessageSnapshotInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReactionUserInfo, ReactionUsersInfo, RoleInfo, UserGuildSettingsInfo,
-        UserSettingsInfo, VoiceConnectionStatus,
+        ReactionEmoji, ReactionUserInfo, RoleInfo, UserGuildSettingsInfo, UserSettingsInfo,
+        VoiceConnectionStatus,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };

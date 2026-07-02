@@ -4,7 +4,7 @@ use crate::{
     DiscordClient,
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, MessageInfo, MessageUpdateDispatchInfo,
-        MessageUpdateEventFields, ReactionUsersInfo,
+        MessageUpdateEventFields,
     },
 };
 
@@ -223,33 +223,36 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
         AppCommand::LoadReactionUsers {
             channel_id,
             message_id,
-            reactions,
-        } => {
-            let mut loaded_reactions = Vec::with_capacity(reactions.len());
-            let mut failed = false;
-            for emoji in reactions {
-                match client
-                    .load_reaction_users(channel_id, message_id, &emoji)
-                    .await
-                {
-                    Ok(users) => loaded_reactions.push(ReactionUsersInfo { emoji, users }),
-                    Err(error) => {
-                        publish_app_error(&client, "load reaction users failed", &error).await;
-                        failed = true;
-                        break;
-                    }
-                }
-            }
-            if !failed {
+            emoji,
+            after,
+        } => match client
+            .load_reaction_users_page(channel_id, message_id, &emoji, after)
+            .await
+        {
+            Ok(page) => {
                 client
                     .publish_event(AppEvent::ReactionUsersLoaded {
                         channel_id,
                         message_id,
-                        reactions: loaded_reactions,
+                        emoji,
+                        users: page.users,
+                        next_after: page.next_after,
+                        after,
                     })
                     .await;
             }
-        }
+            Err(error) => {
+                publish_app_error(&client, "load reaction users failed", &error).await;
+                // Clears the popup's in-flight flag so the emoji can be retried.
+                client
+                    .publish_event(AppEvent::ReactionUsersLoadFailed {
+                        channel_id,
+                        message_id,
+                        emoji,
+                    })
+                    .await;
+            }
+        },
         AppCommand::LoadPinnedMessages { channel_id } => {
             match client.load_pinned_messages(channel_id).await {
                 Ok(messages) => {

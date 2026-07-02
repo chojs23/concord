@@ -91,7 +91,7 @@ pub(super) use profile::{user_profile_popup_lines, user_profile_popup_lines_with
 pub(super) use reactions::{
     emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     emoji_reaction_picker_lines_with_own_reactions, filtered_emoji_reaction_picker_lines,
-    reaction_users_popup_lines,
+    reaction_list_lines_with_ready_urls, reaction_users_popup_lines,
 };
 pub(super) use reactions::{
     emoji_reaction_picker_popup_area_for_state, emoji_reaction_picker_visible_items_for_area,

@@ -45,7 +45,7 @@ use message_viewport::{MessageViewportState, ThreadReturnTarget};
 use navigation::{ActiveGuildScope, FolderKey, FolderSettingsState, NavigationState};
 use options::SettingsState;
 use pane_filter::PaneFilterState;
-use popups::{ModalPopup, PopupUiState};
+use popups::PopupUiState;
 use request_tracking::RequestTrackingState;
 use runtime_state::{
     MediaPlaybackPreparingUiState, RuntimeUiState, ToastMessage, VoiceConnectionUiState,
@@ -78,8 +78,8 @@ pub(in crate::tui) use popups::{ActiveModalPopupKind, MessageConfirmationKind};
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,
     NotificationInboxChannelLoad, NotificationInboxItem, NotificationInboxLoad,
-    NotificationInboxMessage, NotificationInboxTab, PollVotePickerState, ReactionUsersPopupState,
-    UserProfileSettingsField, UserProfileSettingsTab,
+    NotificationInboxMessage, NotificationInboxTab, PollVotePickerState, ReactionUsersEntry,
+    ReactionUsersPopupState, UserProfileSettingsField, UserProfileSettingsTab,
 };
 pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
 

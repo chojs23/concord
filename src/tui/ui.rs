@@ -33,7 +33,7 @@ use super::{
 };
 use crate::discord::{
     ActivityInfo, ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus,
-    MessageState, PresenceStatus, ReactionInfo, ReactionUsersInfo, UserProfileInfo, is_thread_kind,
+    MessageState, PresenceStatus, ReactionInfo, UserProfileInfo, is_thread_kind,
 };
 
 /// Discord's "you were mentioned" orange, `#FFA500`.
@@ -51,6 +51,7 @@ pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_HEIGHT: u16 = 6;
 pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_WIDTH: u16 = 32;
 
 mod activity;
+mod emoji_overlay;
 pub(in crate::tui) mod forum;
 mod hit_test;
 mod layout;
@@ -124,8 +125,8 @@ use self::{
         message_action_menu_lines_with_keymap_options, message_delete_confirmation_lines,
         message_pin_confirmation_lines, message_remove_embeds_confirmation_lines,
         message_url_picker_lines_for_width, options_popup_lines, poll_vote_picker_lines,
-        quit_confirmation_lines, reaction_users_popup_lines, toast_area, toast_line,
-        user_profile_popup_lines, user_profile_popup_lines_with_activities,
+        quit_confirmation_lines, reaction_list_lines_with_ready_urls, reaction_users_popup_lines,
+        toast_area, toast_line, user_profile_popup_lines, user_profile_popup_lines_with_activities,
     },
 };
 
@@ -339,7 +340,7 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     render_poll_vote_picker(frame, popup_area, state);
     render_user_profile_popup(frame, popup_area, state, profile_avatar, &emoji_images);
     render_emoji_reaction_picker(frame, popup_area, state, &emoji_images);
-    render_reaction_users_popup(frame, popup_area, state);
+    render_reaction_users_popup(frame, popup_area, state, &emoji_images);
     render_attachment_viewer(frame, frame.area(), state, viewer_image_preview);
     render_debug_log_popup(frame, popup_area, state);
     render_keymap_help_popup(frame, popup_area, state);

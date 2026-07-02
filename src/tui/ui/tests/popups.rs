@@ -3,6 +3,7 @@ use crate::discord::test_builders::{
     GuildCreateFixture, ReactionUsersLoadedFixture, guild_create_event, reaction_users_loaded_event,
 };
 use crate::tui::keybindings::{KeymapBindingSummary, OptionsCategoryShortcut};
+use crate::tui::state::ReactionUsersPopupState;
 use crate::tui::ui::{downloads_popup_area, downloads_popup_lines};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::BTreeMap;
@@ -690,82 +691,105 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
 }
 
 #[test]
-fn reaction_users_popup_groups_users_by_reaction() {
-    let lines = reaction_users_popup_lines(
-        &[
-            ReactionUsersInfo {
-                users: vec![
-                    ReactionUserInfo::test(Id::new(10), "neo"),
-                    ReactionUserInfo::test(Id::new(11), "trinity"),
-                ],
-                ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-            },
-            ReactionUsersInfo::test(ReactionEmoji::Custom {
-                id: Id::new(50),
-                name: Some("party".to_owned()),
-                animated: false,
-            }),
+fn reaction_users_popup_lists_reactions() {
+    // The selected row gets the `› ` marker. A custom emoji with no ready
+    // thumbnail falls back to `:name:`.
+    let popup = ReactionUsersPopupState::test_list(
+        Id::new(2),
+        Id::new(1),
+        vec![
+            (ReactionEmoji::Unicode("👍".to_owned()), 55),
+            (
+                ReactionEmoji::Custom {
+                    id: Id::new(50),
+                    name: Some("party".to_owned()),
+                    animated: false,
+                },
+                23,
+            ),
         ],
-        0,
-        10,
-        56,
     );
+
+    let lines = reaction_users_popup_lines(&popup, 0, 10, 56);
 
     let trimmed = line_texts_from_ratatui(&lines)
         .into_iter()
         .map(|line| line.trim_end().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(
-        trimmed,
-        vec![
-            "👍 · 2 users",
-            "  neo",
-            "  trinity",
-            ":party: · 0 users",
-            "  no users found",
-        ]
-    );
+    assert_eq!(trimmed, vec!["› 👍 55", "  :party: 23"]);
+}
+
+#[test]
+fn reaction_list_reserves_image_cell_for_ready_custom_emoji() {
+    let custom = ReactionEmoji::Custom {
+        id: Id::new(50),
+        name: Some("party".to_owned()),
+        animated: false,
+    };
+    let popup =
+        ReactionUsersPopupState::test_list(Id::new(2), Id::new(1), vec![(custom.clone(), 23)]);
+    let url = custom
+        .custom_image_url()
+        .expect("custom emoji has a thumbnail url");
+
+    // No thumbnail ready yet -> text fallback shows `:party:`.
+    let fallback = reaction_list_lines_with_ready_urls(&popup, &[], 56);
+    assert!(line_texts_from_ratatui(&fallback)[0].contains(":party:"));
+
+    // Thumbnail ready -> the emoji cell is blanked so the overlaid image shows,
+    // exactly like the message view and picker.
+    let with_image = reaction_list_lines_with_ready_urls(&popup, std::slice::from_ref(&url), 56);
+    assert!(!line_texts_from_ratatui(&with_image)[0].contains(":party:"));
 }
 
 #[test]
 fn reaction_users_popup_scrolls_long_lists() {
-    let reactions = vec![ReactionUsersInfo {
-        users: (1..=6)
-            .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
-            .collect(),
-        ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-    }];
+    // View B: the reactors for one emoji, scrolled down by 3.
+    let popup = ReactionUsersPopupState::test_viewing(
+        Id::new(2),
+        Id::new(1),
+        vec![(
+            ReactionEmoji::Unicode("👍".to_owned()),
+            6,
+            (1..=6)
+                .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
+                .collect(),
+            None,
+        )],
+        0,
+    );
 
-    let lines = reaction_users_popup_lines(&reactions, 3, 3, 56);
+    let lines = reaction_users_popup_lines(&popup, 3, 3, 56);
 
     let trimmed = line_texts_from_ratatui(&lines)
         .into_iter()
         .map(|line| line.trim_end().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(trimmed, vec!["  user-3", "  user-4", "  user-5",]);
+    assert_eq!(trimmed, vec!["  user-4", "  user-5", "  user-6"]);
 }
 
 #[test]
 fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
+    use crate::tui::keybindings::SelectionAction;
+
     let mut state = DashboardState::new();
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 5)]);
+    // Drill into the reaction so the user list (with the long name) renders.
+    state.activate_reaction_users_popup();
     state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
-        reactions: vec![
-            ReactionUsersInfo {
-                users: vec![
-                    ReactionUserInfo::test(Id::new(1), "갱생케가"),
-                    ReactionUserInfo::test(Id::new(2), "하나비"),
-                    ReactionUserInfo::test(Id::new(3), "슬기인뎅"),
-                    ReactionUserInfo::test(Id::new(4), "won"),
-                ],
-                ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-            },
-            ReactionUsersInfo {
-                users: vec![ReactionUserInfo::test(Id::new(5), "파닥파닥( 40%..? )")],
-                ..ReactionUsersInfo::test(ReactionEmoji::Unicode("❤️".to_owned()))
-            },
+        emoji,
+        users: vec![
+            ReactionUserInfo::test(Id::new(1), "갱생케가"),
+            ReactionUserInfo::test(Id::new(2), "하나비"),
+            ReactionUserInfo::test(Id::new(3), "슬기인뎅"),
+            ReactionUserInfo::test(Id::new(4), "won"),
+            ReactionUserInfo::test(Id::new(5), "파닥파닥( 40%..? )"),
         ],
+        next_after: None,
+        after: None,
     }));
 
     // Use a wide terminal so the popup's full POPUP_TARGET_WIDTH (58)
@@ -786,7 +810,7 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
     // survive without bleeding the wrap continuation onto
     // neighbouring rows.
     for _ in 0..6 {
-        state.scroll_reaction_users_popup_down();
+        state.navigate_reaction_users_popup(SelectionAction::Next);
     }
     terminal
         .draw(|frame| {
@@ -795,7 +819,7 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
         })
         .expect("second draw");
     for _ in 0..6 {
-        state.scroll_reaction_users_popup_up();
+        state.navigate_reaction_users_popup(SelectionAction::Previous);
     }
     terminal
         .draw(|frame| {
@@ -830,16 +854,19 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
 #[test]
 fn reaction_users_popup_buffer_stays_clean_in_narrow_terminal() {
     let mut state = DashboardState::new();
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 2)]);
+    state.activate_reaction_users_popup();
     state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
-        reactions: vec![ReactionUsersInfo {
-            users: vec![
-                ReactionUserInfo::test(Id::new(1), "won"),
-                ReactionUserInfo::test(Id::new(2), "파닥파닥( 40%..? )"),
-            ],
-            ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-        }],
+        emoji,
+        users: vec![
+            ReactionUserInfo::test(Id::new(1), "won"),
+            ReactionUserInfo::test(Id::new(2), "파닥파닥( 40%..? )"),
+        ],
+        next_after: None,
+        after: None,
     }));
 
     // Narrow terminal that would force the popup down to a width where
@@ -857,19 +884,26 @@ fn reaction_users_popup_buffer_stays_clean_in_narrow_terminal() {
 
 #[test]
 fn reaction_users_popup_truncates_long_lines_to_fit_width() {
-    let reactions = vec![ReactionUsersInfo {
-        users: vec![
-            ReactionUserInfo::test(Id::new(1), "won"),
-            ReactionUserInfo::test(Id::new(2), "파닥파닥( 40%..? )"),
-        ],
-        ..ReactionUsersInfo::test(ReactionEmoji::Unicode("❤️".to_owned()))
-    }];
+    let popup = ReactionUsersPopupState::test_viewing(
+        Id::new(2),
+        Id::new(1),
+        vec![(
+            ReactionEmoji::Unicode("❤️".to_owned()),
+            2,
+            vec![
+                ReactionUserInfo::test(Id::new(1), "won"),
+                ReactionUserInfo::test(Id::new(2), "파닥파닥( 40%..? )"),
+            ],
+            None,
+        )],
+        0,
+    );
 
     // Inner width that is narrower than the long Korean+ASCII display name
     // forces the popup logic to truncate. Without truncation, ratatui's
     // wrap would split the long name and the wrap continuation would bleed
     // onto adjacent rows.
-    let lines = reaction_users_popup_lines(&reactions, 0, 4, 12);
+    let lines = reaction_users_popup_lines(&popup, 0, 4, 12);
 
     for line in &lines {
         assert!(

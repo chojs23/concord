@@ -1,6 +1,10 @@
-use crate::discord::AppCommand;
-use crate::discord::ids::{Id, marker::GuildMarker};
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, MessageMarker},
+};
+use crate::discord::{AppCommand, ReactionEmoji};
 use crate::tui::fuzzy::{FuzzyScore, fuzzy_text_score};
+use crate::tui::keybindings::SelectionAction;
 
 use super::super::emoji::{
     custom_emoji_can_be_used_directly, custom_emoji_reaction_item, is_quick_unicode_emoji,
@@ -135,23 +139,80 @@ impl DashboardState {
         }
     }
 
-    pub fn scroll_reaction_users_popup_down(&mut self) {
-        if let Some(popup) = self.popups.reaction_users_popup_mut() {
-            popup.scroll.scroll_down();
+    pub fn open_reaction_users_popup(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        reactions: Vec<(ReactionEmoji, u64)>,
+    ) {
+        let popup = ReactionUsersPopupState::new(channel_id, message_id, reactions);
+        self.popups.modal = Some(ModalPopup::ReactionUsers(popup));
+    }
+
+    pub fn navigate_reaction_users_popup(&mut self, action: SelectionAction) -> Option<AppCommand> {
+        let popup = self.popups.reaction_users_popup_mut()?;
+        if !popup.is_viewing_users() {
+            popup.move_selection(action);
+            return None;
+        }
+        match action {
+            SelectionAction::Previous => {
+                popup.user_scroll.scroll_up();
+                None
+            }
+            SelectionAction::Next => {
+                popup.user_scroll.scroll_down();
+                let (emoji, after) = popup.take_load_more()?;
+                Some(AppCommand::LoadReactionUsers {
+                    channel_id: popup.channel_id,
+                    message_id: popup.message_id,
+                    emoji,
+                    after: Some(after),
+                })
+            }
         }
     }
 
-    pub fn scroll_reaction_users_popup_up(&mut self) {
-        if let Some(popup) = self.popups.reaction_users_popup_mut() {
-            popup.scroll.scroll_up();
+    /// Fetches the next page after a page or half-page scroll of the user list,
+    /// when the reader is near the bottom and more users remain.
+    pub fn reaction_users_popup_take_load_more(&mut self) -> Option<AppCommand> {
+        let popup = self.popups.reaction_users_popup_mut()?;
+        let (emoji, after) = popup.take_load_more()?;
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: popup.channel_id,
+            message_id: popup.message_id,
+            emoji,
+            after: Some(after),
+        })
+    }
+
+    pub fn activate_reaction_users_popup(&mut self) -> Option<AppCommand> {
+        let popup = self.popups.reaction_users_popup_mut()?;
+        if popup.is_viewing_users() {
+            return None;
         }
+        let emoji = popup.open_selected()?;
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: popup.channel_id,
+            message_id: popup.message_id,
+            emoji,
+            after: None,
+        })
+    }
+
+    pub fn reaction_users_popup_back(&mut self) -> bool {
+        self.popups
+            .reaction_users_popup_mut()
+            .is_some_and(|popup| popup.back_to_list())
     }
 
     pub fn set_reaction_users_popup_view_height(&mut self, height: usize) {
         if let Some(popup) = self.popups.reaction_users_popup_mut() {
-            let total_lines = popup.data_line_count();
-            popup.scroll.set_view_height(height);
-            popup.scroll.set_total_lines(total_lines);
+            if popup.is_viewing_users() {
+                popup.set_user_view_height(height);
+            } else {
+                popup.set_list_view_height(height);
+            }
         }
     }
 

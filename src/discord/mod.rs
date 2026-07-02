@@ -78,7 +78,7 @@ pub use message::{
     AttachmentInfo, AttachmentUpdate, EmbedFieldInfo, EmbedInfo, InlinePreviewInfo,
     MESSAGE_FLAG_SUPPRESS_EMBEDS, MentionInfo, MessageInfo, MessageInteractionInfo, MessageKind,
     MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, ReactionInfo,
-    ReactionUserInfo, ReactionUsersInfo, ReplyInfo,
+    ReactionUserInfo, ReplyInfo,
 };
 pub use notification::{
     ChannelNotificationOverrideInfo, GuildNotificationSettingsInfo, NotificationLevel,
@@ -86,7 +86,7 @@ pub use notification::{
 pub use presence::{ActivityEmoji, ActivityInfo, ActivityKind, PresenceStatus};
 pub use profile::{FriendStatus, MutualGuildInfo, RelationshipInfo, UserProfileInfo};
 pub use read::ReadStateInfo;
-pub use rest::ForumPostPage;
+pub use rest::{ForumPostPage, ReactionUsersPage};
 pub use state::{
     ChannelRecipientState, ChannelState, ChannelUnreadState, ChannelVisibilityStats,
     CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, GuildMemberState, GuildState,

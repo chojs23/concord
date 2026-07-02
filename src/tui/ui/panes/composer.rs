@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_column, overlay_emoji_slots};
 
 pub(in crate::tui::ui) fn render_composer(
     frame: &mut Frame,
@@ -490,33 +491,15 @@ fn render_composer_emoji_picker_images(
         horizontal: 1,
         vertical: 1,
     });
-    if content.width <= EMOJI_REACTION_IMAGE_WIDTH || content.height == 0 {
-        return;
-    }
-
-    for (offset, entry) in candidates.iter().enumerate() {
-        let Some(url) = entry.custom_image_url.as_deref() else {
-            continue;
-        };
-        let Some(image) = emoji_images.iter().find(|image| image.url == url) else {
-            continue;
-        };
-        let y = content
-            .y
-            .saturating_add(u16::try_from(offset).unwrap_or(u16::MAX));
-        if y >= content.y.saturating_add(content.height) {
-            continue;
-        }
-        let image_area = Rect::new(
-            content.x.saturating_add(2),
-            y,
-            EMOJI_REACTION_IMAGE_WIDTH.min(content.width.saturating_sub(2)),
-            1,
-        );
-        if image_area.width > 0 {
-            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-        }
-    }
+    overlay_emoji_column(
+        frame,
+        content,
+        2,
+        candidates
+            .iter()
+            .map(|entry| entry.custom_image_url.as_deref()),
+        emoji_images,
+    );
 }
 
 #[cfg(test)]
@@ -679,13 +662,8 @@ fn render_composer_custom_emoji_images(
     let inner_width = composer_inner_width(area.width) as usize;
     let content_row = composer_rows_before_input(state);
 
+    let mut slots = Vec::new();
     for completion in state.composer_emoji_image_completions() {
-        let Some(image) = emoji_images
-            .iter()
-            .find(|image| image.url == completion.url)
-        else {
-            continue;
-        };
         let Some((row, column)) = composer_custom_emoji_image_position(
             input,
             display_input.map_byte_index(completion.byte_start),
@@ -694,29 +672,22 @@ fn render_composer_custom_emoji_images(
         ) else {
             continue;
         };
-        let x = area
-            .x
-            .saturating_add(1)
-            .saturating_add(u16::try_from(column).unwrap_or(u16::MAX));
-        let y = area
-            .y
-            .saturating_add(1)
-            .saturating_add(u16::try_from(content_row.saturating_add(row)).unwrap_or(u16::MAX));
-        let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
-        let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
-        if x >= inner_right || y >= inner_bottom {
-            continue;
-        }
-        let image_area = Rect::new(
-            x,
-            y,
-            EMOJI_REACTION_IMAGE_WIDTH.min(inner_right.saturating_sub(x)),
-            1,
-        );
-        if image_area.width > 0 {
-            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-        }
+        slots.push(EmojiSlot {
+            row_in_list: 1isize.saturating_add(content_row.saturating_add(row) as isize),
+            col: area.x as isize + 1 + column as isize,
+            max_width: u16::MAX,
+            url: completion.url,
+        });
     }
+
+    // Shrink by one so the helper's bounds reproduce the border the composer
+    // keeps clear on its right and bottom edges.
+    let list = Rect {
+        width: area.width.saturating_sub(1),
+        height: area.height.saturating_sub(1),
+        ..area
+    };
+    overlay_emoji_slots(frame, list, emoji_images, &[], slots.into_iter());
 }
 
 fn composer_custom_emoji_image_position(

@@ -21,15 +21,17 @@ pub(super) fn handle_popup_key(
     key: KeyEvent,
     phase: PopupKeyPhase,
 ) -> Option<Option<AppCommand>> {
-    let handled_page = phase == PopupKeyPhase::Priority
-        && !state.key_bindings().is_popup_close_key(key)
-        && match state.key_bindings().popup_page_action(key) {
-            Some(SelectionAction::Next) => state.page_active_popup_down(),
-            Some(SelectionAction::Previous) => state.page_active_popup_up(),
-            None => false,
-        };
-    if handled_page {
-        return Some(None);
+    if phase == PopupKeyPhase::Priority && !state.key_bindings().is_popup_close_key(key) {
+        match state.key_bindings().popup_page_action(key) {
+            // Paging to the bottom of a reactor list must still fetch the next page.
+            Some(SelectionAction::Next) if state.page_active_popup_down() => {
+                return Some(state.reaction_users_popup_take_load_more());
+            }
+            Some(SelectionAction::Previous) if state.page_active_popup_up() => {
+                return Some(None);
+            }
+            _ => {}
+        }
     }
 
     let kind = state.active_modal_popup_kind()?;
@@ -870,17 +872,23 @@ pub(super) fn handle_reaction_users_popup_key(
     key: KeyEvent,
 ) -> Option<AppCommand> {
     match state.key_bindings().reaction_users_popup_action(key) {
-        Some(ReactionUsersPopupAction::Close) => state.close_reaction_users_popup(),
-        Some(ReactionUsersPopupAction::Scroll(ScrollAction::Down)) => {
-            state.scroll_reaction_users_popup_down()
+        Some(ReactionUsersPopupAction::Close) => {
+            // Esc steps out of the user list first, closing only from the list.
+            if !state.reaction_users_popup_back() {
+                state.close_reaction_users_popup();
+            }
+            None
         }
-        Some(ReactionUsersPopupAction::Scroll(ScrollAction::Up)) => {
-            state.scroll_reaction_users_popup_up()
+        Some(ReactionUsersPopupAction::Back) => {
+            state.reaction_users_popup_back();
+            None
         }
-        None => {}
+        Some(ReactionUsersPopupAction::Activate) => state.activate_reaction_users_popup(),
+        Some(ReactionUsersPopupAction::Navigate(action)) => {
+            state.navigate_reaction_users_popup(action)
+        }
+        None => None,
     }
-
-    None
 }
 
 pub(super) fn handle_debug_log_popup_key(

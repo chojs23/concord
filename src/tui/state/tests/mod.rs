@@ -32,9 +32,9 @@ use crate::discord::{
     MessageReferenceInfo, MessageSearchPage, MessageSnapshotInfo, MessageState,
     MessageUpdateDispatchInfo, MessageUpdateEventFields, NotificationLevel,
     PermissionOverwriteInfo, PermissionOverwriteKind, PremiumTier, PresenceStatus, ReactionEmoji,
-    ReactionInfo, ReactionUserInfo, ReactionUsersInfo, ReplyInfo, RoleInfo, SnapshotRevision,
-    ThreadMembersUpdateInfo, UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo,
-    VoiceConnectionStatus, VoiceStateInfo,
+    ReactionInfo, ReactionUserInfo, ReplyInfo, RoleInfo, SnapshotRevision, ThreadMembersUpdateInfo,
+    UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus,
+    VoiceStateInfo,
 };
 
 mod channel_switcher;

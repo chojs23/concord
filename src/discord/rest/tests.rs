@@ -36,7 +36,7 @@ use super::{
     notification_settings::mute_request_body,
     polls::poll_vote_request_body,
     profile::parse_user_profile_response,
-    reactions::{REACTION_USERS_MAX_PAGES, next_reaction_users_after, reaction_route_component},
+    reactions::{next_reaction_users_after, reaction_route_component},
     search::{message_search_date_snowflake_bounds, message_search_query_params},
     user_settings::settings_proto_request_body,
 };
@@ -451,18 +451,26 @@ fn reaction_route_component_formats_unicode_and_custom_reactions() {
 
 #[test]
 fn reaction_user_pagination_continues_only_after_full_pages() {
-    let last_user_id = Id::new(123);
+    // A full page (100 raw entries) hands back the last entry's id as the cursor
+    // for the next page.
+    let full: Vec<serde_json::Value> = (1..=100)
+        .map(|id| serde_json::json!({ "id": id.to_string() }))
+        .collect();
+    assert_eq!(
+        next_reaction_users_after(&full),
+        Id::<UserMarker>::new_checked(100)
+    );
 
-    assert_eq!(
-        next_reaction_users_after(100, Some(last_user_id), 1),
-        Some(last_user_id)
-    );
-    assert_eq!(next_reaction_users_after(99, Some(last_user_id), 1), None);
-    assert_eq!(next_reaction_users_after(100, None, 1), None);
-    assert_eq!(
-        next_reaction_users_after(100, Some(last_user_id), REACTION_USERS_MAX_PAGES),
-        None
-    );
+    // A short page means there is nothing more to fetch.
+    let short: Vec<serde_json::Value> = (1..=99)
+        .map(|id| serde_json::json!({ "id": id.to_string() }))
+        .collect();
+    assert_eq!(next_reaction_users_after(&short), None);
+
+    // A full page whose last entry lacks a parseable id yields no cursor.
+    let mut malformed = full.clone();
+    malformed[99] = serde_json::json!({ "id": "not-a-number" });
+    assert_eq!(next_reaction_users_after(&malformed), None);
 }
 
 #[test]

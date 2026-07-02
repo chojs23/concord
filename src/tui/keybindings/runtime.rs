@@ -479,8 +479,25 @@ impl KeyBindings {
         if self.is_popup_close_key(key) {
             return Some(ReactionUsersPopupAction::Close);
         }
-        if let Some(action) = self.scroll_action(key) {
-            return Some(ReactionUsersPopupAction::Scroll(action));
+        if is_confirm_key(key.code) {
+            return Some(ReactionUsersPopupAction::Activate);
+        }
+        if let Some(action) = self.horizontal_selection_action(key) {
+            return Some(match action {
+                SelectionAction::Next => ReactionUsersPopupAction::Activate,
+                SelectionAction::Previous => ReactionUsersPopupAction::Back,
+            });
+        }
+        if let Some(action) = self
+            .selection_action(key, SelectionKeySet::Navigation)
+            .or_else(|| {
+                self.scroll_action(key).map(|scroll| match scroll {
+                    ScrollAction::Down => SelectionAction::Next,
+                    ScrollAction::Up => SelectionAction::Previous,
+                })
+            })
+        {
+            return Some(ReactionUsersPopupAction::Navigate(action));
         }
 
         None
@@ -694,6 +711,29 @@ impl KeyBindings {
                     .any(|shortcut| shortcut.matches(key))
                     .then_some(SelectionAction::Previous)
             })
+    }
+
+    /// `Next` is right, `Previous` is left, honouring the configured horizontal
+    /// navigation keys plus the arrows.
+    pub(in crate::tui) fn horizontal_selection_action(
+        &self,
+        key: KeyEvent,
+    ) -> Option<SelectionAction> {
+        match key.code {
+            KeyCode::Right => Some(SelectionAction::Next),
+            KeyCode::Left => Some(SelectionAction::Previous),
+            _ => self
+                .keymap_single_key_shortcuts(UiAction::ScrollHorizontalRight)
+                .iter()
+                .any(|shortcut| shortcut.matches(key))
+                .then_some(SelectionAction::Next)
+                .or_else(|| {
+                    self.keymap_single_key_shortcuts(UiAction::ScrollHorizontalLeft)
+                        .iter()
+                        .any(|shortcut| shortcut.matches(key))
+                        .then_some(SelectionAction::Previous)
+                }),
+        }
     }
 
     pub(in crate::tui) fn scroll_action(&self, key: KeyEvent) -> Option<ScrollAction> {

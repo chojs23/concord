@@ -983,27 +983,42 @@ fn disabled_media_playback_display_option_blocks_attachment_viewer_playback() {
 fn reaction_users_popup_is_modal_and_escape_closes_it() {
     let mut state = state_with_messages(2);
     state.focus_pane(FocusPane::Messages);
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 3)]);
+    // Drill into the reaction so the user list (view B) is showing.
+    state.activate_reaction_users_popup();
     state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
-        reactions: vec![ReactionUsersInfo {
-            users: vec![ReactionUserInfo::test(Id::new(10), "neo")],
-            ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-        }],
+        emoji,
+        users: (1..=3)
+            .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
+            .collect(),
+        next_after: None,
+        after: None,
     }));
 
+    // Down scrolls the user list rather than the message list beneath the modal.
     handle_key(&mut state, key(KeyCode::Down));
 
     assert_eq!(state.selected_message(), 1);
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
     assert_eq!(
-        state.reaction_users_popup().map(|popup| popup.scroll()),
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.user_scroll()),
         Some(1)
     );
 
+    // Esc steps back to the reaction list first. A second Esc closes the popup.
     let command = handle_key(&mut state, key(KeyCode::Esc));
-
     assert_eq!(command, None);
+    assert_eq!(
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.is_viewing_users()),
+        Some(false)
+    );
+    handle_key(&mut state, key(KeyCode::Esc));
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
 }
 

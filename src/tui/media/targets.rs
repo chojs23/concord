@@ -663,6 +663,18 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
         }
     }
 
+    // The reacted-users popup draws the same custom-emoji images as the message
+    // view, so its reactions feed the shared cache too.
+    if let Some(popup) = state.reaction_users_popup() {
+        for entry in popup.entries() {
+            if let Some(url) = entry.emoji().custom_image_url()
+                && seen.insert(url.clone())
+            {
+                targets.push(EmojiImageTarget { url });
+            }
+        }
+    }
+
     // Reactions + every body slot the renderer will draw. Walking the same
     // formatter as `message_viewport_lines` keeps prefetch and render in lockstep.
     for message in state.visible_messages() {

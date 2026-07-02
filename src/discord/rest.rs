@@ -23,6 +23,7 @@ mod user_settings;
 
 pub use forum::{CreatedForumPost, ForumPostPage};
 pub(in crate::discord) use messages::MessageEditRequest;
+pub use reactions::ReactionUsersPage;
 
 #[derive(Clone, Debug)]
 pub struct DiscordRest {

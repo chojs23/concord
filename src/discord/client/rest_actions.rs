@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use super::DiscordClient;
 use crate::discord::{
     ForumPostCreate, GuildFolder, MESSAGE_FLAG_SUPPRESS_EMBEDS, MessageAttachmentUpload,
-    MessageInfo, ReactionEmoji, ReactionUserInfo, ReplyReference, UserProfileInfo,
+    MessageInfo, ReactionEmoji, ReactionUsersPage, ReplyReference, UserProfileInfo,
     UserProfileUpdate,
     commands::ForumPostArchiveState,
     ids::{
@@ -433,14 +433,15 @@ impl DiscordClient {
             .await
     }
 
-    pub async fn load_reaction_users(
+    pub async fn load_reaction_users_page(
         &self,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         emoji: &ReactionEmoji,
-    ) -> Result<Vec<ReactionUserInfo>> {
+        after: Option<Id<UserMarker>>,
+    ) -> Result<ReactionUsersPage> {
         self.rest
-            .load_reaction_users(channel_id, message_id, emoji)
+            .load_reaction_users_page(channel_id, message_id, emoji, after)
             .await
     }
 

@@ -368,7 +368,7 @@ fn show_reacted_users_requires_read_message_history() {
 }
 
 #[test]
-fn show_reacted_users_action_loads_all_reaction_emojis() {
+fn show_reacted_users_action_opens_reaction_list() {
     let mut state = state_with_reaction_message();
     state.focus_pane(FocusPane::Messages);
     state.open_selected_message_actions();
@@ -381,76 +381,266 @@ fn show_reacted_users_action_loads_all_reaction_emojis() {
 
     let command = state.activate_selected_message_action();
 
+    // Opening the popup makes no request: it shows the reaction list, and users
+    // are fetched only once the reader drills into a reaction.
+    assert_eq!(command, None);
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
+    let popup = state
+        .reaction_users_popup()
+        .expect("popup should be open on the reaction list");
+    assert_eq!(popup.entries().len(), 2);
+    assert!(!popup.is_viewing_users());
+    assert!(!state.is_message_action_context_active());
+}
+
+#[test]
+fn reaction_users_activate_requests_first_page_and_loaded_fills_users() {
+    let mut state = state_with_messages(1);
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 1)]);
+
+    // Drilling into the highlighted reaction requests its first page.
+    let command = state.activate_reaction_users_popup();
     assert_eq!(
         command,
         Some(AppCommand::LoadReactionUsers {
             channel_id: Id::new(2),
             message_id: Id::new(1),
-            reactions: vec![
-                ReactionEmoji::Unicode("👍".to_owned()),
-                ReactionEmoji::Custom {
-                    id: Id::new(50),
-                    name: Some("party".to_owned()),
-                    animated: false,
-                },
-            ],
+            emoji: emoji.clone(),
+            after: None,
         })
     );
-    assert!(!state.is_message_action_context_active());
-}
-
-#[test]
-fn reaction_users_loaded_opens_popup_state() {
-    let mut state = state_with_messages(1);
+    assert_eq!(
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.is_viewing_users()),
+        Some(true)
+    );
 
     state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
-        reactions: vec![ReactionUsersInfo {
-            users: vec![ReactionUserInfo::test(Id::new(10), "neo")],
-            ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-        }],
+        emoji,
+        users: vec![ReactionUserInfo::test(Id::new(10), "neo")],
+        next_after: None,
+        after: None,
     }));
 
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
+    assert_eq!(
+        state.reaction_users_popup().and_then(|popup| {
+            popup
+                .viewed_entry()
+                .map(|entry| entry.users()[0].display_name.clone())
+        }),
+        Some("neo".to_owned())
+    );
+}
+
+#[test]
+fn reaction_users_load_failure_clears_loading_and_allows_retry() {
+    let mut state = state_with_messages(1);
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 1)]);
+    state.activate_reaction_users_popup();
+
+    state.push_event(AppEvent::ReactionUsersLoadFailed {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        emoji: emoji.clone(),
+    });
+    // The failure clears the loading flag rather than leaving it stuck.
     assert_eq!(
         state
             .reaction_users_popup()
-            .map(|popup| popup.reactions()[0].users[0].display_name.as_str()),
-        Some("neo")
+            .and_then(|popup| popup.viewed_entry())
+            .map(|entry| entry.is_loading()),
+        Some(false)
+    );
+
+    // Backing out and reopening the reaction issues a fresh request.
+    assert!(state.reaction_users_popup_back());
+    assert_eq!(
+        state.activate_reaction_users_popup(),
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji,
+            after: None,
+        })
+    );
+}
+
+#[test]
+fn reaction_users_popup_page_down_requests_next_page() {
+    let mut state = state_with_messages(1);
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 150)]);
+    state.activate_reaction_users_popup();
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        emoji: emoji.clone(),
+        users: (1..=100)
+            .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
+            .collect(),
+        next_after: Some(Id::new(100)),
+        after: None,
+    }));
+    state.set_reaction_users_popup_view_height(3);
+
+    // Paging to the bottom must still fetch the next page, not stall at 100.
+    let mut command = None;
+    for _ in 0..200 {
+        assert!(state.page_active_popup_down());
+        if let Some(cmd) = state.reaction_users_popup_take_load_more() {
+            command = Some(cmd);
+            break;
+        }
+    }
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji,
+            after: Some(Id::new(100)),
+        })
     );
 }
 
 #[test]
 fn reaction_users_popup_scroll_down_clamps_at_bottom() {
+    use crate::tui::keybindings::SelectionAction;
+
     let mut state = state_with_messages(1);
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 6)]);
+    state.activate_reaction_users_popup();
     state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
-        reactions: vec![ReactionUsersInfo {
-            users: (1..=6)
-                .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
-                .collect(),
-            ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-        }],
+        emoji,
+        users: (1..=6)
+            .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
+            .collect(),
+        next_after: None,
+        after: None,
     }));
-    // 1 header + 6 users = 7 data lines. With a 3-line viewport the
-    // furthest the user can scroll is 4.
+    // 6 user rows with a 3-line viewport: the furthest scroll offset is 3.
     state.set_reaction_users_popup_view_height(3);
 
     for _ in 0..50 {
-        state.scroll_reaction_users_popup_down();
+        state.navigate_reaction_users_popup(SelectionAction::Next);
     }
     assert_eq!(
-        state.reaction_users_popup().map(|popup| popup.scroll()),
-        Some(4)
-    );
-
-    // A single 'k' press should now move the scroll back, not be eaten by
-    // the inflated counter.
-    state.scroll_reaction_users_popup_up();
-    assert_eq!(
-        state.reaction_users_popup().map(|popup| popup.scroll()),
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.user_scroll()),
         Some(3)
     );
+
+    // A single scroll-up press moves back one row rather than being eaten by an
+    // inflated counter.
+    state.navigate_reaction_users_popup(SelectionAction::Previous);
+    assert_eq!(
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.user_scroll()),
+        Some(2)
+    );
+}
+
+#[test]
+fn reaction_users_popup_scroll_requests_next_page_when_more_remain() {
+    use crate::tui::keybindings::SelectionAction;
+
+    let mut state = state_with_messages(1);
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 150)]);
+    state.activate_reaction_users_popup();
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        emoji: emoji.clone(),
+        users: (1..=100)
+            .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
+            .collect(),
+        next_after: Some(Id::new(100)),
+        after: None,
+    }));
+    state.set_reaction_users_popup_view_height(3);
+
+    // A full first page that still has more should be marked as paginable.
+    assert_eq!(
+        state
+            .reaction_users_popup()
+            .and_then(|popup| popup.viewed_entry())
+            .map(|entry| entry.has_more()),
+        Some(true)
+    );
+
+    // Scrolling to the bottom asks for the next page continuing after user 100.
+    let mut command = None;
+    for _ in 0..100 {
+        if let Some(cmd) = state.navigate_reaction_users_popup(SelectionAction::Next) {
+            command = Some(cmd);
+            break;
+        }
+    }
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji,
+            after: Some(Id::new(100)),
+        })
+    );
+}
+
+#[test]
+fn reaction_users_popup_opens_highlighted_reaction() {
+    use crate::tui::keybindings::SelectionAction;
+
+    let mut state = state_with_messages(1);
+    let first = ReactionEmoji::Unicode("👍".to_owned());
+    let second = ReactionEmoji::Unicode("🎉".to_owned());
+    state.open_reaction_users_popup(
+        Id::new(2),
+        Id::new(1),
+        vec![(first.clone(), 1), (second.clone(), 1)],
+    );
+
+    // Move the reaction-list selection to the second reaction, then open it.
+    assert_eq!(
+        state.navigate_reaction_users_popup(SelectionAction::Next),
+        None
+    );
+    let command = state.activate_reaction_users_popup();
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: second.clone(),
+            after: None,
+        })
+    );
+    assert_eq!(
+        state
+            .reaction_users_popup()
+            .and_then(|popup| popup.viewed_entry())
+            .map(|entry| entry.emoji().clone()),
+        Some(second)
+    );
+
+    // Backing out returns to the reaction list without closing the popup.
+    assert!(state.reaction_users_popup_back());
+    assert_eq!(
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.is_viewing_users()),
+        Some(false)
+    );
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
 }
