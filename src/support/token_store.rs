@@ -21,7 +21,10 @@ pub fn load_token(store: CredentialStoreMode) -> Result<Option<String>> {
     match store {
         CredentialStoreMode::Auto => match load_keychain_token(&account_id) {
             Ok(Some(token)) => Ok(Some(token)),
-            Ok(None) | Err(_) => load_fallback_token(&account_id),
+            Ok(None) | Err(_) => match std::env::var("CONCORD_TOKEN") {
+                Ok(token) => Ok(Some(normalize_token(&token)?)),
+                Err(_) => load_fallback_token(&account_id),
+            },
         },
         CredentialStoreMode::Keychain => load_keychain_token(&account_id),
         CredentialStoreMode::Plain => load_fallback_token(&account_id),
