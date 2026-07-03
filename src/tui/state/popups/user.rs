@@ -343,6 +343,9 @@ impl DashboardState {
                 .clone()
                 .or_else(|| profile.and_then(|profile| profile.guild_pronouns.clone()))
                 .unwrap_or_default(),
+            UserProfileSettingsField::Save
+            | UserProfileSettingsField::Cancel
+            | UserProfileSettingsField::SignOut => String::new(),
         }
     }
 
@@ -428,6 +431,16 @@ impl DashboardState {
         if field == UserProfileSettingsField::ManualActivity {
             self.open_user_profile_activity_picker();
             return None;
+        }
+        if field == UserProfileSettingsField::Save {
+            return self.save_user_profile_settings_command();
+        }
+        if field == UserProfileSettingsField::Cancel {
+            self.close_or_cancel_user_profile_popup();
+            return None;
+        }
+        if field == UserProfileSettingsField::SignOut {
+            return self.sign_out_command();
         }
         let value = self.user_profile_settings_field_value(field);
         if let Some(popup) = self.popups.user_profile_popup_mut() {

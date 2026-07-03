@@ -204,12 +204,14 @@ fn build_composer_layout(
 
     lines.push(Line::from(""));
     let submit_row = lines.len();
-    lines.push(button_line(
+    lines.push(popup_button_line(
+        "s",
         "submit",
         view.active_field == ForumPostComposerField::Submit,
     ));
     let cancel_row = lines.len();
-    lines.push(button_line(
+    lines.push(popup_button_line(
+        "c",
         "cancel",
         view.active_field == ForumPostComposerField::Cancel,
     ));
@@ -299,18 +301,6 @@ pub(in crate::tui::ui) fn forum_post_composer_metrics(
         reveal_start,
         reveal_end,
     }
-}
-
-fn button_line(label: &str, active: bool) -> Line<'static> {
-    let style = if active {
-        highlight_style().add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-    };
-    Line::from(vec![
-        Span::raw(field_marker(active)),
-        Span::styled(format!("[{label}]"), style),
-    ])
 }
 
 fn tag_line(tag: &ForumPostComposerTagView, width: usize, thumbnail_ready: bool) -> Line<'static> {

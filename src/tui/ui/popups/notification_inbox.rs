@@ -17,8 +17,6 @@ pub(in crate::tui::ui) fn render_notification_inbox_popup(
 
     let popup = notification_inbox_popup_area(area);
     let inner_width = usize::from(popup.width.saturating_sub(2)).max(1);
-    // The block borders take 2 rows; the tab line, the rule, a spacer, and the
-    // help line take 4 more. The rest is the scrollable channel/message body.
     let body_lines = usize::from(popup.height.saturating_sub(6)).max(1);
 
     frame.render_widget(Clear, popup);
@@ -81,28 +79,8 @@ fn notification_inbox_lines(
     }
 
     lines.push(Line::from(Span::styled(String::new(), Style::default())));
-    if state.notification_inbox_is_confirming_mark_all() {
-        lines.push(notification_inbox_confirm_line(tab));
-    } else {
-        lines.push(notification_inbox_help_line());
-    }
+    lines.push(notification_inbox_help_line());
     lines
-}
-
-fn notification_inbox_confirm_line(tab: NotificationInboxTab) -> Line<'static> {
-    let scope = match tab {
-        NotificationInboxTab::Unreads => "all unread channels",
-        NotificationInboxTab::Mentions => "all mentions",
-    };
-    Line::from(vec![
-        Span::styled(
-            format!("Mark {scope} as read? "),
-            Style::default()
-                .fg(MENTION_ORANGE)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("[y] confirm  [n] cancel", Style::default().fg(DIM)),
-    ])
 }
 
 fn notification_inbox_notice_line(text: &str) -> Line<'static> {

@@ -1,14 +1,13 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::discord::AppCommand;
 use crate::tui::keybindings::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, DebugLogPopupAction,
-    EmojiReactionPickerAction, KeyChord, MessageConfirmationAction, NotificationInboxAction,
-    OptionsPopupAction, PollVotePickerAction, PopupListAction, ProfilePopupAction,
-    ProfilePopupTabAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction,
-    SelectionAction, SelectionKeySet,
+    EmojiReactionPickerAction, KeyChord, NotificationInboxAction, OptionsPopupAction,
+    PollVotePickerAction, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
+    ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
 };
-use crate::tui::state::{ActiveModalPopupKind, DashboardState};
+use crate::tui::state::{ActiveModalPopupKind, ConfirmationButton, DashboardState};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PopupKeyPhase {
@@ -468,18 +467,13 @@ pub(super) fn handle_notification_inbox_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    // While the "mark all read" prompt is up, keys answer it instead of driving
-    // the list: confirm on Enter/y, cancel on anything else.
     if state.notification_inbox_is_confirming_mark_all() {
-        return match key.code {
-            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                state.confirm_mark_all_notification_inbox_read()
-            }
-            _ => {
-                state.cancel_mark_all_notification_inbox_read();
-                None
-            }
-        };
+        return handle_confirmation_key(
+            state,
+            key,
+            DashboardState::confirm_mark_all_notification_inbox_read,
+            DashboardState::cancel_mark_all_notification_inbox_read,
+        );
     }
 
     match state.key_bindings().notification_inbox_action(key) {
@@ -685,14 +679,53 @@ fn handle_confirmation_key(
     confirm: impl FnOnce(&mut DashboardState) -> Option<AppCommand>,
     cancel: impl FnOnce(&mut DashboardState),
 ) -> Option<AppCommand> {
-    match state.key_bindings().message_confirmation_action(key) {
-        Some(MessageConfirmationAction::Confirm) => confirm(state),
-        Some(MessageConfirmationAction::Cancel) => {
-            cancel(state);
-            None
-        }
-        None => None,
+    if shortcut_key(key, 'y') {
+        return confirm(state);
     }
+    if shortcut_key(key, 'n') {
+        cancel(state);
+        return None;
+    }
+
+    if let Some(action) = state
+        .key_bindings()
+        .selection_action(key, SelectionKeySet::Navigation)
+    {
+        match action {
+            SelectionAction::Next | SelectionAction::Previous => state.next_confirmation_button(),
+        }
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Tab | KeyCode::BackTab => {
+            state.next_confirmation_button();
+            return None;
+        }
+        KeyCode::Enter => {
+            return match state.active_confirmation_button() {
+                ConfirmationButton::Confirm => confirm(state),
+                ConfirmationButton::Cancel => {
+                    cancel(state);
+                    None
+                }
+            };
+        }
+        _ => {}
+    }
+
+    if state.key_bindings().is_popup_close_key(key) {
+        cancel(state);
+    }
+    None
+}
+
+fn shortcut_key(key: KeyEvent, expected: char) -> bool {
+    let KeyCode::Char(value) = key.code else {
+        return false;
+    };
+    value.eq_ignore_ascii_case(&expected)
+        && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
 }
 
 pub(super) fn handle_attachment_viewer_key(

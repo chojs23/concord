@@ -35,17 +35,16 @@ pub(in crate::tui::ui) fn render_folder_settings_popup(
                 }),
             )),
             Line::default(),
-            Line::from(Span::styled(
-                popup_shortcut_help_text(&[
-                    ("Enter", "select"),
-                    ("s", "save"),
-                    ("Esc", "close/cancel"),
-                ]),
-                Style::default().fg(DIM),
-            )),
         ],
         inner_width,
     );
+    let lines = lines
+        .into_iter()
+        .chain([
+            popup_button_line("s", "submit", state.folder_settings_submit_active()),
+            popup_button_line("c", "cancel", state.folder_settings_cancel_active()),
+        ])
+        .collect();
     render_modal_paragraph(frame, popup, "Folder Settings", lines);
 
     if !editing {

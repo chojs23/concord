@@ -577,6 +577,7 @@ impl DashboardState {
             .and_then(|channel| channel.parent_id)
             .and_then(|parent_id| self.discord.cache.channel(parent_id))
             .is_some_and(|parent| parent.is_forum());
+        self.popups.confirmation_button = super::ConfirmationButton::default();
         self.popups.modal = Some(ModalPopup::ThreadDeleteConfirmation(
             ThreadDeleteConfirmationState {
                 channel_id,

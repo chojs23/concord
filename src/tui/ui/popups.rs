@@ -45,8 +45,8 @@ pub(super) use channel_switcher::{
 pub(super) use confirmation::{
     guild_leave_confirmation_popup_area_for_state, message_confirmation_popup_area_for_state,
     quit_confirmation_popup_area, render_guild_leave_confirmation, render_message_confirmation,
-    render_quit_confirmation, render_thread_delete_confirmation,
-    thread_delete_confirmation_popup_area_for_state,
+    render_notification_inbox_mark_all_confirmation, render_quit_confirmation,
+    render_thread_delete_confirmation, thread_delete_confirmation_popup_area_for_state,
 };
 #[cfg(test)]
 pub(super) use confirmation::{
@@ -221,6 +221,34 @@ fn popup_shortcut_help_text(items: &[(&str, &str)]) -> String {
         .map(|(shortcut, description)| format!("[{shortcut}] {description}"))
         .collect::<Vec<_>>()
         .join(" · ")
+}
+
+fn popup_button_line(shortcut: &'static str, label: &'static str, active: bool) -> Line<'static> {
+    popup_button_line_with_style(shortcut, label, active, Style::default())
+}
+
+fn popup_danger_button_line(
+    shortcut: &'static str,
+    label: &'static str,
+    active: bool,
+) -> Line<'static> {
+    popup_button_line_with_style(shortcut, label, active, Style::default().fg(Color::Red))
+}
+
+fn popup_button_line_with_style(
+    shortcut: &'static str,
+    label: &'static str,
+    active: bool,
+    label_style: Style,
+) -> Line<'static> {
+    Line::from(vec![
+        selectable_popup_marker(active),
+        Span::styled(
+            format!("[{shortcut}] "),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(label, label_style),
+    ])
 }
 
 fn truncate_line_to_display_width(line: Line<'static>, max_width: usize) -> Line<'static> {

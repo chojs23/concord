@@ -148,12 +148,14 @@ fn build_edit_layout(view: &ThreadEditView, width: usize) -> EditLayout {
 
     lines.push(Line::from(""));
     let submit_row = lines.len();
-    lines.push(button_line(
+    lines.push(popup_button_line(
+        "s",
         "submit",
         view.active_field == ThreadEditField::Submit,
     ));
     let cancel_row = lines.len();
-    lines.push(button_line(
+    lines.push(popup_button_line(
+        "c",
         "cancel",
         view.active_field == ThreadEditField::Cancel,
     ));
@@ -323,18 +325,6 @@ pub(in crate::tui::ui) fn thread_edit_tag_picker_visible_items(
         .min(TAG_PICKER_VISIBLE_ITEMS)
         .min(tag_count)
         .max(1)
-}
-
-fn button_line(label: &str, active: bool) -> Line<'static> {
-    let style = if active {
-        highlight_style().add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-    };
-    Line::from(vec![
-        Span::raw(field_marker(active)),
-        Span::styled(format!("[{label}]"), style),
-    ])
 }
 
 fn tag_line(tag: &ThreadEditTagView, width: usize, thumbnail_ready: bool) -> Line<'static> {

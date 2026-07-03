@@ -181,7 +181,7 @@ default `auto` mode, Concord falls back to its state directory when keychain
 storage is unavailable. See the Security section below for details.
 
 To sign out with the default keys, open your profile with `Space`, `p`, then
-choose `[o] Sign out`.
+choose `[o] sign out`.
 
 ### Guilds & Channels
 

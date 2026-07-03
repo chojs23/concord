@@ -257,7 +257,6 @@ fn message_action_shortcuts_edit_and_delete_own_message() {
     );
 
     let command = handle_key(&mut delete_state, key(KeyCode::Enter));
-
     assert_eq!(
         command,
         Some(AppCommand::DeleteMessage {
@@ -365,6 +364,9 @@ fn message_action_menu_d_shortcut_removes_embeds() {
         })
     );
     assert!(!state.is_message_action_context_active());
+    assert!(
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
+    );
 }
 
 #[test]
@@ -781,7 +783,6 @@ fn message_pane_pin_shortcut_requires_confirmation() {
     handle_key(&mut state, key(KeyCode::Enter));
     handle_key(&mut state, char_key('P'));
     let command = handle_key(&mut state, key(KeyCode::Enter));
-
     assert_eq!(
         command,
         Some(AppCommand::SetMessagePinned {

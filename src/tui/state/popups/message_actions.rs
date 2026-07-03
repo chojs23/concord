@@ -652,6 +652,7 @@ impl DashboardState {
     }
 
     fn open_message_confirmation(&mut self, confirmation: popups::MessageConfirmationState) {
+        self.popups.confirmation_button = popups::ConfirmationButton::default();
         self.popups.modal = Some(ModalPopup::MessageConfirmation(confirmation));
     }
 }

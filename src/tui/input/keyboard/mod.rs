@@ -110,13 +110,29 @@ fn handle_folder_settings_key(state: &mut DashboardState, key: KeyEvent) -> Opti
 
     match key.code {
         KeyCode::Esc => state.close_folder_settings(),
-        KeyCode::Enter => state.start_or_commit_folder_settings_edit(),
-        KeyCode::Char('s')
+        KeyCode::Enter => {
+            if state.folder_settings_submit_active() {
+                return state.commit_folder_settings_command();
+            }
+            if state.folder_settings_cancel_active() {
+                state.close_folder_settings();
+            } else {
+                state.start_or_commit_folder_settings_edit();
+            }
+        }
+        KeyCode::Char('s' | 'S')
             if !key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
         {
             return state.commit_folder_settings_command();
+        }
+        KeyCode::Char('c' | 'C')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            state.close_folder_settings();
         }
         KeyCode::Tab => {
             state.next_folder_settings_field();

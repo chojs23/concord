@@ -74,7 +74,9 @@ pub use model::{
     ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem, ThreadActionKind,
 };
 pub use options::DisplayOptionItem;
-pub(in crate::tui) use popups::{ActiveModalPopupKind, MessageConfirmationKind};
+pub(in crate::tui) use popups::{
+    ActiveModalPopupKind, ConfirmationButton, MessageConfirmationKind,
+};
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,
     NotificationInboxChannelLoad, NotificationInboxItem, NotificationInboxLoad,

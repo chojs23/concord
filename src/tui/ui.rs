@@ -88,12 +88,12 @@ use self::popups::{
     render_folder_settings_popup, render_forum_post_composer, render_forum_post_tag_picker,
     render_guild_leave_confirmation, render_keymap_help_popup, render_leader_popup,
     render_message_action_menu, render_message_confirmation, render_message_url_picker,
-    render_notification_inbox_popup, render_options_popup, render_poll_vote_picker,
-    render_quit_confirmation, render_reaction_users_popup, render_search_popup,
-    render_thread_action_menu, render_thread_delete_confirmation, render_thread_edit,
-    render_thread_edit_tag_picker, render_toast, render_user_profile_popup,
-    search_popup_visible_items, thread_edit_metrics, thread_edit_popup_area,
-    thread_edit_tag_picker_visible_items, user_profile_popup_has_avatar,
+    render_notification_inbox_mark_all_confirmation, render_notification_inbox_popup,
+    render_options_popup, render_poll_vote_picker, render_quit_confirmation,
+    render_reaction_users_popup, render_search_popup, render_thread_action_menu,
+    render_thread_delete_confirmation, render_thread_edit, render_thread_edit_tag_picker,
+    render_toast, render_user_profile_popup, search_popup_visible_items, thread_edit_metrics,
+    thread_edit_popup_area, thread_edit_tag_picker_visible_items, user_profile_popup_has_avatar,
     user_profile_popup_text_geometry, user_profile_popup_total_lines,
 };
 use self::types::{
@@ -328,6 +328,7 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     render_leader_popup(frame, popup_area, state);
     render_channel_switcher_popup(frame, popup_area, state);
     render_notification_inbox_popup(frame, popup_area, state);
+    render_notification_inbox_mark_all_confirmation(frame, popup_area, state);
     render_message_action_menu(frame, popup_area, state);
     render_thread_action_menu(frame, popup_area, state);
     render_message_url_picker(frame, popup_area, state);

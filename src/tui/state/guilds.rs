@@ -371,6 +371,22 @@ impl DashboardState {
             .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Color))
     }
 
+    pub(in crate::tui) fn folder_settings_submit_active(&self) -> bool {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Submit))
+    }
+
+    pub(in crate::tui) fn folder_settings_cancel_active(&self) -> bool {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Cancel))
+    }
+
     pub(in crate::tui) fn is_folder_settings_editing(&self) -> bool {
         self.navigation
             .guilds
@@ -400,13 +416,25 @@ impl DashboardState {
             }
             settings.active_field = match settings.active_field {
                 FolderSettingsField::Name => FolderSettingsField::Color,
-                FolderSettingsField::Color => FolderSettingsField::Name,
+                FolderSettingsField::Color => FolderSettingsField::Submit,
+                FolderSettingsField::Submit => FolderSettingsField::Cancel,
+                FolderSettingsField::Cancel => FolderSettingsField::Name,
             };
         }
     }
 
     pub fn previous_folder_settings_field(&mut self) {
-        self.next_folder_settings_field();
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+            if settings.editing_field.is_some() {
+                return;
+            }
+            settings.active_field = match settings.active_field {
+                FolderSettingsField::Name => FolderSettingsField::Cancel,
+                FolderSettingsField::Color => FolderSettingsField::Name,
+                FolderSettingsField::Submit => FolderSettingsField::Color,
+                FolderSettingsField::Cancel => FolderSettingsField::Submit,
+            };
+        }
     }
 
     pub fn start_or_commit_folder_settings_edit(&mut self) {
@@ -416,6 +444,7 @@ impl DashboardState {
                 match settings.active_field {
                     FolderSettingsField::Name => settings.name_input.set_value(value),
                     FolderSettingsField::Color => settings.color_input.set_value(value),
+                    FolderSettingsField::Submit | FolderSettingsField::Cancel => {}
                 }
                 settings.editing_field = None;
                 settings.edit_input.clear();
@@ -423,6 +452,7 @@ impl DashboardState {
                 let value = match settings.active_field {
                     FolderSettingsField::Name => settings.name_input.value().to_owned(),
                     FolderSettingsField::Color => settings.color_input.value().to_owned(),
+                    FolderSettingsField::Submit | FolderSettingsField::Cancel => return,
                 };
                 settings.editing_field = Some(settings.active_field);
                 settings.edit_input.set_value(value);

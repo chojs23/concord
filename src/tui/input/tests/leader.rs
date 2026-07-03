@@ -1111,6 +1111,12 @@ fn folder_settings_edits_name_and_color() {
     handle_key(&mut state, char_key('a'));
     handle_key(&mut state, char_key('r'));
     assert!(state.is_folder_settings_open());
+    assert!(state.folder_settings_name_active());
+
+    handle_key(&mut state, key(KeyCode::BackTab));
+    assert!(state.folder_settings_cancel_active());
+    handle_key(&mut state, key(KeyCode::Tab));
+    assert!(state.folder_settings_name_active());
 
     handle_key(&mut state, key(KeyCode::Enter));
     handle_key(&mut state, ctrl_key('w'));
@@ -1118,15 +1124,7 @@ fn folder_settings_edits_name_and_color() {
         handle_key(&mut state, char_key(ch));
     }
     handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('j'));
-    handle_key(&mut state, char_key('x'));
-    assert_eq!(state.folder_settings_color_value(), Some(""));
-    handle_key(&mut state, char_key('k'));
     handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Up));
-    handle_key(&mut state, ctrl_key('n'));
-    handle_key(&mut state, ctrl_key('p'));
-    handle_key(&mut state, ctrl_key('n'));
 
     handle_key(&mut state, key(KeyCode::Enter));
     for ch in "#00AAFF".chars() {
@@ -1134,7 +1132,8 @@ fn folder_settings_edits_name_and_color() {
     }
     handle_key(&mut state, key(KeyCode::Enter));
 
-    let command = handle_key(&mut state, char_key('s'));
+    handle_key(&mut state, key(KeyCode::Down));
+    let command = handle_key(&mut state, key(KeyCode::Enter));
 
     assert_eq!(
         command,
@@ -1165,7 +1164,8 @@ fn folder_settings_keeps_overlay_open_for_invalid_color() {
     }
     handle_key(&mut state, key(KeyCode::Enter));
 
-    let command = handle_key(&mut state, char_key('s'));
+    handle_key(&mut state, key(KeyCode::Down));
+    let command = handle_key(&mut state, key(KeyCode::Enter));
 
     assert_eq!(command, None);
     assert!(state.is_folder_settings_open());
@@ -1196,7 +1196,9 @@ fn folder_settings_esc_cancels_current_field_edit() {
     assert!(!state.is_folder_settings_editing());
     assert_eq!(state.folder_settings_name_value(), Some("folder"));
 
-    let command = handle_key(&mut state, char_key('s'));
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Down));
+    let command = handle_key(&mut state, key(KeyCode::Enter));
     assert_eq!(
         command,
         Some(AppCommand::UpdateGuildFolderSettings {

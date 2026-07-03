@@ -283,22 +283,6 @@ impl KeyBindings {
         }
     }
 
-    pub(in crate::tui) fn message_confirmation_action(
-        &self,
-        key: KeyEvent,
-    ) -> Option<MessageConfirmationAction> {
-        if self.is_popup_close_key(key) {
-            return Some(MessageConfirmationAction::Cancel);
-        }
-        match key.code {
-            KeyCode::Enter | KeyCode::Char('y') if is_shortcut_key(key) => {
-                Some(MessageConfirmationAction::Confirm)
-            }
-            KeyCode::Char('n') if is_shortcut_key(key) => Some(MessageConfirmationAction::Cancel),
-            _ => None,
-        }
-    }
-
     pub(in crate::tui) fn attachment_viewer_action(
         &self,
         key: KeyEvent,
@@ -350,6 +334,7 @@ impl KeyBindings {
                 Some(ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Guild))
             }
             KeyCode::Char('s') if is_shortcut_key(key) => Some(ProfilePopupAction::Save),
+            KeyCode::Char('c') if is_shortcut_key(key) => Some(ProfilePopupAction::Close),
             KeyCode::Char('o') if is_shortcut_key(key) => Some(ProfilePopupAction::SignOut),
             _ => self
                 .selection_action(key, SelectionKeySet::Navigation)

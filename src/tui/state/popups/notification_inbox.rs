@@ -246,8 +246,15 @@ impl DashboardState {
     }
 
     pub fn begin_mark_all_notification_inbox_read(&mut self) {
+        let can_confirm = self
+            .popups
+            .notification_inbox()
+            .is_some_and(|inbox| !inbox.active_items().is_empty());
+        if can_confirm {
+            self.popups.confirmation_button = super::ConfirmationButton::default();
+        }
         if let Some(inbox) = self.popups.notification_inbox_mut()
-            && !inbox.active_items().is_empty()
+            && can_confirm
         {
             inbox.confirming_mark_all = true;
         }

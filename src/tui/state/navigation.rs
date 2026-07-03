@@ -96,6 +96,8 @@ pub(super) enum FolderSettingsField {
     #[default]
     Name,
     Color,
+    Submit,
+    Cancel,
 }
 
 #[derive(Debug)]

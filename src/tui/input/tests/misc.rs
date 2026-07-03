@@ -15,6 +15,20 @@ fn quit_key_requires_confirmation() {
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::QuitConfirmation)
     );
 
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::SUPER,
+    ] {
+        handle_key(&mut state, char_key('q'));
+        handle_key(&mut state, KeyEvent::new(KeyCode::Char('y'), modifiers));
+        assert!(!state.should_quit());
+        assert!(
+            state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::QuitConfirmation)
+        );
+        handle_key(&mut state, char_key('n'));
+    }
+
     handle_key(&mut state, char_key('q'));
     handle_key(&mut state, char_key('y'));
 
@@ -169,7 +183,7 @@ fn profile_status_picker_routes_selection_keys_and_enter() {
 }
 
 #[test]
-fn o_key_signs_out_from_current_user_profile_popup() {
+fn profile_sign_out_button_signs_out_from_current_user_profile_popup() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "neo".to_owned(),

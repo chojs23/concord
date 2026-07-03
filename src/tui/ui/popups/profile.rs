@@ -434,27 +434,28 @@ fn user_profile_settings_popup_text(
         Some(status.to_owned())
     } else {
         let dirty_count = state.user_profile_settings_dirty_count();
-        (dirty_count > 0).then(|| "Unsaved changes. [s] save.".to_owned())
+        (dirty_count > 0).then(|| "Unsaved changes.".to_owned())
     };
     if let Some(status) = status {
         push_wrapped_styled_popup_text(&mut lines, &status, width, Style::default().fg(ACCENT));
     }
     lines.push(Line::from(Span::raw(String::new())));
-    lines.push(Line::from(Span::styled(
-        truncate_display_width("[o] Sign out", width),
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-    )));
-    push_wrapped_styled_popup_text(
-        &mut lines,
-        &popup_shortcut_help_text(&[
-            ("Esc", "close/cancel"),
-            ("Enter", "select"),
-            ("s", "save"),
-            ("o", "sign out"),
-        ]),
-        width,
-        Style::default().fg(DIM),
-    );
+    let active_field = state.user_profile_settings_active_field();
+    lines.push(popup_button_line(
+        "s",
+        "save",
+        active_field == Some(UserProfileSettingsField::Save),
+    ));
+    lines.push(popup_button_line(
+        "c",
+        "cancel",
+        active_field == Some(UserProfileSettingsField::Cancel),
+    ));
+    lines.push(popup_danger_button_line(
+        "o",
+        "sign out",
+        active_field == Some(UserProfileSettingsField::SignOut),
+    ));
 
     UserProfilePopupText {
         lines,

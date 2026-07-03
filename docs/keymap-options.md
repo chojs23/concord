@@ -180,7 +180,7 @@ profile settings popup:
 
 | Shortcut | Action                              |
 | -------- | ----------------------------------- |
-| `o`      | Sign out, delete saved credentials. |
+| `o`      | sign out, delete saved credentials. |
 
 ## Composer actions
 

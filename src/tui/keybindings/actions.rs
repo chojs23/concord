@@ -260,12 +260,6 @@ pub(in crate::tui) enum PopupListAction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::tui) enum MessageConfirmationAction {
-    Confirm,
-    Cancel,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum AttachmentViewerAction {
     Close,
     Previous,

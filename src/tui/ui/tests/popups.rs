@@ -53,19 +53,24 @@ fn message_delete_confirmation_lines_show_controls_and_excerpt() {
     assert_eq!(lines[0].spans[0].content, "Delete this message?");
     assert_eq!(lines[1].spans[0].content, "From: neo");
     assert!(lines[2].spans[0].content.contains("important message"));
-    assert!(lines[4].spans[0].content.contains("[Enter/y]"));
-    assert!(lines[4].spans[0].content.contains("[Esc/n]"));
+    let texts = line_texts_from_ratatui(&lines);
+    assert_eq!(texts[4], "› [y] confirm");
+    assert_eq!(texts[5], "  [n] cancel");
 }
 
 #[test]
 fn message_pin_confirmation_lines_show_action_and_excerpt() {
     let pin_lines = message_pin_confirmation_lines(true, "neo", Some("pin this"), 80);
     assert_eq!(pin_lines[0].spans[0].content, "Pin this message?");
-    assert!(pin_lines[4].spans[0].content.contains("Pin message"));
+    let pin_texts = line_texts_from_ratatui(&pin_lines);
+    assert_eq!(pin_texts[4], "› [y] confirm");
+    assert_eq!(pin_texts[5], "  [n] cancel");
 
     let unpin_lines = message_pin_confirmation_lines(false, "neo", Some("unpin this"), 80);
     assert_eq!(unpin_lines[0].spans[0].content, "Unpin this message?");
-    assert!(unpin_lines[4].spans[0].content.contains("Unpin message"));
+    let unpin_texts = line_texts_from_ratatui(&unpin_lines);
+    assert_eq!(unpin_texts[4], "› [y] confirm");
+    assert_eq!(unpin_texts[5], "  [n] cancel");
 
     let remove_lines =
         message_remove_embeds_confirmation_lines("neo", Some("remove embeds from this"), 80);
@@ -73,7 +78,9 @@ fn message_pin_confirmation_lines_show_action_and_excerpt() {
         remove_lines[0].spans[0].content,
         "Remove embeds from this message?"
     );
-    assert!(remove_lines[4].spans[0].content.contains("Remove embeds"));
+    let remove_texts = line_texts_from_ratatui(&remove_lines);
+    assert_eq!(remove_texts[4], "› [y] confirm");
+    assert_eq!(remove_texts[5], "  [n] cancel");
 }
 
 #[test]
@@ -82,8 +89,11 @@ fn quit_confirmation_lines_show_controls() {
 
     assert_eq!(lines[0].spans[0].content, "Quit Concord?");
     assert_eq!(lines[1].spans[0].content, "");
-    assert!(lines[2].spans[0].content.contains("[Enter/y]"));
-    assert!(lines[2].spans[0].content.contains("[Esc/n]"));
+    let texts = line_texts_from_ratatui(&lines);
+    assert_eq!(texts[2], "› [y] confirm");
+    assert_eq!(texts[3], "  [n] cancel");
+    assert_eq!(lines[2].spans[0].content, "› ");
+    assert_eq!(lines[3].spans[0].content, "  ");
 }
 
 #[test]
@@ -368,17 +378,10 @@ fn current_user_profile_settings_render_contract() {
     let dirty_lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
     let dirty_texts = line_texts_from_ratatui(&dirty_lines);
 
-    assert!(
-        dirty_texts
-            .iter()
-            .any(|line| line == "Unsaved changes. [s] save.")
-    );
-    assert!(
-        dirty_texts
-            .iter()
-            .any(|line| line.contains("[Enter] select"))
-    );
-    assert!(dirty_texts.iter().any(|line| line.contains(" · ")));
+    assert!(dirty_texts.iter().any(|line| line == "Unsaved changes."));
+    assert!(dirty_texts.iter().any(|line| line.contains("[s] save")));
+    assert!(dirty_texts.iter().any(|line| line.contains("[c] cancel")));
+    assert!(dirty_texts.iter().any(|line| line.contains("[o] sign out")));
     assert!(
         !dirty_texts
             .iter()
@@ -387,15 +390,18 @@ fn current_user_profile_settings_render_contract() {
 
     let narrow_lines = user_profile_popup_lines(&profile, &state, 24, PresenceStatus::DoNotDisturb);
     let narrow_texts = line_texts_from_ratatui(&narrow_lines);
-    let hint_start = narrow_texts
-        .iter()
-        .position(|line| line.contains("[Esc] close/cancel"))
-        .expect("wrapped helper hint should start with [Esc] close/cancel");
-    let wrapped_hint = narrow_texts[hint_start..].join(" ");
-    assert!(wrapped_hint.contains("[Esc] close/cancel"));
-    assert!(wrapped_hint.contains(" · "));
-    assert!(wrapped_hint.contains("[Enter] select"));
-    assert!(wrapped_hint.contains("[s] save"));
+    assert!(narrow_texts.iter().any(|line| line.contains("[s] save")));
+    assert!(narrow_texts.iter().any(|line| line.contains("[c] cancel")));
+    assert!(
+        narrow_texts
+            .iter()
+            .any(|line| line.contains("[o] sign out"))
+    );
+    assert!(
+        !narrow_texts
+            .iter()
+            .any(|line| line.contains("close/cancel"))
+    );
 
     state.next_user_profile_settings_field();
     state.next_user_profile_settings_field();
@@ -428,19 +434,18 @@ fn current_user_profile_settings_show_sign_out_action() {
     let texts = line_texts_from_ratatui(&lines);
     let sign_out_index = texts
         .iter()
-        .position(|line| line == "[o] Sign out")
+        .position(|line| line.contains("[o] sign out"))
         .expect("sign-out action should render");
 
-    assert_eq!(lines[sign_out_index].spans[0].style.fg, Some(Color::Red));
+    assert_eq!(lines[sign_out_index].spans[2].style.fg, Some(Color::Red));
     assert!(
-        lines[sign_out_index].spans[0]
+        lines[sign_out_index].spans[1]
             .style
             .add_modifier
             .contains(Modifier::BOLD)
     );
     let rendered = texts.join(" ");
-    assert!(rendered.contains("[o]"));
-    assert!(rendered.contains("sign out"));
+    assert!(rendered.contains("[o] sign out"));
 }
 
 #[test]
@@ -1289,8 +1294,10 @@ fn folder_settings_popup_renders_name_and_color_inputs() {
     assert!(rendered.contains("folder"), "{rendered}");
     assert!(rendered.contains("Color code:"), "{rendered}");
     assert!(rendered.contains("#00AAFF"), "{rendered}");
-    assert!(rendered.contains("[Enter] select"), "{rendered}");
-    assert!(rendered.contains("[Esc] close/cancel"), "{rendered}");
+    assert!(rendered.contains("[s] submit"), "{rendered}");
+    assert!(rendered.contains("[c] cancel"), "{rendered}");
+    assert!(!rendered.contains("[Enter] select"), "{rendered}");
+    assert!(!rendered.contains("[Esc] close/cancel"), "{rendered}");
 }
 
 #[test]

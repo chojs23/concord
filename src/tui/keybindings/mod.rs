@@ -22,11 +22,10 @@ pub(in crate::tui) use actions::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, ComposerCompletionAction,
     DashboardAction, DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction,
     LeaderActionMenuAction, LoginBusyAction, LoginGlobalAction, LoginMfaSelectAction,
-    LoginModeSelectAction, LoginPasswordInputAction, LoginTextInputAction,
-    MessageConfirmationAction, NotificationInboxAction, OptionsPopupAction, PaneFilterAction,
-    PollVotePickerAction, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
-    ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
-    UiAction,
+    LoginModeSelectAction, LoginPasswordInputAction, LoginTextInputAction, NotificationInboxAction,
+    OptionsPopupAction, PaneFilterAction, PollVotePickerAction, PopupListAction,
+    ProfilePopupAction, ProfilePopupTabAction, ReactionUsersPopupAction, ScrollAction,
+    SearchPopupAction, SelectionAction, SelectionKeySet, UiAction,
 };
 pub(in crate::tui) use chord::KeyChord;
 #[cfg(test)]

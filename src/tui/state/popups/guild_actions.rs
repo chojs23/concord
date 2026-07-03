@@ -220,6 +220,7 @@ impl DashboardState {
             .guild(guild_id)
             .map(|guild| guild.name.clone())
             .unwrap_or_else(|| format!("server-{}", guild_id.get()));
+        self.popups.confirmation_button = super::ConfirmationButton::default();
         self.popups.modal = Some(ModalPopup::GuildLeaveConfirmation(
             GuildLeaveConfirmationState { guild_id, name },
         ));

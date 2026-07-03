@@ -55,8 +55,25 @@ pub(super) enum LeaderMode {
 #[derive(Debug, Default)]
 pub(super) struct PopupUiState {
     pub(super) modal: Option<ModalPopup>,
+    pub(super) confirmation_button: ConfirmationButton,
     /// Bumped per inbox open so a previous open's late responses are ignored.
     pub(super) inbox_request_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::tui) enum ConfirmationButton {
+    #[default]
+    Confirm,
+    Cancel,
+}
+
+impl ConfirmationButton {
+    fn next(self) -> Self {
+        match self {
+            Self::Confirm => Self::Cancel,
+            Self::Cancel => Self::Confirm,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -545,15 +562,6 @@ impl MessageConfirmationKind {
             Self::Pin { pinned: false } => "Unpin this message?".to_owned(),
         }
     }
-
-    pub(in crate::tui) fn action_label(self) -> String {
-        match self {
-            Self::Delete => "delete".to_owned(),
-            Self::RemoveEmbeds => "Remove embeds".to_owned(),
-            Self::Pin { pinned: true } => "Pin message".to_owned(),
-            Self::Pin { pinned: false } => "Unpin message".to_owned(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -658,6 +666,9 @@ pub enum UserProfileSettingsField {
     GlobalAvatarPath,
     GuildNickname,
     GuildPronouns,
+    Save,
+    Cancel,
+    SignOut,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -690,29 +701,45 @@ impl UserProfileSettingsState {
         UserProfileSettingsField::CurrentStatus,
         UserProfileSettingsField::ManualActivity,
     ];
+    const GLOBAL_ACTIONS: [UserProfileSettingsField; 3] = [
+        UserProfileSettingsField::Save,
+        UserProfileSettingsField::Cancel,
+        UserProfileSettingsField::SignOut,
+    ];
     const GUILD_FIELDS: [UserProfileSettingsField; 2] = [
         UserProfileSettingsField::GuildNickname,
         UserProfileSettingsField::GuildPronouns,
     ];
+    const GUILD_ACTIONS: [UserProfileSettingsField; 3] = [
+        UserProfileSettingsField::Save,
+        UserProfileSettingsField::Cancel,
+        UserProfileSettingsField::SignOut,
+    ];
 
     pub(super) fn active_field(&self) -> UserProfileSettingsField {
         match self.tab {
-            UserProfileSettingsTab::Global => {
-                Self::GLOBAL_FIELDS[self.selected_global.min(Self::GLOBAL_FIELDS.len() - 1)]
-            }
-            UserProfileSettingsTab::Guild => {
-                Self::GUILD_FIELDS[self.selected_guild.min(Self::GUILD_FIELDS.len() - 1)]
-            }
+            UserProfileSettingsTab::Global => profile_settings_field_at(
+                self.selected_global,
+                &Self::GLOBAL_FIELDS,
+                &Self::GLOBAL_ACTIONS,
+            ),
+            UserProfileSettingsTab::Guild => profile_settings_field_at(
+                self.selected_guild,
+                &Self::GUILD_FIELDS,
+                &Self::GUILD_ACTIONS,
+            ),
         }
     }
 
     pub(super) fn next_field(&mut self) {
         match self.tab {
             UserProfileSettingsTab::Global => {
-                self.selected_global = (self.selected_global + 1) % Self::GLOBAL_FIELDS.len();
+                self.selected_global = (self.selected_global + 1)
+                    % (Self::GLOBAL_FIELDS.len() + Self::GLOBAL_ACTIONS.len());
             }
             UserProfileSettingsTab::Guild => {
-                self.selected_guild = (self.selected_guild + 1) % Self::GUILD_FIELDS.len();
+                self.selected_guild = (self.selected_guild + 1)
+                    % (Self::GUILD_FIELDS.len() + Self::GUILD_ACTIONS.len());
             }
         }
     }
@@ -721,14 +748,14 @@ impl UserProfileSettingsState {
         match self.tab {
             UserProfileSettingsTab::Global => {
                 self.selected_global = if self.selected_global == 0 {
-                    Self::GLOBAL_FIELDS.len() - 1
+                    Self::GLOBAL_FIELDS.len() + Self::GLOBAL_ACTIONS.len() - 1
                 } else {
                     self.selected_global - 1
                 };
             }
             UserProfileSettingsTab::Guild => {
                 self.selected_guild = if self.selected_guild == 0 {
-                    Self::GUILD_FIELDS.len() - 1
+                    Self::GUILD_FIELDS.len() + Self::GUILD_ACTIONS.len() - 1
                 } else {
                     self.selected_guild - 1
                 };
@@ -752,6 +779,9 @@ impl UserProfileSettingsState {
             }
             UserProfileSettingsField::GuildNickname => self.guild_nickname = Some(value),
             UserProfileSettingsField::GuildPronouns => self.guild_pronouns = Some(value),
+            UserProfileSettingsField::Save
+            | UserProfileSettingsField::Cancel
+            | UserProfileSettingsField::SignOut => {}
         }
     }
 
@@ -788,6 +818,20 @@ impl UserProfileSettingsState {
         self.edit_input.clear();
         self.saving = false;
         self.status = Some("Saved profile changes".to_owned());
+    }
+}
+
+fn profile_settings_field_at(
+    selected: usize,
+    fields: &[UserProfileSettingsField],
+    actions: &[UserProfileSettingsField],
+) -> UserProfileSettingsField {
+    let field_count = fields.len();
+    let selected = selected.min(field_count + actions.len() - 1);
+    if selected < field_count {
+        fields[selected]
+    } else {
+        actions[selected - field_count]
     }
 }
 
@@ -1478,6 +1522,7 @@ impl DashboardState {
     }
 
     pub fn open_quit_confirmation(&mut self) {
+        self.popups.confirmation_button = ConfirmationButton::default();
         self.popups.modal = Some(ModalPopup::QuitConfirmation);
     }
 
@@ -1490,6 +1535,14 @@ impl DashboardState {
     pub fn confirm_quit(&mut self) {
         self.close_quit_confirmation();
         self.quit();
+    }
+
+    pub(in crate::tui) fn active_confirmation_button(&self) -> ConfirmationButton {
+        self.popups.confirmation_button
+    }
+
+    pub(in crate::tui) fn next_confirmation_button(&mut self) {
+        self.popups.confirmation_button = self.popups.confirmation_button.next();
     }
 
     pub(in crate::tui) fn page_active_popup_down(&mut self) -> bool {
