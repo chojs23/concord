@@ -245,7 +245,7 @@ If your terminal does not support any graphics protocol, images will be rendered
 
 You can toggle image viewing on or off in the configuration file. When image viewing is off, attachments and emojis will be shown as text placeholders.
 
-Video playback uses [mpv](https://mpv.io/). Make sure `mpv` is installed and in your PATH.
+Video and audio playback uses [mpv](https://mpv.io/). Make sure `mpv` is installed and in your PATH.
 YouTube playback depends on your local `mpv` setup, such as `yt-dlp` support.
 External media playback is off by default. You can enable it with
 `media_playback = true` under `[display]`, or toggle it from the in-app Display
@@ -349,7 +349,7 @@ Message shortcuts:
 | `d`      | Delete              | Open a delete confirmation before deleting the message      |
 | `e`      | Edit                | Start editing the selected message when editing is allowed  |
 | `o`      | Open URL            | Open the selected message URL, or choose from multiple URLs |
-| `x`      | Play media          | Play selected video media in an external player             |
+| `x`      | Play media          | Play selected video or audio media in an external player    |
 | `v`      | View attachment     | Open the selected message's attachment viewer               |
 
 Message action menu shortcuts:
@@ -363,7 +363,7 @@ Message action menu shortcuts:
 | `e`      | Edit                        | Start editing the selected message when editing is allowed  |
 | `o`      | Open URL                    | Open the selected message URL, or choose from multiple URLs |
 | `D`      | Remove embeds               | Remove embeds from the selected message                     |
-| `x`      | Play media                  | Play selected video media in an external player             |
+| `x`      | Play media                  | Play selected video or audio media in an external player    |
 | `v`      | View attachment             | Open the selected message's attachment viewer               |
 | `g`      | Go to referenced message    | Go to the replied or forwarded message                      |
 | `p`      | show message sender profile | Open the selected message author's profile                  |
@@ -372,7 +372,7 @@ Message action menu shortcuts:
 | `u`      | Show reacted users          | Show users who reacted to the selected message              |
 | `c`      | Choose poll votes           | Choose poll votes for the selected message                  |
 
-When the attachment viewer is open, press `x` to play the current video attachment
+When the attachment viewer is open, press `x` to play the current video or audio attachment
 in an external player, or `d` to download the current attachment directly.
 
 Server actions:
@@ -491,7 +491,7 @@ show_avatars = true
 # Render inline image previews for attachments and embeds.
 show_images = true
 
-# Allow video media to open in an external player.
+# Allow video and audio media to open in an external player.
 media_playback = false
 
 # Preview quality: efficient, balanced, high, or original.
