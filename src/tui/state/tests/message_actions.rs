@@ -6,8 +6,8 @@ use crate::discord::test_builders::{
     attachment_download_progress_event, attachment_download_started_event,
 };
 use crate::discord::{
-    AppCommand, AttachmentDownloadId, MESSAGE_FLAG_SUPPRESS_EMBEDS, MediaPlaybackSource,
-    MediaPlaybackTarget,
+    AppCommand, AttachmentDownloadId, AttachmentMediaType, MESSAGE_FLAG_SUPPRESS_EMBEDS,
+    MediaPlaybackSource, MediaPlaybackTarget,
 };
 
 fn message_action(actions: &[MessageActionItem], kind: MessageActionKind) -> &MessageActionItem {
@@ -156,8 +156,7 @@ fn direct_attachment_message_action_opens_attachment_viewer() {
             filename: "image-10.png".to_owned(),
             url: Some("https://cdn.discordapp.com/image-10.png".to_owned()),
             size_bytes: 2048,
-            is_image: true,
-            is_video: false,
+            media_type: Some(AttachmentMediaType::Image),
         })
     );
 }
@@ -637,8 +636,7 @@ fn reply_attachment_action_can_open_attachment_viewer() {
             filename: "image-1.png".to_owned(),
             url: Some("https://cdn.discordapp.com/image-1.png".to_owned()),
             size_bytes: 2048,
-            is_image: true,
-            is_video: false,
+            media_type: Some(AttachmentMediaType::Image),
         })
     );
 }

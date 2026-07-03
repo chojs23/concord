@@ -3,8 +3,8 @@ use crate::discord::ids::{
     marker::{ChannelMarker, MessageMarker},
 };
 use crate::discord::{
-    AppCommand, EmbedInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MediaPlaybackSource, MediaPlaybackTarget,
-    MessageState, ReactionEmoji,
+    AppCommand, AttachmentMediaType, EmbedInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MediaPlaybackSource,
+    MediaPlaybackTarget, MessageState, ReactionEmoji,
 };
 use crate::tui::format::detected_urls;
 use crate::tui::keybindings::KeyChord;
@@ -670,7 +670,11 @@ fn message_url_items(message: &MessageState) -> Vec<MessageUrlItem> {
 fn message_media_playback_items(message: &MessageState) -> Vec<MediaPlaybackTarget> {
     let mut targets = message
         .attachments_in_display_order()
-        .filter(|attachment| attachment.is_video())
+        .filter(|attachment| {
+            attachment.media_type().is_some_and(|media_type| {
+                media_type == AttachmentMediaType::Video || media_type == AttachmentMediaType::Audio
+            })
+        })
         .filter_map(|attachment| {
             Some(MediaPlaybackTarget {
                 url: attachment.preferred_url()?.to_owned(),

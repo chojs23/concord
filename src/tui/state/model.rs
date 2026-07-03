@@ -1,13 +1,10 @@
-use crate::discord::AttachmentDownloadId;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
-
-use crate::discord::PresenceStatus;
 use crate::discord::{
-    ChannelState, ChannelUnreadState, GuildFolder, GuildState, MuteDuration, ReactionEmoji,
-    ReactionInfo, VoiceParticipantState,
+    AttachmentDownloadId, AttachmentMediaType, ChannelState, ChannelUnreadState, GuildFolder,
+    GuildState, MuteDuration, PresenceStatus, ReactionEmoji, ReactionInfo, VoiceParticipantState,
 };
 use ratatui_image::protocol::Protocol;
 
@@ -309,8 +306,7 @@ pub struct AttachmentViewerItem {
     pub filename: String,
     pub url: Option<String>,
     pub size_bytes: u64,
-    pub is_image: bool,
-    pub is_video: bool,
+    pub media_type: Option<AttachmentMediaType>,
 }
 
 #[cfg(test)]
@@ -323,8 +319,7 @@ impl AttachmentViewerItem {
             filename: String::new(),
             url: None,
             size_bytes: 0,
-            is_image: false,
-            is_video: false,
+            media_type: None,
         }
     }
 }

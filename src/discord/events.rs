@@ -1725,15 +1725,14 @@ fn poll_result_info_from_fields<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::AttachmentInfo;
+    use crate::discord::{AttachmentInfo, AttachmentMediaType};
 
     use super::*;
 
     #[test]
     fn attachment_media_classification_controls_inline_preview() {
         let video = attachment_info("clip.mp4", Some("video/mp4"));
-        assert!(!video.is_image());
-        assert!(video.is_video());
+        assert!(video.media_type() == Some(AttachmentMediaType::Video));
         assert_eq!(video.inline_preview_url(), None);
         assert_eq!(
             video.inline_preview_info().map(|info| (
@@ -1749,8 +1748,7 @@ mod tests {
         );
 
         let image = attachment_info("cat.png", Some("image/png"));
-        assert!(image.is_image());
-        assert!(!image.is_video());
+        assert!(image.media_type() == Some(AttachmentMediaType::Image));
         assert_eq!(
             image.inline_preview_url(),
             Some("https://cdn.discordapp.com/cat.png")
@@ -1760,8 +1758,11 @@ mod tests {
             Some("https://media.discordapp.net/cat.png")
         );
 
-        assert!(attachment_info("CAT.PNG", None).is_image());
-        assert!(attachment_info("CLIP.MP4", None).is_video());
+        assert!(attachment_info("CAT.PNG", None).media_type() == Some(AttachmentMediaType::Image));
+        assert!(attachment_info("CLIP.MP4", None).media_type() == Some(AttachmentMediaType::Video));
+        assert!(
+            attachment_info("MUSIC.MP3", None).media_type() == Some(AttachmentMediaType::Audio)
+        );
     }
 
     #[test]

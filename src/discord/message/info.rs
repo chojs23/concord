@@ -1,9 +1,8 @@
+use crate::discord::commands::ReactionEmoji;
 use crate::discord::ids::{
     Id,
     marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
-
-use crate::discord::commands::ReactionEmoji;
 
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
 
@@ -41,6 +40,13 @@ pub struct AttachmentInfo {
     pub width: Option<u64>,
     pub height: Option<u64>,
     pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AttachmentMediaType {
+    Image,
+    Video,
+    Audio,
 }
 
 #[cfg(test)]
@@ -477,31 +483,43 @@ impl AttachmentInfo {
         }
     }
 
-    pub fn is_image(&self) -> bool {
+    pub fn media_type(&self) -> Option<AttachmentMediaType> {
         if let Some(content_type) = self.content_type.as_deref() {
-            return content_type.starts_with("image/");
+            if content_type.starts_with("image/") {
+                return Some(AttachmentMediaType::Image);
+            } else if content_type.starts_with("video/") {
+                return Some(AttachmentMediaType::Video);
+            } else if content_type.starts_with("audio/") {
+                return Some(AttachmentMediaType::Audio);
+            }
         }
 
-        filename_has_extension(
+        if filename_has_extension(
             &self.filename,
             &["avif", "gif", "jpeg", "jpg", "png", "webp"],
-        )
-    }
-
-    pub fn is_video(&self) -> bool {
-        if let Some(content_type) = self.content_type.as_deref() {
-            return content_type.starts_with("video/");
+        ) {
+            return Some(AttachmentMediaType::Image);
         }
-
-        filename_has_extension(&self.filename, &["m4v", "mov", "mp4", "webm"])
+        if filename_has_extension(&self.filename, &["m4v", "mov", "mp4", "webm"]) {
+            return Some(AttachmentMediaType::Video);
+        }
+        if filename_has_extension(
+            &self.filename,
+            &["mp3", "m4a", "opus", "ogg", "flac", "wav", "aiff"],
+        ) {
+            return Some(AttachmentMediaType::Audio);
+        }
+        None
     }
 
     pub fn inline_preview_url(&self) -> Option<&str> {
-        self.is_image().then(|| self.preferred_url()).flatten()
+        self.media_type()
+            .filter(|t| *t == AttachmentMediaType::Image)
+            .and_then(|_| self.preferred_url())
     }
 
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
-        if self.is_video() && !self.proxy_url.is_empty() {
+        if self.media_type() == Some(AttachmentMediaType::Video) && !self.proxy_url.is_empty() {
             return Some(InlinePreviewInfo {
                 url: self.proxy_url.as_str(),
                 proxy_url: Some(self.proxy_url.as_str()),
