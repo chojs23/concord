@@ -5,11 +5,10 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
 use crate::discord::{
-    AttachmentInfo, EmbedInfo, InlinePreviewInfo, MemberInfo, MentionInfo, MessageInfo,
-    MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    AttachmentInfo, AttachmentMediaType, EmbedInfo, InlinePreviewInfo, MemberInfo, MentionInfo,
+    MessageInfo, MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
     MessageUpdateEventFields, PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo,
 };
-
 use crate::discord::{
     member::{selected_member_role_color, selected_role_ids_color},
     profile::UserProfileCacheKey,
@@ -82,6 +81,7 @@ pub struct MessageCapabilities {
     pub has_poll: bool,
     pub has_image: bool,
     pub has_video: bool,
+    pub has_audio: bool,
     pub has_file: bool,
 }
 
@@ -155,13 +155,15 @@ impl MessageState {
 
         capabilities.has_poll = self.poll.is_some();
         for attachment in self.attachments_in_display_order() {
-            if attachment.is_image() && attachment.preferred_url().is_some() {
-                capabilities.has_image = true;
-            } else if attachment.is_video() {
-                capabilities.has_video = true;
+            if let Some(media_type) = attachment.media_type() {
+                match media_type {
+                    AttachmentMediaType::Image => capabilities.has_image = true,
+                    AttachmentMediaType::Video => capabilities.has_video = true,
+                    AttachmentMediaType::Audio => capabilities.has_audio = true,
+                };
             } else {
                 capabilities.has_file = true;
-            }
+            };
         }
         if self.first_inline_preview().is_some() {
             capabilities.has_image = true;

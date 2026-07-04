@@ -376,7 +376,7 @@ fn media_player_command_spec_for_url_with_ipc(
     let url = normalize_openable_url(url).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "unsupported media URL scheme")
     })?;
-    let mut args = vec!["--no-terminal".to_owned()];
+    let mut args = vec!["--no-terminal".to_owned(), "--force-window".to_owned()];
     if let Some(ipc_server) = ipc_server {
         args.push(format!("--input-ipc-server={ipc_server}"));
     }
@@ -696,6 +696,7 @@ mod tests {
             spec.args,
             vec![
                 "--no-terminal".to_owned(),
+                "--force-window".to_owned(),
                 "--".to_owned(),
                 "https://example.com/video.mp4?x=1&y=2".to_owned(),
             ]
@@ -715,6 +716,7 @@ mod tests {
             spec.args,
             vec![
                 "--no-terminal".to_owned(),
+                "--force-window".to_owned(),
                 "--input-ipc-server=/tmp/concord-mpv.sock".to_owned(),
                 "--".to_owned(),
                 "https://example.com/video.mp4".to_owned(),

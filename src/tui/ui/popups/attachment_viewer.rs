@@ -1,3 +1,5 @@
+use crate::discord::AttachmentMediaType;
+
 use super::*;
 
 pub(in crate::tui::ui) fn render_attachment_viewer(
@@ -32,8 +34,10 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
         height: hint_height,
         ..inner
     });
-
-    let can_preview = item.is_image || item.is_video;
+    let can_preview = matches!(
+        item.media_type,
+        Some(AttachmentMediaType::Image | AttachmentMediaType::Video)
+    );
     if can_preview
         && state.show_images()
         && let Some(image_preview) = image_preview
