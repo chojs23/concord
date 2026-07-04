@@ -678,10 +678,7 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
     let mut lines = if show_header {
         let mut header = vec![message_avatar_span(), Span::styled(author, author_style)];
         if author_is_bot {
-            header.extend([
-                Span::raw(" "),
-                bot_badge_span(),
-            ]);
+            header.extend([Span::raw(" "), bot_badge_span()]);
         }
         header.extend([
             Span::raw(" "),
