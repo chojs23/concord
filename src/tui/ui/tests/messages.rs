@@ -161,9 +161,13 @@ fn message_viewport_author_uses_resolved_role_color() {
         lines[1].spans[1].style.fg,
         Some(Color::Rgb(0x33, 0x66, 0xCC))
     );
-    assert_eq!(lines[1].spans[2].content.as_ref(), " [bot]");
-    assert_eq!(lines[1].spans[2].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[2].style.bg, Some(Color::Rgb(88, 101, 242)));
+
+    assert_eq!(lines[1].spans[2].content.as_ref(), " ");
+    assert_eq!(lines[1].spans[2].style.fg, None);
+    assert_eq!(lines[1].spans[2].style.bg, None);
+    assert_eq!(lines[1].spans[3].content.as_ref(), "[bot]");
+    assert_eq!(lines[1].spans[3].style.fg, Some(Color::White));
+    assert_eq!(lines[1].spans[3].style.bg, Some(Color::Rgb(88, 101, 242)));
 }
 
 #[test]
