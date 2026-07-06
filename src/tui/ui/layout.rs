@@ -9,6 +9,7 @@ use super::super::{
     state::{AttachmentViewerZoom, DashboardState, FocusPane},
 };
 use super::LOCAL_UPLOAD_PREVIEW_HEIGHT;
+use super::panes::composer_text;
 use super::types::{
     DashboardAreas, EMBED_PREVIEW_GUTTER_PREFIX, IMAGE_PREVIEW_HEIGHT, IMAGE_PREVIEW_WIDTH,
     MAX_REACTION_USERS_VISIBLE_LINES, MESSAGE_AVATAR_OFFSET, MIN_MESSAGE_INPUT_HEIGHT,
@@ -211,9 +212,14 @@ pub(super) fn composer_height(area: Rect, state: &DashboardState) -> u16 {
     {
         composer_content_line_count(state, composer_inner_width(area.width))
     } else {
-        1
+        composer_placeholder_line_count(state, composer_inner_width(area.width))
     };
     MIN_MESSAGE_INPUT_HEIGHT.max(content_lines.saturating_add(2))
+}
+
+fn composer_placeholder_line_count(state: &DashboardState, width: u16) -> u16 {
+    let text = composer_text(state, width);
+    (wrap_text_lines(&text, usize::from(width.max(1))).len() as u16).max(1)
 }
 
 pub(super) fn composer_inner_width(width: u16) -> u16 {

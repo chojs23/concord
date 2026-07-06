@@ -542,14 +542,15 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
     }
 
     let text = composer_text(state, width);
+    let wrapped = wrap_text_lines(&text, width as usize);
     // A locked DM is a hard stop, so override the dimmed placeholder with red.
     if state.dm_composer_lock().is_some() {
-        return vec![Line::from(Span::styled(
-            text,
-            Style::default().fg(Color::Red),
-        ))];
+        return wrapped
+            .into_iter()
+            .map(|subline| Line::from(Span::styled(subline, Style::default().fg(Color::Red))))
+            .collect();
     }
-    vec![Line::from(text)]
+    wrapped.into_iter().map(Line::from).collect()
 }
 
 struct ComposerDisplayInput {

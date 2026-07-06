@@ -48,13 +48,13 @@ mod shared;
 
 pub(super) use channels::{channel_pane_header_height, render_channels};
 pub(super) use composer::{
-    active_composer_picker_area, render_composer, render_composer_command_picker,
+    active_composer_picker_area, composer_text, render_composer, render_composer_command_picker,
     render_composer_emoji_picker, render_composer_mention_picker,
 };
 #[cfg(test)]
 pub(super) use composer::{
     composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
-    composer_text, emoji_picker_lines,
+    emoji_picker_lines,
 };
 pub(super) use guilds::render_guilds;
 pub(super) use header::render_header;
