@@ -678,7 +678,7 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
     let mut lines = if show_header {
         let mut header = vec![message_avatar_span(), Span::styled(author, author_style)];
         if author_is_bot {
-            header.push(bot_badge_span());
+            header.extend([Span::raw(" "), bot_badge_span()]);
         }
         header.extend([
             Span::raw(" "),
@@ -719,7 +719,7 @@ pub(in crate::tui::ui) fn message_author_style(role_color: Option<u32>) -> Style
 
 fn bot_badge_span() -> Span<'static> {
     Span::styled(
-        " [bot]",
+        "[bot]",
         Style::default()
             .fg(Color::White)
             .bg(Color::Rgb(88, 101, 242))
