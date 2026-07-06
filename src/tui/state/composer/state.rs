@@ -42,14 +42,30 @@ use crate::tui::text_input::TextInputState;
 pub enum DmComposerLock {
     Spam,
     MessageRequest,
-    /// No locally known message authored by us, so the first send would hit the
-    /// CAPTCHA gate.
-    NeverMessaged,
+    /// The DM is too new or holds too few of our own messages, where an early
+    /// send would trip Discord's CAPTCHA / spam gate.
+    NotEstablished,
 }
 
 /// Discord keeps a typing indicator alive for about ten seconds, so resend a
 /// little sooner while the user keeps typing.
 const COMPOSER_TYPING_INTERVAL: Duration = Duration::from_secs(8);
+
+const DM_ESTABLISHED_MESSAGE_THRESHOLD: usize = 5;
+const DM_ESTABLISHED_MIN_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+
+const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
+
+fn snowflake_created_ms<T>(id: Id<T>) -> u64 {
+    (id.get() >> 22) + DISCORD_EPOCH_MS
+}
+
+fn current_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 #[derive(Debug, Default)]
 pub(in crate::tui::state) struct ComposerUiState {
@@ -343,16 +359,11 @@ impl DashboardState {
         }
     }
 
-    /// Why the composer is locked in the selected one-to-one DM, or `None` when
-    /// sending is allowed (or the selection is not a DM). Sending the first
-    /// message into such a DM is what triggers Discord's CAPTCHA gate, which a
-    /// terminal cannot solve, so we lock first (issue #218).
-    ///
-    /// The `NeverMessaged` case trusts locally cached history. A dormant DM whose
-    /// latest page holds only the other side's messages reads as locked until one
-    /// of our own messages pages back in. That is the safe failure: a temporary
-    /// read-only composer rather than an unintended send.
     pub fn dm_composer_lock(&self) -> Option<DmComposerLock> {
+        self.dm_composer_lock_at(current_unix_ms())
+    }
+
+    pub(in crate::tui::state) fn dm_composer_lock_at(&self, now_ms: u64) -> Option<DmComposerLock> {
         let channel = self.selected_channel_state()?;
         if !channel.is_dm() {
             return None;
@@ -363,16 +374,52 @@ impl DashboardState {
         if channel.is_message_request == Some(true) {
             return Some(DmComposerLock::MessageRequest);
         }
-        // Without our own id we cannot prove we have written here, so defer to
-        // the flags above and otherwise allow sending.
+        let aged =
+            now_ms.saturating_sub(snowflake_created_ms(channel.id)) >= DM_ESTABLISHED_MIN_AGE_MS;
+        // Without our own id we cannot count our messages, so allow sending.
+        let has_enough_messages = self
+            .navigation
+            .channels
+            .established_dms
+            .contains(&channel.id)
+            || self.dm_own_message_count(channel.id)? >= DM_ESTABLISHED_MESSAGE_THRESHOLD;
+        (!(aged && has_enough_messages)).then_some(DmComposerLock::NotEstablished)
+    }
+
+    fn dm_own_message_count(&self, channel_id: Id<ChannelMarker>) -> Option<usize> {
         let current_user_id = self.current_user_id()?;
-        let has_sent = self
-            .discord
-            .cache
-            .messages_for_channel(channel.id)
-            .iter()
-            .any(|message| message.author_id == current_user_id);
-        (!has_sent).then_some(DmComposerLock::NeverMessaged)
+        Some(
+            self.discord
+                .cache
+                .messages_for_channel(channel_id)
+                .iter()
+                .filter(|message| message.author_id == current_user_id)
+                .count(),
+        )
+    }
+
+    pub(in crate::tui::state) fn record_dm_established(&mut self, channel_id: Id<ChannelMarker>) {
+        if self.navigation.channels.established_dms.insert(channel_id) {
+            self.options.ui_state_save_pending = true;
+        }
+    }
+
+    pub(in crate::tui::state) fn selected_dm_needs_establishment_verification(&self) -> bool {
+        let Some(channel) = self.selected_channel_state() else {
+            return false;
+        };
+        if self
+            .navigation
+            .channels
+            .established_dms
+            .contains(&channel.id)
+        {
+            return false;
+        }
+        matches!(
+            self.dm_composer_lock(),
+            Some(DmComposerLock::NotEstablished)
+        )
     }
 
     fn can_send_tts_in_selected_channel(&self) -> bool {

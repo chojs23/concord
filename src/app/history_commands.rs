@@ -10,12 +10,18 @@ use crate::{
 };
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
+/// Mirrors the composer's `DM_ESTABLISHED_MESSAGE_THRESHOLD`. Keep them in sync.
+const DM_ESTABLISHED_MESSAGE_THRESHOLD: usize = 5;
+const DM_ESTABLISHED_SCAN_PAGES: usize = 2;
 const THREAD_PREVIEW_LIMIT: u16 = 1;
 const INBOX_MENTIONS_LIMIT: u16 = 25;
 const INBOX_CHANNEL_HISTORY_LIMIT: u16 = 5;
 
 pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
     match command {
+        AppCommand::VerifyDmEstablished { channel_id } => {
+            verify_dm_established(&client, channel_id).await;
+        }
         AppCommand::LoadMessageHistory { channel_id, before } => {
             if let Some(before) = before
                 && !client.begin_older_message_history_request(channel_id, before)
@@ -389,6 +395,56 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             }
         }
         _ => unreachable!("non-history command routed to history handler"),
+    }
+}
+
+/// Best-effort background check off a DM open: a history load failure is logged
+/// and retried on the next open rather than surfaced to the user.
+async fn verify_dm_established(client: &DiscordClient, channel_id: Id<ChannelMarker>) {
+    let Some(current_user_id) = client.current_user_id() else {
+        return;
+    };
+
+    let mut sent = 0usize;
+    let mut before: Option<Id<MessageMarker>> = None;
+    for _ in 0..DM_ESTABLISHED_SCAN_PAGES {
+        let messages = match client
+            .load_message_history(channel_id, before, MESSAGE_HISTORY_LIMIT)
+            .await
+        {
+            Ok(messages) => messages,
+            Err(error) => {
+                logging::debug(
+                    "history",
+                    format!("verify dm established load failed: {error}"),
+                );
+                return;
+            }
+        };
+
+        sent += messages
+            .iter()
+            .filter(|message| message.author_id == current_user_id)
+            .count();
+        if sent >= DM_ESTABLISHED_MESSAGE_THRESHOLD {
+            break;
+        }
+
+        // A short page means we reached the start of the DM, so there is no
+        // older history left to scan.
+        let Some(oldest) = messages.iter().map(|message| message.message_id).min() else {
+            break;
+        };
+        if messages.len() < MESSAGE_HISTORY_LIMIT as usize {
+            break;
+        }
+        before = Some(oldest);
+    }
+
+    if sent >= DM_ESTABLISHED_MESSAGE_THRESHOLD {
+        client
+            .publish_event(AppEvent::DmEstablished { channel_id })
+            .await;
     }
 }
 

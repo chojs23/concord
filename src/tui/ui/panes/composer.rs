@@ -911,9 +911,9 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
                         "read-only · {label} is a message request. accept it in the official app first"
                     )
                 }
-                DmComposerLock::NeverMessaged => {
+                DmComposerLock::NotEstablished => {
                     format!(
-                        "read-only · no past messages with {label}. send the first one from the official app"
+                        "read-only · {label} is a new conversation. send at least 5 messages from the official app and wait a day before sending here"
                     )
                 }
             };

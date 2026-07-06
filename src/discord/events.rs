@@ -143,6 +143,9 @@ pub enum AppEvent {
         user_id: Option<Id<UserMarker>>,
     },
     SignedOut,
+    DmEstablished {
+        channel_id: Id<ChannelMarker>,
+    },
     CurrentUserCapabilities {
         premium_tier: PremiumTier,
     },
@@ -572,6 +575,7 @@ define_app_event_kinds! {
     GatewayDispatchReceived: AppEvent::GatewayDispatchReceived { .. },
     Ready: AppEvent::Ready { .. },
     SignedOut: AppEvent::SignedOut,
+    DmEstablished: AppEvent::DmEstablished { .. },
     CurrentUserCapabilities: AppEvent::CurrentUserCapabilities { .. },
     UserIdentityUpdate: AppEvent::UserIdentityUpdate { .. },
     ApplicationCommandsLoaded: AppEvent::ApplicationCommandsLoaded { .. },
@@ -1637,7 +1641,8 @@ impl AppEventKind {
             | AppEventKind::RichPresenceDetected
             | AppEventKind::GatewayResumed
             | AppEventKind::GatewayReidentified
-            | AppEventKind::GatewayClosed => AppEventMetadata::effect_only(),
+            | AppEventKind::GatewayClosed
+            | AppEventKind::DmEstablished => AppEventMetadata::effect_only(),
 
             AppEventKind::VoiceServerUpdate => AppEventMetadata::inert(),
 
