@@ -36,6 +36,11 @@ impl App {
             let resolved_token = resolve_token().await?;
             let token = resolved_token.token;
             let token_warnings = resolved_token.warnings;
+
+            // Must run before the REST client bakes the build number into
+            // X-Super-Properties and the gateway sends IDENTIFY.
+            crate::discord::refresh_client_build_number().await;
+
             let client = DiscordClient::new(token)?;
             let effects = client.take_effects();
             let snapshots = client.subscribe_snapshots();

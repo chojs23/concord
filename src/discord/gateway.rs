@@ -26,7 +26,7 @@ use super::{
     client::publish_app_event,
     events::{AppEvent, SequencedAppEvent},
     fingerprint::{
-        CLIENT_BROWSER, CLIENT_BROWSER_VERSION, CLIENT_BUILD_NUMBER, discord_web_os,
+        CLIENT_BROWSER, CLIENT_BROWSER_VERSION, client_build_number, discord_web_os,
         discord_web_os_version, discord_web_user_agent,
     },
     state::{DiscordState, SnapshotRevision},
@@ -858,7 +858,7 @@ fn build_identify_payload(token: &str) -> String {
                 "referrer_current": "",
                 "referring_domain_current": "",
                 "release_channel": "stable",
-                "client_build_number": CLIENT_BUILD_NUMBER,
+                "client_build_number": client_build_number(),
                 "client_event_source": Value::Null,
             },
             "presence": {

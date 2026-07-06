@@ -1,4 +1,6 @@
 use std::process::Command;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::header::{
@@ -9,7 +11,10 @@ use uuid::Uuid;
 
 use super::auth_http::DISCORD_ORIGIN;
 
-pub(super) const CLIENT_BUILD_NUMBER: u64 = 536_121;
+/// Fallback used only when the live build number cannot be fetched at startup.
+pub(super) const CLIENT_BUILD_NUMBER: u64 = 573_410;
+static CLIENT_BUILD_NUMBER_CACHE: OnceLock<u64> = OnceLock::new();
+
 pub(super) const CLIENT_BROWSER: &str = "Chrome";
 pub(super) const CLIENT_BROWSER_VERSION: &str = "143.0.0.0";
 
@@ -109,7 +114,7 @@ fn build_super_properties(identity: &ClientIdentity) -> String {
         has_client_mods: false,
         browser_user_agent: identity.user_agent.clone(),
         browser_version: CLIENT_BROWSER_VERSION,
-        client_build_number: CLIENT_BUILD_NUMBER,
+        client_build_number: client_build_number(),
         client_event_source: None,
         launch_signature: generate_launch_signature(),
         client_launch_id: Uuid::new_v4().to_string(),
@@ -122,6 +127,51 @@ fn build_super_properties(identity: &ClientIdentity) -> String {
     };
     let raw = serde_json::to_vec(&properties).expect("super properties serialize");
     STANDARD.encode(raw)
+}
+
+pub(super) fn client_build_number() -> u64 {
+    CLIENT_BUILD_NUMBER_CACHE
+        .get()
+        .copied()
+        .unwrap_or(CLIENT_BUILD_NUMBER)
+}
+
+/// Aligns our advertised build number with Discord's live value. A stale build
+/// number is a self-bot signal that can get accounts flagged. Best-effort. On
+/// any failure the compiled fallback stays in place.
+pub(crate) async fn refresh_client_build_number() {
+    if CLIENT_BUILD_NUMBER_CACHE.get().is_some() {
+        return;
+    }
+    match fetch_client_build_number().await {
+        Some(build) => {
+            let _ = CLIENT_BUILD_NUMBER_CACHE.set(build);
+        }
+        None => crate::logging::debug(
+            "fingerprint",
+            "could not fetch Discord build number; using compiled fallback",
+        ),
+    }
+}
+
+async fn fetch_client_build_number() -> Option<u64> {
+    let response = discord_rest_client()
+        .get(format!("{DISCORD_ORIGIN}/app"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+    let body = response.text().await.ok()?;
+    parse_build_number(&body)
+}
+
+/// Discord embeds `"BUILD_NUMBER":"<n>"` in the `/app` HTML.
+fn parse_build_number(html: &str) -> Option<u64> {
+    const MARKER: &str = "\"BUILD_NUMBER\":\"";
+    let start = html.find(MARKER)? + MARKER.len();
+    let rest = &html[start..];
+    let end = rest.find('"')?;
+    rest[..end].parse::<u64>().ok()
 }
 
 fn client_identity() -> ClientIdentity {
@@ -232,6 +282,13 @@ mod tests {
         net::{TcpListener, TcpStream},
         thread,
     };
+
+    #[test]
+    fn parses_build_number_from_app_html() {
+        let html = r#"window.GLOBAL_ENV = {"BUILD_NUMBER":"573410","VERSION":"1.0.0"};"#;
+        assert_eq!(parse_build_number(html), Some(573_410));
+        assert_eq!(parse_build_number("no build number here"), None);
+    }
 
     #[test]
     fn rest_headers_match_web_fingerprint_plan() {
