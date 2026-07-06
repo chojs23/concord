@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-07-06
+
+### Bug Fixes
+
+- Fix bot badge rendering (#241) in [#241](https://github.com/chojs23/concord/pull/241) by @LmanTW
+- Rewrite Discord build-number fetch to scrape the sentry JS asset by @chojs23
+- Fix truncated compsoer placeholder by @chojs23
+
+### Features
+
+- _(discord)_ Fetch live client build number at startup by @chojs23
+- _(discord)_ Attach a snowflake nonce to outgoing messages by @chojs23
+- _(discord)_ Broadcast typing indicator while composing a message by @chojs23
+- _(discord)_ Lock DM composer until the conversation is established (#245) in [#245](https://github.com/chojs23/concord/pull/245) by @chojs23
+
 ## [2.2.13] - 2026-07-04
 
 ### Features
