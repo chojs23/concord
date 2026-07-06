@@ -90,6 +90,7 @@ impl CommandDispatcher {
                 .await;
             }
             command @ (AppCommand::SendMessage { .. }
+            | AppCommand::TriggerTyping { .. }
             | AppCommand::CreateForumPost { .. }
             | AppCommand::SetThreadArchived { .. }
             | AppCommand::SetThreadLocked { .. }

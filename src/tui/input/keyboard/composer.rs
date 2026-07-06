@@ -22,7 +22,7 @@ pub(super) fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
         }
         ComposerAction::InsertNewline => {
             state.push_composer_char('\n');
-            None
+            state.note_composer_typing()
         }
         ComposerAction::Submit => state.submit_composer(),
         ComposerAction::Close => {
@@ -85,7 +85,7 @@ pub(super) fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
             if value != ':' || !state.open_composer_reaction_picker_from_plus_colon() {
                 state.push_composer_char(value);
             }
-            None
+            state.note_composer_typing()
         }
         ComposerAction::Ignore => None,
     }

@@ -36,6 +36,26 @@ impl DiscordRest {
             .await
     }
 
+    /// Fires a typing indicator without blocking the send it precedes. A
+    /// message that arrives with no prior typing looks automated.
+    pub fn spawn_typing(&self, channel_id: Id<ChannelMarker>) {
+        let rest = self.clone();
+        tokio::spawn(async move {
+            let _ = rest.trigger_typing(channel_id).await;
+        });
+    }
+
+    async fn trigger_typing(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
+        self.send_unit(
+            self.raw_http.post(format!(
+                "https://discord.com/api/v9/channels/{}/typing",
+                channel_id.get()
+            )),
+            "trigger typing",
+        )
+        .await
+    }
+
     pub async fn send_tts_message(
         &self,
         channel_id: Id<ChannelMarker>,

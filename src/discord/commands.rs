@@ -474,6 +474,9 @@ pub enum AppCommand {
     SetSelectedMessageChannel {
         channel_id: Option<Id<ChannelMarker>>,
     },
+    TriggerTyping {
+        channel_id: Id<ChannelMarker>,
+    },
     SubscribeDirectMessage {
         channel_id: Id<ChannelMarker>,
     },

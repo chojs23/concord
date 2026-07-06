@@ -24,6 +24,7 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             Ok(message) => client.publish_event(message_create_event(message)).await,
             Err(error) => publish_app_error(&client, "send message failed", &error).await,
         },
+        AppCommand::TriggerTyping { channel_id } => client.trigger_typing(channel_id),
         AppCommand::SendTtsMessage {
             channel_id,
             content,

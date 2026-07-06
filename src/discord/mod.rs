@@ -53,7 +53,6 @@ pub use channel::{
 };
 pub use client::DiscordClient;
 pub(crate) use client::validate_token_header;
-pub(crate) use fingerprint::refresh_client_build_number;
 pub use commands::{
     AppCommand, AttachmentDownloadId, DownloadAttachmentSource, ForumPostArchiveState,
     ForumPostCreate, GlobalUserProfileUpdate, GuildUserProfileUpdate, MediaPlaybackRequestId,
@@ -73,6 +72,7 @@ pub use events::{
     PresenceEventFields, SequencedAppEvent, ThreadListSyncInfo, ThreadMemberUpdateInfo,
     ThreadMembersUpdateInfo, UserGuildSettingsInfo,
 };
+pub(crate) use fingerprint::refresh_client_build_number;
 pub use guild::{CustomEmojiInfo, GuildFolder};
 pub use ids::{Id, marker};
 pub use member::{MemberInfo, RoleInfo};

@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use crate::discord::ids::{
     Id,
@@ -46,6 +47,10 @@ pub enum DmComposerLock {
     NeverMessaged,
 }
 
+/// Discord keeps a typing indicator alive for about ten seconds, so resend a
+/// little sooner while the user keeps typing.
+const COMPOSER_TYPING_INTERVAL: Duration = Duration::from_secs(8);
+
 #[derive(Debug, Default)]
 pub(in crate::tui::state) struct ComposerUiState {
     pub(in crate::tui::state) composer_input: TextInputState,
@@ -71,6 +76,9 @@ pub(in crate::tui::state) struct ComposerUiState {
     /// Mutually exclusive with those pickers, enforced in
     /// `refresh_active_mention_query`.
     pub(in crate::tui::state) emoji_completion: EmojiCompletionState,
+    /// Channel and time of the last typing indicator sent while composing, used
+    /// to throttle resends.
+    pub(in crate::tui::state) last_typing_sent: Option<(Id<ChannelMarker>, Instant)>,
 }
 
 #[derive(Debug, Default)]
@@ -460,6 +468,32 @@ impl DashboardState {
         let mut text = String::new();
         text.push(value);
         self.insert_composer_text_at_cursor(&text);
+    }
+
+    pub fn note_composer_typing(&mut self) -> Option<AppCommand> {
+        self.note_composer_typing_at(Instant::now())
+    }
+
+    pub(in crate::tui::state) fn note_composer_typing_at(
+        &mut self,
+        now: Instant,
+    ) -> Option<AppCommand> {
+        // Discord does not broadcast typing while editing an existing message.
+        if self.composer.edit_target_message.is_some() {
+            return None;
+        }
+        let channel_id = self.selected_channel_id()?;
+        let due = match self.composer.last_typing_sent {
+            Some((last_channel, at)) if last_channel == channel_id => {
+                now.saturating_duration_since(at) >= COMPOSER_TYPING_INTERVAL
+            }
+            _ => true,
+        };
+        if !due {
+            return None;
+        }
+        self.composer.last_typing_sent = Some((channel_id, now));
+        Some(AppCommand::TriggerTyping { channel_id })
     }
 
     pub fn insert_composer_text_at_cursor(&mut self, value: &str) {

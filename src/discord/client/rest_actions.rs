@@ -46,6 +46,10 @@ impl DiscordClient {
         self.rest.send_tts_message(channel_id, content).await
     }
 
+    pub fn trigger_typing(&self, channel_id: Id<ChannelMarker>) {
+        self.rest.spawn_typing(channel_id);
+    }
+
     pub async fn create_forum_post(&self, post: &ForumPostCreate) -> Result<CreatedForumPost> {
         self.ensure_can_create_forum_post(post)?;
         let upload_limit = self.attachment_size_limit(post.channel_id);

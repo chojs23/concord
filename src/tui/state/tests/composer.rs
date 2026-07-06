@@ -2206,3 +2206,25 @@ fn composer_sends_to_opened_thread_channel() {
         })
     );
 }
+
+#[test]
+fn composer_typing_indicator_throttles_and_resends() {
+    use std::time::{Duration, Instant};
+
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    let typing = Some(AppCommand::TriggerTyping {
+        channel_id: Id::new(2),
+    });
+
+    let start = Instant::now();
+    assert_eq!(state.note_composer_typing_at(start), typing);
+    assert_eq!(
+        state.note_composer_typing_at(start + Duration::from_secs(1)),
+        None
+    );
+    assert_eq!(
+        state.note_composer_typing_at(start + Duration::from_secs(8)),
+        typing
+    );
+}
