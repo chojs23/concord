@@ -316,13 +316,24 @@ pub(super) fn message_request_body(
     message_request_body_with_tts(content, reply_to, attachments, false)
 }
 
+/// The official client tags every message create with a snowflake nonce. Its
+/// absence is a self-bot signal.
+fn generate_nonce() -> String {
+    const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(DISCORD_EPOCH_MS);
+    (now_ms.saturating_sub(DISCORD_EPOCH_MS) << 22).to_string()
+}
+
 pub(super) fn message_request_body_with_tts(
     content: &str,
     reply_to: Option<ReplyReference>,
     attachments: &[MessageAttachmentUpload],
     tts: bool,
 ) -> Value {
-    let mut body = json!({ "content": content });
+    let mut body = json!({ "content": content, "nonce": generate_nonce() });
     if tts {
         body["tts"] = Value::Bool(true);
     }

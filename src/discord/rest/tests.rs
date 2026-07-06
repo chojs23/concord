@@ -78,6 +78,13 @@ fn validates_attachment_only_message_payload() {
 }
 
 #[test]
+fn message_request_body_carries_snowflake_nonce() {
+    let body = message_request_body("hi", None, &[]);
+    let nonce = body["nonce"].as_str().expect("nonce is a string");
+    assert!(nonce.parse::<u64>().is_ok(), "nonce must be a snowflake");
+}
+
+#[test]
 fn message_request_body_suppresses_reply_ping_when_disabled() {
     let body = message_request_body(
         "hi",
