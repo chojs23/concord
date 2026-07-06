@@ -155,23 +155,46 @@ pub(crate) async fn refresh_client_build_number() {
 }
 
 async fn fetch_client_build_number() -> Option<u64> {
-    let response = discord_rest_client()
+    let client = discord_rest_client();
+    let app_html = client
         .get(format!("{DISCORD_ORIGIN}/app"))
         .timeout(Duration::from_secs(5))
         .send()
         .await
+        .ok()?
+        .text()
+        .await
         .ok()?;
-    let body = response.text().await.ok()?;
-    parse_build_number(&body)
+    let asset_path = find_sentry_asset_path(&app_html)?;
+    let asset = client
+        .get(format!("{DISCORD_ORIGIN}{asset_path}"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+    parse_build_number(&asset)
 }
 
-/// Discord embeds `"BUILD_NUMBER":"<n>"` in the `/app` HTML.
-fn parse_build_number(html: &str) -> Option<u64> {
-    const MARKER: &str = "\"BUILD_NUMBER\":\"";
-    let start = html.find(MARKER)? + MARKER.len();
+fn find_sentry_asset_path(html: &str) -> Option<String> {
+    const PREFIX: &str = "/assets/sentry";
+    const SUFFIX: &str = ".js";
+    let start = html.find(PREFIX)?;
     let rest = &html[start..];
-    let end = rest.find('"')?;
-    rest[..end].parse::<u64>().ok()
+    let end = rest.find(SUFFIX)? + SUFFIX.len();
+    Some(rest[..end].to_owned())
+}
+
+fn parse_build_number(js: &str) -> Option<u64> {
+    const MARKER: &str = "buildNumber\",\"";
+    let start = js.find(MARKER)? + MARKER.len();
+    let digits: String = js[start..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect();
+    digits.parse::<u64>().ok()
 }
 
 fn client_identity() -> ClientIdentity {
@@ -284,10 +307,20 @@ mod tests {
     };
 
     #[test]
-    fn parses_build_number_from_app_html() {
-        let html = r#"window.GLOBAL_ENV = {"BUILD_NUMBER":"573410","VERSION":"1.0.0"};"#;
-        assert_eq!(parse_build_number(html), Some(573_410));
+    fn parses_build_number_from_sentry_asset() {
+        let js = r#"e.exports={buildNumber","573410",version:"1.0.0"}"#;
+        assert_eq!(parse_build_number(js), Some(573_410));
         assert_eq!(parse_build_number("no build number here"), None);
+    }
+
+    #[test]
+    fn finds_sentry_asset_path_in_app_html() {
+        let html = r#"<script src="/assets/sentry.a1b2c3d4.js" crossorigin defer></script>"#;
+        assert_eq!(
+            find_sentry_asset_path(html).as_deref(),
+            Some("/assets/sentry.a1b2c3d4.js")
+        );
+        assert_eq!(find_sentry_asset_path("no sentry asset here"), None);
     }
 
     #[test]
