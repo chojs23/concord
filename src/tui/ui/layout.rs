@@ -12,8 +12,7 @@ use super::LOCAL_UPLOAD_PREVIEW_HEIGHT;
 use super::panes::composer_text;
 use super::types::{
     DashboardAreas, EMBED_PREVIEW_GUTTER_PREFIX, IMAGE_PREVIEW_HEIGHT, IMAGE_PREVIEW_WIDTH,
-    MAX_REACTION_USERS_VISIBLE_LINES, MESSAGE_AVATAR_OFFSET, MIN_MESSAGE_INPUT_HEIGHT,
-    MessageAreas,
+    MAX_REACTION_USERS_VISIBLE_LINES, MIN_MESSAGE_INPUT_HEIGHT, MessageAreas,
 };
 
 const ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT: u16 = 80;
@@ -149,14 +148,14 @@ pub(super) fn inline_image_preview_height(area: Rect, visible: bool) -> u16 {
     }
 }
 
-pub(super) fn inline_image_preview_width(area: Rect) -> u16 {
+pub(super) fn inline_image_preview_width(area: Rect, avatar_offset: u16) -> u16 {
     area.width
-        .saturating_sub(inline_image_content_offset(area))
+        .saturating_sub(inline_image_content_offset(area, avatar_offset))
         .min(IMAGE_PREVIEW_WIDTH)
 }
 
-pub(super) fn inline_image_content_offset(area: Rect) -> u16 {
-    MESSAGE_AVATAR_OFFSET.min(area.width.saturating_sub(1))
+pub(super) fn inline_image_content_offset(area: Rect, avatar_offset: u16) -> u16 {
+    avatar_offset.min(area.width.saturating_sub(1))
 }
 
 pub(super) fn inline_image_preview_area(
@@ -166,12 +165,13 @@ pub(super) fn inline_image_preview_area(
     preview_width: u16,
     preview_height: u16,
     accent_color: Option<u32>,
+    avatar_offset: u16,
 ) -> Option<Rect> {
     if preview_width == 0 || preview_height == 0 {
         return None;
     }
 
-    let content_offset = inline_image_content_offset(list);
+    let content_offset = inline_image_content_offset(list, avatar_offset);
     let desired_top = list.y as isize + row + 1;
     let desired_bottom = desired_top.saturating_add(preview_height as isize);
     let list_top = list.y as isize;

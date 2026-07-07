@@ -248,10 +248,11 @@ pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewL
     let areas = dashboard_areas(area, state);
     let list = message_list_area(areas.messages, state);
     let viewer_image_area = attachment_viewer_image_area(area, state.attachment_viewer_zoom());
+    let avatar_offset = avatar_gutter_width(state.show_avatars());
     ImagePreviewLayout {
         list_height: list.height as usize,
-        content_width: message_content_width(list),
-        preview_width: inline_image_preview_width(list),
+        content_width: message_content_width(list, avatar_offset),
+        preview_width: inline_image_preview_width(list, avatar_offset),
         max_preview_height: inline_image_preview_height(list, true),
         viewer_preview_width: viewer_image_area.width,
         viewer_max_preview_height: viewer_image_area.height,
@@ -373,6 +374,7 @@ pub(in crate::tui) fn inline_image_preview_screen_area(
     preview_width: u16,
     preview_height: u16,
     accent_color: Option<u32>,
+    avatar_offset: u16,
 ) -> Option<Rect> {
     inline_image_preview_area(
         list,
@@ -381,15 +383,26 @@ pub(in crate::tui) fn inline_image_preview_screen_area(
         preview_width,
         preview_height,
         accent_color,
+        avatar_offset,
     )
 }
 
-fn message_content_width(list: Rect) -> usize {
+fn message_content_width(list: Rect, avatar_offset: u16) -> usize {
     let padding = 4usize;
     (list.width as usize)
         .saturating_sub(padding)
-        .saturating_sub(MESSAGE_AVATAR_OFFSET as usize)
+        .saturating_sub(avatar_offset as usize)
         .max(8)
+}
+
+/// Left gutter reserved before message content: the avatar column when avatars
+/// are shown, otherwise just the selection-marker column so content flushes left.
+pub(in crate::tui) fn avatar_gutter_width(show_avatars: bool) -> u16 {
+    if show_avatars {
+        MESSAGE_AVATAR_OFFSET
+    } else {
+        MESSAGE_SELECTION_PREFIX_WIDTH
+    }
 }
 
 fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {

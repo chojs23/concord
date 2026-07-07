@@ -30,6 +30,7 @@ struct MessageItemLinesInput<'a> {
     preview_spacers: &'a [InlinePreviewSpacer],
     bottom_gap: bool,
     line_offset: usize,
+    avatar_offset: u16,
 }
 
 struct MessageRenderPlan<'a, 'p> {
@@ -78,7 +79,8 @@ pub(in crate::tui::ui) fn render_messages(
         } else {
             media.occlusion_areas
         };
-    let content_width = message_content_width(message_areas.list);
+    let avatar_offset = avatar_gutter_width(state.show_avatars());
+    let content_width = message_content_width(message_areas.list, avatar_offset);
 
     render_unread_banner(frame, message_areas.unread_banner, state);
 
@@ -140,7 +142,7 @@ pub(in crate::tui::ui) fn render_messages(
     let selected = state.focused_message_selection();
 
     let preview_width = if state.show_images() {
-        inline_image_preview_width(message_areas.list)
+        inline_image_preview_width(message_areas.list, avatar_offset)
     } else {
         0
     };
@@ -203,6 +205,7 @@ pub(in crate::tui::ui) fn render_messages(
         &render_plan,
         media.emoji_images,
         media_occlusion_areas,
+        avatar_offset,
     );
     render_inline_message_body_emojis(
         frame,
@@ -212,6 +215,7 @@ pub(in crate::tui::ui) fn render_messages(
         media.emoji_images,
         &loaded_custom_emoji_urls,
         media_occlusion_areas,
+        avatar_offset,
     );
     for image_preview in media.image_previews.into_iter() {
         let Some(row_plan) = render_plan.row(image_preview.message_index) else {
@@ -231,6 +235,7 @@ pub(in crate::tui::ui) fn render_messages(
             image_preview.preview_width,
             image_preview.preview_height,
             image_preview.accent_color,
+            avatar_offset,
         ) {
             preview_area.height = preview_area
                 .height
@@ -261,6 +266,7 @@ fn message_viewport_lines_from_plan(
     state: &DashboardState,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<Line<'static>> {
+    let avatar_offset = avatar_gutter_width(state.show_avatars());
     let mut lines = Vec::new();
     for row in plan.rows.rows() {
         let author = row.message.author.clone();
@@ -301,6 +307,7 @@ fn message_viewport_lines_from_plan(
             preview_spacers: &preview_spacers,
             bottom_gap: row.bottom_gap,
             line_offset: row.item_line_offset,
+            avatar_offset,
         });
         if row.selected {
             lines.extend(selected_message_lines(
@@ -453,8 +460,9 @@ fn render_inline_reaction_emojis(
     plan: &MessageRenderPlan<'_, '_>,
     emoji_images: &[EmojiImage<'_>],
     media_occlusion_areas: &[Rect],
+    avatar_offset: u16,
 ) {
-    let avatar_offset = MESSAGE_AVATAR_OFFSET as isize;
+    let avatar_offset = avatar_offset as isize;
     let slots = plan
         .rows
         .rows()
@@ -489,8 +497,9 @@ fn render_inline_message_body_emojis(
     emoji_images: &[EmojiImage<'_>],
     loaded_custom_emoji_urls: &[String],
     media_occlusion_areas: &[Rect],
+    avatar_offset: u16,
 ) {
-    let avatar_offset = MESSAGE_AVATAR_OFFSET as isize;
+    let avatar_offset = avatar_offset as isize;
     let slots = plan
         .rows
         .rows()
@@ -650,6 +659,7 @@ pub(in crate::tui::ui) fn message_item_lines(
         preview_spacers: &preview_spacers,
         bottom_gap: true,
         line_offset,
+        avatar_offset: MESSAGE_AVATAR_OFFSET,
     })
 }
 
@@ -666,6 +676,7 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
         preview_spacers,
         bottom_gap,
         line_offset,
+        avatar_offset,
     } = input;
     let sent_time_width = sent_time.as_str().width();
     let bot_badge_width = usize::from(author_is_bot) * " [bot]".width();
@@ -676,7 +687,10 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
         .max(1);
     let author = truncate_display_width(&author, author_width);
     let mut lines = if show_header {
-        let mut header = vec![message_avatar_span(), Span::styled(author, author_style)];
+        let mut header = vec![
+            message_avatar_span(avatar_offset),
+            Span::styled(author, author_style),
+        ];
         if author_is_bot {
             header.extend([Span::raw(" "), bot_badge_span()]);
         }
@@ -690,18 +704,18 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
     };
     lines.extend(content.into_iter().enumerate().map(|(index, line)| {
         let mut spans = vec![if show_header && index == 0 {
-            message_avatar_span()
+            message_avatar_span(avatar_offset)
         } else {
-            message_avatar_spacer_span()
+            message_avatar_spacer_span(avatar_offset)
         }];
         spans.extend(line.spans());
         Line::from(spans)
     }));
     for spacer in preview_spacers {
-        lines.extend(image_preview_spacer_lines(spacer));
+        lines.extend(image_preview_spacer_lines(spacer, avatar_offset));
     }
     lines.extend(reactions.into_iter().map(|line| {
-        let mut spans = vec![message_avatar_spacer_span()];
+        let mut spans = vec![message_avatar_spacer_span(avatar_offset)];
         spans.extend(line.spans());
         Line::from(spans)
     }));
@@ -752,9 +766,12 @@ pub(in crate::tui::ui) fn message_avatar_area(
     })
 }
 
-fn message_avatar_span() -> Span<'static> {
+fn message_avatar_span(avatar_offset: u16) -> Span<'static> {
     let prefix = " ".repeat(MESSAGE_SELECTION_PREFIX_WIDTH as usize);
-    let padding = (MESSAGE_AVATAR_OFFSET as usize)
+    if avatar_offset <= MESSAGE_SELECTION_PREFIX_WIDTH {
+        return Span::raw(prefix);
+    }
+    let padding = (avatar_offset as usize)
         .saturating_sub(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
         .saturating_sub(MESSAGE_AVATAR_PLACEHOLDER.width());
     Span::styled(
@@ -766,8 +783,8 @@ fn message_avatar_span() -> Span<'static> {
     )
 }
 
-fn message_avatar_spacer_span() -> Span<'static> {
-    Span::raw(" ".repeat(MESSAGE_AVATAR_OFFSET as usize))
+fn message_avatar_spacer_span(avatar_offset: u16) -> Span<'static> {
+    Span::raw(" ".repeat(avatar_offset as usize))
 }
 
 fn selected_message_lines(
@@ -779,58 +796,35 @@ fn selected_message_lines(
     has_header: bool,
 ) -> Vec<Line<'static>> {
     let last_index = lines.len().saturating_sub(1);
-    let mut stamped = false;
+
+    // Header messages show the time in their header; a grouped continuation has no
+    // header, so it carries the time on the bottom border instead.
+    let border_time = (!has_header).then_some(sent_time);
+
     let mut selected_lines = Vec::new();
     if top_visible && !has_header {
         selected_lines.push(selected_message_empty_top_line(card_width));
     }
     selected_lines.extend(lines.into_iter().enumerate().map(|(index, line)| {
         if has_bottom_gap && index == last_index {
-            selected_message_bottom_line(card_width)
+            selected_message_bottom_line(card_width, border_time)
         } else {
-            let show_time = !stamped && !has_header && line_has_gutter(&line);
-            if show_time {
-                stamped = true;
-            }
-            selected_message_content_line(
-                line,
-                card_width,
-                index == 0 && top_visible && has_header,
-                show_time.then_some(sent_time),
-            )
+            selected_message_content_line(line, card_width, index == 0 && top_visible && has_header)
         }
     }));
     if !has_bottom_gap {
-        selected_lines.push(selected_message_bottom_line(card_width));
+        selected_lines.push(selected_message_bottom_line(card_width, border_time));
     }
     selected_lines
-}
-
-fn line_has_gutter(line: &Line<'_>) -> bool {
-    line.spans
-        .first()
-        .is_some_and(|span| span.content.width() == MESSAGE_AVATAR_OFFSET as usize)
-}
-
-fn selected_time_gutter_span(sent_time: &str) -> Span<'static> {
-    let gutter_width =
-        (MESSAGE_AVATAR_OFFSET as usize).saturating_sub(MESSAGE_SELECTION_PREFIX_WIDTH as usize);
-    let time = truncate_display_width(sent_time, gutter_width);
-    let padding = gutter_width.saturating_sub(time.width());
-    Span::styled(
-        format!("{time}{}", " ".repeat(padding)),
-        Style::default().fg(DIM),
-    )
 }
 
 fn selected_message_content_line(
     line: Line<'static>,
     card_width: usize,
     top_line: bool,
-    sent_time: Option<&str>,
 ) -> Line<'static> {
     let mut spans = line.spans;
-    replace_selection_prefix(&mut spans, if top_line { "╭─" } else { "│ " }, sent_time);
+    replace_selection_prefix(&mut spans, if top_line { "╭─" } else { "│ " });
     let used_width = spans.iter().map(|span| span.content.width()).sum::<usize>();
     let right_border = if top_line { "╮" } else { " │" };
     let fill_char = if top_line { '─' } else { ' ' };
@@ -856,18 +850,28 @@ fn selected_message_empty_top_line(card_width: usize) -> Line<'static> {
     ))
 }
 
-fn selected_message_bottom_line(card_width: usize) -> Line<'static> {
+/// Bottom border of a selected card, embedding a grouped continuation's sent
+/// time near the right corner: `╰──── 14:30 ─╯`.
+fn selected_message_bottom_line(card_width: usize, sent_time: Option<&str>) -> Line<'static> {
+    let inner = card_width.saturating_sub(2);
+    if let Some(time) = sent_time.filter(|time| inner > time.width() + 3) {
+        let dashes = inner.saturating_sub(time.width()).saturating_sub(3);
+        return Line::from(vec![
+            Span::styled(
+                format!("╰{}", "─".repeat(dashes)),
+                selected_message_border_style(),
+            ),
+            Span::styled(format!(" {time} "), Style::default().fg(DIM)),
+            Span::styled("─╯", selected_message_border_style()),
+        ]);
+    }
     Line::from(Span::styled(
-        format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
+        format!("╰{}╯", "─".repeat(inner)),
         selected_message_border_style(),
     ))
 }
 
-fn replace_selection_prefix(
-    spans: &mut Vec<Span<'static>>,
-    replacement: &str,
-    sent_time: Option<&str>,
-) {
+fn replace_selection_prefix(spans: &mut Vec<Span<'static>>, replacement: &str) {
     if spans.first().is_some_and(|span| {
         span.content.width() >= MESSAGE_SELECTION_PREFIX_WIDTH as usize
             && span
@@ -877,19 +881,14 @@ fn replace_selection_prefix(
                 .all(|ch| ch == ' ')
     }) {
         let original = spans.remove(0);
-        let remaining = if let Some(time) = sent_time {
-            selected_time_gutter_span(time)
-        } else {
-            Span::styled(
-                original
-                    .content
-                    .chars()
-                    .skip(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
-                    .collect::<String>(),
-                original.style,
-            )
-        };
-        spans.insert(0, remaining);
+        let remaining: String = original
+            .content
+            .chars()
+            .skip(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
+            .collect();
+        if !remaining.is_empty() {
+            spans.insert(0, Span::styled(remaining, original.style));
+        }
     }
     spans.insert(
         0,
@@ -993,13 +992,16 @@ fn separator_line(label: &str, width: usize, style: Style) -> Line<'static> {
     ))
 }
 
-fn image_preview_spacer_lines(spacer: &InlinePreviewSpacer) -> Vec<Line<'static>> {
+fn image_preview_spacer_lines(
+    spacer: &InlinePreviewSpacer,
+    avatar_offset: u16,
+) -> Vec<Line<'static>> {
     let mut lines = (0..spacer.height)
-        .map(|_| preview_spacer_blank_line(spacer.accent_color))
+        .map(|_| preview_spacer_blank_line(spacer.accent_color, avatar_offset))
         .collect::<Vec<_>>();
     if spacer.overflow_count > 0 {
         lines.push(Line::from(vec![
-            message_avatar_spacer_span(),
+            message_avatar_spacer_span(avatar_offset),
             Span::styled(
                 format!("+{} more images", spacer.overflow_count),
                 Style::default().fg(Color::White).bg(Color::Black).bold(),
@@ -1009,10 +1011,10 @@ fn image_preview_spacer_lines(spacer: &InlinePreviewSpacer) -> Vec<Line<'static>
     lines
 }
 
-fn preview_spacer_blank_line(accent_color: Option<u32>) -> Line<'static> {
+fn preview_spacer_blank_line(accent_color: Option<u32>, avatar_offset: u16) -> Line<'static> {
     match accent_color {
         Some(color) => Line::from(vec![
-            message_avatar_spacer_span(),
+            message_avatar_spacer_span(avatar_offset),
             Span::styled(
                 EMBED_PREVIEW_GUTTER_PREFIX,
                 Style::default().fg(embed_color(color)),

@@ -19,8 +19,8 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MemberEntry, READ_DIM,
-    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
+    ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MESSAGE_AVATAR_OFFSET,
+    MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
     attachment_viewer_image_area, attachment_viewer_popup, background_media_occlusion_areas,
     centered_viewer_preview_area, channel_switcher_cursor_position, channel_switcher_lines,
     channel_unread_decoration, composer_content_line_count, composer_cursor_position,
@@ -288,9 +288,16 @@ fn state_with_file_attachment_message() -> DashboardState {
 }
 
 fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> DashboardState {
+    seed_channel_message(DashboardState::new(), message_id, content)
+}
+
+fn seed_channel_message(
+    mut state: DashboardState,
+    message_id: Id<MessageMarker>,
+    content: &str,
+) -> DashboardState {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
-    let mut state = DashboardState::new();
 
     state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {

@@ -207,6 +207,7 @@ impl DashboardMediaRuntime {
             list,
             plan,
             &occlusion_areas,
+            ui::avatar_gutter_width(state.show_avatars()),
         );
         self.avatar_targets = visible_avatar_targets_from_plan(state, layout, plan);
         self.emoji_targets = visible_emoji_image_targets(state);
@@ -279,6 +280,7 @@ impl DashboardMediaRuntime {
                 target.preview_width,
                 target.preview_height,
                 target.accent_color,
+                ui::avatar_gutter_width(state.show_avatars()),
             ) else {
                 continue;
             };
@@ -344,6 +346,7 @@ fn clip_image_preview_targets_for_occlusions(
     list: Rect,
     plan: &MessageViewportPlan<'_>,
     occlusion_areas: &[Rect],
+    avatar_offset: u16,
 ) -> Vec<ImagePreviewTarget> {
     if occlusion_areas.is_empty() {
         return targets;
@@ -371,6 +374,7 @@ fn clip_image_preview_targets_for_occlusions(
             target.preview_width,
             target.preview_height,
             target.accent_color,
+            avatar_offset,
         ) else {
             continue;
         };
