@@ -576,7 +576,7 @@ fn forwarded_snapshot_renders_discord_embed_preview() {
 }
 
 #[test]
-fn selected_grouped_continuation_shows_time_gutter() {
+fn selected_grouped_continuation_stamps_time_on_border() {
     let mut state = state_with_message();
     push_message(&mut state, 2, "follow-up");
     state.jump_top();
@@ -593,7 +593,79 @@ fn selected_grouped_continuation_shows_time_gutter() {
 
     let sent_time = format_message_sent_time(Id::new(2));
     assert!(texts[3].starts_with("╭"));
-    assert!(texts[4].starts_with(&format!("│ {sent_time} follow-up")));
+    assert!(texts[4].starts_with("│ "));
+    assert!(texts[4].contains("follow-up"));
+    assert!(!texts[4].contains(&sent_time));
+
+    let border = texts
+        .iter()
+        .find(|line| line.starts_with("╰"))
+        .expect("selected card bottom border");
+    assert!(border.contains(&sent_time));
+    assert!(border.ends_with("─╯"));
+}
+
+#[test]
+fn selected_multiline_continuation_keeps_time_off_content_lines() {
+    let mut state = state_with_message();
+    push_message(&mut state, 2, "alpha bravo charlie delta echo foxtrot golf");
+    state.jump_top();
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        Some(1),
+        &state,
+        super::selected_message_viewport_layout(20),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    let sent_time = format_message_sent_time(Id::new(2));
+    let content_lines: Vec<&String> = texts.iter().filter(|line| line.starts_with("│ ")).collect();
+
+    assert!(
+        content_lines.len() >= 2,
+        "content should wrap onto multiple lines"
+    );
+    assert!(content_lines.iter().all(|line| !line.contains(&sent_time)));
+
+    let border = texts
+        .iter()
+        .find(|line| line.starts_with("╰"))
+        .expect("selected card bottom border");
+    assert!(border.contains(&sent_time));
+    assert!(border.ends_with("─╯"));
+}
+
+#[test]
+fn avatars_off_collapses_message_gutter() {
+    let display = DisplayOptions {
+        show_avatars: false,
+        ..DisplayOptions::default()
+    };
+    let state = seed_channel_message(
+        DashboardState::new_with_display_options(display),
+        Id::new(1),
+        "hello",
+    );
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
+        super::default_message_viewport_layout(),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(!texts.iter().any(|line| line.contains("oooo")));
+    let body = texts
+        .iter()
+        .find(|line| line.contains("hello"))
+        .expect("body line renders");
+    assert!(body.starts_with("  h"));
 }
 
 #[test]
@@ -805,7 +877,7 @@ fn second_inline_preview_slot_uses_album_column_offset() {
 
     assert_eq!(row, 3);
     assert_eq!(
-        inline_image_preview_area(area, row, 8, 8, 3, None),
+        inline_image_preview_area(area, row, 8, 8, 3, None, MESSAGE_AVATAR_OFFSET),
         Some(Rect::new(26, 9, 8, 3))
     );
 }

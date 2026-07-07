@@ -147,7 +147,7 @@ fn inline_image_preview_slot_follows_image_message_content() {
     let area = Rect::new(10, 5, 80, 12);
 
     assert_eq!(
-        inline_image_preview_area(area, 2, 0, 77, 4, None),
+        inline_image_preview_area(area, 2, 0, 77, 4, None, MESSAGE_AVATAR_OFFSET),
         Some(Rect::new(18, 8, 72, 4))
     );
 }
@@ -157,7 +157,7 @@ fn embed_image_preview_area_leaves_room_for_gutter() {
     let area = Rect::new(10, 5, 80, 12);
 
     assert_eq!(
-        inline_image_preview_area(area, 2, 0, 77, 4, Some(0xff0000)),
+        inline_image_preview_area(area, 2, 0, 77, 4, Some(0xff0000), MESSAGE_AVATAR_OFFSET),
         Some(Rect::new(22, 8, 68, 4))
     );
 }
@@ -168,7 +168,7 @@ fn selected_inline_image_preview_area_keeps_fixed_content_column() {
     let selected_offset = selected_message_content_x_offset(true);
 
     assert_eq!(
-        inline_image_preview_area(area, 2, selected_offset, 77, 4, None),
+        inline_image_preview_area(area, 2, selected_offset, 77, 4, None, MESSAGE_AVATAR_OFFSET),
         Some(Rect::new(18, 8, 72, 4))
     );
 }
@@ -187,7 +187,7 @@ fn later_image_preview_slot_accounts_for_prior_preview_rows() {
 
     assert_eq!(row, 14);
     assert_eq!(
-        inline_image_preview_area(area, row, 0, 77, 4, None),
+        inline_image_preview_area(area, row, 0, 77, 4, None, MESSAGE_AVATAR_OFFSET),
         Some(Rect::new(18, 20, 72, 3))
     );
 }
@@ -211,7 +211,7 @@ fn inline_image_preview_area_clips_preview_at_list_bottom() {
     let area = Rect::new(10, 5, 80, 6);
 
     assert_eq!(
-        inline_image_preview_area(area, 3, 0, 77, 4, None),
+        inline_image_preview_area(area, 3, 0, 77, 4, None, MESSAGE_AVATAR_OFFSET),
         Some(Rect::new(18, 9, 72, 2))
     );
 }
@@ -221,7 +221,7 @@ fn inline_image_preview_area_clips_preview_at_list_top() {
     let area = Rect::new(10, 5, 80, 6);
 
     assert_eq!(
-        inline_image_preview_area(area, -2, 0, 77, 4, None),
+        inline_image_preview_area(area, -2, 0, 77, 4, None, MESSAGE_AVATAR_OFFSET),
         Some(Rect::new(18, 5, 72, 3))
     );
 }
