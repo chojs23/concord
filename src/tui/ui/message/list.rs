@@ -183,7 +183,8 @@ pub(in crate::tui::ui) fn render_messages(
         &owned_plan
     };
     let render_plan = MessageRenderPlan { rows, layout };
-    let lines = message_viewport_lines_from_plan(&render_plan, state, &loaded_custom_emoji_urls);
+    let (lines, body_emoji_slots) =
+        message_viewport_lines_from_plan(&render_plan, state, &loaded_custom_emoji_urls);
 
     frame.render_widget(Paragraph::new(lines), message_areas.list);
     let selected_avatar_body_top =
@@ -213,7 +214,7 @@ pub(in crate::tui::ui) fn render_messages(
         &render_plan,
         state,
         media.emoji_images,
-        &loaded_custom_emoji_urls,
+        body_emoji_slots,
         media_occlusion_areas,
         avatar_offset,
     );
@@ -261,13 +262,23 @@ pub(in crate::tui::ui) fn render_messages(
     render_composer_emoji_picker(frame, message_areas, state, media.emoji_images);
 }
 
+/// A custom-emoji image position inside one message's formatted body lines,
+/// captured while the lines are built so the emoji overlay pass does not
+/// have to re-format the message.
+struct BodyEmojiSlot {
+    line_index: usize,
+    col: u16,
+    url: String,
+}
+
 fn message_viewport_lines_from_plan(
     plan: &MessageRenderPlan<'_, '_>,
     state: &DashboardState,
     loaded_custom_emoji_urls: &[String],
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, Vec<Vec<BodyEmojiSlot>>) {
     let avatar_offset = avatar_gutter_width(state.show_avatars());
     let mut lines = Vec::new();
+    let mut body_emoji_slots = Vec::with_capacity(plan.rows.rows().len());
     for row in plan.rows.rows() {
         let author = row.message.author.clone();
         let author_style = message_author_style(state.message_author_role_color(row.message));
@@ -287,6 +298,20 @@ fn message_viewport_lines_from_plan(
             state,
             plan.layout.content_width.max(8),
             loaded_custom_emoji_urls,
+        );
+        body_emoji_slots.push(
+            content
+                .iter()
+                .chain(reactions.iter())
+                .enumerate()
+                .flat_map(|(line_index, line)| {
+                    line.image_slots.iter().map(move |slot| BodyEmojiSlot {
+                        line_index,
+                        col: slot.col,
+                        url: slot.url.clone(),
+                    })
+                })
+                .collect(),
         );
 
         let sent_time = format_message_sent_time(row.message.id);
@@ -322,7 +347,7 @@ fn message_viewport_lines_from_plan(
             lines.extend(item_lines);
         }
     }
-    lines
+    (lines, body_emoji_slots)
 }
 
 #[cfg(test)]
@@ -345,7 +370,7 @@ pub(in crate::tui::ui) fn message_viewport_lines(
         rows: &rows,
         layout,
     };
-    message_viewport_lines_from_plan(&plan, state, loaded_custom_emoji_urls)
+    message_viewport_lines_from_plan(&plan, state, loaded_custom_emoji_urls).0
 }
 
 fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardState) {
@@ -495,7 +520,7 @@ fn render_inline_message_body_emojis(
     plan: &MessageRenderPlan<'_, '_>,
     state: &DashboardState,
     emoji_images: &[EmojiImage<'_>],
-    loaded_custom_emoji_urls: &[String],
+    body_emoji_slots: Vec<Vec<BodyEmojiSlot>>,
     media_occlusion_areas: &[Rect],
     avatar_offset: u16,
 ) {
@@ -504,31 +529,20 @@ fn render_inline_message_body_emojis(
         .rows
         .rows()
         .iter()
-        .take_while(|row| row.message_top < list.height as isize)
-        .flat_map(|row| {
+        .zip(body_emoji_slots)
+        .take_while(|(row, _)| row.message_top < list.height as isize)
+        .flat_map(|(row, row_slots)| {
             let base_col = list.x as isize
                 + avatar_offset
                 + selected_message_content_x_offset(row.selected) as isize;
             let body_top =
                 row.body_top + state.message_header_line_count_at(row.global_index) as isize;
-            let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-                row.message,
-                state,
-                plan.layout.content_width.max(8),
-                loaded_custom_emoji_urls,
-            );
-            body_lines
-                .into_iter()
-                .enumerate()
-                .flat_map(move |(line_idx, line)| {
-                    let row_in_list = body_top + line_idx as isize;
-                    line.image_slots.into_iter().map(move |slot| EmojiSlot {
-                        row_in_list,
-                        col: base_col + slot.col as isize,
-                        max_width: u16::MAX,
-                        url: slot.url,
-                    })
-                })
+            row_slots.into_iter().map(move |slot| EmojiSlot {
+                row_in_list: body_top + slot.line_index as isize,
+                col: base_col + slot.col as isize,
+                max_width: u16::MAX,
+                url: slot.url,
+            })
         });
     overlay_emoji_slots(frame, list, emoji_images, media_occlusion_areas, slots);
 }
@@ -565,12 +579,13 @@ pub(in crate::tui::ui) fn message_body_custom_emoji_rows(
     };
 
     for row in plan.rows.rows() {
-        let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-            row.message,
-            state,
-            content_width.max(8),
-            loaded_custom_emoji_urls,
-        );
+        let body_lines =
+            crate::tui::message::format::format_message_content_lines_with_loaded_custom_emoji_urls(
+                row.message,
+                state,
+                content_width.max(8),
+                loaded_custom_emoji_urls,
+            );
         for (line_idx, line) in body_lines.iter().enumerate() {
             if !line.image_slots.is_empty() {
                 rows.push(

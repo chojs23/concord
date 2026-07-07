@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use crate::discord::ids::{
     Id,
@@ -477,23 +477,40 @@ impl DiscordState {
         guild_id: Id<GuildMarker>,
         member: &MemberInfo,
     ) {
-        // If this member payload is a fallback ("unknown", no username), avoid
-        // clobbering messages that already have a real name. Try the profile
-        // cache for a better name; if nothing is available, skip the refresh.
-        let display_name = if is_fallback_identity(member.username.as_deref(), &member.display_name)
-        {
-            match self
-                .profiles
-                .user_profiles
-                .get(&UserProfileCacheKey::new(member.user_id, Some(guild_id)))
-            {
-                Some(profile) => profile.display_name().to_owned(),
-                None => return,
-            }
-        } else {
-            member.display_name.clone()
-        };
-        let avatar_url = member.avatar_url.clone();
+        self.refresh_message_author_display_names(guild_id, std::slice::from_ref(member));
+    }
+
+    /// Batch variant: resolves every member's display identity up front, then
+    /// updates the whole message cache in a single pass. Member-list syncs
+    /// carry up to 1000 members, so one scan per member would be quadratic.
+    pub(in crate::discord) fn refresh_message_author_display_names(
+        &mut self,
+        guild_id: Id<GuildMarker>,
+        members: &[MemberInfo],
+    ) {
+        let mut identities: HashMap<Id<UserMarker>, (String, Option<String>)> = HashMap::new();
+        for member in members {
+            // If this member payload is a fallback ("unknown", no username),
+            // avoid clobbering messages that already have a real name. Try the
+            // profile cache for a better name; otherwise skip this member.
+            let display_name =
+                if is_fallback_identity(member.username.as_deref(), &member.display_name) {
+                    match self
+                        .profiles
+                        .user_profiles
+                        .get(&UserProfileCacheKey::new(member.user_id, Some(guild_id)))
+                    {
+                        Some(profile) => profile.display_name().to_owned(),
+                        None => continue,
+                    }
+                } else {
+                    member.display_name.clone()
+                };
+            identities.insert(member.user_id, (display_name, member.avatar_url.clone()));
+        }
+        if identities.is_empty() {
+            return;
+        }
 
         for messages in self
             .message_cache
@@ -502,16 +519,16 @@ impl DiscordState {
             .chain(self.message_cache.pinned_messages.values_mut())
         {
             for message in messages.iter_mut().filter(|m| m.guild_id == Some(guild_id)) {
-                if message.author_id == member.user_id {
+                if let Some((display_name, avatar_url)) = identities.get(&message.author_id) {
                     message.author = display_name.clone();
                     if avatar_url.is_some() || message.author_avatar_url.is_none() {
                         message.author_avatar_url = avatar_url.clone();
                     }
                 }
-                if let Some(reply) = message
-                    .reply
-                    .as_mut()
-                    .filter(|r| r.author_id == Some(member.user_id))
+                if let Some(reply) = message.reply.as_mut()
+                    && let Some((display_name, _)) = reply
+                        .author_id
+                        .and_then(|author_id| identities.get(&author_id))
                 {
                     reply.author = display_name.clone();
                 }

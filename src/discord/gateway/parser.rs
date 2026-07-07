@@ -47,15 +47,16 @@ pub(super) struct ParsedGatewayDispatch {
     pub events: Vec<AppEvent>,
 }
 
-pub(super) fn parse_user_account_dispatch(raw: &str) -> Option<ParsedGatewayDispatch> {
-    let value = serde_json::from_str::<Value>(raw).ok()?;
+/// Takes the already-parsed gateway frame so the hot read loop never parses
+/// the same JSON twice, and moves `d` out instead of cloning it.
+pub(super) fn parse_user_account_dispatch(mut value: Value) -> Option<ParsedGatewayDispatch> {
     let event_type = value.get("t").and_then(Value::as_str)?.to_owned();
-    let data = value.get("d")?;
-    let events = parse_user_account_event_data(&event_type, data);
+    let data = value.get_mut("d").map(Value::take)?;
+    let events = parse_user_account_event_data(&event_type, &data);
     Some(ParsedGatewayDispatch {
         dispatch: GatewayDispatchInfo {
             event_type,
-            payload: data.clone(),
+            payload: data,
         },
         events,
     })
@@ -63,7 +64,9 @@ pub(super) fn parse_user_account_dispatch(raw: &str) -> Option<ParsedGatewayDisp
 
 #[cfg(test)]
 pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
-    parse_user_account_dispatch(raw)
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(parse_user_account_dispatch)
         .map(|dispatch| dispatch.events)
         .unwrap_or_default()
 }

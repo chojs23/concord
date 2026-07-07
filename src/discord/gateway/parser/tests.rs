@@ -14,24 +14,21 @@ use crate::discord::{
 
 #[test]
 fn raw_dispatch_parser_keeps_original_payload_for_future_fields() {
-    let parsed = parse_user_account_dispatch(
-        &json!({
-            "t": "MESSAGE_CREATE",
-            "d": {
-                "id": "101",
-                "channel_id": "20",
-                "author": { "id": "30", "username": "neo" },
-                "type": 0,
-                "pinned": false,
-                "content": "hello",
-                "mentions": [],
-                "attachments": [],
-                "embeds": [],
-                "future_discord_field": { "value": true }
-            }
-        })
-        .to_string(),
-    )
+    let parsed = parse_user_account_dispatch(json!({
+        "t": "MESSAGE_CREATE",
+        "d": {
+            "id": "101",
+            "channel_id": "20",
+            "author": { "id": "30", "username": "neo" },
+            "type": 0,
+            "pinned": false,
+            "content": "hello",
+            "mentions": [],
+            "attachments": [],
+            "embeds": [],
+            "future_discord_field": { "value": true }
+        }
+    }))
     .expect("dispatch should parse");
 
     assert_eq!(parsed.dispatch.event_type, "MESSAGE_CREATE");

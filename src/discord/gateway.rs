@@ -247,6 +247,10 @@ struct SessionState {
     resume_url: Option<String>,
     last_sequence: Option<u64>,
     has_received_ready: bool,
+    /// Whether the current connection reached READY or RESUMED. Read and
+    /// cleared by the reconnect loop to reset the backoff after a healthy
+    /// session.
+    established: bool,
 }
 
 impl SessionState {
@@ -325,7 +329,11 @@ pub async fn run_gateway(
         }
 
         // Exponential backoff with full jitter so a flapping network doesn't
-        // hammer Discord. Successful sessions reset the delay below.
+        // hammer Discord. A connection that reached READY/RESUMED was healthy,
+        // so its disconnect restarts the backoff from the base delay.
+        if std::mem::take(&mut session.established) {
+            backoff = RECONNECT_BASE_DELAY;
+        }
         let jitter = rand::thread_rng().gen_range(0..=backoff.as_millis() as u64);
         let delay = Duration::from_millis(jitter);
         logging::debug(
@@ -491,7 +499,6 @@ async fn connect_and_run(
                         };
                         match handle_frame(
                             value,
-                            &text,
                             session,
                             frame_context,
                         ).await {
@@ -557,7 +564,6 @@ enum FrameOutcome {
 
 async fn handle_frame(
     value: Value,
-    raw: &str,
     session: &mut SessionState,
     context: FrameContext<'_>,
 ) -> FrameOutcome {
@@ -594,10 +600,12 @@ async fn handle_frame(
                     publish_reidentified = true;
                 }
                 session.has_received_ready = true;
+                session.established = true;
             } else if dispatch_type == "RESUMED" {
+                session.established = true;
                 publish_gateway_event(context.publish, AppEvent::GatewayResumed).await;
             }
-            if let Some(parsed) = parse_user_account_dispatch(raw) {
+            if let Some(parsed) = parse_user_account_dispatch(value) {
                 publish_gateway_event(
                     context.publish,
                     AppEvent::GatewayDispatchReceived {

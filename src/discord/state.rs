@@ -809,8 +809,8 @@ impl DiscordState {
                 }
                 for member in &update.members {
                     self.upsert_guild_member(update.guild_id, member);
-                    self.refresh_message_author_display_name(update.guild_id, member);
                 }
+                self.refresh_message_author_display_names(update.guild_id, &update.members);
                 for presence in &update.presences {
                     self.apply_event(&AppEvent::PresenceUpdate {
                         guild_id: Some(update.guild_id),
@@ -821,8 +821,8 @@ impl DiscordState {
             AppEvent::GuildMembersChunk { chunk } => {
                 for member in &chunk.members {
                     self.upsert_guild_member(chunk.guild_id, member);
-                    self.refresh_message_author_display_name(chunk.guild_id, member);
                 }
+                self.refresh_message_author_display_names(chunk.guild_id, &chunk.members);
                 for presence in &chunk.presences {
                     self.apply_event(&AppEvent::PresenceUpdate {
                         guild_id: Some(chunk.guild_id),

@@ -18,7 +18,6 @@ use super::{
     format::truncate_display_width,
     message::format::{
         EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, ReactionLayout, embed_color,
-        format_message_content_lines_with_loaded_custom_emoji_urls,
         format_message_content_sections_with_loaded_custom_emoji_urls, format_message_relative_age,
         lay_out_reaction_chips_with_custom_emoji_images, reaction_line_spans, wrap_text_lines,
     },

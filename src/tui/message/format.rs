@@ -269,6 +269,7 @@ pub(in crate::tui) fn format_message_content_lines(
     lines
 }
 
+#[cfg(test)]
 pub(in crate::tui) fn format_message_content_lines_with_loaded_custom_emoji_urls(
     message: &MessageState,
     state: &DashboardState,
