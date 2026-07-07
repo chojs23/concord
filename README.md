@@ -434,6 +434,7 @@ overlay.
 | `Ctrl+c`                                     | clear             | Clear current draft                                              |
 | `Ctrl+Left`/ `Ctrl+Right`                    | Jump word         | Jump the cursor by word                                          |
 | `Alt+Backspace`, `Ctrl+Backspace` / `Ctrl+w` | Delete word       | Delete the word before the cursor                                |
+| `Ctrl+u` / `Ctrl+k`                          | Delete line text  | Delete from cursor to start/end of the current line              |
 | `Delete`                                     | Detach attachment | Removes the last pending attachment                              |
 | `Alt+p`                                      | Toggle reply ping | Toggle whether replying pings the original author                |
 
@@ -689,6 +690,8 @@ ClearInput = "<C-c>"
 RemoveLastAttachment = "delete"
 DeletePreviousChar = "backspace"
 DeletePreviousWord = { keys = ["<A-backspace>", "<C-backspace>", "<C-w>"] }
+DeleteToLineStart = "<C-u>"
+DeleteToLineEnd = "<C-k>"
 MoveCursorUp = "up"
 MoveCursorDown = "down"
 MoveCursorWordLeft = "<C-left>"

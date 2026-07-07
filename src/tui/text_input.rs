@@ -76,6 +76,26 @@ impl TextInputState {
         self.replace_range(start..end, "")
     }
 
+    pub(in crate::tui) fn delete_to_line_start(&mut self) -> bool {
+        let end = self.cursor_byte_index();
+        let start = self.value[..end].rfind('\n').map_or(0, |index| index + 1);
+        if start == end {
+            return false;
+        }
+        self.replace_range(start..end, "")
+    }
+
+    pub(in crate::tui) fn delete_to_line_end(&mut self) -> bool {
+        let start = self.cursor_byte_index();
+        let end = self.value[start..]
+            .find('\n')
+            .map_or(self.value.len(), |offset| start + offset);
+        if start == end {
+            return false;
+        }
+        self.replace_range(start..end, "")
+    }
+
     pub(in crate::tui) fn move_left(&mut self) {
         let cursor = self.cursor_byte_index();
         self.cursor_byte_index = previous_char_boundary(&self.value, cursor);

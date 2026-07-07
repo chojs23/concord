@@ -207,6 +207,8 @@ attachments. Press `s` outside edit mode to create the post.
 | `RemoveLastAttachment` | `"delete"`                                         | Remove the last pending attachment.     |
 | `DeletePreviousChar`   | `"backspace"`                                      | Delete the previous character.          |
 | `DeletePreviousWord`   | `["<A-backspace>", "<C-backspace>", "<C-w>"]`      | Delete the word before the cursor.      |
+| `DeleteToLineStart`    | `"<C-u>"`                                          | Delete to the start of the current line. |
+| `DeleteToLineEnd`      | `"<C-k>"`                                          | Delete to the end of the current line.   |
 | `MoveCursorUp`         | `"up"`                                             | Move the cursor up.                     |
 | `MoveCursorDown`       | `"down"`                                           | Move the cursor down.                   |
 | `MoveCursorWordLeft`   | `"<C-left>"`                                       | Move the cursor one word left.          |

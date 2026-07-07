@@ -393,6 +393,30 @@ fn modified_backspace_and_ctrl_w_delete_previous_composer_word() {
 }
 
 #[test]
+fn ctrl_u_and_ctrl_k_delete_to_composer_line_boundaries() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    assert!(handle_paste(&mut state, "alpha\nbrave world\nomega"));
+    for _ in 0.."world\nomega".chars().count() {
+        handle_key(&mut state, key(KeyCode::Left));
+    }
+
+    handle_key(&mut state, ctrl_key('k'));
+
+    assert_eq!(state.composer_input(), "alpha\nbrave \nomega");
+    assert_eq!(state.composer_cursor_byte_index(), "alpha\nbrave ".len());
+
+    handle_key(&mut state, ctrl_key('u'));
+
+    assert_eq!(state.composer_input(), "alpha\n\nomega");
+    assert_eq!(state.composer_cursor_byte_index(), "alpha\n".len());
+}
+
+#[test]
 fn composer_keymap_can_remap_editor_and_delete_word() {
     let state = state_with_keymap(KeymapOptions {
         composer: [

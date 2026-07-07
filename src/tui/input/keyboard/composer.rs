@@ -45,6 +45,14 @@ pub(super) fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
             state.delete_previous_composer_word();
             None
         }
+        ComposerAction::DeleteToLineStart => {
+            state.delete_composer_to_line_start();
+            None
+        }
+        ComposerAction::DeleteToLineEnd => {
+            state.delete_composer_to_line_end();
+            None
+        }
         ComposerAction::MoveCursorUp => {
             state.move_composer_cursor_up();
             None

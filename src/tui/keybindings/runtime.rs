@@ -355,6 +355,8 @@ impl KeyBindings {
             ComposerAction::Close => Some(ProfilePopupAction::Close),
             ComposerAction::DeletePreviousChar => Some(ProfilePopupAction::DeleteChar),
             ComposerAction::DeletePreviousWord => Some(ProfilePopupAction::DeletePreviousWord),
+            ComposerAction::DeleteToLineStart => Some(ProfilePopupAction::DeleteToLineStart),
+            ComposerAction::DeleteToLineEnd => Some(ProfilePopupAction::DeleteToLineEnd),
             ComposerAction::MoveCursorWordLeft => Some(ProfilePopupAction::MoveCursorWordLeft),
             ComposerAction::MoveCursorLeft => Some(ProfilePopupAction::MoveCursorLeft),
             ComposerAction::MoveCursorWordRight => Some(ProfilePopupAction::MoveCursorWordRight),
