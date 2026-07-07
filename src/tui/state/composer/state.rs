@@ -586,6 +586,24 @@ impl DashboardState {
         self.replace_composer_range(start..end, "");
     }
 
+    pub fn delete_composer_to_line_start(&mut self) {
+        let end = self.composer.composer_input.cursor_byte_index();
+        let start = self.composer.composer_input.value()[..end]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+        self.replace_composer_range(start..end, "");
+    }
+
+    pub fn delete_composer_to_line_end(&mut self) {
+        let start = self.composer.composer_input.cursor_byte_index();
+        let end = self.composer.composer_input.value()[start..]
+            .find('\n')
+            .map_or(self.composer.composer_input.value().len(), |offset| {
+                start + offset
+            });
+        self.replace_composer_range(start..end, "");
+    }
+
     pub fn move_composer_cursor_left(&mut self) {
         self.composer.composer_input.move_left();
         self.refresh_active_mention_query();

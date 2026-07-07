@@ -394,6 +394,24 @@ impl super::super::DashboardState {
         }
     }
 
+    pub fn delete_thread_edit_to_line_start(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut()
+            && popup.editing_title
+            && popup.edit_input.delete_to_line_start()
+        {
+            popup.status = None;
+        }
+    }
+
+    pub fn delete_thread_edit_to_line_end(&mut self) {
+        if let Some(popup) = self.popups.thread_edit_mut()
+            && popup.editing_title
+            && popup.edit_input.delete_to_line_end()
+        {
+            popup.status = None;
+        }
+    }
+
     pub fn move_thread_edit_cursor_left(&mut self) {
         self.with_thread_edit_title_input(|input| input.move_left());
     }

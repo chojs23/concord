@@ -334,6 +334,46 @@ impl DashboardState {
         }
     }
 
+    pub fn delete_forum_post_to_line_start(&mut self) {
+        if let Some(popup) = self.popups.forum_post_composer_mut() {
+            let changed = match popup.editing {
+                Some(ForumPostComposerFieldState::Title | ForumPostComposerFieldState::Body) => {
+                    popup.edit_input.delete_to_line_start()
+                }
+                Some(
+                    ForumPostComposerFieldState::Attachments
+                    | ForumPostComposerFieldState::Tags
+                    | ForumPostComposerFieldState::Submit
+                    | ForumPostComposerFieldState::Cancel,
+                )
+                | None => false,
+            };
+            if changed {
+                popup.status = None;
+            }
+        }
+    }
+
+    pub fn delete_forum_post_to_line_end(&mut self) {
+        if let Some(popup) = self.popups.forum_post_composer_mut() {
+            let changed = match popup.editing {
+                Some(ForumPostComposerFieldState::Title | ForumPostComposerFieldState::Body) => {
+                    popup.edit_input.delete_to_line_end()
+                }
+                Some(
+                    ForumPostComposerFieldState::Attachments
+                    | ForumPostComposerFieldState::Tags
+                    | ForumPostComposerFieldState::Submit
+                    | ForumPostComposerFieldState::Cancel,
+                )
+                | None => false,
+            };
+            if changed {
+                popup.status = None;
+            }
+        }
+    }
+
     pub fn move_forum_post_cursor_left(&mut self) {
         self.with_forum_post_active_text_input(|input| input.move_left());
     }

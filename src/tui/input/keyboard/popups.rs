@@ -149,6 +149,8 @@ pub(super) fn handle_forum_post_composer_key(
         | ComposerAction::InsertNewline
         | ComposerAction::DeletePreviousChar
         | ComposerAction::DeletePreviousWord
+        | ComposerAction::DeleteToLineStart
+        | ComposerAction::DeleteToLineEnd
         | ComposerAction::MoveCursorUp
         | ComposerAction::MoveCursorDown
         | ComposerAction::MoveCursorWordLeft
@@ -188,6 +190,8 @@ fn handle_forum_post_tag_picker_key(
         | ComposerAction::InsertNewline
         | ComposerAction::DeletePreviousChar
         | ComposerAction::DeletePreviousWord
+        | ComposerAction::DeleteToLineStart
+        | ComposerAction::DeleteToLineEnd
         | ComposerAction::RemoveLastAttachment
         | ComposerAction::MoveCursorUp
         | ComposerAction::MoveCursorDown
@@ -216,6 +220,8 @@ fn handle_forum_post_composer_edit_key(
         ComposerAction::ClearInput => state.clear_forum_post_active_field(),
         ComposerAction::DeletePreviousChar => state.delete_forum_post_previous_char(),
         ComposerAction::DeletePreviousWord => state.delete_forum_post_previous_word(),
+        ComposerAction::DeleteToLineStart => state.delete_forum_post_to_line_start(),
+        ComposerAction::DeleteToLineEnd => state.delete_forum_post_to_line_end(),
         ComposerAction::MoveCursorWordLeft => state.move_forum_post_cursor_word_left(),
         ComposerAction::MoveCursorLeft => state.move_forum_post_cursor_left(),
         ComposerAction::MoveCursorWordRight => state.move_forum_post_cursor_word_right(),
@@ -307,6 +313,8 @@ pub(super) fn handle_thread_edit_key(
         | ComposerAction::InsertNewline
         | ComposerAction::DeletePreviousChar
         | ComposerAction::DeletePreviousWord
+        | ComposerAction::DeleteToLineStart
+        | ComposerAction::DeleteToLineEnd
         | ComposerAction::RemoveLastAttachment
         | ComposerAction::MoveCursorUp
         | ComposerAction::MoveCursorDown
@@ -347,6 +355,8 @@ fn handle_thread_edit_tag_picker_key(
         | ComposerAction::InsertNewline
         | ComposerAction::DeletePreviousChar
         | ComposerAction::DeletePreviousWord
+        | ComposerAction::DeleteToLineStart
+        | ComposerAction::DeleteToLineEnd
         | ComposerAction::RemoveLastAttachment
         | ComposerAction::MoveCursorUp
         | ComposerAction::MoveCursorDown
@@ -371,6 +381,8 @@ fn handle_thread_edit_title_key(state: &mut DashboardState, key: KeyEvent) -> Op
         ComposerAction::ClearInput => state.clear_thread_edit_active_field(),
         ComposerAction::DeletePreviousChar => state.delete_thread_edit_previous_char(),
         ComposerAction::DeletePreviousWord => state.delete_thread_edit_previous_word(),
+        ComposerAction::DeleteToLineStart => state.delete_thread_edit_to_line_start(),
+        ComposerAction::DeleteToLineEnd => state.delete_thread_edit_to_line_end(),
         ComposerAction::MoveCursorWordLeft => state.move_thread_edit_cursor_word_left(),
         ComposerAction::MoveCursorLeft => state.move_thread_edit_cursor_left(),
         ComposerAction::MoveCursorWordRight => state.move_thread_edit_cursor_word_right(),
@@ -828,6 +840,10 @@ pub(super) fn handle_user_profile_popup_key(
         Some(ProfilePopupAction::DeletePreviousWord) => {
             state.delete_previous_user_profile_edit_word()
         }
+        Some(ProfilePopupAction::DeleteToLineStart) => {
+            state.delete_user_profile_edit_to_line_start()
+        }
+        Some(ProfilePopupAction::DeleteToLineEnd) => state.delete_user_profile_edit_to_line_end(),
         Some(ProfilePopupAction::MoveCursorLeft) => state.move_user_profile_edit_cursor_left(),
         Some(ProfilePopupAction::MoveCursorRight) => state.move_user_profile_edit_cursor_right(),
         Some(ProfilePopupAction::MoveCursorWordLeft) => {

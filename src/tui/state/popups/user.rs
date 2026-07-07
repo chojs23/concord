@@ -665,6 +665,28 @@ impl DashboardState {
         }
     }
 
+    pub fn delete_user_profile_edit_to_line_start(&mut self) {
+        if !self.is_current_user_profile_popup() {
+            return;
+        }
+        if let Some(popup) = self.popups.user_profile_popup_mut()
+            && popup.settings.editing.is_some()
+        {
+            popup.settings.edit_input.delete_to_line_start();
+        }
+    }
+
+    pub fn delete_user_profile_edit_to_line_end(&mut self) {
+        if !self.is_current_user_profile_popup() {
+            return;
+        }
+        if let Some(popup) = self.popups.user_profile_popup_mut()
+            && popup.settings.editing.is_some()
+        {
+            popup.settings.edit_input.delete_to_line_end();
+        }
+    }
+
     pub fn move_user_profile_edit_cursor_left(&mut self) {
         self.move_user_profile_edit_cursor_with(|input| input.move_left());
     }
