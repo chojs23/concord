@@ -151,10 +151,7 @@ fn runs_inline(command: &AppCommand) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config::{MicrophoneSensitivityDb, VoiceVolumePercent},
-        discord::{VoiceScope, ids::Id},
-    };
+    use crate::discord::{MicrophoneSensitivityDb, VoiceScope, VoiceVolumePercent, ids::Id};
 
     use super::*;
 

@@ -7,11 +7,11 @@ use std::{
 mod lifecycle;
 mod rest_actions;
 
-use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
+use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use reqwest::header::HeaderValue;
 use tokio::{
     sync::{Mutex as AsyncMutex, mpsc, watch},
@@ -323,7 +323,7 @@ impl DiscordClient {
                     .current_user_voice_connection()
                     .filter(|voice| voice.scope == scope && voice.channel_id == channel_id)
                     .is_some();
-                // Permission gates apply only to guild voice channels; DM and
+                // Permission gates apply only to guild voice channels. DM and
                 // group-DM calls have no guild permission model to check.
                 if !current_same_channel
                     && scope.guild_id().is_some()

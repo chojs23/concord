@@ -5,7 +5,7 @@ use ratatui::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::tui::format::{InlineEmojiSlot, TextHighlight};
+use crate::tui::text::{InlineEmojiSlot, TextHighlight};
 
 use super::{MessageContentImageSlot, StyledPrefix};
 
@@ -185,7 +185,6 @@ pub(super) fn wrap_text_with_metadata(
                     slot_count: current_slots.len(),
                 });
             }
-            // First grapheme of a slot reserves the full `:name:` width.
             let effective_width = match slot_at_grapheme {
                 Some(slot) => slot.display_width as usize,
                 None => grapheme_width,
@@ -319,7 +318,6 @@ mod tests {
 
     #[test]
     fn wrap_distributes_emoji_slots_per_line_with_correct_columns() {
-        // Two `:e:` placeholders (each 3 cells wide) at byte offsets 2 and 7.
         let text = "ab:e:cd:e:";
         let slots = vec![
             InlineEmojiSlot {
@@ -354,7 +352,6 @@ mod tests {
 
     #[test]
     fn wrap_keeps_emoji_text_fallback_atomic_at_line_edge() {
-        // Width 4 cannot fit "ab" + 3-cell ":e:" on one line, so the emoji wraps.
         let text = "ab:e:";
         let slots = vec![InlineEmojiSlot {
             byte_start: 2,

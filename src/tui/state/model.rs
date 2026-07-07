@@ -204,7 +204,7 @@ pub enum ForumPostComposerField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForumPostComposerTagView {
     pub name: String,
-    /// Unicode emoji shown inline; `None` for a custom or emoji-less tag.
+    /// Unicode emoji shown inline. `None` for a custom or emoji-less tag.
     pub unicode_emoji: Option<String>,
     /// CDN url of a custom tag emoji, overlaid as an image on a reserved gap.
     pub custom_emoji_url: Option<String>,
@@ -257,7 +257,7 @@ pub enum ThreadEditField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ThreadEditTagView {
     pub name: String,
-    /// Unicode emoji shown inline; `None` for a custom or emoji-less tag.
+    /// Unicode emoji shown inline. `None` for a custom or emoji-less tag.
     pub unicode_emoji: Option<String>,
     /// CDN url of a custom tag emoji, overlaid as an image on a reserved gap.
     pub custom_emoji_url: Option<String>,
@@ -337,7 +337,7 @@ pub enum ChannelActionKind {
 pub type ChannelActionItem = ActionItem<ChannelActionKind>;
 
 /// Actions on a thread (a regular thread or a forum post). Mirrors Discord's
-/// thread/forum-post right-click menu. `Pin` only applies to forum posts; the
+/// thread/forum-post right-click menu. `Pin` only applies to forum posts. The
 /// rest apply to every thread (see `selected_thread_action_items`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ThreadActionKind {

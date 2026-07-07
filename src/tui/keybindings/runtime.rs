@@ -1,5 +1,38 @@
 use super::*;
 
+/// The lookup trio every action-menu scope exposes: shortcut resolution,
+/// item label, and (where the menu shows one) the shortcut gutter label.
+/// Adding a scope is one invocation plus its default key table.
+macro_rules! define_action_menu_scope {
+    (
+        $field:ident, $item:ty,
+        $shortcuts:ident, $label:ident, $default:ident $(, $shortcut_label:ident)?
+    ) => {
+        pub fn $shortcuts(&self, actions: &[$item], index: usize) -> Vec<KeyChord> {
+            scoped_action_shortcuts(
+                index,
+                actions.iter().map(|item| item.kind),
+                &self.action_shortcuts.$field,
+                |kind| self.$default(kind),
+            )
+        }
+
+        pub fn $label(&self, action: &$item) -> String {
+            action_label(&self.action_shortcuts.$field, action.kind, &action.label)
+        }
+
+        $(
+            pub fn $shortcut_label(&self, actions: &[$item], index: usize) -> String {
+                let activation_shortcuts = self.$shortcuts(actions, index);
+                if !activation_shortcuts.is_empty() {
+                    return key_chord_list_label(&activation_shortcuts);
+                }
+                String::new()
+            }
+        )?
+    };
+}
+
 impl KeyBindings {
     pub(in crate::tui) fn binding_summaries(&self) -> Vec<KeymapBindingSummary> {
         let mut summaries = self
@@ -790,22 +823,13 @@ impl KeyBindings {
         }
     }
 
-    pub fn channel_action_shortcuts(
-        &self,
-        actions: &[ChannelActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.channel,
-            |kind| self.default_channel_action_shortcut(kind),
-        )
-    }
-
-    pub fn channel_action_label(&self, action: &ChannelActionItem) -> String {
-        action_label(&self.action_shortcuts.channel, action.kind, &action.label)
-    }
+    define_action_menu_scope!(
+        channel,
+        ChannelActionItem,
+        channel_action_shortcuts,
+        channel_action_label,
+        default_channel_action_shortcut
+    );
 
     fn default_channel_action_shortcut(&self, kind: ChannelActionKind) -> Vec<KeyChord> {
         vec![char_chord(match kind {
@@ -818,22 +842,13 @@ impl KeyBindings {
         })]
     }
 
-    pub fn guild_action_shortcuts(
-        &self,
-        actions: &[GuildActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.guild,
-            |kind| self.default_guild_action_shortcut(kind),
-        )
-    }
-
-    pub fn guild_action_label(&self, action: &GuildActionItem) -> String {
-        action_label(&self.action_shortcuts.guild, action.kind, &action.label)
-    }
+    define_action_menu_scope!(
+        guild,
+        GuildActionItem,
+        guild_action_shortcuts,
+        guild_action_label,
+        default_guild_action_shortcut
+    );
 
     fn default_guild_action_shortcut(&self, kind: GuildActionKind) -> Vec<KeyChord> {
         match kind {
@@ -845,22 +860,13 @@ impl KeyBindings {
         }
     }
 
-    pub fn member_action_shortcuts(
-        &self,
-        actions: &[MemberActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.member,
-            |kind| self.default_member_action_shortcut(kind),
-        )
-    }
-
-    pub fn member_action_label(&self, action: &MemberActionItem) -> String {
-        action_label(&self.action_shortcuts.member, action.kind, &action.label)
-    }
+    define_action_menu_scope!(
+        member,
+        MemberActionItem,
+        member_action_shortcuts,
+        member_action_label,
+        default_member_action_shortcut
+    );
 
     fn default_member_action_shortcut(&self, kind: MemberActionKind) -> Vec<KeyChord> {
         vec![char_chord(match kind {
@@ -868,22 +874,14 @@ impl KeyBindings {
         })]
     }
 
-    pub fn thread_action_shortcuts(
-        &self,
-        actions: &[ThreadActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.thread,
-            |kind| self.default_thread_action_shortcut(kind),
-        )
-    }
-
-    pub fn thread_action_label(&self, action: &ThreadActionItem) -> String {
-        action_label(&self.action_shortcuts.thread, action.kind, &action.label)
-    }
+    define_action_menu_scope!(
+        thread,
+        ThreadActionItem,
+        thread_action_shortcuts,
+        thread_action_label,
+        default_thread_action_shortcut,
+        thread_action_shortcut_label
+    );
 
     fn default_thread_action_shortcut(&self, kind: ThreadActionKind) -> Vec<KeyChord> {
         vec![char_chord(match kind {
@@ -901,34 +899,14 @@ impl KeyBindings {
         })]
     }
 
-    pub fn thread_action_shortcut_label(
-        &self,
-        actions: &[ThreadActionItem],
-        index: usize,
-    ) -> String {
-        let activation_shortcuts = self.thread_action_shortcuts(actions, index);
-        if !activation_shortcuts.is_empty() {
-            return key_chord_list_label(&activation_shortcuts);
-        }
-        String::new()
-    }
-
-    pub fn message_action_shortcuts(
-        &self,
-        actions: &[MessageActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.message,
-            |kind| self.default_message_action_shortcut(kind),
-        )
-    }
-
-    pub fn message_action_label(&self, action: &MessageActionItem) -> String {
-        action_label(&self.action_shortcuts.message, action.kind, &action.label)
-    }
+    define_action_menu_scope!(
+        message,
+        MessageActionItem,
+        message_action_shortcuts,
+        message_action_label,
+        default_message_action_shortcut,
+        message_action_shortcut_label
+    );
 
     fn default_message_action_shortcut(&self, kind: MessageActionKind) -> Vec<KeyChord> {
         vec![char_chord(match kind {
@@ -948,18 +926,6 @@ impl KeyBindings {
             MessageActionKind::ShowReactionUsers => 'u',
             MessageActionKind::OpenPollVotePicker => 'c',
         })]
-    }
-
-    pub fn message_action_shortcut_label(
-        &self,
-        actions: &[MessageActionItem],
-        index: usize,
-    ) -> String {
-        let activation_shortcuts = self.message_action_shortcuts(actions, index);
-        if !activation_shortcuts.is_empty() {
-            return key_chord_list_label(&activation_shortcuts);
-        }
-        String::new()
     }
 
     fn keymap_single_key_shortcuts(&self, action: UiAction) -> Vec<KeyChord> {

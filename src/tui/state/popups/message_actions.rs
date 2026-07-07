@@ -6,8 +6,8 @@ use crate::discord::{
     AppCommand, AttachmentMediaType, EmbedInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MediaPlaybackSource,
     MediaPlaybackTarget, MessageState, ReactionEmoji,
 };
-use crate::tui::format::detected_urls;
 use crate::tui::keybindings::KeyChord;
+use crate::tui::text::detected_urls;
 
 use super::super::{
     ActiveGuildScope, DashboardState, FocusPane, MessageActionItem, MessageActionKind,

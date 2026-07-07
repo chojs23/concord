@@ -179,47 +179,15 @@ pub(super) async fn connect_voice_gateway(
                 let opcode = value.get("op").and_then(Value::as_u64).unwrap_or_default() as u8;
                 match opcode {
                     VOICE_OP_READY => {
-                        let ready = parse_voice_ready_payload(&value)?;
-                        logging::debug(
-                            "voice",
-                            format!(
-                                "voice ready received: ssrc={} udp={}:{} modes={}",
-                                ready.ssrc,
-                                ready.ip,
-                                ready.port,
-                                ready.modes.len()
-                            ),
-                        );
-                        let mode = choose_encryption_mode(&ready.modes)?;
-                        logging::debug("voice", format!("voice encryption mode selected: {mode}"));
-                        // Bind the UDP socket on the audio runtime so its tokio
-                        // reactor owns the I/O; subsequent send/recv stay on the
-                        // dedicated thread instead of competing with the TUI.
-                        let ready_for_discover = ready.clone();
-                        let (socket, discovered) =
-                            audio_handle
-                                .spawn(async move {
-                                    discover_voice_udp_address(&ready_for_discover).await
-                                })
-                                .await
-                                .map_err(|error| {
-                                    format!("voice UDP discovery task join failed: {error}")
-                                })??;
-                        send_voice_text(&writer, voice_select_protocol_payload(&discovered, &mode))
-                            .await?;
-                        logging::debug(
-                            "voice",
-                            format!(
-                                "voice select protocol sent: address={} port={} mode={}",
-                                discovered.address, discovered.port, mode
-                            ),
-                        );
+                        let (socket, ready) =
+                            establish_voice_transport(&value, &writer, &audio_handle).await?;
                         udp_socket = Some(socket);
                         #[cfg(feature = "voice-playback")]
                         {
                             voice_ready = Some(ready);
                         }
-                        logging::debug("voice", "voice UDP discovery completed");
+                        #[cfg(not(feature = "voice-playback"))]
+                        let _ = ready;
                     }
                     VOICE_OP_SESSION_DESCRIPTION => {
                         let description = parse_voice_session_description(&value)?;
@@ -233,70 +201,31 @@ pub(super) async fn connect_voice_gateway(
                             dave_state.lock().await.reinit(dave_protocol_version)?;
                         }
                         if let Some(socket) = udp_socket.as_ref() {
-                            logging::debug("voice", "starting voice UDP receive task");
-                            let opus_decode =
-                                VoiceOpusDecode::start(current_playback_gate, &audio_handle);
-                            let playback_tx = Some(opus_decode.frames_tx.clone());
-                            child_tasks.replace_opus_decode(opus_decode);
-                            child_tasks.set_voice_playback_gate(current_playback_gate);
-                            #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
-                            let transmit_description = description.clone();
-                            child_tasks.replace_udp_receive(audio_handle.spawn(
-                                run_voice_udp_receive(
-                                    Arc::clone(socket),
-                                    description,
-                                    Arc::clone(&dave_state),
-                                    playback_tx,
-                                    remote_speaking_tx.clone(),
-                                ),
-                            ));
-                            #[cfg(feature = "voice-playback")]
-                            if let Some(ready) = voice_ready.as_ref() {
-                                let (pcm_tx, pcm_rx) = mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-                                let (gate_tx, gate_rx) = watch::channel(current_capture_gate);
-                                child_tasks
-                                    .replace_udp_transmit(
-                                        audio_handle.spawn(run_voice_udp_transmit(
-                                            pcm_rx,
-                                            gate_rx,
-                                            VoiceUdpTransmitContext {
-                                                udp_socket: Arc::clone(socket),
-                                                writer: Arc::clone(&writer),
-                                                description: transmit_description,
-                                                ssrc: ready.ssrc,
-                                                dave_state: Arc::clone(&dave_state),
-                                                local_speaking_tx: local_speaking_tx.clone(),
-                                            },
-                                        )),
-                                        gate_tx,
-                                        pcm_tx,
-                                    )
-                                    .await;
-                                child_tasks.set_voice_transmit_gate(current_capture_gate);
-                            }
+                            start_voice_session_audio(
+                                description,
+                                &mut child_tasks,
+                                VoiceSessionAudio {
+                                    socket,
+                                    #[cfg(feature = "voice-playback")]
+                                    writer: &writer,
+                                    audio_handle: &audio_handle,
+                                    dave_state: &dave_state,
+                                    remote_speaking_tx: &remote_speaking_tx,
+                                    current_playback_gate,
+                                    #[cfg(feature = "voice-playback")]
+                                    voice_ready: voice_ready.as_ref(),
+                                    #[cfg(feature = "voice-playback")]
+                                    current_capture_gate,
+                                    #[cfg(feature = "voice-playback")]
+                                    local_speaking_tx: &local_speaking_tx,
+                                },
+                            )
+                            .await;
                         }
                     }
                     VOICE_OP_HEARTBEAT_ACK => {}
                     VOICE_OP_HELLO => {
-                        let interval = value
-                            .get("d")
-                            .and_then(|data| data.get("heartbeat_interval"))
-                            .and_then(Value::as_u64)
-                            .map(Duration::from_millis)
-                            .ok_or_else(|| "voice hello missing heartbeat interval".to_owned())?;
-                        logging::debug(
-                            "voice",
-                            format!(
-                                "voice hello received: heartbeat_interval_ms={}",
-                                interval.as_millis()
-                            ),
-                        );
-                        child_tasks.replace_heartbeat(tokio::spawn(run_voice_heartbeat(
-                            Arc::clone(&writer),
-                            interval,
-                            Arc::clone(&last_sequence),
-                        )));
-                        logging::debug("voice", "voice heartbeat task started");
+                        handle_voice_hello(&value, &writer, &last_sequence, &mut child_tasks)?;
                     }
                     VOICE_OP_CLIENTS_CONNECT
                     | VOICE_OP_CLIENT_DISCONNECT
@@ -313,21 +242,14 @@ pub(super) async fn connect_voice_gateway(
                             .await?;
                     }
                     VOICE_OP_SPEAKING => {
-                        let speaking = dave_state.lock().await.handle_speaking_op(&value);
-                        if let (Some(user_id), Some(speaking)) = (
-                            speaking.user_id.and_then(Id::<UserMarker>::new_checked),
-                            speaking.speaking,
-                        ) {
-                            if let Some(speaking) = speaking_tracker.record_remote(
-                                user_id,
-                                voice_speaking_microphone_active(speaking),
-                                Instant::now(),
-                            ) {
-                                status_publisher
-                                    .publish_speaking(session, user_id, speaking)
-                                    .await;
-                            }
-                        }
+                        handle_voice_speaking(
+                            &value,
+                            session,
+                            &dave_state,
+                            &mut speaking_tracker,
+                            status_publisher,
+                        )
+                        .await;
                     }
                     other => logging::debug("voice", format!("unhandled voice gateway op={other}")),
                 }
@@ -377,6 +299,156 @@ pub(super) async fn connect_voice_gateway(
             .await;
     }
     result
+}
+
+async fn establish_voice_transport(
+    value: &Value,
+    writer: &VoiceWriter,
+    audio_handle: &tokio::runtime::Handle,
+) -> Result<(Arc<UdpSocket>, VoiceTransportSession), String> {
+    let ready = parse_voice_ready_payload(value)?;
+    logging::debug(
+        "voice",
+        format!(
+            "voice ready received: ssrc={} udp={}:{} modes={}",
+            ready.ssrc,
+            ready.ip,
+            ready.port,
+            ready.modes.len()
+        ),
+    );
+    let mode = choose_encryption_mode(&ready.modes)?;
+    logging::debug("voice", format!("voice encryption mode selected: {mode}"));
+    // Bind on the audio runtime so subsequent UDP I/O stays on the dedicated
+    // thread instead of competing with the TUI.
+    let ready_for_discover = ready.clone();
+    let (socket, discovered) = audio_handle
+        .spawn(async move { discover_voice_udp_address(&ready_for_discover).await })
+        .await
+        .map_err(|error| format!("voice UDP discovery task join failed: {error}"))??;
+    send_voice_text(writer, voice_select_protocol_payload(&discovered, &mode)).await?;
+    logging::debug(
+        "voice",
+        format!(
+            "voice select protocol sent: address={} port={} mode={}",
+            discovered.address, discovered.port, mode
+        ),
+    );
+    logging::debug("voice", "voice UDP discovery completed");
+    Ok((socket, ready))
+}
+
+struct VoiceSessionAudio<'a> {
+    socket: &'a Arc<UdpSocket>,
+    #[cfg(feature = "voice-playback")]
+    writer: &'a VoiceWriter,
+    audio_handle: &'a tokio::runtime::Handle,
+    dave_state: &'a Arc<Mutex<VoiceDaveState>>,
+    remote_speaking_tx: &'a mpsc::UnboundedSender<Id<UserMarker>>,
+    current_playback_gate: VoicePlaybackGate,
+    #[cfg(feature = "voice-playback")]
+    voice_ready: Option<&'a VoiceTransportSession>,
+    #[cfg(feature = "voice-playback")]
+    current_capture_gate: VoiceCaptureGate,
+    #[cfg(feature = "voice-playback")]
+    local_speaking_tx: &'a mpsc::UnboundedSender<bool>,
+}
+
+async fn start_voice_session_audio(
+    description: VoiceSessionDescription,
+    child_tasks: &mut VoiceChildTasks,
+    audio: VoiceSessionAudio<'_>,
+) {
+    logging::debug("voice", "starting voice UDP receive task");
+    let opus_decode = VoiceOpusDecode::start(audio.current_playback_gate, audio.audio_handle);
+    let playback_tx = Some(opus_decode.frames_tx.clone());
+    child_tasks.replace_opus_decode(opus_decode);
+    child_tasks.set_voice_playback_gate(audio.current_playback_gate);
+    #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
+    let transmit_description = description.clone();
+    child_tasks.replace_udp_receive(audio.audio_handle.spawn(run_voice_udp_receive(
+        Arc::clone(audio.socket),
+        description,
+        Arc::clone(audio.dave_state),
+        playback_tx,
+        audio.remote_speaking_tx.clone(),
+    )));
+    #[cfg(feature = "voice-playback")]
+    if let Some(ready) = audio.voice_ready {
+        let (pcm_tx, pcm_rx) = mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
+        let (gate_tx, gate_rx) = watch::channel(audio.current_capture_gate);
+        child_tasks
+            .replace_udp_transmit(
+                audio.audio_handle.spawn(run_voice_udp_transmit(
+                    pcm_rx,
+                    gate_rx,
+                    VoiceUdpTransmitContext {
+                        udp_socket: Arc::clone(audio.socket),
+                        writer: Arc::clone(audio.writer),
+                        description: transmit_description,
+                        ssrc: ready.ssrc,
+                        dave_state: Arc::clone(audio.dave_state),
+                        local_speaking_tx: audio.local_speaking_tx.clone(),
+                    },
+                )),
+                gate_tx,
+                pcm_tx,
+            )
+            .await;
+        child_tasks.set_voice_transmit_gate(audio.current_capture_gate);
+    }
+}
+
+fn handle_voice_hello(
+    value: &Value,
+    writer: &VoiceWriter,
+    last_sequence: &Arc<Mutex<Option<i64>>>,
+    child_tasks: &mut VoiceChildTasks,
+) -> Result<(), String> {
+    let interval = value
+        .get("d")
+        .and_then(|data| data.get("heartbeat_interval"))
+        .and_then(Value::as_u64)
+        .map(Duration::from_millis)
+        .ok_or_else(|| "voice hello missing heartbeat interval".to_owned())?;
+    logging::debug(
+        "voice",
+        format!(
+            "voice hello received: heartbeat_interval_ms={}",
+            interval.as_millis()
+        ),
+    );
+    child_tasks.replace_heartbeat(tokio::spawn(run_voice_heartbeat(
+        Arc::clone(writer),
+        interval,
+        Arc::clone(last_sequence),
+    )));
+    logging::debug("voice", "voice heartbeat task started");
+    Ok(())
+}
+
+async fn handle_voice_speaking(
+    value: &Value,
+    session: &VoiceGatewaySession,
+    dave_state: &Arc<Mutex<VoiceDaveState>>,
+    speaking_tracker: &mut VoiceSpeakingTracker,
+    status_publisher: &VoiceStatusPublisher,
+) {
+    let speaking = dave_state.lock().await.handle_speaking_op(value);
+    if let (Some(user_id), Some(speaking)) = (
+        speaking.user_id.and_then(Id::<UserMarker>::new_checked),
+        speaking.speaking,
+    ) {
+        if let Some(speaking) = speaking_tracker.record_remote(
+            user_id,
+            voice_speaking_microphone_active(speaking),
+            Instant::now(),
+        ) {
+            status_publisher
+                .publish_speaking(session, user_id, speaking)
+                .await;
+        }
+    }
 }
 
 pub(super) async fn discover_voice_udp_address(

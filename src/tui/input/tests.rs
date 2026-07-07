@@ -21,18 +21,15 @@ use ratatui::layout::Rect;
 use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, handle_paste};
 use crate::discord::AppCommand;
 use crate::{
-    config::{
-        AppOptions, DisplayOptions, ImagePreviewQualityPreset, KeymapBinding, KeymapOptions,
-        MicrophoneSensitivityDb, VoiceVolumePercent,
-    },
+    config::{AppOptions, DisplayOptions, ImagePreviewQualityPreset, KeymapBinding, KeymapOptions},
     discord::{
         ActivityInfo, AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo,
         AttachmentDownloadId, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
         CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildFolder,
         GuildNotificationSettingsInfo, MemberInfo, MessageInfo, MessageReferenceInfo,
-        MessageSnapshotInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
-        ReactionEmoji, ReactionUserInfo, RoleInfo, UserGuildSettingsInfo, UserSettingsInfo,
-        VoiceConnectionStatus,
+        MessageSnapshotInfo, MicrophoneSensitivityDb, NotificationLevel, PollAnswerInfo, PollInfo,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, RoleInfo, UserGuildSettingsInfo,
+        UserSettingsInfo, VoiceConnectionStatus, VoiceVolumePercent,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -99,8 +96,6 @@ fn message_row_point(row: u16) -> (u16, u16) {
 }
 
 fn message_action_row_point(item_count: u16, row: u16) -> (u16, u16) {
-    // The action menu centers on the whole frame (dashboard_area, height 20);
-    // its first selectable row sits one row below the popup's top border.
     let popup_top = dashboard_area().height.saturating_sub(item_count + 2) / 2;
     (46, popup_top + 1 + row)
 }

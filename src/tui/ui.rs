@@ -15,7 +15,6 @@ use unicode_width::UnicodeWidthStr;
 #[cfg(test)]
 use super::state::MemberEntry;
 use super::{
-    format::truncate_display_width,
     message::format::{
         EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, ReactionLayout, embed_color,
         format_message_content_sections_with_loaded_custom_emoji_urls, format_message_relative_age,
@@ -29,6 +28,7 @@ use super::{
         PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
         ThreadActionItem, discord_color, presence_color, presence_marker,
     },
+    text::truncate_display_width,
 };
 use crate::discord::{
     ActivityInfo, ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus,

@@ -13,6 +13,7 @@ mod audio_runtime;
 mod dave;
 mod gateway;
 mod info;
+mod levels;
 #[cfg(any(test, feature = "voice-playback"))]
 mod microphone;
 mod opus;
@@ -99,7 +100,6 @@ use tokio::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::{
     DiscordState, SequencedAppEvent, SnapshotRevision,
     ids::{
@@ -108,6 +108,7 @@ use crate::discord::{
     },
 };
 use crate::logging;
+pub use levels::{MicrophoneSensitivityDb, VoiceVolumePercent};
 
 use super::{client::publish_app_event, events::AppEvent};
 
@@ -446,10 +447,36 @@ struct VoiceSpeakingTracker {
     local_speaking: bool,
 }
 
-#[derive(Default)]
+/// A child task slot that aborts the task it holds when replaced or torn
+/// down, logging the transition under the slot's label.
+struct ManagedTask {
+    label: &'static str,
+    task: Option<JoinHandle<()>>,
+}
+
+impl ManagedTask {
+    const fn new(label: &'static str) -> Self {
+        Self { label, task: None }
+    }
+
+    fn replace(&mut self, task: JoinHandle<()>) {
+        if let Some(previous) = self.task.replace(task) {
+            logging::debug("voice", format!("aborting previous {}", self.label));
+            previous.abort();
+        }
+    }
+
+    fn abort(&mut self) {
+        if let Some(task) = self.task.take() {
+            logging::debug("voice", format!("aborting {}", self.label));
+            task.abort();
+        }
+    }
+}
+
 struct VoiceChildTasks {
-    heartbeat: Option<JoinHandle<()>>,
-    udp_receive: Option<JoinHandle<()>>,
+    heartbeat: ManagedTask,
+    udp_receive: ManagedTask,
     #[cfg(feature = "voice-playback")]
     udp_transmit: Option<JoinHandle<()>>,
     #[cfg(feature = "voice-playback")]
@@ -460,7 +487,7 @@ struct VoiceChildTasks {
     playback_volume: Option<Arc<AtomicU8>>,
     #[cfg(feature = "voice-playback")]
     microphone_pcm_tx: Option<mpsc::Sender<Vec<i16>>>,
-    opus_decode: Option<JoinHandle<()>>,
+    opus_decode: ManagedTask,
     #[cfg(feature = "voice-playback")]
     audio_output: Option<VoiceAudioOutput>,
     #[cfg(feature = "voice-playback")]
@@ -468,6 +495,31 @@ struct VoiceChildTasks {
     // Declared last so it is dropped after the task handles above — aborting
     // them before the runtime they ran on tears down.
     audio_runtime: Option<VoiceAudioRuntime>,
+}
+
+impl Default for VoiceChildTasks {
+    fn default() -> Self {
+        Self {
+            heartbeat: ManagedTask::new("voice heartbeat task"),
+            udp_receive: ManagedTask::new("voice UDP receive task"),
+            #[cfg(feature = "voice-playback")]
+            udp_transmit: None,
+            #[cfg(feature = "voice-playback")]
+            transmit_gate: None,
+            #[cfg(feature = "voice-playback")]
+            playback_enabled: None,
+            #[cfg(feature = "voice-playback")]
+            playback_volume: None,
+            #[cfg(feature = "voice-playback")]
+            microphone_pcm_tx: None,
+            opus_decode: ManagedTask::new("voice Opus decode task"),
+            #[cfg(feature = "voice-playback")]
+            audio_output: None,
+            #[cfg(feature = "voice-playback")]
+            microphone_capture: None,
+            audio_runtime: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -572,19 +624,11 @@ impl fmt::Debug for VoiceGatewaySession {
 
 impl VoiceChildTasks {
     fn replace_heartbeat(&mut self, task: JoinHandle<()>) {
-        if let Some(task) = self.heartbeat.take() {
-            logging::debug("voice", "aborting previous voice heartbeat task");
-            task.abort();
-        }
-        self.heartbeat = Some(task);
+        self.heartbeat.replace(task);
     }
 
     fn replace_udp_receive(&mut self, task: JoinHandle<()>) {
-        if let Some(task) = self.udp_receive.take() {
-            logging::debug("voice", "aborting previous voice UDP receive task");
-            task.abort();
-        }
-        self.udp_receive = Some(task);
+        self.udp_receive.replace(task);
     }
 
     #[cfg(feature = "voice-playback")]
@@ -638,38 +682,25 @@ impl VoiceChildTasks {
     }
 
     fn replace_opus_decode(&mut self, opus_decode: VoiceOpusDecode) {
-        if let Some(task) = self.opus_decode.take() {
-            logging::debug("voice", "aborting previous voice Opus decode task");
-            task.abort();
-        }
         #[cfg(feature = "voice-playback")]
         {
             self.audio_output = opus_decode.audio_output;
             self.playback_enabled = Some(opus_decode.playback_enabled);
             self.playback_volume = Some(opus_decode.playback_volume);
         }
-        self.opus_decode = Some(opus_decode.task);
+        self.opus_decode.replace(opus_decode.task);
     }
 
     fn abort_all(&mut self) {
-        if let Some(task) = self.heartbeat.take() {
-            logging::debug("voice", "aborting voice heartbeat task");
-            task.abort();
-        }
-        if let Some(task) = self.udp_receive.take() {
-            logging::debug("voice", "aborting voice UDP receive task");
-            task.abort();
-        }
+        self.heartbeat.abort();
+        self.udp_receive.abort();
         #[cfg(feature = "voice-playback")]
         if let Some(task) = self.udp_transmit.take() {
             logging::debug("voice", "stopping voice UDP transmit task");
             self.signal_udp_transmit_stop();
             drop(task);
         }
-        if let Some(task) = self.opus_decode.take() {
-            logging::debug("voice", "aborting voice Opus decode task");
-            task.abort();
-        }
+        self.opus_decode.abort();
         #[cfg(feature = "voice-playback")]
         {
             self.audio_output = None;

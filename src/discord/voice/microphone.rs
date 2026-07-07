@@ -610,6 +610,70 @@ pub(super) async fn wait_voice_transmit_pacer_delay(
     }
 }
 
+/// Flushes a stop-speaking notice through the outbound sender, logging
+/// instead of propagating failures since the transmit loop keeps running.
+#[cfg(feature = "voice-playback")]
+async fn stop_voice_transmission(
+    context: &VoiceUdpTransmitContext,
+    sender: &mut VoiceOutboundSendState,
+    transmit_stats: &mut VoiceUdpTransmitStats,
+) {
+    let outcome = sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await);
+    if let Err(error) = flush_voice_outbound_events(
+        &context.udp_socket,
+        &context.writer,
+        outcome,
+        sender,
+        &context.local_speaking_tx,
+        transmit_stats,
+    )
+    .await
+    {
+        logging::error("voice", error);
+    }
+}
+
+/// [`stop_voice_transmission`] plus marking the local user silent and
+/// forcing the capture gate shut. Used on every teardown path.
+#[cfg(feature = "voice-playback")]
+async fn silence_voice_transmission(
+    context: &VoiceUdpTransmitContext,
+    sender: &mut VoiceOutboundSendState,
+    transmit_stats: &mut VoiceUdpTransmitStats,
+) {
+    stop_voice_transmission(context, sender, transmit_stats).await;
+    let _ = context.local_speaking_tx.send(false);
+    sender.set_capture_gate(false, false);
+}
+
+/// Applies overload smoothing, user volume, transmit boost, and the limiter
+/// to a captured microphone frame in place.
+#[cfg(feature = "voice-playback")]
+fn condition_voice_microphone_frame(
+    frame: &mut [i16],
+    gate: VoiceCaptureGate,
+    microphone_gate: &mut VoiceMicrophoneGateState,
+    transmit_stats: &mut VoiceUdpTransmitStats,
+) {
+    let raw_overload_decision = voice_microphone_overload_decision(frame);
+    let overload_decision =
+        if voice_microphone_clipped_frame_needs_blank(frame, raw_overload_decision) {
+            Some(VoiceMicrophoneOverloadDecision {
+                kind: VoiceMicrophoneOverloadKind::HandlingNoise,
+                gain: VOICE_MIC_HANDLING_NOISE_GAIN,
+            })
+        } else {
+            microphone_gate.overload_decision(frame)
+        };
+    if let Some(decision) = overload_decision {
+        transmit_stats.overload_smoothed_frames += 1;
+        apply_voice_microphone_gain(frame, decision.gain);
+    }
+    apply_voice_volume_to_i16_frame(frame, gate.microphone_volume);
+    apply_voice_microphone_gain(frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
+    transmit_stats.limited_samples += protect_voice_microphone_frame(frame);
+}
+
 #[cfg(feature = "voice-playback")]
 pub(super) async fn run_voice_udp_transmit(
     mut pcm_rx: mpsc::Receiver<Vec<i16>>,
@@ -653,18 +717,7 @@ pub(super) async fn run_voice_udp_transmit(
             changed = gate_rx.changed() => {
                 if changed.is_err() {
                     drain_voice_microphone_pcm_queue(&mut pcm_rx);
-                    if let Err(error) = flush_voice_outbound_events(
-                        &context.udp_socket,
-                        &context.writer,
-                        sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
-                        &mut sender,
-                        &context.local_speaking_tx,
-                        &mut transmit_stats,
-                    ).await {
-                        logging::error("voice", error);
-                    }
-                    let _ = context.local_speaking_tx.send(false);
-                    sender.set_capture_gate(false, false);
+                    silence_voice_transmission(&context, &mut sender, &mut transmit_stats).await;
                     break;
                 }
                 let gate = *gate_rx.borrow();
@@ -674,19 +727,8 @@ pub(super) async fn run_voice_udp_transmit(
                     microphone_gate.reset();
                     transmit_pacer.reset();
                 }
-                if !gate.enabled
-                    && let Err(error) = flush_voice_outbound_events(
-                        &context.udp_socket,
-                        &context.writer,
-                        sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
-                        &mut sender,
-                        &context.local_speaking_tx,
-                        &mut transmit_stats,
-                    ).await
-                {
-                    logging::error("voice", error);
-                }
                 if !gate.enabled {
+                    stop_voice_transmission(&context, &mut sender, &mut transmit_stats).await;
                     let _ = context.local_speaking_tx.send(false);
                     microphone_gate.reset();
                     transmit_pacer.reset();
@@ -695,18 +737,7 @@ pub(super) async fn run_voice_udp_transmit(
             }
             received = pcm_rx.recv() => {
                 let Some(mut frame) = received else {
-                    if let Err(error) = flush_voice_outbound_events(
-                        &context.udp_socket,
-                        &context.writer,
-                        sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
-                        &mut sender,
-                        &context.local_speaking_tx,
-                        &mut transmit_stats,
-                    ).await {
-                        logging::error("voice", error);
-                    }
-                    let _ = context.local_speaking_tx.send(false);
-                    sender.set_capture_gate(false, false);
+                    silence_voice_transmission(&context, &mut sender, &mut transmit_stats).await;
                     microphone_gate.reset();
                     break;
                 };
@@ -717,37 +748,15 @@ pub(super) async fn run_voice_udp_transmit(
                     continue;
                 }
                 if !microphone_gate.allows_frame(&frame, gate.microphone_sensitivity) {
-                    if let Err(error) = flush_voice_outbound_events(
-                        &context.udp_socket,
-                        &context.writer,
-                        sender.stop_speaking_with_dave(&mut *context.dave_state.lock().await),
-                        &mut sender,
-                        &context.local_speaking_tx,
-                        &mut transmit_stats,
-                    ).await {
-                        logging::error("voice", error);
-                    }
+                    stop_voice_transmission(&context, &mut sender, &mut transmit_stats).await;
                     continue;
                 }
-                let raw_overload_decision = voice_microphone_overload_decision(&frame);
-                let overload_decision = if voice_microphone_clipped_frame_needs_blank(
-                    &frame,
-                    raw_overload_decision,
-                ) {
-                    Some(VoiceMicrophoneOverloadDecision {
-                        kind: VoiceMicrophoneOverloadKind::HandlingNoise,
-                        gain: VOICE_MIC_HANDLING_NOISE_GAIN,
-                    })
-                } else {
-                    microphone_gate.overload_decision(&frame)
-                };
-                if let Some(decision) = overload_decision {
-                    transmit_stats.overload_smoothed_frames += 1;
-                    apply_voice_microphone_gain(&mut frame, decision.gain);
-                }
-                apply_voice_volume_to_i16_frame(&mut frame, gate.microphone_volume);
-                apply_voice_microphone_gain(&mut frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
-                transmit_stats.limited_samples += protect_voice_microphone_frame(&mut frame);
+                condition_voice_microphone_frame(
+                    &mut frame,
+                    gate,
+                    &mut microphone_gate,
+                    &mut transmit_stats,
+                );
                 let _ = context.local_speaking_tx.send(true);
                 let opus = match encoder.encode_20ms_i16(&frame) {
                     Ok(opus) => opus,
@@ -761,22 +770,12 @@ pub(super) async fn run_voice_udp_transmit(
                         VoiceTransmitPacerDelayOutcome::Elapsed => {}
                         VoiceTransmitPacerDelayOutcome::GateChanged => {
                             if !gate_rx.borrow().enabled {
-                                if let Err(error) = flush_voice_outbound_events(
-                                    &context.udp_socket,
-                                    &context.writer,
-                                    sender.stop_speaking_with_dave(
-                                        &mut *context.dave_state.lock().await,
-                                    ),
+                                silence_voice_transmission(
+                                    &context,
                                     &mut sender,
-                                    &context.local_speaking_tx,
                                     &mut transmit_stats,
                                 )
-                                .await
-                                {
-                                    logging::error("voice", error);
-                                }
-                                let _ = context.local_speaking_tx.send(false);
-                                sender.set_capture_gate(false, false);
+                                .await;
                             }
                             microphone_gate.reset();
                             transmit_pacer.reset();
@@ -784,22 +783,8 @@ pub(super) async fn run_voice_udp_transmit(
                         }
                         VoiceTransmitPacerDelayOutcome::Closed => {
                             drain_voice_microphone_pcm_queue(&mut pcm_rx);
-                            if let Err(error) = flush_voice_outbound_events(
-                                &context.udp_socket,
-                                &context.writer,
-                                sender.stop_speaking_with_dave(
-                                    &mut *context.dave_state.lock().await,
-                                ),
-                                &mut sender,
-                                &context.local_speaking_tx,
-                                &mut transmit_stats,
-                            )
-                            .await
-                            {
-                                logging::error("voice", error);
-                            }
-                            let _ = context.local_speaking_tx.send(false);
-                            sender.set_capture_gate(false, false);
+                            silence_voice_transmission(&context, &mut sender, &mut transmit_stats)
+                                .await;
                             microphone_gate.reset();
                             break;
                         }

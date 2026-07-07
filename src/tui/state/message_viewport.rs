@@ -5,8 +5,8 @@ use crate::discord::ids::{
     marker::{ChannelMarker, MessageMarker, RoleMarker},
 };
 use crate::discord::{ChannelState, MessageHistoryAfterMode, MessageState, is_thread_kind};
-use crate::tui::format;
-use crate::tui::format::{
+use crate::tui::text;
+use crate::tui::text::{
     MentionTarget, RenderedText, TextHighlightKind, render_user_mentions,
     render_user_mentions_with_highlights, replace_custom_emoji_markup,
 };
@@ -1368,7 +1368,7 @@ impl DashboardState {
         let value = if self.show_custom_emoji() {
             replace_custom_emoji_markup(value)
         } else {
-            format::replace_custom_emoji_markup_with_ids(value)
+            text::replace_custom_emoji_markup_with_ids(value)
         };
         render_user_mentions(
             &value,
@@ -1427,7 +1427,7 @@ impl DashboardState {
             add_literal_mention_highlights(&mut rendered, "@here", everyone_kind);
         }
         normalize_text_highlights(&mut rendered.highlights);
-        format::replace_custom_emoji_markup_in_rendered_with_images(
+        text::replace_custom_emoji_markup_in_rendered_with_images(
             rendered,
             self.show_custom_emoji(),
         )

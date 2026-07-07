@@ -52,8 +52,6 @@ pub(in crate::tui::ui) fn render_forum_post_composer(
     let layout = build_composer_layout(&view, content_width, previews.len());
     let total = layout.lines.len();
     let viewport = inner.height as usize;
-    // The scroll offset is owned by state (driven by the scroll keys and the
-    // reveal-on-focus pass in `sync_view_heights`); clamp defensively here.
     let scroll = state
         .forum_post_composer_scroll()
         .min(total.saturating_sub(viewport));
@@ -130,8 +128,6 @@ fn build_composer_layout(
         editing_body,
     ));
     let body_content_row = lines.len();
-    // The body grows to fit every line so long, multi-line posts stay fully
-    // visible; the whole popup scrolls instead of clipping the body.
     let body_lines = visible_body_lines(&view.body);
     for line in &body_lines {
         lines.push(Line::from(Span::styled(
@@ -327,7 +323,7 @@ fn tag_line(tag: &ForumPostComposerTagView, width: usize, thumbnail_ready: bool)
 }
 
 /// The applied-tag summary on the composer. Every selected tag is shown (never
-/// reduced), and at least [`TAG_SUMMARY_MIN_VISIBLE`] rows appear by default;
+/// reduced), and at least [`TAG_SUMMARY_MIN_VISIBLE`] rows appear by default.
 /// the rest fold into `...(+N more)`. Tags arrive selected-first.
 fn push_tag_summary(
     lines: &mut Vec<Line<'static>>,

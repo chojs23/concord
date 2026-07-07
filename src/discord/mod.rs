@@ -13,6 +13,7 @@ mod fingerprint;
 mod gateway;
 mod guild;
 pub mod ids;
+mod json;
 mod member;
 mod message;
 mod notification;
@@ -100,6 +101,7 @@ pub use state::{
 };
 pub(crate) use upload::read_profile_avatar_image;
 pub use user_settings::{UserCustomStatusInfo, UserFriendSourceFlagsInfo, UserSettingsInfo};
+pub use voice::{MicrophoneSensitivityDb, VoiceVolumePercent};
 pub use voice::{
     VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,
 };

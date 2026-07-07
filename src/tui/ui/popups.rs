@@ -2,7 +2,7 @@ use super::activity::{ActivityLeading, build_activity_render};
 use super::message::list::render_image_preview;
 use super::*;
 use crate::discord::ActivityKind;
-use crate::tui::format::format_byte_size;
+use crate::tui::text::format_byte_size;
 use ratatui::layout::Position;
 
 mod action_menu;
@@ -163,8 +163,6 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
             thread_delete_confirmation_popup_area_for_state(frame_area, state)
         }
         ActiveModalPopupKind::Options => Some(options_popup_area(frame_area, state)),
-        // The attachment viewer centers on the whole frame; default and large
-        // zoom take a percentage of it, fullscreen uses all of it.
         ActiveModalPopupKind::AttachmentViewer => Some(attachment_viewer_popup(
             frame_area,
             state.attachment_viewer_zoom(),

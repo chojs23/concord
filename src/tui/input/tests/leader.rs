@@ -279,7 +279,6 @@ fn keymap_leader_n_opens_notification_inbox_and_switches_tabs() {
             ))
     );
 
-    // Right (or Tab) flips to the Mentions tab; Esc closes the popup.
     handle_key(&mut state, key(KeyCode::Right));
     assert_eq!(
         state.notification_inbox_tab(),

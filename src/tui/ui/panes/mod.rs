@@ -15,16 +15,16 @@ use crate::discord::{
 };
 
 use super::super::{
-    format::{
-        format_byte_size, sanitize_for_display_width, truncate_display_width,
-        truncate_display_width_from,
-    },
     message::format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
         ChannelPaneEntry, CommandPickerEntry, DashboardState, DmComposerLock, EmojiPickerEntry,
         FocusPane, GuildPaneEntry, LocalUploadPreviewView, MAX_MENTION_PICKER_VISIBLE, MemberEntry,
         MemberGroup, MentionPickerEntry, MentionPickerTarget, discord_color, folder_color,
         presence_color, presence_marker,
+    },
+    text::{
+        format_byte_size, sanitize_for_display_width, truncate_display_width,
+        truncate_display_width_from,
     },
 };
 use super::{

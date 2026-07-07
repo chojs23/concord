@@ -50,17 +50,12 @@ macro_rules! define_ui_actions {
                 }
             }
 
-            /// Default key sequences before the leader placeholder is
-            /// resolved. Empty when the action ships unbound.
             pub(super) fn default_sequences(self) -> &'static [&'static [DefaultKeymapChord]] {
                 match self {
                     $(Self::$variant => $sequences,)*
                 }
             }
 
-            /// Focus-independent `DashboardAction` this action dispatches
-            /// to. Returns `None` for actions handled by focus-specific
-            /// handlers.
             pub(super) fn global_dashboard_action(self) -> Option<DashboardAction> {
                 match self {
                     $(Self::$variant => $dashboard,)*
@@ -71,7 +66,6 @@ macro_rules! define_ui_actions {
 }
 
 define_ui_actions! {
-    // variant => (label, default key sequences, dashboard action)
     StartComposer => ("start composer", &[&[Char('i')]], Some(DashboardAction::StartComposer)),
     OpenPaneFilter => ("filter/search pane", &[&[Char('/')]], Some(DashboardAction::OpenFocusedPaneFilter)),
     ClosePopup => ("close popup", &[&[Char('q')]], None),

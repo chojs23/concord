@@ -1,6 +1,5 @@
-use std::collections::BTreeMap;
-
 use crate::discord::fingerprint::discord_rest_client;
+use crate::discord::json::extra_fields;
 use crate::{AppError, Result};
 
 use reqwest::{RequestBuilder, header::AUTHORIZATION};
@@ -109,17 +108,6 @@ fn truncate_error_body(body: String) -> String {
     } else {
         truncated
     }
-}
-
-fn extra_fields(value: &Value, known_fields: &[&str]) -> BTreeMap<String, Value> {
-    let Some(object) = value.as_object() else {
-        return BTreeMap::new();
-    };
-    object
-        .iter()
-        .filter(|(field, _)| !known_fields.contains(&field.as_str()))
-        .map(|(field, value)| (field.clone(), value.clone()))
-        .collect()
 }
 
 fn clone_array(value: Option<&Value>) -> Vec<Value> {

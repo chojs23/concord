@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use crate::config::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
+use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::{VoiceScope, VoiceSoundKind, VoiceStateInfo};
 
 use crate::discord::state::DiscordState;

@@ -4,8 +4,8 @@
 use ratatui::style::{Color, Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
-use crate::tui::format::{InlineEmojiSlot, RenderedText, TextHighlight, truncate_display_width};
 use crate::tui::state::DashboardState;
+use crate::tui::text::{InlineEmojiSlot, RenderedText, TextHighlight, truncate_display_width};
 
 use super::wrap::wrap_text_line_with_styles;
 use super::{

@@ -1,6 +1,5 @@
 mod clipboard;
 mod commands;
-mod format;
 mod fuzzy;
 mod input;
 mod keybindings;
@@ -11,6 +10,7 @@ mod runtime;
 mod selection;
 mod state;
 mod terminal;
+mod text;
 mod text_cursor;
 mod text_input;
 mod ui;

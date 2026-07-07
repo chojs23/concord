@@ -1,5 +1,5 @@
-use crate::config::MicrophoneSensitivityDb;
 use crate::discord::AppCommand;
+use crate::discord::MicrophoneSensitivityDb;
 use crate::tui::keybindings::OptionsCategoryShortcut;
 
 use super::super::{DashboardState, DisplayOptionItem};

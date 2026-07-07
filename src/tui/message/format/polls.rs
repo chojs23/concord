@@ -4,7 +4,7 @@ use ratatui::style::Style;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::PollInfo;
-use crate::tui::format::{RenderedText, truncate_display_width, truncate_text};
+use crate::tui::text::{RenderedText, truncate_display_width, truncate_text};
 
 use super::{MessageContentLine, wrap_rendered_text_lines_with_loaded_custom_emoji_urls};
 

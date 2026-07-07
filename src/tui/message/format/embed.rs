@@ -4,7 +4,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     discord::EmbedInfo,
-    tui::format::{RenderedText, replace_custom_emoji_markup_in_rendered_with_images},
+    tui::text::{RenderedText, replace_custom_emoji_markup_in_rendered_with_images},
 };
 
 use super::{

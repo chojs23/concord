@@ -106,7 +106,7 @@ impl DashboardState {
             && self.runtime.voice_connection.is_some_and(|voice| {
                 voice.scope == channel.voice_scope() && voice.channel_id == Some(channel_id)
             });
-        // Guild voice needs the connect permission; DM and group-DM calls have
+        // Guild voice needs the connect permission. DM and group-DM calls have
         // no guild permission model, so they are always joinable.
         let can_join_voice = channel.supports_voice_call()
             && !joined_here

@@ -1,4 +1,4 @@
-use super::super::format::{RenderedText, TextHighlight, TextHighlightKind};
+use super::super::text::{RenderedText, TextHighlight, TextHighlightKind};
 
 pub(super) fn add_literal_mention_highlights(
     rendered: &mut RenderedText,

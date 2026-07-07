@@ -8,9 +8,9 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::{MessageKind, MessageSnapshotInfo, MessageState};
-use crate::tui::format::{truncate_display_width, truncate_text};
 use crate::tui::message::time as message_time;
 use crate::tui::state::{DashboardState, discord_color};
+use crate::tui::text::{truncate_display_width, truncate_text};
 use crate::tui::ui::forum::forum_post_card_lines;
 
 use super::polls::format_poll_result_lines;

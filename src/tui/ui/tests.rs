@@ -63,7 +63,6 @@ use crate::{
         UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceStateInfo,
     },
     tui::{
-        format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
         message::format::{
             MessageContentLine, format_message_content, format_message_content_lines,
             format_message_content_lines_with_loaded_custom_emoji_urls, lay_out_reaction_chips,
@@ -76,6 +75,7 @@ use crate::{
             EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
             PollVotePickerItem,
         },
+        text::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
         ui::{MouseTarget, PopupListTarget, mouse_target_at},
     },
 };

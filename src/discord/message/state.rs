@@ -492,7 +492,7 @@ impl DiscordState {
         for member in members {
             // If this member payload is a fallback ("unknown", no username),
             // avoid clobbering messages that already have a real name. Try the
-            // profile cache for a better name; otherwise skip this member.
+            // profile cache for a better name. Otherwise skip this member.
             let display_name =
                 if is_fallback_identity(member.username.as_deref(), &member.display_name) {
                     match self

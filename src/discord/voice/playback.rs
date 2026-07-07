@@ -24,7 +24,7 @@ use super::{
     VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ, VOICE_PLAYBACK_JITTER_BUFFER_DELAY,
     VOICE_PLAYBACK_MAX_BUFFERED_FRAMES_PER_SSRC, VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES,
 };
-use crate::config::VoiceVolumePercent;
+use crate::discord::VoiceVolumePercent;
 #[cfg(feature = "voice-playback")]
 use crate::logging;
 #[cfg(feature = "voice-playback")]

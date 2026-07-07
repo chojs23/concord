@@ -812,8 +812,8 @@ fn selected_message_lines(
 ) -> Vec<Line<'static>> {
     let last_index = lines.len().saturating_sub(1);
 
-    // Header messages show the time in their header; a grouped continuation has no
-    // header, so it carries the time on the bottom border instead.
+    // Header messages show the time in their header. A grouped continuation has
+    // no header, so it carries the time on the bottom border instead.
     let border_time = (!has_header).then_some(sent_time);
 
     let mut selected_lines = Vec::new();

@@ -43,11 +43,11 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{MessageState, ReplyInfo};
 use crate::tui::{
-    format::{
+    state::DashboardState,
+    text::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, detected_url_ranges,
         truncate_text,
     },
-    state::DashboardState,
 };
 
 const ACCENT: Color = Color::Cyan;

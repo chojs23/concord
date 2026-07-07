@@ -1,5 +1,5 @@
 use crate::discord::{ActivityInfo, ActivityKind};
-use crate::tui::format::sanitize_for_display_width;
+use crate::tui::text::sanitize_for_display_width;
 
 use super::types::EmojiImage;
 
