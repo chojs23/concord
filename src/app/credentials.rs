@@ -10,6 +10,20 @@ pub(super) struct ResolvedToken {
 
 pub(super) async fn resolve_token() -> Result<ResolvedToken> {
     let mut warnings = Vec::new();
+
+    if let Some(token) = token_store::env_token() {
+        validate_token_header(&token)?;
+        if let Err(error) = validate_token_with_discord(&token).await {
+            match error {
+                AppError::DiscordTokenRejected => return Err(AppError::DiscordTokenRejected),
+                error => warnings.push(format!(
+                    "CONCORD_TOKEN could not be verified: {error}; continuing with it for this session"
+                )),
+            }
+        }
+        return Ok(ResolvedToken { token, warnings });
+    }
+
     let credential_store = match config::load_options() {
         Ok(options) => options.credentials.store,
         Err(error) => {

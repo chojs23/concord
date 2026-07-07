@@ -87,7 +87,13 @@ impl App {
             shutdown_gateway(&client, gateway_task).await;
             match result? {
                 tui::DashboardExit::Quit => return Ok(()),
-                tui::DashboardExit::SignOut => {}
+                // Sign-out of an env-token session quits: re-resolving would
+                // read the same CONCORD_TOKEN and log straight back in.
+                tui::DashboardExit::SignOut => {
+                    if crate::token_store::env_token().is_some() {
+                        return Ok(());
+                    }
+                }
             }
         }
     }

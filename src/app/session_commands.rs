@@ -18,6 +18,11 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
 }
 
 async fn delete_saved_credentials() -> Result<()> {
+    // An env-token session has nothing stored to delete
+    if token_store::env_token().is_some() {
+        return Ok(());
+    }
+
     let credential_store = match config::load_options() {
         Ok(options) => options.credentials.store,
         Err(error) => {

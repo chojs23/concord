@@ -173,7 +173,7 @@ aplay -D pulse /usr/share/sounds/alsa/Front_Center.wav
 - **Token** : paste an existing Discord token.
 - **Email / Password** : login with credentials. MFA (TOTP, SMS) is fully supported.
 - **QR Code** : scan the code from the Discord mobile app.
-- **CONCORD_TOKEN env var** : set `CONCORD_TOKEN=your-token` before launching Concord. Takes precedence over the plaintext credential file when `credentials.store = "auto"`, but the keychain is checked first.
+- **CONCORD_TOKEN env var** : set `CONCORD_TOKEN=your-token` before launching Concord. It overrides every `credentials.store` mode (`auto`, `keychain`, `plain`).
 
 Email and QR code logins may trigger a CAPTCHA challenge on Discord's side. We cannot solve that, so I strongly recommend using token authentication.
 

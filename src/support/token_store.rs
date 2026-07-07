@@ -8,11 +8,24 @@ use crate::{AppError, Result, config::CredentialStoreMode, paths, support::priva
 const KEYCHAIN_SERVICE: &str = "io.github.chojs23.concord.discord-token.v1";
 const DEFAULT_ACCOUNT_ID: &str = "default";
 const KEYCHAIN_ACCOUNT_PREFIX: &str = "account:";
+const ENV_TOKEN_VAR: &str = "CONCORD_TOKEN";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TokenSaveLocation {
     Keychain,
     PlaintextFile,
+}
+
+/// A token from the `CONCORD_TOKEN` environment variable. An empty or
+/// whitespace-only value is treated as unset, so a blank env var falls through
+/// to the configured store.
+pub fn env_token() -> Option<String> {
+    let token = std::env::var(ENV_TOKEN_VAR).ok()?;
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    Some(token.to_owned())
 }
 
 pub fn load_token(store: CredentialStoreMode) -> Result<Option<String>> {
@@ -21,10 +34,7 @@ pub fn load_token(store: CredentialStoreMode) -> Result<Option<String>> {
     match store {
         CredentialStoreMode::Auto => match load_keychain_token(&account_id) {
             Ok(Some(token)) => Ok(Some(token)),
-            Ok(None) | Err(_) => match std::env::var("CONCORD_TOKEN") {
-                Ok(token) => Ok(Some(normalize_token(&token)?)),
-                Err(_) => load_fallback_token(&account_id),
-            },
+            Ok(None) | Err(_) => load_fallback_token(&account_id),
         },
         CredentialStoreMode::Keychain => load_keychain_token(&account_id),
         CredentialStoreMode::Plain => load_fallback_token(&account_id),
