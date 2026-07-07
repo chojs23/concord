@@ -31,7 +31,7 @@ use crate::discord::{MessageKind, MessageSnapshotInfo, MessageState, PollInfo, R
 use crate::tui::{
     format::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, detected_url_ranges,
-        truncate_display_width, truncate_text,
+        spoiler_ranges, truncate_display_width, truncate_text,
     },
     state::{DashboardState, discord_color},
     ui::forum::forum_post_card_lines,
@@ -387,13 +387,19 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
         .then(|| display_text_with_stickers(message.content.as_deref(), &message.sticker_names))
         .flatten();
     if let Some(value) = standalone_content {
-        let rendered = state.render_user_mentions_with_highlights(
+        let mut rendered = state.render_user_mentions_with_highlights(
             message.guild_id,
             &message.mentions,
             message.mention_everyone,
             &message.mention_roles,
             &value,
         );
+        // Mask `||spoiler||` spans until the reader reveals this message by
+        // clicking it. Revealed messages fall through with no spoiler highlight
+        // so the text renders normally.
+        if !state.message_spoilers_revealed(message.id) {
+            rendered.highlights.extend(spoiler_highlights(&rendered.text));
+        }
         lines.extend(wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
             state,
             rendered,
@@ -1095,6 +1101,17 @@ fn url_highlights(value: &str) -> Vec<TextHighlight> {
             start,
             end,
             kind: TextHighlightKind::Url,
+        })
+        .collect()
+}
+
+fn spoiler_highlights(value: &str) -> Vec<TextHighlight> {
+    spoiler_ranges(value)
+        .into_iter()
+        .map(|(start, end)| TextHighlight {
+            start,
+            end,
+            kind: TextHighlightKind::Spoiler,
         })
         .collect()
 }
@@ -2115,6 +2132,11 @@ pub(in crate::tui) fn mention_highlight_style(kind: TextHighlightKind) -> Style 
         TextHighlightKind::Url => Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::UNDERLINED),
+        // Foreground matches background so the masked text renders as a solid
+        // block; revealing the message drops this highlight entirely.
+        TextHighlightKind::Spoiler => Style::default()
+            .fg(Color::DarkGray)
+            .bg(Color::DarkGray),
     }
 }
 

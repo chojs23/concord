@@ -219,7 +219,14 @@ fn handle_left_click(
                 clicks.clear();
                 return MouseOutcome::handled(None);
             }
-            let command = if clicks.record_left_click(target) {
+            let double_click = clicks.record_left_click(target);
+            // A single click on a message toggles its spoiler reveal; the second
+            // click of a double-click activates the message instead, so a
+            // double-click ends up revealed-and-activated.
+            if pane == FocusPane::Messages && !double_click {
+                state.toggle_selected_message_spoilers();
+            }
+            let command = if double_click {
                 activate_focused_target(state)
             } else {
                 None
