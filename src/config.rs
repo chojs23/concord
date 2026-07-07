@@ -1190,18 +1190,18 @@ mod tests {
     #[test]
     fn keymap_options_parse_scoped_action_bindings() {
         let keymap = parse_keymap_options(
-            "[keymap.guild_actions]\nMuteServer = { keys = [\"m\"], description = \"mute server\" }\n\n[keymap.channel_actions]\nMuteChannel = \"x\"\n\n[keymap.message_actions]\nGoToReferencedMessage = { keys = [\"g\"], description = \"go to referenced message\" }\n\n[keymap.member_actions]\nShowProfile = \"p\"\n\n[keymap.composer]\nOpenEditor = \"<C-o>\"\nDeletePreviousWord = { keys = [\"<A-backspace>\"], description = \"delete word\" }\n",
+            "[keymap.guild_actions]\nToggleMute = { keys = [\"m\"], description = \"mute server\" }\n\n[keymap.channel_actions]\nToggleMute = \"x\"\n\n[keymap.message_actions]\nGoToReferencedMessage = { keys = [\"g\"], description = \"go to referenced message\" }\n\n[keymap.member_actions]\nShowProfile = \"p\"\n\n[keymap.composer]\nOpenEditor = \"<C-o>\"\nDeletePreviousWord = { keys = [\"<A-backspace>\"], description = \"delete word\" }\n",
         );
 
         assert_eq!(
-            keymap.guild_actions.get("MuteServer"),
+            keymap.guild_actions.get("ToggleMute"),
             Some(&crate::config::KeymapBinding {
                 keys: vec!["m".to_owned()],
                 description: Some("mute server".to_owned()),
             })
         );
         assert_eq!(
-            keymap.channel_actions.get("MuteChannel"),
+            keymap.channel_actions.get("ToggleMute"),
             Some(&crate::config::KeymapBinding::one("x"))
         );
         assert_eq!(
@@ -1231,7 +1231,7 @@ mod tests {
     #[test]
     fn keymap_invalid_binding_is_skipped_without_discarding_the_rest() {
         let (keymap, warnings) = super::parse_keymap_options(
-            "[keymap]\nleader = \"space\"\nStartComposer = \"<leader>e\"\nReplyMessage = 123\n\n[keymap.guild_actions]\nMuteServer = \"m\"\nBadAction = 7\n",
+            "[keymap]\nleader = \"space\"\nStartComposer = \"<leader>e\"\nReplyMessage = 123\n\n[keymap.guild_actions]\nToggleMute = \"m\"\nBadAction = 7\n",
         )
         .expect("syntactically valid keymap should parse");
 
@@ -1246,7 +1246,7 @@ mod tests {
             "invalid top-level binding is skipped"
         );
         assert_eq!(
-            keymap.guild_actions.get("MuteServer"),
+            keymap.guild_actions.get("ToggleMute"),
             Some(&crate::config::KeymapBinding::one("m")),
             "valid action binding survives a bad sibling"
         );

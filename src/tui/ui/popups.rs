@@ -203,7 +203,7 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
 
 /// Clears the popup area, draws the standard focused panel border, and
 /// returns the inner content rect. Every modal popup opens with this
-/// sequence; content is then rendered into the returned rect.
+/// sequence and then renders its content into the returned rect.
 fn render_modal_frame(frame: &mut Frame, popup: Rect, title: impl Into<String>) -> Rect {
     frame.render_widget(Clear, popup);
     let block = panel_block_owned(title.into(), true);

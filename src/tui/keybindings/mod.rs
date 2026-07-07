@@ -17,6 +17,7 @@ mod chord;
 mod composer;
 mod runtime;
 
+use actions::DefaultKeymapChord;
 pub use actions::OptionsCategoryShortcut;
 pub(in crate::tui) use actions::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, ComposerCompletionAction,
@@ -245,7 +246,7 @@ impl KeyMap {
         let mut configured_specs = BTreeMap::new();
 
         for (action_name, binding) in options.mappings.iter().take(MAX_KEYMAP_MAPPINGS) {
-            let Some(action) = UiAction::from_keymap_name(action_name) else {
+            let Some(action) = UiAction::from_name(action_name) else {
                 continue;
             };
             let Some(spec) = parse_keymap_binding_lossy(action_name, action, binding, leader)
@@ -281,7 +282,7 @@ impl KeyMap {
         );
         let mut configured_specs = BTreeMap::new();
         for (action_name, binding) in &options.mappings {
-            let action = UiAction::from_keymap_name(action_name)
+            let action = UiAction::from_name(action_name)
                 .ok_or_else(|| format!("unknown keymap action `{action_name}`"))?;
             let spec = parse_keymap_binding(action_name, action, binding, leader)?;
             configured_specs.insert(action, spec);
@@ -691,21 +692,11 @@ fn parse_action_shortcut_key(value: &str) -> std::result::Result<KeyChord, Strin
     }
 }
 
-impl UiAction {
-    fn from_keymap_name(name: &str) -> Option<Self> {
-        match name {
-            "ScrollMessageViewportDown" => Some(Self::ScrollViewportDown),
-            "ScrollMessageViewportUp" => Some(Self::ScrollViewportUp),
-            _ => Self::from_name(name),
-        }
-    }
-}
-
 impl GuildActionKind {
     fn from_keymap_name(name: &str) -> Option<Self> {
         match name {
             "MarkAsRead" => Some(Self::MarkAsRead),
-            "MuteServer" | "ToggleMute" => Some(Self::ToggleMute),
+            "ToggleMute" => Some(Self::ToggleMute),
             "LeaveServer" => Some(Self::LeaveServer),
             "FolderSettings" => Some(Self::FolderSettings),
             _ => None,
@@ -728,10 +719,10 @@ impl ChannelActionKind {
         match name {
             "JoinVoice" => Some(Self::JoinVoice),
             "LeaveVoice" => Some(Self::LeaveVoice),
-            "ShowPinnedMessages" | "LoadPinnedMessages" => Some(Self::LoadPinnedMessages),
+            "ShowPinnedMessages" => Some(Self::ShowPinnedMessages),
             "ShowThreads" => Some(Self::ShowThreads),
             "MarkAsRead" => Some(Self::MarkAsRead),
-            "MuteChannel" | "ToggleMute" => Some(Self::ToggleMute),
+            "ToggleMute" => Some(Self::ToggleMute),
             _ => None,
         }
     }
@@ -740,7 +731,7 @@ impl ChannelActionKind {
         match self {
             Self::JoinVoice => "JoinVoice",
             Self::LeaveVoice => "LeaveVoice",
-            Self::LoadPinnedMessages => "ShowPinnedMessages",
+            Self::ShowPinnedMessages => "ShowPinnedMessages",
             Self::ShowThreads => "ShowThreads",
             Self::MarkAsRead => "MarkAsRead",
             Self::ToggleMute => "ToggleMute",
@@ -805,238 +796,17 @@ fn is_reserved_keymap_chord(chord: KeyChord) -> bool {
     ) || matches!((chord.code, chord.modifiers), (KeyCode::Char(value), KeyModifiers::CONTROL) if matches!(value.to_ascii_lowercase(), 'c' | 'n' | 'p'))
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DefaultKeymapChord {
-    Leader,
-    Char(char),
-    Ctrl(char),
-    Key(KeyCode),
-    ModifiedKey(KeyCode, KeyModifiers),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DefaultKeymapDescriptor {
-    action: UiAction,
-    sequences: &'static [&'static [DefaultKeymapChord]],
-}
-
-const DEFAULT_KEYMAP_DESCRIPTORS: &[DefaultKeymapDescriptor] = &[
-    DefaultKeymapDescriptor {
-        action: UiAction::StartComposer,
-        sequences: &[&[DefaultKeymapChord::Char('i')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::OpenPaneFilter,
-        sequences: &[&[DefaultKeymapChord::Char('/')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ClosePopup,
-        sequences: &[&[DefaultKeymapChord::Char('q')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::FocusGuildPane,
-        sequences: &[&[DefaultKeymapChord::Char('1')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::FocusChannelPane,
-        sequences: &[&[DefaultKeymapChord::Char('2')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::FocusMessagePane,
-        sequences: &[&[DefaultKeymapChord::Char('3')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::FocusMemberPane,
-        sequences: &[&[DefaultKeymapChord::Char('4')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::SelectNext,
-        sequences: &[&[DefaultKeymapChord::Char('j')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::SelectPrevious,
-        sequences: &[&[DefaultKeymapChord::Char('k')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::CycleFocusNext,
-        sequences: &[
-            &[DefaultKeymapChord::Key(KeyCode::Tab)],
-            &[DefaultKeymapChord::Char('l')],
-            &[DefaultKeymapChord::Key(KeyCode::Right)],
-        ],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::CycleFocusPrevious,
-        sequences: &[
-            &[DefaultKeymapChord::ModifiedKey(
-                KeyCode::Tab,
-                KeyModifiers::SHIFT,
-            )],
-            &[DefaultKeymapChord::Char('h')],
-            &[DefaultKeymapChord::Key(KeyCode::Left)],
-        ],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::HalfPageDown,
-        sequences: &[&[DefaultKeymapChord::Ctrl('d')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::HalfPageUp,
-        sequences: &[&[DefaultKeymapChord::Ctrl('u')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ScrollViewportDown,
-        sequences: &[&[DefaultKeymapChord::Char('J')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ScrollViewportUp,
-        sequences: &[&[DefaultKeymapChord::Char('K')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::JumpTop,
-        sequences: &[&[DefaultKeymapChord::Char('g'), DefaultKeymapChord::Char('g')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::JumpBottom,
-        sequences: &[&[DefaultKeymapChord::Char('G')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ScrollHorizontalLeft,
-        sequences: &[&[DefaultKeymapChord::Char('H')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ScrollHorizontalRight,
-        sequences: &[&[DefaultKeymapChord::Char('L')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ResizePaneLeft,
-        sequences: &[
-            &[DefaultKeymapChord::ModifiedKey(
-                KeyCode::Char('h'),
-                KeyModifiers::ALT,
-            )],
-            &[DefaultKeymapChord::ModifiedKey(
-                KeyCode::Left,
-                KeyModifiers::ALT,
-            )],
-        ],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ResizePaneRight,
-        sequences: &[
-            &[DefaultKeymapChord::ModifiedKey(
-                KeyCode::Char('l'),
-                KeyModifiers::ALT,
-            )],
-            &[DefaultKeymapChord::ModifiedKey(
-                KeyCode::Right,
-                KeyModifiers::ALT,
-            )],
-        ],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::Quit,
-        sequences: &[&[DefaultKeymapChord::Char('q')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::CopyMessage,
-        sequences: &[&[DefaultKeymapChord::Char('y')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ReactMessage,
-        sequences: &[&[DefaultKeymapChord::Char('r')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ReplyMessage,
-        sequences: &[&[DefaultKeymapChord::Char('R')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::DeleteMessage,
-        sequences: &[&[DefaultKeymapChord::Char('d')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::EditMessage,
-        sequences: &[&[DefaultKeymapChord::Char('e')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::OpenMessageUrl,
-        sequences: &[&[DefaultKeymapChord::Char('o')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::PlayMedia,
-        sequences: &[&[DefaultKeymapChord::Char('x')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ViewMessageAttachment,
-        sequences: &[&[DefaultKeymapChord::Char('v')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ToggleGuildPane,
-        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Char('1')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ToggleChannelPane,
-        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Char('2')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ToggleMemberPane,
-        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Char('4')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::OpenFocusedPaneAction,
-        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Char('a')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::OpenCurrentUserProfile,
-        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Char('p')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::OpenOptions,
-        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Char('o')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::ChannelSwitcher,
-        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Leader]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::OpenNotificationInbox,
-        sequences: &[&[DefaultKeymapChord::Leader, DefaultKeymapChord::Char('n')]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::VoiceDeafen,
-        sequences: &[&[
-            DefaultKeymapChord::Leader,
-            DefaultKeymapChord::Char('v'),
-            DefaultKeymapChord::Char('d'),
-        ]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::VoiceMute,
-        sequences: &[&[
-            DefaultKeymapChord::Leader,
-            DefaultKeymapChord::Char('v'),
-            DefaultKeymapChord::Char('m'),
-        ]],
-    },
-    DefaultKeymapDescriptor {
-        action: UiAction::VoiceLeave,
-        sequences: &[&[
-            DefaultKeymapChord::Leader,
-            DefaultKeymapChord::Char('v'),
-            DefaultKeymapChord::Char('l'),
-        ]],
-    },
-];
-
 fn default_keymap_specs(leader: KeyChord) -> BTreeMap<UiAction, KeyMapActionSpec> {
-    DEFAULT_KEYMAP_DESCRIPTORS
+    UiAction::ALL
         .iter()
-        .map(|descriptor| {
+        .copied()
+        .filter(|action| !action.default_sequences().is_empty())
+        .map(|action| {
             (
-                descriptor.action,
+                action,
                 KeyMapActionSpec {
-                    sequences: default_keymap_sequences(leader, descriptor.sequences),
-                    label: descriptor.action.label().to_owned(),
+                    sequences: default_keymap_sequences(leader, action.default_sequences()),
+                    label: action.label().to_owned(),
                 },
             )
         })
@@ -1384,7 +1154,7 @@ mod tests {
     fn scoped_action_keymaps_override_pane_action_shortcuts_and_labels() {
         let keymap = KeymapOptions {
             guild_actions: [(
-                "MuteServer".to_owned(),
+                "ToggleMute".to_owned(),
                 KeymapBinding {
                     keys: vec!["x".to_owned()],
                     description: Some("mute server".to_owned()),
@@ -1392,7 +1162,7 @@ mod tests {
             )]
             .into_iter()
             .collect(),
-            channel_actions: [("MuteChannel".to_owned(), KeymapBinding::one("x"))]
+            channel_actions: [("ToggleMute".to_owned(), KeymapBinding::one("x"))]
                 .into_iter()
                 .collect(),
             message_actions: [("GoToReferencedMessage".to_owned(), KeymapBinding::one("g"))]
@@ -1609,7 +1379,7 @@ mod tests {
     #[test]
     fn scoped_action_keymaps_reject_actions_outside_their_scope() {
         let keymap = KeymapOptions {
-            guild_actions: [("MuteChannel".to_owned(), KeymapBinding::one("x"))]
+            guild_actions: [("ShowPinnedMessages".to_owned(), KeymapBinding::one("x"))]
                 .into_iter()
                 .collect(),
             ..Default::default()
@@ -1624,7 +1394,7 @@ mod tests {
             channel_actions: [
                 ("ShowPinnedMessages".to_owned(), KeymapBinding::one("x")),
                 (
-                    "MuteChannel".to_owned(),
+                    "ToggleMute".to_owned(),
                     KeymapBinding {
                         keys: vec!["x".to_owned(), "z".to_owned()],
                         description: None,
@@ -1639,7 +1409,7 @@ mod tests {
             KeyBindings::try_from_options(&keymap).expect("scoped action keymaps should parse");
         let actions = [
             ChannelActionItem {
-                kind: ChannelActionKind::LoadPinnedMessages,
+                kind: ChannelActionKind::ShowPinnedMessages,
                 label: "Show pinned messages".to_owned(),
                 enabled: true,
             },
@@ -1664,7 +1434,7 @@ mod tests {
     fn scoped_action_keymaps_keep_multiple_unique_aliases() {
         let keymap = KeymapOptions {
             channel_actions: [(
-                "MuteChannel".to_owned(),
+                "ToggleMute".to_owned(),
                 KeymapBinding {
                     keys: vec!["x".to_owned(), "u".to_owned()],
                     description: None,
@@ -1692,7 +1462,7 @@ mod tests {
     fn scoped_action_keymaps_keep_modified_shortcuts_distinct() {
         let keymap = KeymapOptions {
             channel_actions: [(
-                "MuteChannel".to_owned(),
+                "ToggleMute".to_owned(),
                 KeymapBinding {
                     keys: vec!["u".to_owned(), "<C-u>".to_owned()],
                     description: None,
@@ -1724,7 +1494,7 @@ mod tests {
         let keymap = KeymapOptions {
             channel_actions: [
                 ("ShowPinnedMessages".to_owned(), KeymapBinding::one("1")),
-                ("MuteChannel".to_owned(), KeymapBinding::one("1")),
+                ("ToggleMute".to_owned(), KeymapBinding::one("1")),
             ]
             .into_iter()
             .collect(),
@@ -1734,7 +1504,7 @@ mod tests {
             KeyBindings::try_from_options(&keymap).expect("scoped action keymaps should parse");
         let actions = [
             ChannelActionItem {
-                kind: ChannelActionKind::LoadPinnedMessages,
+                kind: ChannelActionKind::ShowPinnedMessages,
                 label: "Show pinned messages".to_owned(),
                 enabled: true,
             },
@@ -1851,7 +1621,7 @@ mod tests {
     #[test]
     fn composer_keymaps_reject_unknown_actions_and_conflicts() {
         let unknown = KeymapOptions {
-            composer: [("MuteChannel".to_owned(), KeymapBinding::one("<C-m>"))]
+            composer: [("ToggleMute".to_owned(), KeymapBinding::one("<C-m>"))]
                 .into_iter()
                 .collect(),
             ..Default::default()
@@ -2321,38 +2091,6 @@ mod tests {
             key_bindings
                 .dashboard_action_for_ui_action(UiAction::ScrollViewportDown, FocusPane::Channels,),
             Some(DashboardAction::ScrollViewportDown)
-        );
-    }
-
-    #[test]
-    fn keymap_accepts_legacy_message_viewport_scroll_action_names() {
-        let keymap = KeymapOptions {
-            mappings: [
-                (
-                    "ScrollMessageViewportDown".to_owned(),
-                    KeymapBinding::one("N"),
-                ),
-                (
-                    "ScrollMessageViewportUp".to_owned(),
-                    KeymapBinding::one("P"),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-            ..Default::default()
-        };
-        let key_bindings =
-            KeyBindings::try_from_options(&keymap).expect("legacy scroll keys should parse");
-
-        assert_eq!(
-            key_bindings
-                .keymap_lookup_root_key(KeyEvent::new(KeyCode::Char('N'), KeyModifiers::NONE)),
-            Some(KeyMapLookup::Action(UiAction::ScrollViewportDown))
-        );
-        assert_eq!(
-            key_bindings
-                .keymap_lookup_root_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::NONE)),
-            Some(KeyMapLookup::Action(UiAction::ScrollViewportUp))
         );
     }
 

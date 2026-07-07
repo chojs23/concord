@@ -105,30 +105,7 @@ impl KeyBindings {
             return Some(DashboardAction::MessageShortcut(message_action));
         }
 
-        match action {
-            UiAction::StartComposer => Some(DashboardAction::StartComposer),
-            UiAction::OpenPaneFilter => Some(DashboardAction::OpenFocusedPaneFilter),
-            UiAction::FocusGuildPane => Some(DashboardAction::FocusPane(FocusPane::Guilds)),
-            UiAction::FocusChannelPane => Some(DashboardAction::FocusPane(FocusPane::Channels)),
-            UiAction::FocusMessagePane => Some(DashboardAction::FocusPane(FocusPane::Messages)),
-            UiAction::FocusMemberPane => Some(DashboardAction::FocusPane(FocusPane::Members)),
-            UiAction::SelectNext => Some(DashboardAction::Select(SelectionAction::Next)),
-            UiAction::SelectPrevious => Some(DashboardAction::Select(SelectionAction::Previous)),
-            UiAction::CycleFocusNext => Some(DashboardAction::CycleFocusForward),
-            UiAction::CycleFocusPrevious => Some(DashboardAction::CycleFocusBackward),
-            UiAction::HalfPageDown => Some(DashboardAction::HalfPageDown),
-            UiAction::HalfPageUp => Some(DashboardAction::HalfPageUp),
-            UiAction::ScrollViewportDown => Some(DashboardAction::ScrollViewportDown),
-            UiAction::ScrollViewportUp => Some(DashboardAction::ScrollViewportUp),
-            UiAction::JumpTop => Some(DashboardAction::JumpTop),
-            UiAction::JumpBottom => Some(DashboardAction::JumpBottom),
-            UiAction::ScrollHorizontalLeft => Some(DashboardAction::ScrollHorizontalLeft),
-            UiAction::ScrollHorizontalRight => Some(DashboardAction::ScrollHorizontalRight),
-            UiAction::ResizePaneLeft => Some(DashboardAction::ResizePaneLeft),
-            UiAction::ResizePaneRight => Some(DashboardAction::ResizePaneRight),
-            UiAction::Quit => Some(DashboardAction::Quit),
-            _ => None,
-        }
+        action.global_dashboard_action()
     }
 
     pub(in crate::tui) fn dashboard_action(&self, key: KeyEvent) -> Option<DashboardAction> {
@@ -834,7 +811,7 @@ impl KeyBindings {
         vec![char_chord(match kind {
             ChannelActionKind::JoinVoice => 'j',
             ChannelActionKind::LeaveVoice => 'l',
-            ChannelActionKind::LoadPinnedMessages => 'p',
+            ChannelActionKind::ShowPinnedMessages => 'p',
             ChannelActionKind::ShowThreads => 't',
             ChannelActionKind::MarkAsRead => 'm',
             ChannelActionKind::ToggleMute => 'u',

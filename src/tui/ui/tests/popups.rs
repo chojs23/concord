@@ -1207,7 +1207,7 @@ fn leader_action_popup_renders_modified_action_shortcut_labels() {
     let channel_id = Id::new(2);
     let mut channel_actions = BTreeMap::new();
     channel_actions.insert(
-        "MuteChannel".to_owned(),
+        "ToggleMute".to_owned(),
         crate::config::KeymapBinding::one("<C-u>"),
     );
     let mut state = DashboardState::new_with_options(

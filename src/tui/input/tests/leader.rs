@@ -167,7 +167,7 @@ fn scoped_channel_action_keys_work_as_aliases() {
     for shortcut in ['x', 'u'] {
         let mut channel_actions = BTreeMap::new();
         channel_actions.insert(
-            "MuteChannel".to_owned(),
+            "ToggleMute".to_owned(),
             KeymapBinding {
                 keys: vec!["x".to_owned(), "u".to_owned()],
                 description: None,
@@ -194,7 +194,7 @@ fn scoped_channel_action_keys_work_as_aliases() {
 #[test]
 fn scoped_channel_action_modified_shortcut_requires_matching_modifier() {
     let mut channel_actions = BTreeMap::new();
-    channel_actions.insert("MuteChannel".to_owned(), KeymapBinding::one("<C-u>"));
+    channel_actions.insert("ToggleMute".to_owned(), KeymapBinding::one("<C-u>"));
     let mut state = state_with_keymap(KeymapOptions {
         leader: None,
         groups: BTreeMap::new(),

@@ -328,7 +328,7 @@ impl AttachmentViewerItem {
 pub enum ChannelActionKind {
     JoinVoice,
     LeaveVoice,
-    LoadPinnedMessages,
+    ShowPinnedMessages,
     ShowThreads,
     MarkAsRead,
     ToggleMute,

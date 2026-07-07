@@ -1,11 +1,28 @@
+use crossterm::event::{KeyCode, KeyModifiers};
+
 use crate::discord::password_auth::MfaMethod;
 use crate::tui::state::{FocusPane, MessageActionKind};
 use crate::tui::text_input::TextEditAction;
 
+use self::DefaultKeymapChord::{Char, Ctrl, Key, Leader, ModifiedKey};
 use super::KeyChord;
 
+/// Chord alphabet for default key bindings. `Leader` is a placeholder that
+/// resolves to the configured leader chord when the keymap is built.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DefaultKeymapChord {
+    Leader,
+    Char(char),
+    Ctrl(char),
+    Key(KeyCode),
+    ModifiedKey(KeyCode, KeyModifiers),
+}
+
+// Single source of truth for every UI action: its keymap name is the variant
+// identifier itself, and the default key sequences plus the dashboard mapping
+// live in the same row, so adding an action is a one-line change.
 macro_rules! define_ui_actions {
-    ($($variant:ident => ($name:literal, $label:literal),)*) => {
+    ($($variant:ident => ($label:literal, $sequences:expr, $dashboard:expr),)*) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         pub(in crate::tui) enum UiAction {
             $($variant,)*
@@ -23,7 +40,7 @@ macro_rules! define_ui_actions {
 
             pub(in crate::tui) fn name(self) -> &'static str {
                 match self {
-                    $(Self::$variant => $name,)*
+                    $(Self::$variant => stringify!($variant),)*
                 }
             }
 
@@ -32,63 +49,81 @@ macro_rules! define_ui_actions {
                     $(Self::$variant => $label,)*
                 }
             }
+
+            /// Default key sequences before the leader placeholder is
+            /// resolved. Empty when the action ships unbound.
+            pub(super) fn default_sequences(self) -> &'static [&'static [DefaultKeymapChord]] {
+                match self {
+                    $(Self::$variant => $sequences,)*
+                }
+            }
+
+            /// Focus-independent `DashboardAction` this action dispatches
+            /// to. Returns `None` for actions handled by focus-specific
+            /// handlers.
+            pub(super) fn global_dashboard_action(self) -> Option<DashboardAction> {
+                match self {
+                    $(Self::$variant => $dashboard,)*
+                }
+            }
         }
     };
 }
 
 define_ui_actions! {
-    StartComposer => ("StartComposer", "start composer"),
-    OpenPaneFilter => ("OpenPaneFilter", "filter/search pane"),
-    ClosePopup => ("ClosePopup", "close popup"),
-    FocusGuildPane => ("FocusGuildPane", "focus Servers"),
-    FocusChannelPane => ("FocusChannelPane", "focus Channels"),
-    FocusMessagePane => ("FocusMessagePane", "focus Messages"),
-    FocusMemberPane => ("FocusMemberPane", "focus Members"),
-    SelectNext => ("SelectNext", "select next"),
-    SelectPrevious => ("SelectPrevious", "select previous"),
-    CycleFocusNext => ("CycleFocusNext", "focus next"),
-    CycleFocusPrevious => ("CycleFocusPrevious", "focus previous"),
-    HalfPageDown => ("HalfPageDown", "half page down"),
-    HalfPageUp => ("HalfPageUp", "half page up"),
-    ScrollViewportDown => ("ScrollViewportDown", "scroll viewport down"),
-    ScrollViewportUp => ("ScrollViewportUp", "scroll viewport up"),
-    JumpTop => ("JumpTop", "jump top"),
-    JumpBottom => ("JumpBottom", "jump bottom"),
-    ScrollHorizontalLeft => ("ScrollHorizontalLeft", "scroll left"),
-    ScrollHorizontalRight => ("ScrollHorizontalRight", "scroll right"),
-    ResizePaneLeft => ("ResizePaneLeft", "resize pane left"),
-    ResizePaneRight => ("ResizePaneRight", "resize pane right"),
-    Quit => ("Quit", "quit"),
-    CopyMessage => ("CopyMessage", "copy message"),
-    ReactMessage => ("ReactMessage", "react"),
-    ReplyMessage => ("ReplyMessage", "reply"),
-    DeleteMessage => ("DeleteMessage", "delete message"),
-    EditMessage => ("EditMessage", "edit message"),
-    OpenMessageUrl => ("OpenMessageUrl", "open URL"),
-    RemoveMessageEmbeds => ("RemoveMessageEmbeds", "remove embeds"),
-    PlayMedia => ("PlayMedia", "play media"),
-    ViewMessageAttachment => ("ViewMessageAttachment", "view attachment"),
-    ShowMessageProfile => ("ShowMessageProfile", "show message sender profile"),
-    PinMessage => ("PinMessage", "pin message"),
-    OpenThread => ("OpenThread", "open thread"),
-    ShowReactionUsers => ("ShowReactionUsers", "show reacted users"),
-    OpenPollVotePicker => ("OpenPollVotePicker", "choose poll votes"),
-    GoToReferencedMessage => ("GoToReferencedMessage", "go to referenced message"),
-    ToggleGuildPane => ("ToggleGuildPane", "toggle Servers"),
-    ToggleChannelPane => ("ToggleChannelPane", "toggle Channels"),
-    ToggleMemberPane => ("ToggleMemberPane", "toggle Members"),
-    OpenFocusedPaneAction => ("OpenFocusedPaneAction", "Actions"),
-    OpenCurrentUserProfile => ("OpenCurrentUserProfile", "My profile"),
-    OpenOptions => ("OpenOptions", "Options"),
-    ChannelSwitcher => ("ChannelSwitcher", "Switch channels"),
-    OpenNotificationInbox => ("OpenNotificationInbox", "Notification inbox"),
-    OpenDisplayOptions => ("OpenDisplayOptions", "Display options"),
-    OpenComposerOptions => ("OpenComposerOptions", "Composer options"),
-    OpenNotificationOptions => ("OpenNotificationOptions", "Notification options"),
-    OpenVoiceOptions => ("OpenVoiceOptions", "Voice options"),
-    VoiceDeafen => ("VoiceDeafen", "deafen voice"),
-    VoiceMute => ("VoiceMute", "mute voice"),
-    VoiceLeave => ("VoiceLeave", "leave voice"),
+    // variant => (label, default key sequences, dashboard action)
+    StartComposer => ("start composer", &[&[Char('i')]], Some(DashboardAction::StartComposer)),
+    OpenPaneFilter => ("filter/search pane", &[&[Char('/')]], Some(DashboardAction::OpenFocusedPaneFilter)),
+    ClosePopup => ("close popup", &[&[Char('q')]], None),
+    FocusGuildPane => ("focus Servers", &[&[Char('1')]], Some(DashboardAction::FocusPane(FocusPane::Guilds))),
+    FocusChannelPane => ("focus Channels", &[&[Char('2')]], Some(DashboardAction::FocusPane(FocusPane::Channels))),
+    FocusMessagePane => ("focus Messages", &[&[Char('3')]], Some(DashboardAction::FocusPane(FocusPane::Messages))),
+    FocusMemberPane => ("focus Members", &[&[Char('4')]], Some(DashboardAction::FocusPane(FocusPane::Members))),
+    SelectNext => ("select next", &[&[Char('j')]], Some(DashboardAction::Select(SelectionAction::Next))),
+    SelectPrevious => ("select previous", &[&[Char('k')]], Some(DashboardAction::Select(SelectionAction::Previous))),
+    CycleFocusNext => ("focus next", &[&[Key(KeyCode::Tab)], &[Char('l')], &[Key(KeyCode::Right)]], Some(DashboardAction::CycleFocusForward)),
+    CycleFocusPrevious => ("focus previous", &[&[ModifiedKey(KeyCode::Tab, KeyModifiers::SHIFT)], &[Char('h')], &[Key(KeyCode::Left)]], Some(DashboardAction::CycleFocusBackward)),
+    HalfPageDown => ("half page down", &[&[Ctrl('d')]], Some(DashboardAction::HalfPageDown)),
+    HalfPageUp => ("half page up", &[&[Ctrl('u')]], Some(DashboardAction::HalfPageUp)),
+    ScrollViewportDown => ("scroll viewport down", &[&[Char('J')]], Some(DashboardAction::ScrollViewportDown)),
+    ScrollViewportUp => ("scroll viewport up", &[&[Char('K')]], Some(DashboardAction::ScrollViewportUp)),
+    JumpTop => ("jump top", &[&[Char('g'), Char('g')]], Some(DashboardAction::JumpTop)),
+    JumpBottom => ("jump bottom", &[&[Char('G')]], Some(DashboardAction::JumpBottom)),
+    ScrollHorizontalLeft => ("scroll left", &[&[Char('H')]], Some(DashboardAction::ScrollHorizontalLeft)),
+    ScrollHorizontalRight => ("scroll right", &[&[Char('L')]], Some(DashboardAction::ScrollHorizontalRight)),
+    ResizePaneLeft => ("resize pane left", &[&[ModifiedKey(KeyCode::Char('h'), KeyModifiers::ALT)], &[ModifiedKey(KeyCode::Left, KeyModifiers::ALT)]], Some(DashboardAction::ResizePaneLeft)),
+    ResizePaneRight => ("resize pane right", &[&[ModifiedKey(KeyCode::Char('l'), KeyModifiers::ALT)], &[ModifiedKey(KeyCode::Right, KeyModifiers::ALT)]], Some(DashboardAction::ResizePaneRight)),
+    Quit => ("quit", &[&[Char('q')]], Some(DashboardAction::Quit)),
+    CopyMessage => ("copy message", &[&[Char('y')]], None),
+    ReactMessage => ("react", &[&[Char('r')]], None),
+    ReplyMessage => ("reply", &[&[Char('R')]], None),
+    DeleteMessage => ("delete message", &[&[Char('d')]], None),
+    EditMessage => ("edit message", &[&[Char('e')]], None),
+    OpenMessageUrl => ("open URL", &[&[Char('o')]], None),
+    RemoveMessageEmbeds => ("remove embeds", &[], None),
+    PlayMedia => ("play media", &[&[Char('x')]], None),
+    ViewMessageAttachment => ("view attachment", &[&[Char('v')]], None),
+    ShowMessageProfile => ("show message sender profile", &[], None),
+    PinMessage => ("pin message", &[], None),
+    OpenThread => ("open thread", &[], None),
+    ShowReactionUsers => ("show reacted users", &[], None),
+    OpenPollVotePicker => ("choose poll votes", &[], None),
+    GoToReferencedMessage => ("go to referenced message", &[], None),
+    ToggleGuildPane => ("toggle Servers", &[&[Leader, Char('1')]], None),
+    ToggleChannelPane => ("toggle Channels", &[&[Leader, Char('2')]], None),
+    ToggleMemberPane => ("toggle Members", &[&[Leader, Char('4')]], None),
+    OpenFocusedPaneAction => ("Actions", &[&[Leader, Char('a')]], None),
+    OpenCurrentUserProfile => ("My profile", &[&[Leader, Char('p')]], None),
+    OpenOptions => ("Options", &[&[Leader, Char('o')]], None),
+    ChannelSwitcher => ("Switch channels", &[&[Leader, Leader]], None),
+    OpenNotificationInbox => ("Notification inbox", &[&[Leader, Char('n')]], None),
+    OpenDisplayOptions => ("Display options", &[], None),
+    OpenComposerOptions => ("Composer options", &[], None),
+    OpenNotificationOptions => ("Notification options", &[], None),
+    OpenVoiceOptions => ("Voice options", &[], None),
+    VoiceDeafen => ("deafen voice", &[&[Leader, Char('v'), Char('d')]], None),
+    VoiceMute => ("mute voice", &[&[Leader, Char('v'), Char('m')]], None),
+    VoiceLeave => ("leave voice", &[&[Leader, Char('v'), Char('l')]], None),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

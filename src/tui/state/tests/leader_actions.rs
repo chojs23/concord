@@ -40,7 +40,7 @@ fn channel_leader_action_show_threads_opens_thread_list_view() {
     assert_eq!(actions[1].kind, ChannelActionKind::LeaveVoice);
     assert_eq!(actions[1].label, "Leave voice");
     assert!(!actions[1].enabled);
-    assert_eq!(actions[2].kind, ChannelActionKind::LoadPinnedMessages);
+    assert_eq!(actions[2].kind, ChannelActionKind::ShowPinnedMessages);
     assert_eq!(actions[2].label, "Show pinned messages");
     assert!(actions[2].enabled);
     assert_eq!(actions[3].kind, ChannelActionKind::ShowThreads);
@@ -345,7 +345,7 @@ fn category_leader_action_lists_disabled_rows_and_dispatches_mute_command() {
     assert!(!actions[0].enabled);
     assert_eq!(actions[1].kind, ChannelActionKind::LeaveVoice);
     assert!(!actions[1].enabled);
-    assert_eq!(actions[2].kind, ChannelActionKind::LoadPinnedMessages);
+    assert_eq!(actions[2].kind, ChannelActionKind::ShowPinnedMessages);
     assert!(!actions[2].enabled);
     assert_eq!(actions[3].kind, ChannelActionKind::ShowThreads);
     assert!(!actions[3].enabled);

@@ -126,7 +126,7 @@ impl DashboardState {
             ChannelActionItem::new(ChannelActionKind::JoinVoice, "Join voice", can_join_voice),
             ChannelActionItem::new(ChannelActionKind::LeaveVoice, "Leave voice", joined_here),
             ChannelActionItem::new(
-                ChannelActionKind::LoadPinnedMessages,
+                ChannelActionKind::ShowPinnedMessages,
                 "Show pinned messages",
                 !channel.is_category() && !channel.is_forum(),
             ),
@@ -227,7 +227,7 @@ impl DashboardState {
                             }
                         })
                     }
-                    ChannelActionKind::LoadPinnedMessages => {
+                    ChannelActionKind::ShowPinnedMessages => {
                         self.close_channel_leader_action();
                         self.open_channel_for_pane_view(channel_id);
                         self.enter_pinned_message_view(channel_id);
