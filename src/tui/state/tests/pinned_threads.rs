@@ -19,7 +19,7 @@ fn channel_show_pinned_messages_action_enters_pinned_message_view() {
             channel_id: Id::new(2)
         })
     );
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_channel_action_menu_active());
     assert_eq!(state.selected_message(), 0);
     assert_eq!(state.message_scroll(), 0);
     assert_eq!(state.message_line_scroll(), 0);

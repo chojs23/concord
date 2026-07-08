@@ -22,7 +22,10 @@ pub(super) fn handle_popup_key(
 ) -> Option<Option<AppCommand>> {
     let kind = state.active_modal_popup_kind()?;
 
-    if phase == PopupKeyPhase::Priority && !state.key_bindings().is_popup_close_key(key) {
+    if phase == PopupKeyPhase::Priority
+        && !state.key_bindings().is_popup_close_key(key)
+        && !action_menu_shortcut_claims_key(state, key)
+    {
         match state.key_bindings().popup_page_action(key) {
             // Paging to the bottom of a reactor list must still fetch the next page.
             Some(SelectionAction::Next) if state.page_active_popup_down() => {
@@ -60,6 +63,9 @@ pub(super) fn handle_popup_key(
         ActiveModalPopupKind::ForumPostComposer => handle_forum_post_composer_key(state, key),
         ActiveModalPopupKind::ThreadEdit => handle_thread_edit_key(state, key),
         ActiveModalPopupKind::ThreadActionMenu => handle_thread_action_menu_key(state, key),
+        ActiveModalPopupKind::GuildActionMenu => handle_guild_action_menu_key(state, key),
+        ActiveModalPopupKind::ChannelActionMenu => handle_channel_action_menu_key(state, key),
+        ActiveModalPopupKind::MemberActionMenu => handle_member_action_menu_key(state, key),
         ActiveModalPopupKind::Leader => super::leader::handle_leader_key(state, key),
         ActiveModalPopupKind::MessageUrlPicker => handle_message_url_picker_key(state, key),
         ActiveModalPopupKind::MessageActionMenu => handle_message_action_menu_key(state, key),
@@ -81,6 +87,9 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::PollVotePicker
         | ActiveModalPopupKind::EmojiReactionPicker => PopupKeyPhase::Priority,
         ActiveModalPopupKind::MessageActionMenu
+        | ActiveModalPopupKind::GuildActionMenu
+        | ActiveModalPopupKind::ChannelActionMenu
+        | ActiveModalPopupKind::MemberActionMenu
         | ActiveModalPopupKind::MessageUrlPicker
         | ActiveModalPopupKind::AttachmentViewer
         | ActiveModalPopupKind::Leader
@@ -367,14 +376,102 @@ pub(super) fn handle_thread_action_menu_key(
         }
     }
 
-    handle_popup_list_key(
+    handle_action_menu_key(
         state,
         key,
+        DashboardState::thread_action_shortcut_matches,
         close_or_back,
         DashboardState::move_thread_action_down,
         DashboardState::move_thread_action_up,
         DashboardState::activate_selected_thread_action,
         activate_thread_action_shortcut,
+    )
+}
+
+pub(super) fn handle_guild_action_menu_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    fn activate_guild_action_shortcut(
+        state: &mut DashboardState,
+        shortcut: KeyChord,
+    ) -> Option<AppCommand> {
+        state
+            .guild_action_shortcut_matches(shortcut)
+            .then(|| state.activate_guild_action_shortcut(shortcut))?
+    }
+
+    fn close_or_back(state: &mut DashboardState) {
+        if !state.back_guild_action_menu() {
+            state.close_guild_action_menu();
+        }
+    }
+
+    handle_action_menu_key(
+        state,
+        key,
+        DashboardState::guild_action_shortcut_matches,
+        close_or_back,
+        DashboardState::move_guild_action_down,
+        DashboardState::move_guild_action_up,
+        DashboardState::activate_selected_guild_action,
+        activate_guild_action_shortcut,
+    )
+}
+
+pub(super) fn handle_channel_action_menu_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    fn activate_channel_action_shortcut(
+        state: &mut DashboardState,
+        shortcut: KeyChord,
+    ) -> Option<AppCommand> {
+        state
+            .channel_action_shortcut_matches(shortcut)
+            .then(|| state.activate_channel_action_shortcut(shortcut))?
+    }
+
+    fn close_or_back(state: &mut DashboardState) {
+        if !state.back_channel_action_menu() {
+            state.close_channel_action_menu();
+        }
+    }
+
+    handle_action_menu_key(
+        state,
+        key,
+        DashboardState::channel_action_shortcut_matches,
+        close_or_back,
+        DashboardState::move_channel_action_down,
+        DashboardState::move_channel_action_up,
+        DashboardState::activate_selected_channel_action,
+        activate_channel_action_shortcut,
+    )
+}
+
+pub(super) fn handle_member_action_menu_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    fn activate_member_action_shortcut(
+        state: &mut DashboardState,
+        shortcut: KeyChord,
+    ) -> Option<AppCommand> {
+        state
+            .member_action_shortcut_matches(shortcut)
+            .then(|| state.activate_member_action_shortcut(shortcut))?
+    }
+
+    handle_action_menu_key(
+        state,
+        key,
+        DashboardState::member_action_shortcut_matches,
+        DashboardState::close_member_action_menu,
+        DashboardState::move_member_action_down,
+        DashboardState::move_member_action_up,
+        DashboardState::activate_selected_member_action,
+        activate_member_action_shortcut,
     )
 }
 
@@ -538,14 +635,83 @@ pub(super) fn handle_message_action_menu_key(
             .then(|| state.activate_message_action_shortcut(shortcut))?
     }
 
-    handle_popup_list_key(
+    handle_action_menu_key(
         state,
         key,
+        DashboardState::message_action_shortcut_matches,
         DashboardState::close_message_action_menu,
         DashboardState::move_message_action_down,
         DashboardState::move_message_action_up,
         DashboardState::activate_selected_message_action,
         activate_message_action_shortcut,
+    )
+}
+
+/// Paging keys can collide with rebound action shortcuts (e.g. ToggleMute on
+/// `<C-u>` vs half-page-up). A displayed shortcut wins, matching the j/k rule
+/// in [`handle_action_menu_key`], so the paging pre-phase skips these keys.
+fn action_menu_shortcut_claims_key(state: &DashboardState, key: KeyEvent) -> bool {
+    if !matches!(key.code, KeyCode::Char(_)) {
+        return false;
+    }
+    let shortcut = state.key_bindings().keymap_chord_for_event(key);
+    match state.active_modal_popup_kind() {
+        Some(ActiveModalPopupKind::MessageActionMenu) => {
+            state.message_action_shortcut_matches(shortcut)
+        }
+        Some(ActiveModalPopupKind::ThreadActionMenu) => {
+            state.thread_action_shortcut_matches(shortcut)
+        }
+        Some(ActiveModalPopupKind::GuildActionMenu) => {
+            state.guild_action_shortcut_matches(shortcut)
+        }
+        Some(ActiveModalPopupKind::ChannelActionMenu) => {
+            state.channel_action_shortcut_matches(shortcut)
+        }
+        Some(ActiveModalPopupKind::MemberActionMenu) => {
+            state.member_action_shortcut_matches(shortcut)
+        }
+        _ => false,
+    }
+}
+
+/// Shared key handling for the action menu family (message, thread, and the
+/// server/channel/member menus). On top of the regular popup-list keys
+/// (j/k/arrows, Enter, Esc):
+/// - Left steps back like Esc so nested submenus can be exited without
+///   closing the whole menu.
+/// - A displayed action shortcut wins over the j/k selection keys, so menus
+///   whose shortcuts overlap them (e.g. an action rebound to `j`) stay
+///   activatable; arrows and Ctrl+n/p always navigate.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn handle_action_menu_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+    shortcut_matches: impl Fn(&DashboardState, KeyChord) -> bool,
+    close_or_back: impl Fn(&mut DashboardState),
+    move_down: impl Fn(&mut DashboardState),
+    move_up: impl Fn(&mut DashboardState),
+    activate_selected: impl Fn(&mut DashboardState) -> Option<AppCommand>,
+    activate_shortcut: impl Fn(&mut DashboardState, KeyChord) -> Option<AppCommand>,
+) -> Option<AppCommand> {
+    if key.code == KeyCode::Left && key.modifiers.is_empty() {
+        close_or_back(state);
+        return None;
+    }
+    if matches!(key.code, KeyCode::Char(_)) {
+        let shortcut = state.key_bindings().keymap_chord_for_event(key);
+        if shortcut_matches(state, shortcut) {
+            return activate_shortcut(state, shortcut);
+        }
+    }
+    handle_popup_list_key(
+        state,
+        key,
+        close_or_back,
+        move_down,
+        move_up,
+        activate_selected,
+        activate_shortcut,
     )
 }
 

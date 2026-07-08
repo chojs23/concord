@@ -658,7 +658,7 @@ fn direct_message_url_opens_single_url_from_message_content() {
             url: "https://example.com/docs".to_owned(),
         })
     );
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
@@ -674,7 +674,7 @@ fn direct_message_url_opens_url_picker_for_multiple_urls() {
     state.focus_pane(FocusPane::Messages);
     assert_eq!(state.direct_open_selected_message_url(), None);
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker));
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert_eq!(state.selected_message_url_index(), Some(0));
 
     assert_eq!(
@@ -689,7 +689,7 @@ fn direct_message_url_opens_url_picker_for_multiple_urls() {
     assert!(
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker)
     );
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]

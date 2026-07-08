@@ -234,31 +234,48 @@ impl DashboardState {
         items
     }
 
-    /// Move the highlight to `row` within the top-level action list. Returns
-    /// `false` when the menu sits in a submenu or the row is out of range.
+    /// Move the highlight to `row` within the current phase's list. Returns
+    /// `false` when the row is out of range.
     fn select_thread_action_row(&mut self, row: usize) -> bool {
-        if row >= self.selected_thread_action_items().len() {
+        if row >= self.thread_action_row_count() {
             return false;
         }
-        if let Some(ThreadActionMenuState::Actions { selection, .. }) =
-            self.popups.thread_action_menu_mut()
-        {
+        if let Some(selection) = self.thread_action_selection_mut() {
             selection.select(row);
             return true;
         }
         false
     }
 
-    /// Activate the action bound to `shortcut`, if an enabled row in the
-    /// top-level list claims it. Mirrors the message action menu's shortcuts.
+    /// Activate the row bound to `shortcut`: action-specific shortcuts in the
+    /// top-level list, indexed shortcuts in the submenus. Mirrors the message
+    /// action menu's shortcuts.
     pub fn activate_thread_action_shortcut(&mut self, shortcut: KeyChord) -> Option<AppCommand> {
-        let actions = self.selected_thread_action_items();
-        let index = self.key_bindings().matching_action_shortcut_index(
-            &actions,
-            shortcut,
-            |key_bindings, actions, index| key_bindings.thread_action_shortcuts(actions, index),
-            |action| action.enabled,
-        )?;
+        let index = match self.popups.thread_action_menu()? {
+            ThreadActionMenuState::Actions { .. } => {
+                let actions = self.selected_thread_action_items();
+                self.key_bindings().matching_action_shortcut_index(
+                    &actions,
+                    shortcut,
+                    |key_bindings, actions, index| {
+                        key_bindings.thread_action_shortcuts(actions, index)
+                    },
+                    |action| action.enabled,
+                )?
+            }
+            ThreadActionMenuState::MuteDuration { .. } => {
+                self.key_bindings().matching_indexed_shortcut_index(
+                    shortcut,
+                    self.selected_thread_mute_duration_items().len(),
+                )?
+            }
+            ThreadActionMenuState::NotificationSettings { .. } => {
+                self.key_bindings().matching_indexed_shortcut_index(
+                    shortcut,
+                    self.selected_thread_notification_items().len(),
+                )?
+            }
+        };
         self.select_thread_action_row(index);
         self.activate_selected_thread_action()
     }
@@ -302,7 +319,7 @@ impl DashboardState {
         }
     }
 
-    fn thread_action_row_count(&self) -> usize {
+    pub(super) fn thread_action_row_count(&self) -> usize {
         match self.popups.thread_action_menu() {
             Some(ThreadActionMenuState::Actions { .. }) => {
                 self.selected_thread_action_items().len()
@@ -317,7 +334,9 @@ impl DashboardState {
         }
     }
 
-    fn thread_action_selection_mut(&mut self) -> Option<&mut super::SelectablePopupState> {
+    pub(super) fn thread_action_selection_mut(
+        &mut self,
+    ) -> Option<&mut super::SelectablePopupState> {
         match self.popups.thread_action_menu_mut()? {
             ThreadActionMenuState::Actions { selection, .. }
             | ThreadActionMenuState::MuteDuration { selection, .. }

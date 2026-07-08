@@ -274,14 +274,6 @@ pub(in crate::tui) enum SearchPopupAction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::tui) enum LeaderActionMenuAction {
-    BackOrClose,
-    Close,
-    ActivateShortcut(KeyChord),
-    UnknownClose,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum PopupListAction {
     Close,
     Select(SelectionAction),

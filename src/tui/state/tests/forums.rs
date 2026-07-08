@@ -1230,9 +1230,9 @@ fn channel_pane_forum_post_thread_opens_thread_actions() {
     );
 
     // The shared action trigger opens the forum post menu, not the channel menu.
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
     assert!(state.is_active_modal_popup(ActiveModalPopupKind::ThreadActionMenu));
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_channel_action_menu_active());
     // Mute is only enabled for a followed post, confirming the menu targets the
     // joined thread (id 30) rather than the forum channel.
     let items = state.selected_thread_action_items();
@@ -1903,9 +1903,9 @@ fn channel_pane_regular_thread_opens_thread_actions() {
 
     // The shared action trigger opens the thread action menu, not the channel
     // menu.
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
     assert!(state.is_active_modal_popup(ActiveModalPopupKind::ThreadActionMenu));
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_channel_action_menu_active());
 
     let items = state.selected_thread_action_items();
     let label = |kind: ThreadActionKind| {

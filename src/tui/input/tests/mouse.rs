@@ -553,7 +553,7 @@ fn mouse_double_click_activates_message_action_row_like_enter() {
     );
 
     assert_eq!(second.command, None);
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::PollVotePicker));
 }
 

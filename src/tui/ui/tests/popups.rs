@@ -1189,12 +1189,12 @@ fn leader_action_popup_renders_focused_pane_actions() {
     let mut state = state_with_message();
     state.focus_pane(FocusPane::Channels);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
 
     let dump = render_dashboard_dump(120, 20, &mut state);
     let rendered = dump.join("\n");
 
-    assert!(rendered.contains("Channel Actions"), "{rendered}");
+    assert!(rendered.contains("Channel actions"), "{rendered}");
     assert!(rendered.contains("[p]"), "{rendered}");
     assert!(rendered.contains("Show pinned messages"), "{rendered}");
     assert!(rendered.contains("Show threads"), "{rendered}");
@@ -1234,9 +1234,9 @@ fn leader_action_popup_renders_modified_action_shortcut_labels() {
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Channels);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
 
-    let lines = leader_action_lines_for_test(&state);
+    let lines = channel_action_menu_lines_for_test(&state);
     let rendered = line_texts_from_ratatui(&lines).join("\n");
 
     assert!(rendered.contains("[Ctrl+u]"), "{rendered}");
@@ -1248,10 +1248,10 @@ fn leader_action_popup_dims_disabled_channel_actions() {
     let mut state = state_with_message();
     state.focus_pane(FocusPane::Channels);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
-    let lines = leader_action_lines_for_test(&state);
+    state.open_focused_pane_actions();
+    let lines = channel_action_menu_lines_for_test(&state);
 
-    assert_eq!(lines[0].spans[2].content, "Join voice");
+    assert_eq!(lines[0].spans[2].content, "Join voice (unavailable)");
     assert_eq!(lines[0].spans[2].style.fg, Some(DIM));
 }
 
@@ -1260,12 +1260,12 @@ fn leader_action_popup_from_messages_uses_message_action_title() {
     let mut state = state_with_message();
     state.focus_pane(FocusPane::Messages);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
 
     let dump = render_dashboard_dump(120, 20, &mut state);
     let rendered = dump.join("\n");
 
-    assert!(rendered.contains("Message Actions"), "{rendered}");
+    assert!(rendered.contains("Message actions"), "{rendered}");
 }
 
 #[test]
@@ -1273,12 +1273,12 @@ fn leader_action_popup_from_guilds_uses_server_action_title() {
     let mut state = state_with_message();
     state.focus_pane(FocusPane::Guilds);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
 
     let dump = render_dashboard_dump(120, 20, &mut state);
     let rendered = dump.join("\n");
 
-    assert!(rendered.contains("Server Actions"), "{rendered}");
+    assert!(rendered.contains("Server actions"), "{rendered}");
     assert!(rendered.contains("Mark server as read"), "{rendered}");
 }
 
@@ -1306,30 +1306,24 @@ fn leader_action_popup_from_members_uses_member_action_title() {
     state.confirm_selected_guild();
     state.focus_pane(FocusPane::Members);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
 
     let dump = render_dashboard_dump(120, 20, &mut state);
     let rendered = dump.join("\n");
 
-    assert!(rendered.contains("Member Actions"), "{rendered}");
+    assert!(rendered.contains("Member actions"), "{rendered}");
     assert!(rendered.contains("Show profile"), "{rendered}");
 }
 
 #[test]
-fn leader_action_popup_for_empty_panes_shows_empty_state() {
+fn focused_pane_actions_on_empty_panes_open_nothing() {
     for pane in [FocusPane::Channels, FocusPane::Messages, FocusPane::Members] {
         let mut state = DashboardState::new();
         state.focus_pane(pane);
         state.open_leader();
-        state.open_leader_actions_for_focused_target();
+        state.open_focused_pane_actions();
 
-        let dump = render_dashboard_dump(120, 20, &mut state);
-        let rendered = dump.join("\n");
-
-        assert!(
-            rendered.contains("No actions available"),
-            "{pane:?}: {rendered}"
-        );
+        assert_eq!(state.active_modal_popup_kind(), None, "{pane:?}");
     }
 }
 

@@ -26,11 +26,12 @@ mod url_picker;
 
 #[cfg(test)]
 pub(super) use action_menu::{
-    leader_action_lines_for_test, message_action_menu_lines,
+    channel_action_menu_lines_for_test, message_action_menu_lines,
     message_action_menu_lines_with_keymap_options,
 };
 pub(super) use action_menu::{
-    leader_popup_area_for_state, message_action_menu_area, render_leader_popup,
+    leader_popup_area_for_state, message_action_menu_area, render_channel_action_menu,
+    render_guild_action_menu, render_leader_popup, render_member_action_menu,
     render_message_action_menu, render_thread_action_menu,
 };
 #[cfg(test)]
@@ -142,11 +143,28 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
     let kind = state.active_modal_popup_kind()?;
     match kind {
         ActiveModalPopupKind::MessageActionMenu => {
-            if state.is_leader_action_mode() {
-                return None;
-            }
             let actions = state.selected_message_action_items();
             (!actions.is_empty()).then(|| message_action_menu_area(frame_area, actions.len()))
+        }
+        ActiveModalPopupKind::GuildActionMenu => {
+            let count = if state.is_guild_action_mute_duration_phase() {
+                state.selected_guild_mute_duration_items().len()
+            } else {
+                state.selected_guild_action_items().len()
+            };
+            (count > 0).then(|| message_action_menu_area(frame_area, count))
+        }
+        ActiveModalPopupKind::ChannelActionMenu => {
+            let count = if state.is_channel_action_mute_duration_phase() {
+                state.selected_channel_mute_duration_items().len()
+            } else {
+                state.selected_channel_action_items().len()
+            };
+            (count > 0).then(|| message_action_menu_area(frame_area, count))
+        }
+        ActiveModalPopupKind::MemberActionMenu => {
+            let count = state.selected_member_action_items().len();
+            (count > 0).then(|| message_action_menu_area(frame_area, count))
         }
         ActiveModalPopupKind::MessageUrlPicker => {
             let urls = state.selected_message_url_items();

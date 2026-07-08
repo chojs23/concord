@@ -114,8 +114,8 @@ fn a_key_no_longer_opens_actions_directly() {
 
     handle_key(&mut state, char_key('a'));
 
-    assert!(!state.is_message_action_context_active());
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_message_action_menu_active());
+    assert!(!state.is_channel_action_menu_active());
 }
 
 #[test]

@@ -251,23 +251,6 @@ impl KeyBindings {
         }
     }
 
-    pub(in crate::tui) fn leader_action_menu_action(
-        &self,
-        key: KeyEvent,
-    ) -> LeaderActionMenuAction {
-        match key.code {
-            KeyCode::Esc => LeaderActionMenuAction::BackOrClose,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                LeaderActionMenuAction::Close
-            }
-            KeyCode::Char(_) => {
-                LeaderActionMenuAction::ActivateShortcut(self.keymap_chord_for_event(key))
-            }
-            code if is_left_key(code) => LeaderActionMenuAction::BackOrClose,
-            _ => LeaderActionMenuAction::UnknownClose,
-        }
-    }
-
     pub(in crate::tui) fn popup_list_action(&self, key: KeyEvent) -> Option<PopupListAction> {
         if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
             if self.is_popup_close_key(key) {
@@ -833,7 +816,7 @@ impl KeyBindings {
 
     fn default_channel_action_shortcut(&self, kind: ChannelActionKind) -> Vec<KeyChord> {
         vec![char_chord(match kind {
-            ChannelActionKind::JoinVoice => 'j',
+            ChannelActionKind::JoinVoice => 'e',
             ChannelActionKind::LeaveVoice => 'l',
             ChannelActionKind::ShowPinnedMessages => 'p',
             ChannelActionKind::ShowThreads => 't',

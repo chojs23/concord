@@ -13,14 +13,14 @@ use crate::tui::text_input::TextEditAction;
 use super::super::model::{FocusPane, MemberActionItem, MemberActionKind};
 use super::super::{ActiveGuildScope, DashboardState};
 use super::{
-    ActiveModalPopupKind, LeaderActionState, LeaderMode, LeaderPopupState, MemberLeaderActionState,
-    ModalPopup, SelectablePopupState, UserProfilePopupState, UserProfileSettingsField,
-    UserProfileSettingsState, UserProfileSettingsTab,
+    ActiveModalPopupKind, MemberActionMenuState, ModalPopup, SelectablePopupState,
+    UserProfilePopupState, UserProfileSettingsField, UserProfileSettingsState,
+    UserProfileSettingsTab,
 };
 
 impl DashboardState {
-    pub fn is_member_leader_action_active(&self) -> bool {
-        self.popups.member_leader_action().is_some()
+    pub fn is_member_action_menu_active(&self) -> bool {
+        self.popups.member_action_menu().is_some()
     }
 
     /// Direct shortcut from the member pane: open the profile popup for the
@@ -49,16 +49,12 @@ impl DashboardState {
     }
 
     pub fn open_selected_member_actions(&mut self) {
-        if let Some(action) = self.selected_member_action_context() {
-            self.popups.modal = Some(ModalPopup::Leader(LeaderPopupState {
-                mode: LeaderMode::Actions,
-                keymap_prefix: Vec::new(),
-                action: Some(LeaderActionState::Member(action)),
-            }));
+        if let Some(menu) = self.selected_member_action_context() {
+            self.popups.modal = Some(ModalPopup::MemberActionMenu(menu));
         }
     }
 
-    pub(super) fn selected_member_action_context(&self) -> Option<MemberLeaderActionState> {
+    pub(super) fn selected_member_action_context(&self) -> Option<MemberActionMenuState> {
         if self.navigation.focus != FocusPane::Members {
             return None;
         }
@@ -72,21 +68,21 @@ impl DashboardState {
             ActiveGuildScope::Guild(guild_id) => Some(guild_id),
             ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
         };
-        Some(MemberLeaderActionState {
+        Some(MemberActionMenuState {
             user_id,
             guild_id,
             selection: Default::default(),
         })
     }
 
-    pub fn close_member_leader_action(&mut self) {
-        if self.is_member_leader_action_active() {
+    pub fn close_member_action_menu(&mut self) {
+        if self.is_member_action_menu_active() {
             self.popups.clear_modal();
         }
     }
 
     pub fn selected_member_action_items(&self) -> Vec<MemberActionItem> {
-        if self.popups.member_leader_action().is_none() {
+        if self.popups.member_action_menu().is_none() {
             return Vec::new();
         }
         vec![MemberActionItem::new(
@@ -96,11 +92,32 @@ impl DashboardState {
         )]
     }
 
+    pub fn selected_member_action_index(&self) -> Option<usize> {
+        self.popups.member_action_menu().map(|action| {
+            action
+                .selection
+                .selected_for_len(self.selected_member_action_items().len())
+        })
+    }
+
+    pub fn move_member_action_down(&mut self) {
+        let len = self.selected_member_action_items().len();
+        if let Some(action) = self.popups.member_action_menu_mut() {
+            action.selection.move_down(len);
+        }
+    }
+
+    pub fn move_member_action_up(&mut self) {
+        if let Some(action) = self.popups.member_action_menu_mut() {
+            action.selection.move_up();
+        }
+    }
+
     pub fn select_member_action_row(&mut self, row: usize) -> bool {
         if row >= self.selected_member_action_items().len() {
             return false;
         }
-        if let Some(action) = self.popups.member_leader_action_mut() {
+        if let Some(action) = self.popups.member_action_menu_mut() {
             action.selection.select(row);
             return true;
         }
@@ -108,7 +125,7 @@ impl DashboardState {
     }
 
     pub fn activate_selected_member_action(&mut self) -> Option<AppCommand> {
-        let action = self.popups.member_leader_action().cloned()?;
+        let action = self.popups.member_action_menu().cloned()?;
         let items = self.selected_member_action_items();
         let item = items
             .get(action.selection.selected_for_len(items.len()))?
@@ -118,7 +135,7 @@ impl DashboardState {
         }
         match item.kind {
             MemberActionKind::ShowProfile => {
-                self.close_member_leader_action();
+                self.close_member_action_menu();
                 self.open_user_profile_popup(action.user_id, action.guild_id)
             }
         }

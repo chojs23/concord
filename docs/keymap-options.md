@@ -247,7 +247,7 @@ Channel pane actions:
 
 ```toml
 [keymap.channel_actions]
-JoinVoice = { keys = ["j"], description = "join voice" }
+JoinVoice = { keys = ["e"], description = "join voice" }
 LeaveVoice = { keys = ["l"], description = "leave voice" }
 ShowPinnedMessages = { keys = ["p"], description = "show pinned messages" }
 ShowThreads = { keys = ["t"], description = "show threads" }
@@ -257,7 +257,7 @@ MuteChannel = { keys = ["u"], description = "mute channel" }
 
 | Scoped action        | Default | Action                                                                                      |
 | -------------------- | ------- | ------------------------------------------------------------------------------------------- |
-| `JoinVoice`          | `j`     | Join the selected voice channel.                                                            |
+| `JoinVoice`          | `e`     | Join the selected voice channel.                                                            |
 | `LeaveVoice`         | `l`     | Leave the current Concord voice channel.                                                    |
 | `ShowPinnedMessages` | `p`     | Open the selected channel's pinned messages. Also accepts `LoadPinnedMessages` as an alias. |
 | `ShowThreads`        | `t`     | List threads for the selected channel.                                                      |

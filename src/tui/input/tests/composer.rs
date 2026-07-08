@@ -885,7 +885,7 @@ fn direct_reply_shortcut_opens_composer() {
     let command = handle_key(&mut state, char_key('R'));
 
     assert_eq!(command, None);
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert!(state.is_composing());
     assert_eq!(state.composer_input(), "");
 
@@ -958,7 +958,7 @@ fn direct_reaction_shortcut_opens_emoji_picker() {
     let command = handle_key(&mut state, char_key('r'));
 
     assert_eq!(command, None);
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert!(
         state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker)
     );

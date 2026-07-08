@@ -1,16 +1,12 @@
 use crossterm::event::KeyEvent;
 
 use crate::discord::AppCommand;
-use crate::tui::keybindings::{KeyMapLookup, LeaderActionMenuAction};
-use crate::tui::state::{ActiveModalPopupKind, DashboardState};
+use crate::tui::keybindings::KeyMapLookup;
+use crate::tui::state::DashboardState;
 
 use super::execute_ui_action;
 
 pub(super) fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    if state.is_leader_action_mode() {
-        return handle_leader_action_key(state, key);
-    }
-
     if let Some(command) = handle_leader_keymap_key(state, key) {
         return command;
     }
@@ -43,40 +39,5 @@ fn handle_leader_keymap_key(
             Some(None)
         }
         None => None,
-    }
-}
-
-fn handle_leader_action_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    match state.key_bindings().leader_action_menu_action(key) {
-        LeaderActionMenuAction::BackOrClose => {
-            if state.is_active_modal_popup(ActiveModalPopupKind::MessageUrlPicker) {
-                state.close_message_url_picker();
-                return None;
-            }
-            if state.back_channel_leader_action() || state.back_guild_leader_action() {
-                return None;
-            }
-            state.close_all_action_contexts();
-            state.close_leader();
-            None
-        }
-        LeaderActionMenuAction::Close => {
-            state.close_all_action_contexts();
-            state.close_leader();
-            None
-        }
-        LeaderActionMenuAction::ActivateShortcut(shortcut) => {
-            let activation = state.activate_active_action_shortcut(shortcut);
-            if !activation.matched || !state.is_any_action_context_active() {
-                state.close_all_action_contexts();
-                state.close_leader();
-            }
-            activation.command
-        }
-        LeaderActionMenuAction::UnknownClose => {
-            state.close_all_action_contexts();
-            state.close_leader();
-            None
-        }
     }
 }

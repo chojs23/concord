@@ -471,7 +471,7 @@ fn enter_opens_member_actions_from_member_pane() {
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
     assert_eq!(command, None);
-    assert!(state.is_member_leader_action_active());
+    assert!(state.is_member_action_menu_active());
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::UserProfile));
 }
 

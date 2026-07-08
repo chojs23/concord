@@ -811,7 +811,7 @@ impl DashboardState {
         self.navigation.members.list.keep_selection_visible();
         self.cancel_composer();
         self.close_message_action_menu();
-        self.close_channel_leader_action();
+        self.close_channel_action_menu();
         self.close_emoji_reaction_picker();
         self.close_poll_vote_picker();
         self.close_reaction_users_popup();

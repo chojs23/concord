@@ -136,7 +136,7 @@ pub(super) fn execute_ui_action(
         UiAction::ToggleGuildPane => state.toggle_pane_visibility(FocusPane::Guilds),
         UiAction::ToggleChannelPane => state.toggle_pane_visibility(FocusPane::Channels),
         UiAction::ToggleMemberPane => state.toggle_pane_visibility(FocusPane::Members),
-        UiAction::OpenFocusedPaneAction => state.open_leader_actions_for_focused_target(),
+        UiAction::OpenFocusedPaneAction => state.open_focused_pane_actions(),
         UiAction::OpenCurrentUserProfile => return state.open_current_user_profile_popup(),
         UiAction::OpenOptions => state.open_options_category_picker(),
         UiAction::ChannelSwitcher => state.open_channel_switcher(),

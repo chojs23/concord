@@ -13,7 +13,7 @@ use super::super::{
     ActiveGuildScope, DashboardState, FocusPane, MessageActionItem, MessageActionKind,
     MessageActionMenuState, MessageConfirmationKind, MessageUrlItem, MessageUrlPickerState, popups,
 };
-use crate::tui::state::popups::{ActiveModalPopupKind, LeaderActionState, ModalPopup};
+use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup};
 
 const PLAYABLE_VIDEO_EXTENSIONS: &[&str] = &["m4v", "mov", "mp4", "webm"];
 
@@ -41,14 +41,7 @@ impl DashboardState {
     }
 
     pub fn close_message_action_menu(&mut self) {
-        if matches!(
-            self.popups.modal,
-            Some(ModalPopup::MessageActionMenu(_))
-                | Some(ModalPopup::Leader(super::LeaderPopupState {
-                    action: Some(LeaderActionState::Message(_)),
-                    ..
-                }))
-        ) {
+        if self.is_message_action_menu_active() {
             self.popups.clear_modal();
         }
     }

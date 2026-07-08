@@ -21,12 +21,12 @@ use actions::DefaultKeymapChord;
 pub use actions::OptionsCategoryShortcut;
 pub(in crate::tui) use actions::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, ComposerCompletionAction,
-    DashboardAction, DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction,
-    LeaderActionMenuAction, LoginBusyAction, LoginGlobalAction, LoginMfaSelectAction,
-    LoginModeSelectAction, LoginPasswordInputAction, LoginTextInputAction, NotificationInboxAction,
-    OptionsPopupAction, PaneFilterAction, PollVotePickerAction, PopupListAction,
-    ProfilePopupAction, ProfilePopupTabAction, ReactionUsersPopupAction, ScrollAction,
-    SearchPopupAction, SelectionAction, SelectionKeySet, UiAction,
+    DashboardAction, DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction, LoginBusyAction,
+    LoginGlobalAction, LoginMfaSelectAction, LoginModeSelectAction, LoginPasswordInputAction,
+    LoginTextInputAction, NotificationInboxAction, OptionsPopupAction, PaneFilterAction,
+    PollVotePickerAction, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
+    ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
+    UiAction,
 };
 pub(in crate::tui) use chord::KeyChord;
 #[cfg(test)]

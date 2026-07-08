@@ -335,10 +335,9 @@ Press `Space` to open the leader shortcut window.
 
 #### Action menus
 
-Focus a pane, then press `Space`, `a` to open actions for that pane. Action
-shortcuts are shown inside the leader popup and only run when the action is
-enabled. In the Messages pane, the selected message also supports these direct
-shortcuts:
+Focus a pane, then press `Space`, `a` to open actions for that pane. Actions
+that do not apply to the current selection are shown dimmed and disabled. In
+the Messages pane, the selected message also supports these direct shortcuts:
 
 Message shortcuts:
 
@@ -389,7 +388,7 @@ Channel actions:
 
 | Shortcut | Action               | Description                                  |
 | -------- | -------------------- | -------------------------------------------- |
-| `j`      | Join voice           | Join the selected voice channel or DM call   |
+| `e`      | Join voice           | Join the selected voice channel or DM call   |
 | `l`      | Leave voice          | Leave the current voice channel or DM call   |
 | `p`      | Show pinned messages | Open the selected channel's pinned messages  |
 | `t`      | Show threads         | List threads for the selected channel        |
@@ -641,7 +640,7 @@ LeaveServer = "l"
 FolderSettings = "r"
 
 [keymap.channel_actions]
-JoinVoice = "j"
+JoinVoice = "e"
 LeaveVoice = "l"
 ShowPinnedMessages = "p"
 ShowThreads = "t"

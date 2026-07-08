@@ -186,7 +186,6 @@ fn scoped_channel_action_keys_work_as_aliases() {
         handle_key(&mut state, char_key('a'));
         handle_key(&mut state, char_key(shortcut));
 
-        assert!(state.is_leader_action_mode());
         assert!(state.is_channel_action_mute_duration_phase());
     }
 }
@@ -209,13 +208,10 @@ fn scoped_channel_action_modified_shortcut_requires_matching_modifier() {
     handle_key(&mut state, char_key('u'));
 
     assert!(!state.is_channel_action_mute_duration_phase());
-    assert!(!state.is_leader_active());
+    assert!(state.is_channel_action_menu_active());
 
-    handle_key(&mut state, char_key(' '));
-    handle_key(&mut state, char_key('a'));
     handle_key(&mut state, ctrl_key('u'));
 
-    assert!(state.is_leader_action_mode());
     assert!(state.is_channel_action_mute_duration_phase());
 }
 
@@ -733,7 +729,6 @@ fn leader_v_opens_voice_keymap_group() {
     handle_key(&mut state, char_key('v'));
 
     assert!(state.is_leader_active());
-    assert!(!state.is_leader_action_mode());
     assert!(
         state
             .leader_keymap_shortcuts()
@@ -995,13 +990,13 @@ fn enter_opens_message_action_menu_and_space_opens_leader() {
 
     handle_key(&mut state, key(KeyCode::Enter));
 
-    assert!(state.is_message_action_context_active());
+    assert!(state.is_message_action_menu_active());
     state.close_message_action_menu();
 
     handle_key(&mut state, char_key(' '));
 
     assert!(state.is_leader_active());
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
@@ -1026,8 +1021,7 @@ fn leader_a_opens_selected_channel_actions_from_channel_pane() {
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
-    assert!(state.is_leader_action_mode());
-    assert!(state.is_channel_leader_action_active());
+    assert!(state.is_channel_action_menu_active());
 }
 
 #[test]
@@ -1041,8 +1035,7 @@ fn leader_channel_subphase_esc_returns_to_channel_actions() {
 
     handle_key(&mut state, key(KeyCode::Esc));
 
-    assert!(state.is_leader_action_mode());
-    assert!(state.is_channel_leader_action_active());
+    assert!(state.is_channel_action_menu_active());
     assert!(!state.is_channel_action_mute_duration_phase());
 }
 
@@ -1071,8 +1064,7 @@ fn leader_guild_subphase_esc_returns_to_server_actions() {
 
     handle_key(&mut state, key(KeyCode::Esc));
 
-    assert!(state.is_leader_action_mode());
-    assert!(state.is_guild_leader_action_active());
+    assert!(state.is_guild_action_menu_active());
     assert!(!state.is_guild_action_mute_duration_phase());
 }
 
@@ -1084,9 +1076,8 @@ fn leader_a_opens_message_actions_from_message_pane() {
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
-    assert!(state.is_leader_action_mode());
-    assert!(state.is_message_action_context_active());
-    assert!(!state.is_channel_leader_action_active());
+    assert!(state.is_message_action_menu_active());
+    assert!(!state.is_channel_action_menu_active());
 }
 
 #[test]
@@ -1097,8 +1088,7 @@ fn leader_a_opens_server_actions_from_guild_pane() {
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
-    assert!(state.is_leader_action_mode());
-    assert!(state.is_guild_leader_action_active());
+    assert!(state.is_guild_action_menu_active());
 }
 
 #[test]
@@ -1216,8 +1206,7 @@ fn leader_a_opens_member_actions_from_member_pane() {
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('a'));
 
-    assert!(state.is_leader_action_mode());
-    assert!(state.is_member_leader_action_active());
+    assert!(state.is_member_action_menu_active());
     let actions = state.selected_member_action_items();
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].label, "Show profile");

@@ -390,7 +390,7 @@ fn show_reacted_users_action_opens_reaction_list() {
         .expect("popup should be open on the reaction list");
     assert_eq!(popup.entries().len(), 2);
     assert!(!popup.is_viewing_users());
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]

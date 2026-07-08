@@ -168,7 +168,7 @@ fn message_action_menu_navigation_is_modal() {
 
     handle_key(&mut state, key(KeyCode::Esc));
 
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
@@ -241,7 +241,7 @@ fn message_action_shortcuts_edit_and_delete_own_message() {
     let command = handle_key(&mut edit_state, char_key('e'));
 
     assert_eq!(command, None);
-    assert!(!edit_state.is_message_action_context_active());
+    assert!(!edit_state.is_message_action_menu_active());
     assert!(edit_state.is_composing());
 
     let mut delete_state = state_with_own_message();
@@ -250,7 +250,7 @@ fn message_action_shortcuts_edit_and_delete_own_message() {
     let command = handle_key(&mut delete_state, char_key('d'));
 
     assert_eq!(command, None);
-    assert!(!delete_state.is_message_action_context_active());
+    assert!(!delete_state.is_message_action_menu_active());
     assert!(
         delete_state
             .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
@@ -363,7 +363,7 @@ fn message_action_menu_d_shortcut_removes_embeds() {
             message_id: Id::new(1),
         })
     );
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert!(
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
@@ -383,7 +383,7 @@ fn open_url_shortcut_opens_url_or_url_picker() {
 
     assert_eq!(command, None);
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker));
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 
     let command = handle_key(&mut state, char_key('2'));
 
@@ -396,7 +396,7 @@ fn open_url_shortcut_opens_url_or_url_picker() {
     assert!(
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker)
     );
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
@@ -498,7 +498,7 @@ fn message_action_popup_q_runs_configured_action_before_close_popup() {
     state.focus_pane(FocusPane::Messages);
 
     handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_context_active());
+    assert!(state.is_message_action_menu_active());
 
     handle_key(&mut state, char_key('q'));
 
@@ -506,7 +506,7 @@ fn message_action_popup_q_runs_configured_action_before_close_popup() {
         state.take_copy_text_request(),
         Some(("msg 1".to_owned(), "Message copied"))
     );
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
@@ -523,17 +523,17 @@ fn message_action_popup_configured_navigation_key_closes_popup() {
     state.focus_pane(FocusPane::Messages);
 
     handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_context_active());
+    assert!(state.is_message_action_menu_active());
 
     handle_key(&mut state, key(KeyCode::Esc));
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 
     handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_context_active());
+    assert!(state.is_message_action_menu_active());
 
     handle_key(&mut state, char_key('j'));
 
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
@@ -805,7 +805,7 @@ fn message_action_menu_control_page_keys_move_selection() {
     let command = handle_key(&mut state, ctrl_key('d'));
 
     assert_eq!(command, None);
-    assert!(state.is_message_action_context_active());
+    assert!(state.is_message_action_menu_active());
     assert_eq!(state.selected_message_action_index(), Some(10));
 
     handle_key(&mut state, ctrl_key('u'));
@@ -821,7 +821,7 @@ fn direct_view_attachment_shortcut_opens_viewer_and_esc_closes_viewer() {
     let command = handle_key(&mut state, char_key('v'));
 
     assert_eq!(command, None);
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::AttachmentViewer));
     assert_eq!(
         state

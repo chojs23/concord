@@ -8,7 +8,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker},
 };
-use crate::discord::{AppCommand, MessageAttachmentUpload, ReactionEmoji};
+use crate::discord::{MessageAttachmentUpload, ReactionEmoji};
 use crate::discord::{PresenceStatus, ProfileAvatarUpload};
 
 use crate::discord::ReactionUserInfo;
@@ -46,12 +46,6 @@ use search::SearchPopupState;
 
 const SELECTABLE_POPUP_PAGE_STEP: usize = 10;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum LeaderMode {
-    Root,
-    Actions,
-}
-
 #[derive(Debug, Default)]
 pub(super) struct PopupUiState {
     pub(super) modal: Option<ModalPopup>,
@@ -77,14 +71,11 @@ impl ConfirmationButton {
 }
 
 #[derive(Debug)]
-pub(in crate::tui) struct ActionShortcutActivation {
-    pub(in crate::tui) matched: bool,
-    pub(in crate::tui) command: Option<AppCommand>,
-}
-
-#[derive(Debug)]
 pub(super) enum ModalPopup {
     MessageActionMenu(MessageActionMenuState),
+    GuildActionMenu(GuildActionMenuState),
+    ChannelActionMenu(ChannelActionMenuState),
+    MemberActionMenu(MemberActionMenuState),
     MessageUrlPicker(MessageUrlPickerState),
     MessageConfirmation(MessageConfirmationState),
     QuitConfirmation,
@@ -110,6 +101,9 @@ pub(super) enum ModalPopup {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum ActiveModalPopupKind {
     MessageActionMenu,
+    GuildActionMenu,
+    ChannelActionMenu,
+    MemberActionMenu,
     MessageUrlPicker,
     MessageConfirmation,
     QuitConfirmation,
@@ -136,6 +130,9 @@ impl ModalPopup {
     fn kind(&self) -> ActiveModalPopupKind {
         match self {
             Self::MessageActionMenu(_) => ActiveModalPopupKind::MessageActionMenu,
+            Self::GuildActionMenu(_) => ActiveModalPopupKind::GuildActionMenu,
+            Self::ChannelActionMenu(_) => ActiveModalPopupKind::ChannelActionMenu,
+            Self::MemberActionMenu(_) => ActiveModalPopupKind::MemberActionMenu,
             Self::MessageUrlPicker(_) => ActiveModalPopupKind::MessageUrlPicker,
             Self::MessageConfirmation(_) => ActiveModalPopupKind::MessageConfirmation,
             Self::QuitConfirmation => ActiveModalPopupKind::QuitConfirmation,
@@ -284,19 +281,12 @@ pub(super) enum ThreadActionMenuState {
     },
 }
 
+/// The leader popup is purely the keymap-hint window: it lists the key
+/// bindings reachable from the pressed prefix. Action menus opened through
+/// the leader flow are their own [`ModalPopup`] variants.
 #[derive(Debug)]
 pub(super) struct LeaderPopupState {
-    pub(super) mode: LeaderMode,
     pub(super) keymap_prefix: Vec<KeyChord>,
-    pub(super) action: Option<LeaderActionState>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum LeaderActionState {
-    Message(MessageActionMenuState),
-    Guild(GuildLeaderActionState),
-    Channel(ChannelLeaderActionState),
-    Member(MemberLeaderActionState),
 }
 
 /// Selectable list with the panes' scrolloff windowing. `view_height` is owned
@@ -633,7 +623,7 @@ impl AttachmentViewerZoom {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum GuildLeaderActionState {
+pub(super) enum GuildActionMenuState {
     Actions { selection: SelectablePopupState },
     MuteDuration { selection: SelectablePopupState },
 }
@@ -849,14 +839,14 @@ fn profile_avatar_preview_key(upload: &ProfileAvatarUpload) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct MemberLeaderActionState {
+pub(super) struct MemberActionMenuState {
     pub(super) user_id: Id<UserMarker>,
     pub(super) guild_id: Option<Id<GuildMarker>>,
     pub(super) selection: SelectablePopupState,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ChannelLeaderActionState {
+pub(super) enum ChannelActionMenuState {
     Actions {
         channel_id: Id<ChannelMarker>,
         selection: SelectablePopupState,
@@ -1183,27 +1173,34 @@ impl PopupUiState {
         self.modal = None;
     }
 
-    pub(super) fn message_action_menu(&self) -> Option<&MessageActionMenuState> {
-        match &self.modal {
-            Some(ModalPopup::MessageActionMenu(menu)) => Some(menu),
-            Some(ModalPopup::Leader(LeaderPopupState {
-                action: Some(LeaderActionState::Message(menu)),
-                ..
-            })) => Some(menu),
-            _ => None,
-        }
-    }
-
-    pub(super) fn message_action_menu_mut(&mut self) -> Option<&mut MessageActionMenuState> {
-        match &mut self.modal {
-            Some(ModalPopup::MessageActionMenu(menu)) => Some(menu),
-            Some(ModalPopup::Leader(LeaderPopupState {
-                action: Some(LeaderActionState::Message(menu)),
-                ..
-            })) => Some(menu),
-            _ => None,
-        }
-    }
+    modal_popup_accessors!(
+        message_action_menu,
+        message_action_menu_mut,
+        MessageActionMenu,
+        MessageActionMenuState,
+        menu
+    );
+    modal_popup_accessors!(
+        guild_action_menu,
+        guild_action_menu_mut,
+        GuildActionMenu,
+        GuildActionMenuState,
+        menu
+    );
+    modal_popup_accessors!(
+        channel_action_menu,
+        channel_action_menu_mut,
+        ChannelActionMenu,
+        ChannelActionMenuState,
+        menu
+    );
+    modal_popup_accessors!(
+        member_action_menu,
+        member_action_menu_mut,
+        MemberActionMenu,
+        MemberActionMenuState,
+        menu
+    );
 
     modal_popup_accessors!(
         message_url_picker,
@@ -1281,48 +1278,6 @@ impl PopupUiState {
         viewer
     );
     modal_popup_accessors!(leader, leader_mut, Leader, LeaderPopupState, leader);
-
-    pub(super) fn guild_leader_action(&self) -> Option<&GuildLeaderActionState> {
-        match self.leader().and_then(|leader| leader.action.as_ref()) {
-            Some(LeaderActionState::Guild(action)) => Some(action),
-            _ => None,
-        }
-    }
-
-    pub(super) fn guild_leader_action_mut(&mut self) -> Option<&mut GuildLeaderActionState> {
-        match self.leader_mut().and_then(|leader| leader.action.as_mut()) {
-            Some(LeaderActionState::Guild(action)) => Some(action),
-            _ => None,
-        }
-    }
-
-    pub(super) fn channel_leader_action(&self) -> Option<&ChannelLeaderActionState> {
-        match self.leader().and_then(|leader| leader.action.as_ref()) {
-            Some(LeaderActionState::Channel(action)) => Some(action),
-            _ => None,
-        }
-    }
-
-    pub(super) fn channel_leader_action_mut(&mut self) -> Option<&mut ChannelLeaderActionState> {
-        match self.leader_mut().and_then(|leader| leader.action.as_mut()) {
-            Some(LeaderActionState::Channel(action)) => Some(action),
-            _ => None,
-        }
-    }
-
-    pub(super) fn member_leader_action(&self) -> Option<&MemberLeaderActionState> {
-        match self.leader().and_then(|leader| leader.action.as_ref()) {
-            Some(LeaderActionState::Member(action)) => Some(action),
-            _ => None,
-        }
-    }
-
-    pub(super) fn member_leader_action_mut(&mut self) -> Option<&mut MemberLeaderActionState> {
-        match self.leader_mut().and_then(|leader| leader.action.as_mut()) {
-            Some(LeaderActionState::Member(action)) => Some(action),
-            _ => None,
-        }
-    }
 
     modal_popup_accessors!(
         user_profile_popup,
@@ -1423,33 +1378,19 @@ impl DashboardState {
         self.active_modal_popup_kind() == Some(kind)
     }
 
-    pub(in crate::tui) fn is_message_action_context_active(&self) -> bool {
-        self.popups.message_action_menu().is_some()
-    }
-
     pub fn is_leader_active(&self) -> bool {
         self.popups.leader().is_some()
     }
 
-    pub fn is_leader_action_mode(&self) -> bool {
-        self.popups
-            .leader()
-            .is_some_and(|leader| leader.mode == LeaderMode::Actions)
-    }
-
     pub fn open_leader(&mut self) {
         self.popups.modal = Some(ModalPopup::Leader(LeaderPopupState {
-            mode: LeaderMode::Root,
             keymap_prefix: self.options.key_bindings.leader_keymap_prefix(),
-            action: None,
         }));
     }
 
     pub(in crate::tui) fn open_keymap_prefix(&mut self, prefix: Vec<KeyChord>) {
         self.popups.modal = Some(ModalPopup::Leader(LeaderPopupState {
-            mode: LeaderMode::Root,
             keymap_prefix: prefix,
-            action: None,
         }));
     }
 
@@ -1484,39 +1425,48 @@ impl DashboardState {
             .keymap_prefix_title(self.leader_keymap_prefix())
     }
 
-    pub fn open_leader_actions_for_focused_target(&mut self) {
+    /// Open the action menu for the focused pane's selected target. Every
+    /// menu is a standalone modal; a pane without an actionable selection
+    /// opens nothing.
+    pub fn open_focused_pane_actions(&mut self) {
         self.close_all_action_contexts();
-        // A focused forum post opens its own standalone action menu instead of
-        // the (empty) message action context, since the messages pane is then
+        self.close_leader();
+        // A focused forum post opens the thread action menu instead of the
+        // (empty) message action menu, since the messages pane is then
         // showing forum post cards rather than messages.
         if self.open_selected_thread_actions() {
             return;
         }
-        let action = match self.navigation.focus {
-            FocusPane::Guilds => self
-                .selected_guild_action_context()
-                .map(LeaderActionState::Guild),
-            FocusPane::Channels => self
-                .selected_channel_action_context()
-                .map(LeaderActionState::Channel),
-            FocusPane::Messages => self
-                .selected_message_state()
-                .map(|_| LeaderActionState::Message(MessageActionMenuState::default())),
-            FocusPane::Members => self
-                .selected_member_action_context()
-                .map(LeaderActionState::Member),
-        };
-        self.popups.modal = Some(ModalPopup::Leader(LeaderPopupState {
-            mode: LeaderMode::Actions,
-            keymap_prefix: Vec::new(),
-            action,
-        }));
+        match self.navigation.focus {
+            FocusPane::Guilds => {
+                if let Some(menu) = self.selected_guild_action_context() {
+                    self.popups.modal = Some(ModalPopup::GuildActionMenu(menu));
+                }
+            }
+            FocusPane::Channels => {
+                if let Some(menu) = self.selected_channel_action_context() {
+                    self.popups.modal = Some(ModalPopup::ChannelActionMenu(menu));
+                }
+            }
+            FocusPane::Messages => self.open_selected_message_actions(),
+            FocusPane::Members => {
+                if let Some(menu) = self.selected_member_action_context() {
+                    self.popups.modal = Some(ModalPopup::MemberActionMenu(menu));
+                }
+            }
+        }
     }
 
     pub fn close_all_action_contexts(&mut self) {
-        if matches!(self.popups.modal, Some(ModalPopup::MessageActionMenu(_)))
-            || self.is_leader_action_mode()
-        {
+        if matches!(
+            self.popups.modal,
+            Some(
+                ModalPopup::MessageActionMenu(_)
+                    | ModalPopup::GuildActionMenu(_)
+                    | ModalPopup::ChannelActionMenu(_)
+                    | ModalPopup::MemberActionMenu(_)
+            )
+        ) {
             self.popups.clear_modal();
         }
     }
@@ -1572,7 +1522,9 @@ impl DashboardState {
                 }
                 true
             }
-            Some(ActiveModalPopupKind::UserProfile) if self.is_user_profile_popup_editing() => false,
+            Some(ActiveModalPopupKind::UserProfile) if self.is_user_profile_popup_editing() => {
+                false
+            }
             Some(ActiveModalPopupKind::UserProfile) => {
                 if let Some(popup) = self.popups.user_profile_popup_mut() {
                     popup.scroll.page(action);
@@ -1620,66 +1572,50 @@ impl DashboardState {
                 }
                 true
             }
+            Some(ActiveModalPopupKind::GuildActionMenu) => {
+                let len = self.guild_action_row_count();
+                if let Some(selection) = self.guild_action_selection_mut() {
+                    selection.page(len, action);
+                }
+                true
+            }
+            Some(ActiveModalPopupKind::ChannelActionMenu) => {
+                let len = self.channel_action_row_count();
+                if let Some(selection) = self.channel_action_selection_mut() {
+                    selection.page(len, action);
+                }
+                true
+            }
+            Some(ActiveModalPopupKind::MemberActionMenu) => {
+                let len = self.selected_member_action_items().len();
+                if let Some(menu) = self.popups.member_action_menu_mut() {
+                    menu.selection.page(len, action);
+                }
+                true
+            }
+            Some(ActiveModalPopupKind::ThreadActionMenu) => {
+                let len = self.thread_action_row_count();
+                if let Some(selection) = self.thread_action_selection_mut() {
+                    selection.page(len, action);
+                }
+                true
+            }
             Some(ActiveModalPopupKind::MessageConfirmation)
             | Some(ActiveModalPopupKind::QuitConfirmation)
             | Some(ActiveModalPopupKind::GuildLeaveConfirmation)
             | Some(ActiveModalPopupKind::AttachmentViewer)
-            // Leader action popups are shortcut-only. They can render message
-            // actions, but they intentionally do not expose selection paging.
             | Some(ActiveModalPopupKind::Leader)
             | Some(ActiveModalPopupKind::DebugLog)
             | Some(ActiveModalPopupKind::Search)
             | Some(ActiveModalPopupKind::ForumPostComposer)
             | Some(ActiveModalPopupKind::ThreadEdit)
-            | Some(ActiveModalPopupKind::ThreadActionMenu)
             | Some(ActiveModalPopupKind::ThreadDeleteConfirmation)
             | None => false,
         }
     }
 
-    pub fn is_any_action_context_active(&self) -> bool {
-        self.popups.message_action_menu().is_some()
-            || self.popups.guild_leader_action().is_some()
-            || self.popups.channel_leader_action().is_some()
-            || self.popups.member_leader_action().is_some()
-    }
-
-    pub(in crate::tui) fn activate_active_action_shortcut(
-        &mut self,
-        shortcut: KeyChord,
-    ) -> ActionShortcutActivation {
-        if self.message_action_shortcut_matches(shortcut) {
-            return ActionShortcutActivation {
-                matched: true,
-                command: self.activate_message_action_shortcut(shortcut),
-            };
-        }
-        if self.channel_action_shortcut_matches(shortcut) {
-            return ActionShortcutActivation {
-                matched: true,
-                command: self.activate_channel_action_shortcut(shortcut),
-            };
-        }
-        if self.guild_action_shortcut_matches(shortcut) {
-            return ActionShortcutActivation {
-                matched: true,
-                command: self.activate_guild_action_shortcut(shortcut),
-            };
-        }
-        if self.member_action_shortcut_matches(shortcut) {
-            return ActionShortcutActivation {
-                matched: true,
-                command: self.activate_member_action_shortcut(shortcut),
-            };
-        }
-        ActionShortcutActivation {
-            matched: false,
-            command: None,
-        }
-    }
-
     pub(in crate::tui) fn message_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
-        if !self.is_message_action_context_active() {
+        if self.popups.message_action_menu().is_none() {
             return false;
         }
         let actions = self.selected_message_action_items();
@@ -1693,26 +1629,35 @@ impl DashboardState {
     }
 
     pub(in crate::tui) fn thread_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
-        // Shortcuts only act on the top-level action list; the mute-duration and
-        // notification submenus navigate by selection only.
-        if !matches!(
-            self.popups.thread_action_menu(),
-            Some(ThreadActionMenuState::Actions { .. })
-        ) {
-            return false;
+        match self.popups.thread_action_menu() {
+            Some(ThreadActionMenuState::Actions { .. }) => {
+                let actions = self.selected_thread_action_items();
+                action_shortcut_matches(
+                    self.key_bindings(),
+                    &actions,
+                    shortcut,
+                    |key_bindings, actions, index| {
+                        key_bindings.thread_action_shortcuts(actions, index)
+                    },
+                    |action| action.enabled,
+                )
+            }
+            Some(ThreadActionMenuState::MuteDuration { .. }) => indexed_shortcut_matches(
+                self.key_bindings(),
+                shortcut,
+                self.selected_thread_mute_duration_items().len(),
+            ),
+            Some(ThreadActionMenuState::NotificationSettings { .. }) => indexed_shortcut_matches(
+                self.key_bindings(),
+                shortcut,
+                self.selected_thread_notification_items().len(),
+            ),
+            None => false,
         }
-        let actions = self.selected_thread_action_items();
-        action_shortcut_matches(
-            self.key_bindings(),
-            &actions,
-            shortcut,
-            |key_bindings, actions, index| key_bindings.thread_action_shortcuts(actions, index),
-            |action| action.enabled,
-        )
     }
 
-    fn channel_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
-        if !self.is_channel_leader_action_active() {
+    pub(in crate::tui) fn channel_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
+        if !self.is_channel_action_menu_active() {
             return false;
         }
         if self.is_channel_action_mute_duration_phase() {
@@ -1732,8 +1677,8 @@ impl DashboardState {
         )
     }
 
-    fn guild_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
-        if !self.is_guild_leader_action_active() {
+    pub(in crate::tui) fn guild_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
+        if !self.is_guild_action_menu_active() {
             return false;
         }
         if self.is_guild_action_mute_duration_phase() {
@@ -1753,8 +1698,8 @@ impl DashboardState {
         )
     }
 
-    fn member_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
-        if !self.is_member_leader_action_active() {
+    pub(in crate::tui) fn member_action_shortcut_matches(&self, shortcut: KeyChord) -> bool {
+        if !self.is_member_action_menu_active() {
             return false;
         }
         let actions = self.selected_member_action_items();
@@ -1787,25 +1732,29 @@ fn indexed_shortcut_matches(key_bindings: &KeyBindings, shortcut: KeyChord, len:
 }
 
 impl DashboardState {
-    pub fn is_channel_leader_action_active(&self) -> bool {
-        self.popups.channel_leader_action().is_some()
+    pub fn is_message_action_menu_active(&self) -> bool {
+        self.popups.message_action_menu().is_some()
     }
 
-    pub fn is_guild_leader_action_active(&self) -> bool {
-        self.popups.guild_leader_action().is_some()
+    pub fn is_channel_action_menu_active(&self) -> bool {
+        self.popups.channel_action_menu().is_some()
+    }
+
+    pub fn is_guild_action_menu_active(&self) -> bool {
+        self.popups.guild_action_menu().is_some()
     }
 
     pub fn is_channel_action_mute_duration_phase(&self) -> bool {
         matches!(
-            self.popups.channel_leader_action(),
-            Some(ChannelLeaderActionState::MuteDuration { .. })
+            self.popups.channel_action_menu(),
+            Some(ChannelActionMenuState::MuteDuration { .. })
         )
     }
 
     pub fn is_guild_action_mute_duration_phase(&self) -> bool {
         matches!(
-            self.popups.guild_leader_action(),
-            Some(GuildLeaderActionState::MuteDuration { .. })
+            self.popups.guild_action_menu(),
+            Some(GuildActionMenuState::MuteDuration { .. })
         )
     }
 }
