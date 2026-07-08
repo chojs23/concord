@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.2] - 2026-07-08
+
+### Bug Fixes
+
+- Fix gateway backoff reset, atomic private-file writes, and remove duplicate by @chojs23
+
+### Features
+
+- Promote guild/channel/member action menus to standalone modal popups by @chojs23
+
+### Miscellaneous Tasks
+
+- Remove redundant sccache from CI and release workflows by @chojs23
+
+### Refactor
+
+- Extract render_modal_frame helper to deduplicate popup modal boilerplate by @chojs23
+- Remove legacy keymap actions by @chojs23
+- Extract OnDemandRequests and CursorRequests primitives to dedupe request trackers by @chojs23
+- Split message format.rs into wrap, markdown, polls, and system submodules by @chojs23
+- Unify discord module layout, dedupe extra_fields by @chojs23
+
 ## [2.3.1] - 2026-07-07
 
 ### Features
