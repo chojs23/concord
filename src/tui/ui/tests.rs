@@ -19,8 +19,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MESSAGE_AVATAR_OFFSET,
-    MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
+    ImagePreview, ImagePreviewState, MESSAGE_AVATAR_OFFSET, MemberEntry,
     attachment_viewer_image_area, attachment_viewer_popup, background_media_occlusion_areas,
     centered_viewer_preview_area, channel_action_menu_lines_for_test, channel_prefix,
     channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
@@ -41,7 +40,7 @@ use super::{
     primary_activity_summary, quit_confirmation_lines, reaction_list_lines_with_ready_urls,
     reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
     render_header, render_members, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
+    selected_message_content_x_offset, sync_view_heights, theme, toast_area, toast_line,
     user_profile_popup_has_avatar, user_profile_popup_lines,
     user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
 };

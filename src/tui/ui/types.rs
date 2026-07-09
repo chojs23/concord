@@ -1,11 +1,8 @@
-use ratatui::{layout::Rect, style::Color, text::Line};
+use ratatui::{layout::Rect, text::Line};
 use ratatui_image::protocol::{Protocol, StatefulProtocol};
 
 use super::super::state::FocusPane;
 
-pub(super) const ACCENT: Color = Color::Cyan;
-pub(super) const DIM: Color = Color::DarkGray;
-pub(super) const SCROLLBAR_THUMB: Color = Color::Rgb(170, 170, 170);
 pub(super) const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 pub(super) const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 pub(super) const IMAGE_PREVIEW_WIDTH: u16 = 72;
@@ -15,8 +12,6 @@ pub(super) const MESSAGE_AVATAR_OFFSET: u16 =
     MESSAGE_SELECTION_PREFIX_WIDTH + MESSAGE_AVATAR_PLACEHOLDER.len() as u16 + 2;
 pub(super) const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 pub(super) const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
-pub(super) const SELECTED_FORUM_POST_BORDER: Color = Color::Green;
-pub(super) const SELECTED_MESSAGE_BORDER: Color = Color::Green;
 
 pub struct ImagePreview<'a> {
     pub viewer: bool,

@@ -411,7 +411,10 @@ fn render_typing_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
         return;
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(text, Style::default().fg(DIM)))),
+        Paragraph::new(Line::from(Span::styled(
+            text,
+            Style::default().fg(theme::current().dim),
+        ))),
         area,
     );
 }
@@ -427,9 +430,8 @@ fn render_unread_banner(frame: &mut Frame, area: Rect, state: &DashboardState) {
         return;
     };
 
-    const BG: Color = Color::Rgb(88, 101, 242);
-    const FG: Color = Color::White;
-    let style = Style::default().fg(FG).bg(BG);
+    let theme = theme::current();
+    let style = Style::default().fg(theme.text).bg(theme.blurple);
 
     let since_label = format_unread_banner_since(banner.since_message_id);
     let left = match since_label {
@@ -608,13 +610,13 @@ pub(in crate::tui::ui) fn render_image_preview(
     match image_preview {
         ImagePreviewState::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(DIM))
+                .style(Style::default().fg(theme::current().dim))
                 .wrap(Wrap { trim: false }),
             area,
         ),
         ImagePreviewState::Failed { filename, message } => frame.render_widget(
             Paragraph::new(format!("{filename}: {message}"))
-                .style(Style::default().fg(Color::Yellow))
+                .style(Style::default().fg(theme::current().warning))
                 .wrap(Wrap { trim: false }),
             area,
         ),
@@ -711,7 +713,7 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
         }
         header.extend([
             Span::raw(" "),
-            Span::styled(sent_time, Style::default().fg(DIM)),
+            Span::styled(sent_time, Style::default().fg(theme::current().dim)),
         ]);
         vec![Line::from(header)]
     } else {
@@ -742,16 +744,17 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
 
 pub(in crate::tui::ui) fn message_author_style(role_color: Option<u32>) -> Style {
     Style::default()
-        .fg(discord_color(role_color, Color::White))
+        .fg(discord_color(role_color, theme::current().text))
         .bold()
 }
 
 fn bot_badge_span() -> Span<'static> {
+    let theme = theme::current();
     Span::styled(
         "[bot]",
         Style::default()
-            .fg(Color::White)
-            .bg(Color::Rgb(88, 101, 242))
+            .fg(theme.text)
+            .bg(theme.blurple)
             .add_modifier(Modifier::BOLD),
     )
 }
@@ -794,7 +797,7 @@ fn message_avatar_span(avatar_offset: u16) -> Span<'static> {
             "{prefix}{MESSAGE_AVATAR_PLACEHOLDER}{}",
             " ".repeat(padding)
         ),
-        Style::default().fg(DIM),
+        Style::default().fg(theme::current().dim),
     )
 }
 
@@ -876,7 +879,10 @@ fn selected_message_bottom_line(card_width: usize, sent_time: Option<&str>) -> L
                 format!("╰{}", "─".repeat(dashes)),
                 selected_message_border_style(),
             ),
-            Span::styled(format!(" {time} "), Style::default().fg(DIM)),
+            Span::styled(
+                format!(" {time} "),
+                Style::default().fg(theme::current().dim),
+            ),
             Span::styled("─╯", selected_message_border_style()),
         ]);
     }
@@ -913,7 +919,7 @@ fn replace_selection_prefix(spans: &mut Vec<Span<'static>>, replacement: &str) {
 
 fn selected_message_border_style() -> Style {
     Style::default()
-        .fg(SELECTED_MESSAGE_BORDER)
+        .fg(theme::current().selected_message_border)
         .add_modifier(Modifier::BOLD)
 }
 
@@ -954,16 +960,15 @@ pub(in crate::tui::ui) fn date_separator_line(
 ) -> Line<'static> {
     let date = message_local_date(message_id);
     let label = format!(" {} ", date.format("%Y-%m-%d"));
-    separator_line(&label, width, Style::default().fg(DIM))
+    separator_line(&label, width, Style::default().fg(theme::current().dim))
 }
 
 pub(in crate::tui::ui) fn unread_divider_line(width: usize) -> Line<'static> {
     // Discord-style red bar with a small "New" tag pinned to the right
     // edge so the unread boundary is unambiguous in dark and light themes.
-    const UNREAD: Color = Color::Rgb(237, 66, 69);
     const TAG: &str = " New ";
 
-    let style = Style::default().fg(UNREAD);
+    let style = Style::default().fg(theme::current().unread_badge);
     if width == 0 {
         return Line::from(Span::raw(""));
     }
@@ -988,7 +993,10 @@ pub(in crate::tui::ui) fn new_messages_notice_line(count: usize, width: usize) -
         let right = padding.saturating_sub(left);
         format!("{}{}{}", " ".repeat(left), label, " ".repeat(right))
     };
-    Line::from(Span::styled(text, Style::default().fg(ACCENT).bold()))
+    Line::from(Span::styled(
+        text,
+        Style::default().fg(theme::current().accent).bold(),
+    ))
 }
 
 fn new_messages_notice_label(count: usize) -> String {
@@ -1019,7 +1027,10 @@ fn image_preview_spacer_lines(
             message_avatar_spacer_span(avatar_offset),
             Span::styled(
                 format!("+{} more images", spacer.overflow_count),
-                Style::default().fg(Color::White).bg(Color::Black).bold(),
+                Style::default()
+                    .fg(theme::current().text)
+                    .bg(Color::Black)
+                    .bold(),
             ),
         ]));
     }

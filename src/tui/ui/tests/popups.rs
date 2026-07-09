@@ -352,11 +352,14 @@ fn current_user_profile_settings_render_contract() {
         .and_then(|index| lines.get(index + 1))
         .expect("status value should follow label");
 
-    assert_eq!(display_label.spans[1].style.fg, Some(ACCENT));
+    assert_eq!(
+        display_label.spans[1].style.fg,
+        Some(theme::current().accent)
+    );
     assert_eq!(display_value.spans[0].content, "  Neo Global");
     assert_eq!(display_value.spans[0].style, Style::default());
     assert_eq!(pronouns_value.spans[0].content, "  (empty)");
-    assert_eq!(pronouns_value.spans[0].style.fg, Some(DIM));
+    assert_eq!(pronouns_value.spans[0].style.fg, Some(theme::current().dim));
     assert_eq!(status_value.spans[0].content, "  Do Not Disturb");
     assert_eq!(status_value.spans[0].style.fg, Some(Color::Red));
 
@@ -1252,7 +1255,7 @@ fn leader_action_popup_dims_disabled_channel_actions() {
     let lines = channel_action_menu_lines_for_test(&state);
 
     assert_eq!(lines[0].spans[2].content, "Join voice (unavailable)");
-    assert_eq!(lines[0].spans[2].style.fg, Some(DIM));
+    assert_eq!(lines[0].spans[2].style.fg, Some(theme::current().dim));
 }
 
 #[test]

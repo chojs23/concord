@@ -78,7 +78,9 @@ pub(in crate::tui::ui) fn keymap_help_popup_lines(
             current_scope = summary.scope;
             lines.push(Line::from(Span::styled(
                 format!("[{}]", summary.scope),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::current().accent)
+                    .add_modifier(Modifier::BOLD),
             )));
         }
 
@@ -94,7 +96,7 @@ pub(in crate::tui::ui) fn keymap_help_popup_lines(
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "No key mappings.",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     }
 

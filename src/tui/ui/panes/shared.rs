@@ -81,9 +81,10 @@ fn render_pane_filter_bar(
     let visible = &query[start..end];
     let cursor_col = prompt_width + query[start..cursor_byte].width();
 
-    let accent = if focused { ACCENT } else { Color::DarkGray };
+    let theme = theme::current();
+    let accent = if focused { theme.accent } else { theme.border };
     let shown_query = if query.is_empty() {
-        Span::styled("search...", Style::default().fg(DIM))
+        Span::styled("search...", Style::default().fg(theme.dim))
     } else {
         Span::raw(visible.to_owned())
     };

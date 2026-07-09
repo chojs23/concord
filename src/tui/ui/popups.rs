@@ -241,7 +241,12 @@ fn popup_danger_button_line(
     label: &'static str,
     active: bool,
 ) -> Line<'static> {
-    popup_button_line_with_style(shortcut, label, active, Style::default().fg(Color::Red))
+    popup_button_line_with_style(
+        shortcut,
+        label,
+        active,
+        Style::default().fg(theme::current().error),
+    )
 }
 
 fn popup_button_line_with_style(
@@ -254,7 +259,9 @@ fn popup_button_line_with_style(
         selectable_popup_marker(active),
         Span::styled(
             format!("[{shortcut}] "),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::current().accent)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(label, label_style),
     ])
@@ -340,22 +347,22 @@ fn push_wrapped_styled_popup_text(
 
 fn selectable_popup_marker(selected: bool) -> Span<'static> {
     let marker = if selected { "› " } else { "  " };
-    Span::styled(marker, Style::default().fg(ACCENT))
+    Span::styled(marker, Style::default().fg(theme::current().accent))
 }
 
 fn selectable_popup_shortcut_span(shortcut: impl Into<String>) -> Span<'static> {
-    Span::styled(shortcut.into(), Style::default().fg(DIM))
+    Span::styled(shortcut.into(), Style::default().fg(theme::current().dim))
 }
 
 fn selectable_popup_label_style(selected: bool, enabled: bool) -> Style {
     let mut style = if enabled {
         Style::default()
     } else {
-        Style::default().fg(DIM)
+        Style::default().fg(theme::current().dim)
     };
     if selected {
         style = style
-            .bg(Color::Rgb(40, 45, 90))
+            .bg(theme::current().selection_bg)
             .add_modifier(Modifier::BOLD);
     }
     style

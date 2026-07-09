@@ -4,23 +4,23 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::{MessageKind, MessageSnapshotInfo, MessageState};
 use crate::tui::message::time as message_time;
 use crate::tui::state::{DashboardState, discord_color};
 use crate::tui::text::{truncate_display_width, truncate_text};
+use crate::tui::theme;
 use crate::tui::ui::forum::forum_post_card_lines;
 
 use super::polls::format_poll_result_lines;
 use super::{
-    ACCENT, MessageContentLine, display_text_with_stickers, format_attachment_summary_lines,
+    MessageContentLine, display_text_with_stickers, format_attachment_summary_lines,
     format_embed_lines, format_reply_line, prefix_message_content_line_without_underline,
     wrap_rendered_text_lines_with_loaded_custom_emoji_urls,
 };
 
-const COMMAND_BLUE: Color = Color::Rgb(88, 101, 242);
 const COMMAND_USAGE_PREFIX: &str = "┌ ";
 
 pub(super) fn format_message_kind_line(message_kind: MessageKind) -> Option<MessageContentLine> {
@@ -91,14 +91,14 @@ pub(super) fn format_chat_input_command_line(
         user_start,
         interaction.user.len(),
         Style::default()
-            .fg(discord_color(user_color, Color::White))
+            .fg(discord_color(user_color, theme::current().text))
             .add_modifier(Modifier::DIM),
     );
     line.styled_range(
         command_start,
         command.len(),
         Style::default()
-            .fg(COMMAND_BLUE)
+            .fg(theme::current().blurple)
             .add_modifier(Modifier::DIM),
     );
     Some(line)
@@ -159,11 +159,11 @@ fn format_thread_created_starter_line(
     let author_style = Style::default()
         .fg(discord_color(
             state.message_author_role_color(message),
-            Color::White,
+            theme::current().text,
         ))
         .bold();
-    let thread_style = Style::default().fg(ACCENT).bold();
-    let base_style = Style::default().fg(Color::White);
+    let thread_style = Style::default().fg(theme::current().accent).bold();
+    let base_style = Style::default().fg(theme::current().text);
 
     let author = message.author.as_str();
     let (starter, thread_start) = if thread_name == "thread" {

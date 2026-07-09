@@ -174,8 +174,11 @@ fn reply_composer_hint_line_shows_dim_excerpt_and_accented_ping_indicator() {
         line_texts_from_ratatui(&lines),
         vec!["reply to hello  @ on", "> "]
     );
-    assert_eq!(lines[0].spans[0].style.fg, Some(DIM));
-    assert_eq!(lines[0].spans.last().unwrap().style.fg, Some(ACCENT));
+    assert_eq!(lines[0].spans[0].style.fg, Some(theme::current().dim));
+    assert_eq!(
+        lines[0].spans.last().unwrap().style.fg,
+        Some(theme::current().accent)
+    );
     assert_eq!(lines[1].spans[0].style.fg, None);
 
     state.toggle_ping_on_reply();
@@ -184,7 +187,10 @@ fn reply_composer_hint_line_shows_dim_excerpt_and_accented_ping_indicator() {
         line_texts_from_ratatui(&lines),
         vec!["reply to hello  @ off", "> "]
     );
-    assert_eq!(lines[0].spans.last().unwrap().style.fg, Some(DIM));
+    assert_eq!(
+        lines[0].spans.last().unwrap().style.fg,
+        Some(theme::current().dim)
+    );
 }
 
 #[test]
@@ -240,7 +246,7 @@ fn composer_lines_show_pending_upload_rows_above_input() {
             "> ",
         ]
     );
-    assert_eq!(lines[0].spans[0].style.fg, Some(ACCENT));
+    assert_eq!(lines[0].spans[0].style.fg, Some(theme::current().accent));
     assert_eq!(composer_content_line_count(&state, 80), 10);
 
     let mut processing = state_with_message();
@@ -254,7 +260,10 @@ fn composer_lines_show_pending_upload_rows_above_input() {
         line_texts_from_ratatui(&processing_lines),
         vec!["upload: ⠋ processing clipboard attachment...", "> "]
     );
-    assert_eq!(processing_lines[0].spans[0].style.fg, Some(ACCENT));
+    assert_eq!(
+        processing_lines[0].spans[0].style.fg,
+        Some(theme::current().accent)
+    );
     assert_eq!(composer_content_line_count(&processing, 80), 2);
 }
 
@@ -502,7 +511,7 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
         lines[2].spans[4].content.as_ref(),
         "available as image link"
     );
-    assert_eq!(lines[2].spans[4].style.fg, Some(DIM));
+    assert_eq!(lines[2].spans[4].style.fg, Some(theme::current().dim));
 }
 
 #[test]

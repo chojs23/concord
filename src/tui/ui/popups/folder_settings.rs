@@ -28,9 +28,9 @@ pub(in crate::tui::ui) fn render_folder_settings_popup(
                     .unwrap_or("Use #RRGGBB or leave blank")
                     .to_owned(),
                 Style::default().fg(if color_error.is_some() {
-                    MENTION_ORANGE
+                    theme::current().mention
                 } else {
-                    DIM
+                    theme::current().dim
                 }),
             )),
             Line::default(),
@@ -81,7 +81,7 @@ fn folder_settings_input_line(label: &'static str, value: &str, active: bool) ->
         Style::default()
     };
     Line::from(vec![
-        Span::styled(marker, Style::default().fg(ACCENT)),
+        Span::styled(marker, Style::default().fg(theme::current().accent)),
         Span::styled(format!("{label}: "), style),
         Span::raw(value.to_owned()),
     ])

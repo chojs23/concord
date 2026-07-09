@@ -344,10 +344,13 @@ fn leader_shortcut_text_line(key: &str, label: &str, enabled: bool) -> Line<'sta
     let style = if enabled {
         Style::default()
     } else {
-        Style::default().fg(DIM)
+        Style::default().fg(theme::current().dim)
     };
     Line::from(vec![
-        Span::styled(format!("[{key}] "), Style::default().fg(DIM)),
+        Span::styled(
+            format!("[{key}] "),
+            Style::default().fg(theme::current().dim),
+        ),
         Span::raw(" "),
         Span::styled(label.to_owned(), style),
     ])

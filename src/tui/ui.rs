@@ -35,17 +35,6 @@ use crate::discord::{
     MessageState, PresenceStatus, ReactionInfo, UserProfileInfo, is_thread_kind,
 };
 
-/// Discord's "you were mentioned" orange, `#FFA500`.
-const MENTION_ORANGE: Color = Color::Rgb(255, 165, 0);
-
-/// Explicit RGB instead of `Modifier::DIM` so CJK wide characters dim
-/// uniformly with ASCII (most terminals ignore SGR dim on wide glyphs).
-const READ_DIM: Color = Color::Rgb(130, 130, 130);
-
-/// Explicit RGB instead of relying on `Modifier::BOLD` alone, which most
-/// monospace fonts can't apply to CJK glyphs.
-const UNREAD_BRIGHT: Color = Color::Reset;
-
 pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_HEIGHT: u16 = 6;
 pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_WIDTH: u16 = 32;
 
@@ -96,13 +85,12 @@ use self::popups::{
     thread_edit_popup_area, thread_edit_tag_picker_visible_items, user_profile_popup_has_avatar,
     user_profile_popup_text_geometry, user_profile_popup_total_lines,
 };
-use self::types::{
-    ACCENT, DIM, EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
-    MESSAGE_SELECTION_PREFIX_WIDTH, MessageViewportLayout, SCROLLBAR_THUMB,
-    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UserProfilePopupText,
-};
 pub use self::types::{
     AvatarImage, EmojiImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
+};
+use self::types::{
+    EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
+    MESSAGE_SELECTION_PREFIX_WIDTH, MessageViewportLayout, UserProfilePopupText,
 };
 pub(crate) use self::types::{MouseTarget, PopupListTarget};
 #[cfg(test)]
@@ -130,6 +118,7 @@ use self::{
         toast_area, toast_line, user_profile_popup_lines, user_profile_popup_lines_with_activities,
     },
 };
+use super::theme;
 
 pub(in crate::tui) use self::popups::user_profile_popup_area;
 #[cfg(test)]
@@ -421,7 +410,9 @@ fn selection_marker(selected: bool) -> Span<'static> {
     if selected {
         Span::styled(
             "▸ ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::current().accent)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw("  ")
@@ -430,7 +421,9 @@ fn selection_marker(selected: bool) -> Span<'static> {
 
 fn active_text_style(active: bool, style: Style) -> Style {
     if active {
-        style.fg(Color::Green).add_modifier(Modifier::BOLD)
+        style
+            .fg(theme::current().active)
+            .add_modifier(Modifier::BOLD)
     } else {
         style
     }
@@ -465,13 +458,14 @@ fn render_vertical_scrollbar(
     let mut state = ScrollbarState::new(scrollbar_content_len)
         .position(position)
         .viewport_content_length(viewport_len);
+    let theme = theme::current();
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
         .end_symbol(None)
         .track_symbol(Some("│"))
         .thumb_symbol("┃")
-        .thumb_style(Style::default().fg(SCROLLBAR_THUMB))
-        .track_style(Style::default().fg(DIM));
+        .thumb_style(Style::default().fg(theme.scrollbar_thumb))
+        .track_style(Style::default().fg(theme.dim));
 
     frame.render_stateful_widget(scrollbar, area, &mut state);
 }
@@ -506,17 +500,21 @@ fn channel_unread_decoration(
     if active {
         return (None, base);
     }
+    let theme = theme::current();
     match unread {
         ChannelUnreadState::Mentioned(count) => {
-            let style = base.fg(MENTION_ORANGE).add_modifier(Modifier::BOLD);
+            let style = base.fg(theme.mention).add_modifier(Modifier::BOLD);
             (Some(Span::styled(format!("({count}) "), style)), style)
         }
         ChannelUnreadState::Notified(count) => {
-            let style = base.fg(UNREAD_BRIGHT).add_modifier(Modifier::BOLD);
+            let style = base.fg(theme.unread_bright).add_modifier(Modifier::BOLD);
             (Some(Span::styled(format!("({count}) "), style)), style)
         }
-        ChannelUnreadState::Unread => (None, base.fg(UNREAD_BRIGHT).add_modifier(Modifier::BOLD)),
-        ChannelUnreadState::Seen => (None, base.fg(READ_DIM)),
+        ChannelUnreadState::Unread => (
+            None,
+            base.fg(theme.unread_bright).add_modifier(Modifier::BOLD),
+        ),
+        ChannelUnreadState::Seen => (None, base.fg(theme.read_dim)),
     }
 }
 
@@ -529,9 +527,10 @@ fn one_to_one_dm_recipient_status(channel: &ChannelState) -> Option<PresenceStat
 }
 
 fn highlight_style() -> Style {
+    let theme = theme::current();
     Style::default()
-        .bg(Color::Rgb(24, 54, 65))
-        .fg(Color::White)
+        .bg(theme.background)
+        .fg(theme.text)
         .add_modifier(Modifier::BOLD)
 }
 
@@ -540,25 +539,27 @@ fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
 }
 
 fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
-    let border = if focused { ACCENT } else { Color::DarkGray };
+    let theme = theme::current();
+    let border = if focused { theme.accent } else { theme.border };
 
     Block::default()
         .title(format!(" {title} "))
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border))
-        .title_style(Style::default().fg(Color::Reset).bold())
+        .title_style(Style::default().fg(theme.panel_title).bold())
 }
 
 pub(super) fn panel_block_line(title: Line<'static>, focused: bool) -> Block<'static> {
-    let border = if focused { ACCENT } else { Color::DarkGray };
+    let theme = theme::current();
+    let border = if focused { theme.accent } else { theme.border };
 
     Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border))
-        .title_style(Style::default().fg(Color::Reset).bold())
+        .title_style(Style::default().fg(theme.panel_title).bold())
 }
 
 #[cfg(test)]

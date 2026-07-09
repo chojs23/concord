@@ -3,12 +3,13 @@ use ratatui::style::Color;
 use crate::discord::{
     ChannelRecipientState, ChannelState, GuildMemberState, PresenceStatus, RoleState,
 };
+use crate::tui::theme;
 
 /// Convert a Discord folder color (24-bit RGB integer) to a ratatui color.
-/// Falls back to a neutral cyan when the color is missing or zero so
+/// Falls back to a neutral accent when the color is missing or zero so
 /// uncolored folders still read as folder headers.
 pub fn folder_color(color: Option<u32>) -> Color {
-    discord_color(color, Color::Cyan)
+    discord_color(color, theme::current().accent)
 }
 
 pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
@@ -24,12 +25,13 @@ pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
 }
 
 pub fn presence_color(status: PresenceStatus) -> Color {
+    let theme = theme::current();
     match status {
-        PresenceStatus::Online => Color::Green,
-        PresenceStatus::Idle => Color::Rgb(180, 140, 0),
-        PresenceStatus::DoNotDisturb => Color::Red,
-        PresenceStatus::Offline => Color::DarkGray,
-        PresenceStatus::Unknown => Color::DarkGray,
+        PresenceStatus::Online => theme.success,
+        PresenceStatus::Idle => theme.presence_idle,
+        PresenceStatus::DoNotDisturb => theme.error,
+        PresenceStatus::Offline => theme.dim,
+        PresenceStatus::Unknown => theme.dim,
     }
 }
 

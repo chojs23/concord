@@ -159,7 +159,12 @@ fn build_edit_layout(view: &ThreadEditView, width: usize) -> EditLayout {
     ));
 
     if let Some(status) = view.status.as_deref() {
-        push_wrapped_styled_popup_text(&mut lines, status, width, Style::default().fg(Color::Red));
+        push_wrapped_styled_popup_text(
+            &mut lines,
+            status,
+            width,
+            Style::default().fg(theme::current().error),
+        );
     }
 
     let cursor = view.editing_title.then(|| {
@@ -332,7 +337,7 @@ fn tag_line(tag: &ThreadEditTagView, width: usize, thumbnail_ready: bool) -> Lin
     let style = if tag.active {
         highlight_style()
     } else if !tag.selectable {
-        Style::default().fg(DIM)
+        Style::default().fg(theme::current().dim)
     } else {
         Style::default()
     };
@@ -386,7 +391,7 @@ fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], 
     if tags.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no tags available",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
         return;
     }
@@ -403,9 +408,9 @@ fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], 
             false,
         );
         let style = if tag.selected {
-            Style::default().fg(ACCENT)
+            Style::default().fg(theme::current().accent)
         } else {
-            Style::default().fg(DIM)
+            Style::default().fg(theme::current().dim)
         };
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  {checkbox}{emoji} {}", tag.name), width),
@@ -416,7 +421,7 @@ fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], 
     if remaining > 0 {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  ...(+{remaining} more)"), width),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     }
 }
@@ -435,7 +440,7 @@ fn field_line(
     let content = if value.is_empty() {
         Span::styled(
             truncate_display_width(placeholder, available),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )
     } else {
         Span::styled(
@@ -461,11 +466,11 @@ fn selector_line(
     let marker = field_marker(active);
     let prefix = format!("{marker}{label}: ");
     let value_style = if !changeable {
-        Style::default().fg(DIM)
+        Style::default().fg(theme::current().dim)
     } else if active {
         highlight_style()
     } else {
-        Style::default().fg(ACCENT)
+        Style::default().fg(theme::current().accent)
     };
     let arrows = if active && changeable {
         format!("‹ {value} ›")
@@ -492,10 +497,12 @@ fn field_marker(active: bool) -> &'static str {
 fn field_label_style(active: bool, editing: bool) -> Style {
     if editing {
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme::current().warning)
             .add_modifier(Modifier::BOLD)
     } else if active {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme::current().accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     }
@@ -503,7 +510,7 @@ fn field_label_style(active: bool, editing: bool) -> Style {
 
 fn editing_value_style(editing: bool) -> Style {
     if editing {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(theme::current().warning)
     } else {
         Style::default()
     }

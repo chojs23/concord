@@ -30,12 +30,12 @@ pub(in crate::tui::ui) fn render_members(
     if loading_members {
         lines.push(Line::from(Span::styled(
             "Loading...",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     } else if groups.is_empty() {
         lines.push(Line::from(Span::styled(
             "No members loaded yet.",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     }
 
@@ -97,7 +97,7 @@ pub(in crate::tui::ui) fn render_members(
                                 emoji_line_urls.push((line_index, url));
                                 Line::from(vec![
                                     Span::raw("      "),
-                                    Span::styled(body, Style::default().fg(DIM)),
+                                    Span::styled(body, Style::default().fg(theme::current().dim)),
                                 ])
                             }
                             ActivityLeading::Icon(icon) => {
@@ -110,10 +110,10 @@ pub(in crate::tui::ui) fn render_members(
                                     Span::raw("    "),
                                     Span::styled(
                                         icon.to_string(),
-                                        Style::default().fg(Color::Green),
+                                        Style::default().fg(theme::current().success),
                                     ),
                                     Span::raw(" "),
-                                    Span::styled(body, Style::default().fg(DIM)),
+                                    Span::styled(body, Style::default().fg(theme::current().dim)),
                                 ])
                             }
                             ActivityLeading::None => {
@@ -124,7 +124,7 @@ pub(in crate::tui::ui) fn render_members(
                                 );
                                 Line::from(vec![
                                     Span::raw("    "),
-                                    Span::styled(body, Style::default().fg(DIM)),
+                                    Span::styled(body, Style::default().fg(theme::current().dim)),
                                 ])
                             }
                         };
@@ -176,10 +176,10 @@ fn member_group_header(group: &MemberGroup<'_>, content_width: usize) -> Line<'s
         Span::styled(
             label,
             Style::default()
-                .fg(discord_color(group.color, DIM))
+                .fg(discord_color(group.color, theme::current().dim))
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(count_suffix, Style::default().fg(DIM)),
+        Span::styled(count_suffix, Style::default().fg(theme::current().dim)),
     ])
 }
 
@@ -188,7 +188,7 @@ pub(in crate::tui::ui) fn member_name_style(
     role_color: Option<u32>,
     is_selected: bool,
 ) -> Style {
-    let mut style = Style::default().fg(discord_color(role_color, Color::White));
+    let mut style = Style::default().fg(discord_color(role_color, theme::current().text));
     if matches!(
         member.status(),
         PresenceStatus::Offline | PresenceStatus::Unknown
@@ -200,7 +200,7 @@ pub(in crate::tui::ui) fn member_name_style(
     }
     if is_selected {
         style = style
-            .bg(Color::Rgb(24, 54, 65))
+            .bg(theme::current().background)
             .add_modifier(Modifier::BOLD);
     }
     style

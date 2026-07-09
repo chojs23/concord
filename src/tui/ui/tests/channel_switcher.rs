@@ -81,7 +81,7 @@ fn selected_channel_switcher_unread_row_keeps_highlight() {
 
     assert_eq!(label.content, "#alerts");
     assert!(label.style.bg.is_some());
-    assert_eq!(label.style.fg, Some(MENTION_ORANGE));
+    assert_eq!(label.style.fg, Some(theme::current().mention));
 }
 
 #[test]

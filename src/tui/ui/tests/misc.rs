@@ -8,18 +8,28 @@ use crate::discord::test_builders::{
 fn channel_unread_decoration_matches_unread_state() {
     let base = Style::default().fg(Color::White);
     let cases = [
-        (ChannelUnreadState::Seen, None, Some(READ_DIM), false),
-        (ChannelUnreadState::Unread, None, Some(UNREAD_BRIGHT), true),
+        (
+            ChannelUnreadState::Seen,
+            None,
+            Some(theme::current().read_dim),
+            false,
+        ),
+        (
+            ChannelUnreadState::Unread,
+            None,
+            Some(theme::current().unread_bright),
+            true,
+        ),
         (
             ChannelUnreadState::Mentioned(3),
-            Some(("(3) ", MENTION_ORANGE)),
-            Some(MENTION_ORANGE),
+            Some(("(3) ", theme::current().mention)),
+            Some(theme::current().mention),
             true,
         ),
         (
             ChannelUnreadState::Notified(3),
-            Some(("(3) ", UNREAD_BRIGHT)),
-            Some(UNREAD_BRIGHT),
+            Some(("(3) ", theme::current().unread_bright)),
+            Some(theme::current().unread_bright),
             true,
         ),
     ];
@@ -159,7 +169,7 @@ fn wrapped_edited_marker_keeps_dim_italic_style() {
         .into_iter()
         .next()
         .expect("wrapped edited marker span should be present");
-    assert_eq!(marker.style.fg, Some(DIM));
+    assert_eq!(marker.style.fg, Some(theme::current().dim));
     assert!(marker.style.add_modifier.contains(Modifier::ITALIC));
 }
 
@@ -195,7 +205,7 @@ fn non_default_message_type_adds_dim_label_line() {
         line_texts(&lines),
         vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"]
     );
-    assert_eq!(lines[0].style, Style::default().fg(DIM));
+    assert_eq!(lines[0].style, Style::default().fg(theme::current().dim));
 }
 
 #[test]
@@ -244,7 +254,7 @@ fn chat_input_command_message_keeps_embed_text() {
             "  ▎ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         ]
     );
-    assert_eq!(lines[0].style, Style::default().fg(DIM));
+    assert_eq!(lines[0].style, Style::default().fg(theme::current().dim));
     let spans = lines[0].spans();
 
     assert_eq!(spans[0].content.as_ref(), "┌ ");
@@ -252,7 +262,7 @@ fn chat_input_command_message_keeps_embed_text() {
     assert_eq!(spans[1].style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
     assert!(spans[1].style.add_modifier.contains(Modifier::DIM));
     assert_eq!(spans[2].content.as_ref(), " used ");
-    assert_eq!(spans[2].style.fg, Some(DIM));
+    assert_eq!(spans[2].style.fg, Some(theme::current().dim));
     assert_eq!(spans[3].content.as_ref(), "/anime search");
     assert_eq!(spans[3].style.fg, Some(Color::Rgb(88, 101, 242)));
     assert!(spans[3].style.add_modifier.contains(Modifier::DIM));
@@ -266,7 +276,7 @@ fn user_join_message_type_uses_join_label() {
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
     assert_eq!(line_texts(&lines), vec!["joined the server"]);
-    assert_eq!(lines[0].style, Style::default().fg(DIM));
+    assert_eq!(lines[0].style, Style::default().fg(theme::current().dim));
 }
 
 #[test]
@@ -283,7 +293,7 @@ fn boost_message_types_use_discord_like_copy() {
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
         assert_eq!(line_texts(&lines), vec![label]);
-        assert_eq!(lines[0].style, Style::default().fg(ACCENT));
+        assert_eq!(lines[0].style, Style::default().fg(theme::current().accent));
     }
 }
 
@@ -333,7 +343,7 @@ fn reply_message_uses_preview_instead_of_type_label() {
             "[image: cat.png] 640x480"
         ]
     );
-    assert_eq!(lines[0].style, Style::default().fg(DIM));
+    assert_eq!(lines[0].style, Style::default().fg(theme::current().dim));
 }
 
 #[test]
@@ -378,7 +388,7 @@ fn poll_message_notes_multiselect() {
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
     assert!(lines[2].text.starts_with("│ Select one or more answers"));
-    assert_eq!(lines[2].style, Style::default().fg(DIM));
+    assert_eq!(lines[2].style, Style::default().fg(theme::current().dim));
 }
 
 #[test]
@@ -412,7 +422,7 @@ fn lay_out_reaction_chips_unicode_only_emits_no_image_slots() {
     let spans = reaction_line_test_spans(&layout.lines[0], &layout.self_ranges, 0);
     assert_eq!(spans[0].content.as_ref(), "[👍 3]");
     assert_eq!(spans[0].style, Style::default().fg(Color::Yellow));
-    assert_eq!(spans[1].style, Style::default().fg(ACCENT));
+    assert_eq!(spans[1].style, Style::default().fg(theme::current().accent));
     assert!(layout.slots.is_empty());
 }
 
@@ -533,7 +543,7 @@ fn forwarded_snapshot_lines_include_channel_and_time() {
         line_texts(&lines),
         vec!["↱ Forwarded", "│ hello", "│ #general · 12:34"]
     );
-    assert_eq!(lines[2].style, Style::default().fg(DIM));
+    assert_eq!(lines[2].style, Style::default().fg(theme::current().dim));
 }
 
 #[test]

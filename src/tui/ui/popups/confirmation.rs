@@ -226,7 +226,7 @@ fn guild_leave_confirmation_lines(
         Line::from(Span::raw("Leave the current server?")),
         Line::from(Span::styled(
             format!("Server: {name}"),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme::current().error),
         )),
         Line::from(Span::raw(String::new())),
     ];
@@ -246,7 +246,7 @@ fn thread_delete_confirmation_lines(
         Line::from(Span::raw(format!("Permanently delete this {noun}?"))),
         Line::from(Span::styled(
             format!("{label}: {name}"),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme::current().error),
         )),
         Line::from(Span::raw(String::new())),
     ];
@@ -315,11 +315,11 @@ fn confirmation_lines(
         Line::from(Span::raw(prompt)),
         Line::from(Span::styled(
             format!("From: {author}"),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )),
         Line::from(Span::styled(
             format!("\"{excerpt}\""),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme::current().error),
         )),
         Line::from(Span::raw(String::new())),
     ];

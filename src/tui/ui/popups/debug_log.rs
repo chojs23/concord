@@ -69,14 +69,14 @@ pub(in crate::tui::ui) fn debug_log_popup_lines(
     );
     lines.push(Line::from(Span::styled(
         visibility_text,
-        Style::default().fg(ACCENT),
+        Style::default().fg(theme::current().accent),
     )));
     lines.push(Line::from(Span::raw(String::new())));
 
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
             "No errors recorded in this process.",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     } else {
         let wrapped = entries
@@ -87,7 +87,7 @@ pub(in crate::tui::ui) fn debug_log_popup_lines(
         for entry in wrapped.into_iter().skip(start) {
             lines.push(Line::from(Span::styled(
                 entry,
-                Style::default().fg(Color::Red),
+                Style::default().fg(theme::current().error),
             )));
         }
     }

@@ -20,14 +20,16 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
         let server_name = selected_channel_server_label(state);
         let mut lines = vec![Line::from(Span::styled(
             truncate_display_width(&server_name, width),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::current().accent)
+                .add_modifier(Modifier::BOLD),
         ))];
         if header_area.height >= 2
             && let Some(boost) = &boost_label
         {
             lines.push(Line::from(Span::styled(
                 truncate_display_width(boost, width),
-                Style::default().fg(DIM),
+                Style::default().fg(theme::current().dim),
             )));
         }
         frame.render_widget(Paragraph::new(lines), header_area);
@@ -94,14 +96,15 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
                         let label_width = max_width.saturating_sub(arrow.width());
-                        let mut label_style =
-                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
+                        let mut label_style = Style::default()
+                            .fg(theme::current().accent)
+                            .add_modifier(Modifier::BOLD);
                         if dashboard.channel_notification_muted(state.id) {
                             label_style = label_style.add_modifier(Modifier::DIM);
                         }
                         ListItem::new(Line::from(vec![
                             selection_marker(is_selected),
-                            Span::styled(arrow, Style::default().fg(ACCENT)),
+                            Span::styled(arrow, Style::default().fg(theme::current().accent)),
                             Span::styled(
                                 truncate_display_width_from(
                                     &state.name,
@@ -127,7 +130,9 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         let (badge, mut name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
                         if state.is_voice() && dashboard.is_joined_voice_channel(state.id) {
-                            name_style = name_style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                            name_style = name_style
+                                .fg(theme::current().warning)
+                                .add_modifier(Modifier::BOLD);
                         }
                         if is_muted {
                             name_style = name_style.add_modifier(Modifier::DIM);
@@ -164,7 +169,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                             .saturating_sub(tag_width);
                         let mut spans = vec![
                             selection_marker(is_selected),
-                            Span::styled(branch_prefix, Style::default().fg(DIM)),
+                            Span::styled(branch_prefix, Style::default().fg(theme::current().dim)),
                         ];
                         if let Some(badge) = badge {
                             spans.push(badge);
@@ -172,10 +177,17 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         if let Some(prefix_span) = dm_prefix_span {
                             spans.push(prefix_span);
                         } else if populated_voice_channel {
-                            spans.push(Span::styled("🔊", Style::default().fg(Color::Cyan)));
-                            spans.push(Span::styled(" ", Style::default().fg(DIM)));
+                            spans.push(Span::styled(
+                                "🔊",
+                                Style::default().fg(theme::current().accent),
+                            ));
+                            spans
+                                .push(Span::styled(" ", Style::default().fg(theme::current().dim)));
                         } else {
-                            spans.push(Span::styled(channel_prefix, Style::default().fg(DIM)));
+                            spans.push(Span::styled(
+                                channel_prefix,
+                                Style::default().fg(theme::current().dim),
+                            ));
                         }
                         spans.push(Span::styled(
                             truncate_display_width_from(
@@ -188,7 +200,9 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         if let Some(tag) = request_tag {
                             spans.push(Span::styled(
                                 format!(" [{tag}]"),
-                                Style::default().fg(DIM).add_modifier(Modifier::ITALIC),
+                                Style::default()
+                                    .fg(theme::current().dim)
+                                    .add_modifier(Modifier::ITALIC),
                             ));
                         }
                         ListItem::new(Line::from(spans))
@@ -222,13 +236,16 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                             .saturating_sub(badge_width);
                         let mut spans = vec![
                             selection_marker(is_selected),
-                            Span::styled(parent_prefix, Style::default().fg(DIM)),
-                            Span::styled(branch_prefix, Style::default().fg(DIM)),
+                            Span::styled(parent_prefix, Style::default().fg(theme::current().dim)),
+                            Span::styled(branch_prefix, Style::default().fg(theme::current().dim)),
                         ];
                         if let Some(badge) = badge {
                             spans.push(badge);
                         }
-                        spans.push(Span::styled(thread_prefix, Style::default().fg(DIM)));
+                        spans.push(Span::styled(
+                            thread_prefix,
+                            Style::default().fg(theme::current().dim),
+                        ));
                         spans.push(Span::styled(
                             truncate_display_width_from(
                                 &state.name,
@@ -246,9 +263,9 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                     } => {
                         let branch_prefix = parent_branch.participant_prefix();
                         let label_style = if participant.speaking {
-                            Style::default().fg(Color::Green).bold()
+                            Style::default().fg(theme::current().success).bold()
                         } else {
-                            Style::default().fg(DIM)
+                            Style::default().fg(theme::current().dim)
                         };
                         let prefix = "  • ";
                         let label_width = max_width
@@ -256,8 +273,8 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                             .saturating_sub(prefix.width());
                         ListItem::new(Line::from(vec![
                             selection_marker(false),
-                            Span::styled(branch_prefix, Style::default().fg(DIM)),
-                            Span::styled(prefix, Style::default().fg(DIM)),
+                            Span::styled(branch_prefix, Style::default().fg(theme::current().dim)),
+                            Span::styled(prefix, Style::default().fg(theme::current().dim)),
                             Span::styled(
                                 voice_participant_label(
                                     participant,

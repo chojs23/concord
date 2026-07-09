@@ -138,7 +138,7 @@ fn build_composer_layout(
     if body_lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "  (empty)",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     }
 
@@ -151,7 +151,7 @@ fn build_composer_layout(
     if view.attachments.is_empty() && !view.paste_pending {
         lines.push(Line::from(Span::styled(
             "  (empty)",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     } else {
         for attachment in &view.attachments {
@@ -164,13 +164,13 @@ fn build_composer_layout(
                     ),
                     width,
                 ),
-                Style::default().fg(ACCENT),
+                Style::default().fg(theme::current().accent),
             )));
         }
         if view.paste_pending {
             lines.push(Line::from(Span::styled(
                 truncate_display_width("  upload: processing clipboard attachment...", width),
-                Style::default().fg(DIM),
+                Style::default().fg(theme::current().dim),
             )));
         }
     }
@@ -211,7 +211,12 @@ fn build_composer_layout(
     ));
 
     if let Some(status) = view.status.as_deref() {
-        push_wrapped_styled_popup_text(&mut lines, status, width, Style::default().fg(Color::Red));
+        push_wrapped_styled_popup_text(
+            &mut lines,
+            status,
+            width,
+            Style::default().fg(theme::current().error),
+        );
     }
 
     let cursor = if editing_title {
@@ -312,7 +317,7 @@ fn tag_line(tag: &ForumPostComposerTagView, width: usize, thumbnail_ready: bool)
     let style = if tag.active {
         highlight_style()
     } else if !tag.selectable {
-        Style::default().fg(DIM)
+        Style::default().fg(theme::current().dim)
     } else {
         Style::default()
     };
@@ -333,7 +338,7 @@ fn push_tag_summary(
     if tags.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no tags available",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
         return;
     }
@@ -350,9 +355,9 @@ fn push_tag_summary(
             false,
         );
         let style = if tag.selected {
-            Style::default().fg(ACCENT)
+            Style::default().fg(theme::current().accent)
         } else {
-            Style::default().fg(DIM)
+            Style::default().fg(theme::current().dim)
         };
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  {checkbox}{emoji} {}", tag.name), width),
@@ -363,7 +368,7 @@ fn push_tag_summary(
     if remaining > 0 {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  ...(+{remaining} more)"), width),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     }
 }
@@ -492,13 +497,13 @@ fn render_forum_post_attachment_preview(
     match preview {
         LocalUploadPreviewView::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(DIM))
+                .style(Style::default().fg(theme::current().dim))
                 .wrap(Wrap { trim: false }),
             area,
         ),
         LocalUploadPreviewView::Failed { filename, message } => frame.render_widget(
             Paragraph::new(format!("{filename}: {message}"))
-                .style(Style::default().fg(Color::Yellow))
+                .style(Style::default().fg(theme::current().warning))
                 .wrap(Wrap { trim: false }),
             area,
         ),
@@ -522,7 +527,7 @@ fn field_line(
     let content = if value.is_empty() {
         Span::styled(
             truncate_display_width(placeholder, available),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )
     } else {
         Span::styled(
@@ -550,10 +555,12 @@ fn field_marker(active: bool) -> &'static str {
 fn field_label_style(active: bool, editing: bool) -> Style {
     if editing {
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme::current().warning)
             .add_modifier(Modifier::BOLD)
     } else if active {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme::current().accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     }
@@ -561,7 +568,7 @@ fn field_label_style(active: bool, editing: bool) -> Style {
 
 fn editing_value_style(editing: bool) -> Style {
     if editing {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(theme::current().warning)
     } else {
         Style::default()
     }

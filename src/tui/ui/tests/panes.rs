@@ -570,7 +570,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let empty_icon_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, empty_row)].symbol() == "🔈")
         .expect("empty voice row should use quiet speaker icon");
-    assert_eq!(buffer[(empty_icon_col, empty_row)].fg, DIM);
+    assert_eq!(buffer[(empty_icon_col, empty_row)].fg, theme::current().dim);
 
     assert!(
         channel_rows.iter().any(|row| row.contains("Alice")),
@@ -984,8 +984,14 @@ fn forum_post_lines_render_title_author_and_preview() {
     assert_eq!(lines[5].spans[4].style.fg, Some(Color::Yellow));
     assert_eq!(lines[5].spans[6].style.fg, Some(Color::Yellow));
     assert_eq!(lines[5].spans[8].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
-    assert_eq!(lines[2].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
+    assert_eq!(
+        lines[1].spans[1].style.fg,
+        Some(theme::current().selected_forum_post_border)
+    );
+    assert_eq!(
+        lines[2].spans[1].style.fg,
+        Some(theme::current().selected_forum_post_border)
+    );
     assert!(
         lines
             .iter()

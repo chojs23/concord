@@ -2,8 +2,9 @@ use ratatui::{style::Style, text::Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{ReactionEmoji, ReactionInfo};
+use crate::tui::theme;
 
-use super::{EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, SELF_REACTION};
+use super::{EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine};
 
 pub(in crate::tui) fn format_message_reaction_lines(
     reactions: &[ReactionInfo],
@@ -24,7 +25,11 @@ pub(in crate::tui) fn format_message_reaction_lines(
                 .iter()
                 .filter(|range| range.line as usize == line_index)
             {
-                line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+                line.styled_range(
+                    range.start,
+                    range.len,
+                    Style::default().fg(theme::current().self_reaction),
+                );
             }
             line
         })
@@ -42,7 +47,11 @@ pub(crate) fn reaction_line_spans(
         .iter()
         .filter(|range| range.line as usize == line_index)
     {
-        line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+        line.styled_range(
+            range.start,
+            range.len,
+            Style::default().fg(theme::current().self_reaction),
+        );
     }
     line.spans()
 }
@@ -53,7 +62,12 @@ pub(crate) fn reaction_line_test_spans(
     ranges: &[ReactionStyleRange],
     line_index: usize,
 ) -> Vec<Span<'static>> {
-    reaction_line_spans(text, ranges, line_index, Style::default().fg(super::ACCENT))
+    reaction_line_spans(
+        text,
+        ranges,
+        line_index,
+        Style::default().fg(theme::current().accent),
+    )
 }
 
 /// Position of a custom-emoji image overlay relative to the start of a

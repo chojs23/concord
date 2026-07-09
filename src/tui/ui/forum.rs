@@ -28,7 +28,10 @@ pub(super) fn forum_post_viewport_lines_with_custom_emoji_images(
         } else {
             "No threads yet."
         };
-        return vec![Line::from(Span::styled(message, Style::default().fg(DIM)))];
+        return vec![Line::from(Span::styled(
+            message,
+            Style::default().fg(theme::current().dim),
+        ))];
     }
 
     let mut lines = Vec::new();
@@ -113,13 +116,13 @@ fn forum_post_section_header_line(label: &str, width: usize) -> Line<'static> {
     Line::from(Span::styled(
         format!("{label}{}", " ".repeat(padding)),
         Style::default()
-            .fg(Color::White)
+            .fg(theme::current().text)
             .add_modifier(Modifier::BOLD),
     ))
 }
 
 fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
-    let title_style = Style::default().fg(Color::White).bold();
+    let title_style = Style::default().fg(theme::current().text).bold();
     if !post.pinned {
         return vec![Span::styled(
             truncate_display_width(&post.label, inner_width),
@@ -135,7 +138,7 @@ fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<S
             truncate_display_width(&post.label, title_width),
             title_style,
         ),
-        Span::styled(badge, Style::default().fg(Color::Yellow).bold()),
+        Span::styled(badge, Style::default().fg(theme::current().warning).bold()),
     ]
 }
 
@@ -150,7 +153,7 @@ fn forum_post_tag_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Spa
             &mut used_width,
             inner_width,
             forum_post_tag_text(tag),
-            Style::default().fg(ACCENT),
+            Style::default().fg(theme::current().accent),
         );
     }
     spans
@@ -170,17 +173,17 @@ fn forum_post_tag_text(tag: &AppliedForumTag) -> String {
 }
 
 fn forum_post_preview_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
-    let preview_style = Style::default().fg(Color::White);
+    let preview_style = Style::default().fg(theme::current().text);
     let Some(author) = post.preview_author.as_deref() else {
         return vec![Span::styled(
             "Preview unavailable",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )];
     };
     let Some(content) = post.preview_content.as_deref() else {
         return vec![Span::styled(
             "Preview unavailable",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )];
     };
 
@@ -205,9 +208,10 @@ fn forum_post_metadata_spans(
     width: usize,
     show_custom_emoji: bool,
 ) -> Vec<Span<'static>> {
-    let primary_style = Style::default().fg(Color::White);
-    let reaction_style = Style::default().fg(ACCENT);
-    let muted_style = Style::default().fg(DIM);
+    let theme = theme::current();
+    let primary_style = Style::default().fg(theme.text);
+    let reaction_style = Style::default().fg(theme.accent);
+    let muted_style = Style::default().fg(theme.dim);
     let mut spans = Vec::new();
     let mut used_width = 0usize;
 
@@ -232,7 +236,7 @@ fn forum_post_metadata_spans(
             &mut used_width,
             width,
             format!("{} {label}", post.new_message_count),
-            Style::default().fg(Color::Yellow).bold(),
+            Style::default().fg(theme::current().warning).bold(),
         );
     }
     if let Some(layout) =
@@ -299,7 +303,10 @@ fn push_forum_metadata_part(
         }
         let separator = truncate_display_width(separator, remaining);
         *used_width = used_width.saturating_add(separator.width());
-        spans.push(Span::styled(separator, Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            separator,
+            Style::default().fg(theme::current().dim),
+        ));
     }
 
     let remaining = max_width.saturating_sub(*used_width);
@@ -333,7 +340,10 @@ fn push_forum_metadata_reaction_part(
         }
         let separator = truncate_display_width(separator, remaining);
         *used_width = used_width.saturating_add(separator.width());
-        spans.push(Span::styled(separator, Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            separator,
+            Style::default().fg(theme::current().dim),
+        ));
     }
 
     let remaining = max_width.saturating_sub(*used_width);
@@ -623,11 +633,12 @@ fn forum_post_inner_line(
 }
 
 fn forum_post_accent_style(selected: bool) -> Style {
+    let theme = theme::current();
     if selected {
         Style::default()
-            .fg(SELECTED_FORUM_POST_BORDER)
+            .fg(theme.selected_forum_post_border)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(ACCENT)
+        Style::default().fg(theme.accent)
     }
 }

@@ -92,7 +92,7 @@ fn active_server_mention_badge_keeps_active_name_style() {
                 .find('g')
                 .map(|offset| badge_col + offset)
                 .expect("guild name starts with g after mention badge");
-            assert_eq!(buffer[(badge_col as u16, row)].fg, MENTION_ORANGE);
+            assert_eq!(buffer[(badge_col as u16, row)].fg, theme::current().mention);
             assert_eq!(buffer[(name_col as u16, row)].fg, Color::Green);
             assert!(
                 buffer[(name_col as u16, row)]
@@ -293,7 +293,7 @@ fn attachment_summary_uses_own_accent_line_after_text_content() {
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
     assert_eq!(line_texts(&lines), vec!["look", "[image: cat.png] 640x480"]);
-    assert_eq!(lines[1].style, Style::default().fg(ACCENT));
+    assert_eq!(lines[1].style, Style::default().fg(theme::current().accent));
 }
 
 #[test]
@@ -309,7 +309,7 @@ fn edited_message_appends_dim_italic_marker_to_content() {
         .into_iter()
         .find(|span| span.content == " (edited)")
         .expect("edited marker span should be present");
-    assert_eq!(marker.style.fg, Some(DIM));
+    assert_eq!(marker.style.fg, Some(theme::current().dim));
     assert!(marker.style.add_modifier.contains(Modifier::ITALIC));
 }
 
@@ -324,8 +324,8 @@ fn attachment_summary_renders_multiple_attachments_one_per_line() {
         line_texts(&lines),
         vec!["look", "[image: cat.png] 640x480", "[file: notes.txt]"]
     );
-    assert_eq!(lines[1].style, Style::default().fg(ACCENT));
-    assert_eq!(lines[2].style, Style::default().fg(ACCENT));
+    assert_eq!(lines[1].style, Style::default().fg(theme::current().accent));
+    assert_eq!(lines[2].style, Style::default().fg(theme::current().accent));
 }
 
 #[test]
@@ -346,7 +346,7 @@ fn message_content_lines_render_discord_embed_preview() {
             "  ▎ A video description",
         ]
     );
-    assert_eq!(lines[1].style.fg, Some(DIM));
+    assert_eq!(lines[1].style.fg, Some(theme::current().dim));
     assert!(lines[2].style.add_modifier.contains(Modifier::BOLD));
     assert_eq!(lines[2].style.fg, Some(Color::Blue));
     let marker_spans = lines[1].spans();
@@ -499,34 +499,34 @@ fn message_content_applies_supported_markdown_formatting() {
         ]
     );
 
-    assert_eq!(lines[0].style.fg, Some(ACCENT));
+    assert_eq!(lines[0].style.fg, Some(theme::current().accent));
     assert!(lines[0].style.add_modifier.contains(Modifier::BOLD));
     assert!(lines[1].style.add_modifier.contains(Modifier::BOLD));
     assert!(lines[1].style.add_modifier.contains(Modifier::UNDERLINED));
     assert!(lines[2].style.add_modifier.contains(Modifier::BOLD));
-    assert_eq!(lines[4].style.fg, Some(DIM));
+    assert_eq!(lines[4].style.fg, Some(theme::current().dim));
     assert_eq!(lines[14].style, Style::default());
 
     let h1_spans = lines[0].spans();
     assert_eq!(h1_spans[0].content.as_ref(), "# ");
-    assert_eq!(h1_spans[0].style.fg, Some(DIM));
+    assert_eq!(h1_spans[0].style.fg, Some(theme::current().dim));
 
     let h2_spans = lines[1].spans();
     assert_eq!(h2_spans[0].content.as_ref(), "## ");
-    assert_eq!(h2_spans[0].style.fg, Some(DIM));
+    assert_eq!(h2_spans[0].style.fg, Some(theme::current().dim));
 
     let h3_spans = lines[2].spans();
     assert_eq!(h3_spans[0].content.as_ref(), "### ");
-    assert_eq!(h3_spans[0].style.fg, Some(DIM));
+    assert_eq!(h3_spans[0].style.fg, Some(theme::current().dim));
 
     let quote_spans = lines[4].spans();
     assert_eq!(quote_spans[0].content.as_ref(), "▎ ");
-    assert_eq!(quote_spans[0].style.fg, Some(DIM));
+    assert_eq!(quote_spans[0].style.fg, Some(theme::current().dim));
 
     for line in [&lines[7], &lines[8]] {
         let bullet_spans = line.spans();
         assert_eq!(bullet_spans[0].content.as_ref(), "• ");
-        assert_eq!(bullet_spans[0].style.fg, Some(DIM));
+        assert_eq!(bullet_spans[0].style.fg, Some(theme::current().dim));
     }
 
     let inline_spans = lines[9].spans();
@@ -562,14 +562,14 @@ fn message_content_applies_supported_markdown_formatting() {
     assert_eq!(code.style.fg, Some(Color::Rgb(255, 165, 0)));
     assert_eq!(code.style.bg, None);
 
-    assert_eq!(lines[10].style.fg, Some(DIM));
-    assert_eq!(lines[13].style.fg, Some(DIM));
+    assert_eq!(lines[10].style.fg, Some(theme::current().dim));
+    assert_eq!(lines[13].style.fg, Some(theme::current().dim));
 
     let code_line = lines[11].spans();
     assert_eq!(
         code_line,
         vec![
-            ratatui::text::Span::from("│ ").fg(DIM),
+            ratatui::text::Span::from("│ ").fg(theme::current().dim),
             ratatui::text::Span::from("let").fg(Color::Rgb(180, 142, 173)),
             ratatui::text::Span::from(" answer ").fg(Color::Rgb(192, 197, 206)),
             ratatui::text::Span::from("=").fg(Color::Rgb(192, 197, 206)),
@@ -577,7 +577,7 @@ fn message_content_applies_supported_markdown_formatting() {
             ratatui::text::Span::from("42").fg(Color::Rgb(208, 135, 112)),
             ratatui::text::Span::from(";").fg(Color::Rgb(192, 197, 206)),
             ratatui::text::Span::from("    ").dark_gray(),
-            ratatui::text::Span::from(" │").fg(DIM)
+            ratatui::text::Span::from(" │").fg(theme::current().dim)
         ]
     );
 
@@ -654,7 +654,7 @@ fn message_content_applies_supported_markdown_formatting() {
         .into_iter()
         .find(|span| span.content == "bold quote")
         .expect("inline bold span should survive quote formatting");
-    assert_eq!(quote_span.style.fg, Some(DIM));
+    assert_eq!(quote_span.style.fg, Some(theme::current().dim));
     assert!(quote_span.style.add_modifier.contains(Modifier::BOLD));
 
     let lines = format_message_content_lines(
@@ -1686,7 +1686,7 @@ fn new_messages_notice_line_centers_count_within_full_width() {
 
     assert_eq!(text.width(), 30);
     assert!(text.contains("↓ 3 new messages"));
-    assert_eq!(line.spans[0].style.fg, Some(ACCENT));
+    assert_eq!(line.spans[0].style.fg, Some(theme::current().accent));
     assert_eq!(line.spans[0].style.bg, None);
     assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
 }

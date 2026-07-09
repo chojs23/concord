@@ -1,10 +1,12 @@
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
+
+use crate::tui::theme;
 
 fn render_app_header(frame: &mut Frame) {
     let area = frame.area();
@@ -22,7 +24,7 @@ fn render_app_header(frame: &mut Frame) {
         Paragraph::new(Line::from(Span::styled(
             title,
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme::current().accent)
                 .add_modifier(Modifier::BOLD),
         )))
         .alignment(Alignment::Left),
@@ -111,7 +113,7 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
         Line::from(""),
         Line::from(vec![
             Span::styled("> Token  ", dim_style()),
-            Span::styled(masked, Style::default().fg(Color::Green)),
+            Span::styled(masked, Style::default().fg(theme::current().success)),
         ]),
     ];
 
@@ -247,7 +249,7 @@ pub(super) fn render_mfa_code(frame: &mut Frame, state: &LoginState) {
             Span::styled(format!("{method}  "), dim_style()),
             Span::styled(
                 mask_chars(&state.password.mfa_code),
-                Style::default().fg(Color::Green),
+                Style::default().fg(theme::current().success),
             ),
         ]),
         Line::from(""),
@@ -295,7 +297,7 @@ fn render_qr(frame: &mut Frame, state: &LoginState) {
             }
             lines.push(Line::from(Span::styled(
                 line,
-                Style::default().fg(Color::White),
+                Style::default().fg(theme::current().text),
             )));
         }
         lines.push(Line::from(""));
@@ -308,7 +310,7 @@ fn render_qr(frame: &mut Frame, state: &LoginState) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("Confirming login as {user}"),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme::current().success),
         )));
     }
 
@@ -345,35 +347,35 @@ fn render_wrapped_login_panel(
 
 fn accent_style() -> Style {
     Style::default()
-        .fg(Color::Cyan)
+        .fg(theme::current().accent)
         .add_modifier(Modifier::BOLD)
 }
 
 fn dim_style() -> Style {
-    Style::default().fg(Color::DarkGray)
+    Style::default().fg(theme::current().dim)
 }
 
 fn active_style() -> Style {
     Style::default()
-        .fg(Color::Green)
+        .fg(theme::current().success)
         .add_modifier(Modifier::BOLD)
 }
 
 fn plain_input_style() -> Style {
-    Style::default().fg(Color::White)
+    Style::default().fg(theme::current().text)
 }
 
 fn error_line(value: impl AsRef<str>) -> Line<'static> {
     Line::from(Span::styled(
         value.as_ref().to_owned(),
-        Style::default().fg(Color::Red),
+        Style::default().fg(theme::current().error),
     ))
 }
 
 fn notice_line(value: impl AsRef<str>) -> Line<'static> {
     Line::from(Span::styled(
         value.as_ref().to_owned(),
-        Style::default().fg(Color::Yellow),
+        Style::default().fg(theme::current().warning),
     ))
 }
 
@@ -382,7 +384,7 @@ fn choice_line(key: &'static str, text: &'static str) -> Line<'static> {
 }
 
 fn key_style() -> Style {
-    Style::default().fg(Color::Cyan)
+    Style::default().fg(theme::current().accent)
 }
 
 fn login_block(title: &'static str) -> Block<'static> {
@@ -390,10 +392,10 @@ fn login_block(title: &'static str) -> Block<'static> {
         .title(title)
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(Style::default().fg(theme::current().accent))
         .title_style(
             Style::default()
-                .fg(Color::White)
+                .fg(theme::current().text)
                 .add_modifier(Modifier::BOLD),
         )
 }

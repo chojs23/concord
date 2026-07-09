@@ -11,14 +11,19 @@ pub(in crate::tui::ui) fn render_composer(
     let ready_urls = ready_custom_emoji_urls(emoji_images);
     let prompt = composer_lines_with_loaded_custom_emoji_urls(state, inner_width, &ready_urls);
     let composer_active = state.is_composing() && state.composer_lock().is_none();
-    let border_color = if composer_active { ACCENT } else { DIM };
+    let theme = theme::current();
+    let border_color = if composer_active {
+        theme.accent
+    } else {
+        theme.dim
+    };
 
     frame.render_widget(
         Paragraph::new(prompt)
             .style(if composer_active {
-                Style::default().fg(Color::White)
+                Style::default().fg(theme.text)
             } else {
-                Style::default().fg(DIM)
+                Style::default().fg(theme.dim)
             })
             .block(
                 Block::default()
@@ -26,7 +31,7 @@ pub(in crate::tui::ui) fn render_composer(
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(border_color))
-                    .title_style(Style::default().fg(Color::White).bold()),
+                    .title_style(Style::default().fg(theme.text).bold()),
             ),
         area,
     );
@@ -125,9 +130,9 @@ pub(in crate::tui::ui) fn render_composer_mention_picker(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(DIM))
+        .border_style(Style::default().fg(theme::current().dim))
         .title(" mention ")
-        .title_style(Style::default().fg(Color::White).bold());
+        .title_style(Style::default().fg(theme::current().text).bold());
     frame.render_widget(Paragraph::new(lines).block(block), setup.area);
     render_composer_picker_scrollbar(frame, &setup, candidates.len());
 }
@@ -202,9 +207,9 @@ pub(in crate::tui::ui) fn render_composer_emoji_picker(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(DIM))
+        .border_style(Style::default().fg(theme::current().dim))
         .title(" emoji ")
-        .title_style(Style::default().fg(Color::White).bold());
+        .title_style(Style::default().fg(theme::current().text).bold());
     frame.render_widget(Paragraph::new(lines).block(block), setup.area);
     if state.show_custom_emoji() {
         render_composer_emoji_picker_images(frame, setup.area, visible_candidates, emoji_images);
@@ -338,7 +343,7 @@ fn mention_picker_lines(
             let mut row_style = mention_picker_entry_style(entry);
             if index == selected {
                 row_style = row_style
-                    .bg(Color::Rgb(40, 45, 90))
+                    .bg(theme::current().selection_bg)
                     .add_modifier(Modifier::BOLD);
             }
             let marker = match entry.target {
@@ -347,7 +352,7 @@ fn mention_picker_lines(
                 MentionPickerTarget::Channel(_) => "#".to_owned(),
             };
             Line::from(vec![
-                Span::styled(cursor, Style::default().fg(ACCENT)),
+                Span::styled(cursor, Style::default().fg(theme::current().accent)),
                 Span::styled(marker, row_style),
                 Span::styled(" ", row_style),
                 Span::styled(label, row_style),
@@ -359,10 +364,10 @@ fn mention_picker_lines(
 fn mention_picker_entry_style(entry: &MentionPickerEntry) -> Style {
     match entry.target {
         MentionPickerTarget::User(_) => Style::default().fg(presence_color(entry.status)),
-        MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => {
-            Style::default().fg(discord_color(entry.role_color, Color::Magenta))
-        }
-        MentionPickerTarget::Channel(_) => Style::default().fg(Color::Cyan),
+        MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => Style::default().fg(
+            discord_color(entry.role_color, theme::current().mention_role_fallback),
+        ),
+        MentionPickerTarget::Channel(_) => Style::default().fg(theme::current().accent),
     }
 }
 
@@ -386,12 +391,14 @@ fn command_picker_lines(
                 marker,
                 Span::styled(
                     entry.label.clone(),
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme::current().accent)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
                 Span::styled(
                     truncate_display_width(&entry.detail, detail_width),
-                    Style::default().fg(DIM),
+                    Style::default().fg(theme::current().dim),
                 ),
             ])
         })
@@ -428,16 +435,21 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
             let label = format!(":{}: {}", entry.shortcode, entry.name);
             let label = truncate_display_width(&label, max_label_width);
             let mut row_style = if entry.available {
-                Style::default().fg(Color::White)
+                Style::default().fg(theme::current().text)
             } else {
-                Style::default().fg(DIM).add_modifier(Modifier::CROSSED_OUT)
+                Style::default()
+                    .fg(theme::current().dim)
+                    .add_modifier(Modifier::CROSSED_OUT)
             };
             if index == selected {
                 row_style = row_style
-                    .bg(Color::Rgb(40, 45, 90))
+                    .bg(theme::current().selection_bg)
                     .add_modifier(Modifier::BOLD);
             }
-            let mut spans = vec![Span::styled(cursor, Style::default().fg(ACCENT))];
+            let mut spans = vec![Span::styled(
+                cursor,
+                Style::default().fg(theme::current().accent),
+            )];
             spans.extend(emoji_picker_entry_prefix(
                 entry,
                 custom_image_ready,
@@ -445,8 +457,14 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
             ));
             spans.push(Span::styled(label, row_style));
             if let Some(description) = description {
-                spans.push(Span::styled(" - ", Style::default().fg(DIM)));
-                spans.push(Span::styled(description, Style::default().fg(DIM)));
+                spans.push(Span::styled(
+                    " - ",
+                    Style::default().fg(theme::current().dim),
+                ));
+                spans.push(Span::styled(
+                    description,
+                    Style::default().fg(theme::current().dim),
+                ));
             }
             Line::from(spans)
         })
@@ -530,7 +548,7 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
             lines.push(Line::from(vec![
                 Span::styled(
                     reply_target_hint(message, state, width),
-                    Style::default().fg(DIM),
+                    Style::default().fg(theme::current().dim),
                 ),
                 Span::raw(REPLY_PING_SEPARATOR),
                 Span::styled(ping_label, ping_style),
@@ -553,7 +571,12 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
     {
         return wrapped
             .into_iter()
-            .map(|subline| Line::from(Span::styled(subline, Style::default().fg(Color::Red))))
+            .map(|subline| {
+                Line::from(Span::styled(
+                    subline,
+                    Style::default().fg(theme::current().error),
+                ))
+            })
             .collect();
     }
     wrapped.into_iter().map(Line::from).collect()
@@ -783,13 +806,13 @@ fn render_composer_attachment_preview(
     match preview {
         LocalUploadPreviewView::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(DIM))
+                .style(Style::default().fg(theme::current().dim))
                 .wrap(Wrap { trim: false }),
             area,
         ),
         LocalUploadPreviewView::Failed { filename, message } => frame.render_widget(
             Paragraph::new(format!("{filename}: {message}"))
-                .style(Style::default().fg(Color::Yellow))
+                .style(Style::default().fg(theme::current().warning))
                 .wrap(Wrap { trim: false }),
             area,
         ),
@@ -802,7 +825,12 @@ fn render_composer_attachment_preview(
 fn pending_upload_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
     pending_upload_texts(state, width)
         .into_iter()
-        .map(|label| Line::from(Span::styled(label, Style::default().fg(ACCENT))))
+        .map(|label| {
+            Line::from(Span::styled(
+                label,
+                Style::default().fg(theme::current().accent),
+            ))
+        })
         .collect()
 }
 
@@ -835,7 +863,10 @@ fn append_composer_upload_preview_lines(
     width: u16,
 ) {
     append_composer_upload_preview_rows(lines, state, width, |text| {
-        Line::from(Span::styled(text, Style::default().fg(DIM)))
+        Line::from(Span::styled(
+            text,
+            Style::default().fg(theme::current().dim),
+        ))
     });
 }
 
@@ -976,9 +1007,9 @@ fn reply_target_hint(message: &MessageState, state: &DashboardState, width: u16)
 
 fn reply_ping_indicator(state: &DashboardState) -> (&'static str, Style) {
     if state.ping_on_reply() {
-        ("@ on", Style::default().fg(ACCENT))
+        ("@ on", Style::default().fg(theme::current().accent))
     } else {
-        ("@ off", Style::default().fg(DIM))
+        ("@ off", Style::default().fg(theme::current().dim))
     }
 }
 

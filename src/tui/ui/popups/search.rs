@@ -83,9 +83,14 @@ pub(in crate::tui::ui) fn search_popup_lines(
     };
     lines.push(Line::from(Span::styled(
         "─".repeat(width.max(1)),
-        Style::default().fg(DIM),
+        Style::default().fg(theme::current().dim),
     )));
-    push_wrapped_styled_popup_text(&mut lines, &status, width, Style::default().fg(DIM));
+    push_wrapped_styled_popup_text(
+        &mut lines,
+        &status,
+        width,
+        Style::default().fg(theme::current().dim),
+    );
 
     if !view.suggestions.is_empty() {
         let start = view
@@ -110,7 +115,7 @@ pub(in crate::tui::ui) fn search_popup_lines(
     if view.results.is_empty() && !view.loading {
         lines.push(Line::from(Span::styled(
             "No results",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
         return lines;
     }
@@ -132,7 +137,7 @@ pub(in crate::tui::ui) fn search_popup_lines(
             &mut lines,
             "More results: [Down/PageDown] load more at the end",
             width,
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         );
     }
     lines
@@ -144,15 +149,17 @@ fn search_field_line(field: &SearchFieldView, width: usize) -> Line<'static> {
     let value = if field.value.is_empty() {
         Span::styled(
             truncate_display_width(&field.placeholder, available),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )
     } else {
         Span::raw(truncate_display_width(&field.value, available))
     };
     let label_style = if field.active {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme::current().accent)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(DIM)
+        Style::default().fg(theme::current().dim)
     };
     Line::from(vec![Span::styled(label, label_style), value])
 }
@@ -168,7 +175,7 @@ fn search_result_line(result: &SearchResultItem, selected: bool, width: usize) -
         SearchResultItem::Message(item) => {
             spans.push(Span::styled(
                 format!("#{} ", item.channel_label),
-                Style::default().fg(ACCENT),
+                Style::default().fg(theme::current().accent),
             ));
             spans.push(Span::styled(
                 format!("{} ", item.author),
@@ -176,7 +183,7 @@ fn search_result_line(result: &SearchResultItem, selected: bool, width: usize) -
             ));
             spans.push(Span::styled(
                 format!("{}: ", format_message_sent_time(item.message_id)),
-                Style::default().fg(DIM),
+                Style::default().fg(theme::current().dim),
             ));
             spans.push(Span::raw(item.content.clone()));
         }
@@ -207,12 +214,14 @@ fn search_suggestion_line(
         SearchSuggestionItem::Channel(item) => {
             spans.push(Span::styled(
                 format!("#{}", item.channel_label),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::current().accent)
+                    .add_modifier(Modifier::BOLD),
             ));
             if let Some(guild_label) = &item.guild_label {
                 spans.push(Span::styled(
                     format!(" in {guild_label}"),
-                    Style::default().fg(DIM),
+                    Style::default().fg(theme::current().dim),
                 ));
             }
         }
@@ -238,11 +247,14 @@ fn push_member_search_spans(
     if let Some(username) = &item.username {
         spans.push(Span::styled(
             format!(" @{username}"),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         ));
     }
     if show_bot_marker && item.is_bot {
-        spans.push(Span::styled(" [bot]", Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            " [bot]",
+            Style::default().fg(theme::current().dim),
+        ));
     }
 }
 

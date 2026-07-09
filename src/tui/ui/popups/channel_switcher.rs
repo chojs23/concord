@@ -115,14 +115,14 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
         channel_switcher_search_line(query, query_cursor, width),
         Line::from(Span::styled(
             "─".repeat(width.max(1)),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )),
     ];
 
     if items.is_empty() {
         lines.push(Line::from(Span::styled(
             "No channels found",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     } else {
         lines.extend(channel_switcher_result_lines(
@@ -138,12 +138,12 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
 
 fn channel_switcher_search_line(query: &str, query_cursor: usize, width: usize) -> Line<'static> {
     let shown_query = if query.is_empty() {
-        Span::styled("search channels", Style::default().fg(DIM))
+        Span::styled("search channels", Style::default().fg(theme::current().dim))
     } else {
         Span::raw(visible_channel_switcher_query(query, query_cursor, width).0)
     };
     Line::from(vec![
-        Span::styled("🔎 ", Style::default().fg(ACCENT)),
+        Span::styled("🔎 ", Style::default().fg(theme::current().accent)),
         shown_query,
     ])
 }
@@ -204,7 +204,9 @@ fn channel_switcher_result_lines(
             }
             ChannelSwitcherResultRow::Group(label) => Line::from(Span::styled(
                 label,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::current().accent)
+                    .add_modifier(Modifier::BOLD),
             )),
         })
         .collect()
@@ -253,9 +255,9 @@ fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Lin
         .map(|label| format!("{label} / "))
         .unwrap_or_default();
     let mut spans = vec![
-        Span::styled(marker, Style::default().fg(ACCENT)),
+        Span::styled(marker, Style::default().fg(theme::current().accent)),
         Span::raw(indent),
-        Span::styled(parent, Style::default().fg(DIM)),
+        Span::styled(parent, Style::default().fg(theme::current().dim)),
     ];
     if let Some(badge) = badge {
         spans.push(badge);

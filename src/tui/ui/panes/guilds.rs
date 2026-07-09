@@ -27,7 +27,7 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                         let base_style = active_text_style(
                             is_active,
                             Style::default()
-                                .fg(Color::Magenta)
+                                .fg(theme::current().dm_icon)
                                 .add_modifier(Modifier::BOLD),
                         );
                         let unread_count = state.direct_message_unread_count();
@@ -99,7 +99,7 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                             .saturating_sub(badge_width);
                         let mut spans = vec![
                             selection_marker(is_selected),
-                            Span::styled(prefix, Style::default().fg(DIM)),
+                            Span::styled(prefix, Style::default().fg(theme::current().dim)),
                         ];
                         if let Some(badge) = badge {
                             spans.push(badge);

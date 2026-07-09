@@ -53,7 +53,7 @@ fn notification_inbox_lines(
         ),
         Line::from(Span::styled(
             "─".repeat(width.max(1)),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )),
     ];
 
@@ -83,7 +83,10 @@ fn notification_inbox_lines(
 }
 
 fn notification_inbox_notice_line(text: &str) -> Line<'static> {
-    Line::from(Span::styled(text.to_owned(), Style::default().fg(DIM)))
+    Line::from(Span::styled(
+        text.to_owned(),
+        Style::default().fg(theme::current().dim),
+    ))
 }
 
 fn notification_inbox_tab_line(
@@ -94,9 +97,11 @@ fn notification_inbox_tab_line(
     let tab_span = |label: &str, count: usize, active: bool| {
         let text = format!(" {label} ({count}) ");
         let style = if active {
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme::current().accent)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(DIM)
+            Style::default().fg(theme::current().dim)
         };
         Span::styled(text, style)
     };
@@ -106,7 +111,7 @@ fn notification_inbox_tab_line(
             unread_count,
             tab == NotificationInboxTab::Unreads,
         ),
-        Span::styled("│", Style::default().fg(DIM)),
+        Span::styled("│", Style::default().fg(theme::current().dim)),
         tab_span(
             "Mentions",
             mention_count,
@@ -175,7 +180,7 @@ fn notification_inbox_card_lines(
         lines.push(notification_inbox_inner_line(
             vec![Span::styled(
                 notification_inbox_placeholder_text(item),
-                Style::default().fg(DIM),
+                Style::default().fg(theme::current().dim),
             )],
             inner_width,
             selected,
@@ -226,7 +231,7 @@ fn notification_inbox_header_spans(item: &NotificationInboxItem) -> Vec<Span<'st
     if let Some(context) = &item.context {
         spans.push(Span::styled(
             format!("  {context}"),
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         ));
     }
     spans
@@ -236,9 +241,14 @@ fn notification_inbox_message_spans(message: &NotificationInboxMessage) -> Vec<S
     vec![
         Span::styled(
             format!("{}: ", message.author),
-            Style::default().fg(DIM).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme::current().dim)
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(message.content.clone(), Style::default().fg(DIM)),
+        Span::styled(
+            message.content.clone(),
+            Style::default().fg(theme::current().dim),
+        ),
     ]
 }
 
@@ -260,9 +270,11 @@ fn notification_inbox_placeholder_text(item: &NotificationInboxItem) -> String {
 
 fn notification_inbox_border_style(selected: bool) -> Style {
     if selected {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme::current().accent)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(DIM)
+        Style::default().fg(theme::current().dim)
     }
 }
 
@@ -279,6 +291,6 @@ fn notification_inbox_help_line() -> Line<'static> {
             ("←/→", "switch tab"),
             ("Esc", "close"),
         ]),
-        Style::default().fg(DIM),
+        Style::default().fg(theme::current().dim),
     ))
 }

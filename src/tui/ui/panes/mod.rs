@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
@@ -36,7 +36,8 @@ use super::{
         panel_scrollbar_area, prefixed_composer_input, vertical_scrollbar_visible,
     },
     panel_block, panel_block_line, render_vertical_scrollbar, selection_marker, styled_list_item,
-    types::{ACCENT, DIM, EmojiImage, MessageAreas},
+    theme,
+    types::{EmojiImage, MessageAreas},
 };
 
 mod channels;

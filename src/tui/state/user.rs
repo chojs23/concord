@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ratatui::{
     layout::Alignment,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
 };
 
@@ -11,6 +11,7 @@ use crate::discord::ids::{
     marker::{GuildMarker, UserMarker},
 };
 use crate::discord::{ActivityInfo, AppCommand, ChannelInfo, MessageInfo, MessageState};
+use crate::tui::theme;
 
 use super::DashboardState;
 use super::member_grouping::{
@@ -219,7 +220,7 @@ impl DashboardState {
         };
         let total = guild.and_then(|g| g.member_count).unwrap_or(0);
         Line::from(vec![
-            Span::styled("●", Style::default().fg(Color::Green)),
+            Span::styled("●", Style::default().fg(theme::current().success)),
             Span::raw(format!(
                 " {}  ○ {}",
                 fmt_with_separators(online as u64),

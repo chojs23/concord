@@ -349,7 +349,7 @@ fn reaction_list_lines(
     if entries.is_empty() {
         return vec![Line::from(Span::styled(
             "No reactions found",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         ))];
     }
 
@@ -365,11 +365,11 @@ fn reaction_list_lines(
             let mut style = Style::default();
             if is_selected {
                 style = style
-                    .bg(Color::Rgb(40, 45, 90))
+                    .bg(theme::current().selection_bg)
                     .add_modifier(Modifier::BOLD);
             }
             let line = Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
+                Span::styled(marker, Style::default().fg(theme::current().accent)),
                 Span::styled(format!("{cell} {}", entry.count()), style),
             ]);
             truncate_line_to_display_width(line, inner_width)
@@ -436,7 +436,7 @@ fn reaction_user_data_lines(popup: &ReactionUsersPopupState) -> Vec<Line<'static
     let Some(entry) = popup.viewed_entry() else {
         return vec![Line::from(Span::styled(
             "No users found",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         ))];
     };
     if entry.users().is_empty() {
@@ -445,7 +445,10 @@ fn reaction_user_data_lines(popup: &ReactionUsersPopupState) -> Vec<Line<'static
         } else {
             "  no users found"
         };
-        return vec![Line::from(Span::styled(text, Style::default().fg(DIM)))];
+        return vec![Line::from(Span::styled(
+            text,
+            Style::default().fg(theme::current().dim),
+        ))];
     }
     entry
         .users()
@@ -592,11 +595,11 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
             );
             let mut style = Style::default();
             if options.own_reactions.contains(&reaction.emoji) {
-                style = style.fg(Color::Yellow);
+                style = style.fg(theme::current().warning);
             }
             if index == selected {
                 style = style
-                    .bg(Color::Rgb(40, 45, 90))
+                    .bg(theme::current().selection_bg)
                     .add_modifier(Modifier::BOLD);
             }
             let thumbnail_ready = options.show_custom_emoji
@@ -604,8 +607,8 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
                     .custom_image_url()
                     .is_some_and(|url| options.thumbnail_urls.iter().any(|ready| ready == &url));
             Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
+                Span::styled(marker, Style::default().fg(theme::current().accent)),
+                Span::styled(shortcut, Style::default().fg(theme::current().dim)),
                 Span::styled(
                     format_emoji_reaction_item(
                         reaction,
@@ -621,19 +624,21 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
     if reactions.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no matching reactions",
-            Style::default().fg(DIM),
+            Style::default().fg(theme::current().dim),
         )));
     }
 
     if let Some(filter) = options.filter {
         lines.push(Line::from(vec![
-            Span::styled("Filter ", Style::default().fg(DIM)),
+            Span::styled("Filter ", Style::default().fg(theme::current().dim)),
             Span::styled(
                 format!(
                     "{}{filter}",
                     options.key_bindings.emoji_reaction_filter_prefix()
                 ),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::current().accent)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
