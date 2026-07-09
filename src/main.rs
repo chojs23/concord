@@ -45,6 +45,10 @@ fn check_config() -> Result<()> {
     let _options = concord::config::load_options()?;
     let keymap = concord::config::load_keymap_options()?;
     concord::tui::validate_keymap_options(&keymap)?;
+    let theme = concord::config::load_theme_options()?;
+    for warning in concord::tui::theme_options_warnings(&theme) {
+        println!("warning: {warning}");
+    }
     println!("concord config OK");
     Ok(())
 }

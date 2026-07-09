@@ -3,7 +3,7 @@
 
 use crate::Result;
 
-use super::{AppOptions, KeymapFileOptions, KeymapOptions, UiStateOptions};
+use super::{AppOptions, KeymapFileOptions, KeymapOptions, ThemeOptions, UiStateOptions};
 
 /// Parse `config.toml` tolerantly: a value with a wrong type or unknown variant
 /// is skipped (its field falls back to default) instead of discarding the whole
@@ -74,6 +74,13 @@ pub(super) fn parse_ui_state_options(content: &str) -> Result<(UiStateOptions, V
     let mut warnings = Vec::new();
     let ui_state = section(&root, "ui_state", &mut warnings);
     Ok((ui_state, warnings))
+}
+
+pub(super) fn parse_theme_options(content: &str) -> Result<(ThemeOptions, Vec<String>)> {
+    let root: toml::Table = toml::from_str(content)?;
+    let mut warnings = Vec::new();
+    let theme = section(&root, "theme", &mut warnings);
+    Ok((theme, warnings))
 }
 
 /// Named map fields of `KeymapOptions`. Any other `[keymap]` key flattens into

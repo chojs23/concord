@@ -19,6 +19,7 @@ use super::{
     clipboard::{ClipboardError, ClipboardPasteData, ClipboardService},
     commands as command_helpers, input,
     state::DashboardState,
+    theme,
 };
 
 pub(super) mod effects;
@@ -86,6 +87,20 @@ pub(super) async fn run_dashboard(
             config::KeymapOptions::default()
         }
     };
+    let theme_options = match config::load_theme_options_with_warnings() {
+        Ok((options, warnings)) => {
+            config_warnings.extend(warnings);
+            options
+        }
+        Err(error) => {
+            logging::error("config", format!("failed to load theme config: {error}"));
+            config::ThemeOptions::default()
+        }
+    };
+    theme::init(theme::Theme::from_options(
+        &theme_options,
+        &mut config_warnings,
+    ));
     let mut state = DashboardState::new_with_options(
         options.display,
         options.composer,

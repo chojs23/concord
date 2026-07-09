@@ -6,8 +6,9 @@ use std::{
 use super::{
     AppOptions, ComposerOptions, CredentialOptions, CredentialStoreMode, DisplayOptions,
     ImagePreviewQualityPreset, ImageProtocolPreference, KeymapBinding, KeymapFileOptions,
-    KeymapOptions, NotificationOptions, PresenceOptions, VoiceOptions,
-    load_keymap_options_from_path, load_options_from_path, parse_app_options, save_options_to_path,
+    KeymapOptions, NotificationOptions, PresenceOptions, ThemeOptions, VoiceOptions,
+    load_keymap_options_from_path, load_options_from_path, parse_app_options, parse_theme_options,
+    save_options_to_path,
 };
 use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
 
@@ -311,6 +312,35 @@ fn valid_config_reports_no_warnings() {
 #[test]
 fn syntax_error_still_fails() {
     assert!(parse_app_options("[display]\nshow_avatars = ").is_err());
+}
+
+#[test]
+fn theme_options_parse_hex_string_fields() {
+    let (theme, warnings) = parse_theme_options("[theme]\naccent = \"#112233\"\n")
+        .expect("valid theme config should parse");
+
+    assert_eq!(theme.accent.as_deref(), Some("#112233"));
+    assert_eq!(theme.dim, None, "unset fields stay None");
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn theme_options_skip_wrong_typed_fields_with_a_warning() {
+    let (theme, warnings) = parse_theme_options("[theme]\naccent = 12345\nerror = \"#ff0000\"\n")
+        .expect("syntactically valid config should parse");
+
+    assert_eq!(theme.accent, None, "wrong-typed value falls back to None");
+    assert_eq!(theme.error.as_deref(), Some("#ff0000"));
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("accent"));
+}
+
+#[test]
+fn missing_theme_file_defaults_to_no_overrides() {
+    let (theme, warnings) = parse_theme_options("").expect("empty config should parse");
+
+    assert_eq!(theme, ThemeOptions::default());
+    assert!(warnings.is_empty());
 }
 
 #[test]

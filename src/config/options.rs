@@ -204,6 +204,41 @@ pub struct AppOptions {
     pub presence: PresenceOptions,
 }
 
+/// Raw `[theme]` values from `theme.toml`: hex strings (`"#rrggbb"`), one per
+/// [`crate::tui::Theme`] field. Missing or invalid entries fall back to that
+/// field's built-in default instead of failing the whole file.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct ThemeOptions {
+    pub accent: Option<String>,
+    pub dim: Option<String>,
+    pub border: Option<String>,
+    pub background: Option<String>,
+    pub text: Option<String>,
+    pub active: Option<String>,
+    pub panel_title: Option<String>,
+    pub mention: Option<String>,
+    pub read_dim: Option<String>,
+    pub unread_bright: Option<String>,
+    pub scrollbar_thumb: Option<String>,
+    pub selected_forum_post_border: Option<String>,
+    pub selected_message_border: Option<String>,
+    pub success: Option<String>,
+    pub warning: Option<String>,
+    pub error: Option<String>,
+    pub info: Option<String>,
+    pub blurple: Option<String>,
+    pub selection_bg: Option<String>,
+    pub unread_badge: Option<String>,
+    pub self_reaction: Option<String>,
+    pub mention_self_bg: Option<String>,
+    pub mention_other_bg: Option<String>,
+    pub mention_other_fg: Option<String>,
+    pub presence_idle: Option<String>,
+    pub mention_role_fallback: Option<String>,
+    pub dm_icon: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
 #[serde(default)]
 pub(super) struct KeymapFileOptions {
