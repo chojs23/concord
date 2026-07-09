@@ -462,7 +462,7 @@ When the composer input starts with a slash `/`, the command suggestion popup
 ## Configuration
 
 Concord options are stored under Concord's config directory. If
-`XDG_CONFIG_HOME` is set, Concord uses `config.toml` for app options and `keymap.toml` for key settings.
+`XDG_CONFIG_HOME` is set, Concord uses `config.toml` for app options, `keymap.toml` for key settings, and `theme.toml` for colors.
 Otherwise it uses the platform config directory.
 
 Local UI state and plaintext fallback credentials are stored under Concord's
@@ -473,7 +473,7 @@ state directory instead. If `XDG_STATE_HOME` is set, Concord uses
 `~/.local/state/concord/credentials.toml`.
 
 You can change some configuration from the in-app Options menu, and Concord saves them back
-to `config.toml`. Key settings are read from `keymap.toml`.
+to `config.toml`. Key settings are read from `keymap.toml`, and colors are read from `theme.toml`.
 
 <details>
 <summary>Default config</summary>
@@ -706,6 +706,49 @@ ToggleReplyPing = "<A-p>"
 </details><br>
 
 You can customize key bindings. Check the [Keymap options](./docs/keymap-options.md) for the config format, supported actions.
+
+You can also customize colors via `theme.toml`. Every field is optional — anything left
+unset, or set to something that isn't a valid `"#rrggbb"` string, falls back to its built-in
+default (and an invalid value logs a warning instead of failing to start).
+
+<details>
+<summary>Example theme config</summary>
+
+```toml
+[theme]
+# Main body/foreground text color.
+text = "#FFFFFF"
+
+# Accent color: focused pane borders, selection markers, tag chips, links.
+accent = "#00FFFF"
+
+# Panel/highlighted-row background, e.g. the selected member row.
+background = "#183641"
+
+# Positive/online indicators: success toasts, online presence dot, accepted friend requests.
+success = "#00FF00"
+
+# Warnings and highlights: badges, muted/deafened icons, editing labels, pending friend requests.
+warning = "#FFFF00"
+
+# Errors and danger actions: error toasts, delete confirmations, blocked users, DnD presence dot.
+error = "#FF0000"
+
+# Discord's own "blurple" brand color: unread-message banner, bot badges, slash commands.
+blurple = "#5865F2"
+
+# Discord's "you were mentioned" orange: mention badges, and inline code spans by default.
+mention = "#FFA500"
+
+# Selection/highlight background used behind mention pickers and dropdowns.
+selection_bg = "#282D5A"
+```
+
+</details><br>
+
+That's a representative subset. Check the [Theme options](./docs/theme-options.md) for the
+full field reference, or copy [`theme.toml.example`](./theme.toml.example) from the repo root
+for every themeable field already filled in at its default value.
 
 ## Performance
 

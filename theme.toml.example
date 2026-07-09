@@ -1,0 +1,133 @@
+# Complete [theme] reference for Concord, with every field set to its
+# built-in default. Copy this file to your Concord config directory as
+# `theme.toml` (same directory as `config.toml` and `keymap.toml`), then edit
+# whichever values you want to change and delete the rest.
+#
+# Every field is optional. Anything left out — or set to something that isn't
+# a valid "#rrggbb" string — falls back to its built-in default, and an
+# invalid (but present) value logs a warning at startup instead of failing to
+# start.
+#
+# Caveat on `accent`, `dim`, `border`, `text`, `active`, `success`, `warning`,
+# `error`, `info`, `self_reaction`, `mention_role_fallback`, `dm_icon`:
+# when *unset*, these actually follow your terminal's own ANSI palette (e.g.
+# `accent` renders as whatever your terminal calls "cyan"), not a fixed hex.
+# The values below are the standard-web-color equivalent of that ANSI name,
+# shown so the file is complete — setting them explicitly (even to the same
+# hex shown here) switches that field from "adapts to your terminal theme" to
+# "always this exact truecolor," which is a real behavior change worth
+# knowing about, not just a cosmetic default.
+#
+# Caveat on `panel_title` and `unread_bright`: their true built-in default is
+# your terminal's reset/default foreground color, which has no hex
+# equivalent at all. The value below (white) is the closest practical
+# stand-in, not the literal default.
+
+[theme]
+
+# --- Core surfaces ---
+
+# Main body/foreground text color.
+text = "#FFFFFF"
+
+# Accent color: focused pane borders, selection markers, tag chips, links.
+accent = "#00FFFF"
+
+# Muted/secondary text: scrollbar track, timestamps, hints, unfocused labels.
+dim = "#808080"
+
+# Unfocused pane border color.
+border = "#808080"
+
+# Panel/highlighted-row background, e.g. the selected member row.
+background = "#183641"
+
+# Selection/highlight background used behind mention pickers and dropdowns.
+selection_bg = "#282D5A"
+
+# --- Status colors ---
+
+# Positive/online indicators: success toasts, online presence dot, accepted
+# friend requests.
+success = "#00FF00"
+
+# Warnings and highlights: badges, muted/deafened icons, editing labels,
+# pending friend requests, failed image-preview notices.
+warning = "#FFFF00"
+
+# Errors and danger actions: error toasts, delete confirmations, blocked
+# users, gateway connection issues, DnD presence dot.
+error = "#FF0000"
+
+# Informational text: toast info messages, embed titles and links.
+info = "#0000FF"
+
+# --- Discord-brand and Discord-specific accents ---
+
+# Discord's own "blurple" brand color: unread-message banner, bot badges,
+# slash-command highlighting.
+blurple = "#5865F2"
+
+# Discord's "you were mentioned" orange: mention badges in the channel list,
+# and (by default) inline code spans in message bodies.
+mention = "#FFA500"
+
+# Discord-style unread-divider red, distinct from `error`.
+unread_badge = "#ED4245"
+
+# --- Message text highlights ---
+
+# Background behind text where you were @mentioned.
+mention_self_bg = "#5C4C23"
+
+# Background behind text where someone else was @mentioned.
+mention_other_bg = "#28325C"
+
+# Foreground color for someone-else-was-mentioned highlighted text.
+mention_other_fg = "#C1CEF7"
+
+# Highlight color for your own reactions, and the "you were mentioned"
+# text-highlight foreground.
+self_reaction = "#FFFF00"
+
+# --- Channel list / unread state ---
+
+# Dim tone for read/seen channels. Deliberately a fixed RGB rather than ANSI
+# dim or the `Modifier::DIM` attribute, so wide CJK glyphs dim as evenly as
+# ASCII (most terminals ignore SGR dim on wide glyphs).
+read_dim = "#828282"
+
+# Bright marker for unread/notified channels. See the panel_title/
+# unread_bright caveat above — true default is your terminal's reset color.
+unread_bright = "#FFFFFF"
+
+# Scrollbar thumb color.
+scrollbar_thumb = "#AAAAAA"
+
+# --- Panels and titles ---
+
+# "Active"/highlighted text state, e.g. the active voice channel indicator.
+active = "#00FF00"
+
+# Panel title text color. See the panel_title/unread_bright caveat above —
+# true default is your terminal's reset color.
+panel_title = "#FFFFFF"
+
+# Selected forum-post card border.
+selected_forum_post_border = "#00FF00"
+
+# Selected message card border.
+selected_message_border = "#00FF00"
+
+# --- Presence ---
+
+# Idle presence dot color.
+presence_idle = "#B48C00"
+
+# --- Fallback colors (used when Discord doesn't supply one) ---
+
+# Fallback color for @role/@everyone mention chips with no role color set.
+mention_role_fallback = "#FF00FF"
+
+# Direct Messages entry icon/text color in the server list.
+dm_icon = "#FF00FF"
