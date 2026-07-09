@@ -234,6 +234,10 @@ fn move_modal_down(state: &mut DashboardState) {
         Some(ActiveModalPopupKind::ChannelSwitcher) => state.move_channel_switcher_down(),
         Some(ActiveModalPopupKind::MessageUrlPicker) => state.move_message_url_picker_down(),
         Some(ActiveModalPopupKind::MessageActionMenu) => state.move_message_action_down(),
+        Some(ActiveModalPopupKind::GuildActionMenu) => state.move_guild_action_down(),
+        Some(ActiveModalPopupKind::ChannelActionMenu) => state.move_channel_action_down(),
+        Some(ActiveModalPopupKind::MemberActionMenu) => state.move_member_action_down(),
+        Some(ActiveModalPopupKind::ThreadActionMenu) => state.move_thread_action_down(),
         _ => {}
     }
 }
@@ -243,6 +247,10 @@ fn move_modal_up(state: &mut DashboardState) {
         Some(ActiveModalPopupKind::ChannelSwitcher) => state.move_channel_switcher_up(),
         Some(ActiveModalPopupKind::MessageUrlPicker) => state.move_message_url_picker_up(),
         Some(ActiveModalPopupKind::MessageActionMenu) => state.move_message_action_up(),
+        Some(ActiveModalPopupKind::GuildActionMenu) => state.move_guild_action_up(),
+        Some(ActiveModalPopupKind::ChannelActionMenu) => state.move_channel_action_up(),
+        Some(ActiveModalPopupKind::MemberActionMenu) => state.move_member_action_up(),
+        Some(ActiveModalPopupKind::ThreadActionMenu) => state.move_thread_action_up(),
         _ => {}
     }
 }
@@ -250,6 +258,10 @@ fn move_modal_up(state: &mut DashboardState) {
 fn select_popup_row(state: &mut DashboardState, target: ui::PopupListTarget, row: usize) -> bool {
     match target {
         ui::PopupListTarget::MessageAction => state.select_message_action_row(row),
+        ui::PopupListTarget::GuildAction => state.select_guild_action_row(row),
+        ui::PopupListTarget::ChannelAction => state.select_channel_action_row(row),
+        ui::PopupListTarget::MemberAction => state.select_member_action_row(row),
+        ui::PopupListTarget::ThreadAction => state.select_thread_action_row(row),
         ui::PopupListTarget::MessageUrl => state.select_message_url_row(row),
     }
 }
@@ -260,6 +272,10 @@ fn activate_popup_row(
 ) -> Option<AppCommand> {
     match target {
         ui::PopupListTarget::MessageAction => state.activate_selected_message_action(),
+        ui::PopupListTarget::GuildAction => state.activate_selected_guild_action(),
+        ui::PopupListTarget::ChannelAction => state.activate_selected_channel_action(),
+        ui::PopupListTarget::MemberAction => state.activate_selected_member_action(),
+        ui::PopupListTarget::ThreadAction => state.activate_selected_thread_action(),
         ui::PopupListTarget::MessageUrl => state.activate_selected_message_url(),
     }
 }

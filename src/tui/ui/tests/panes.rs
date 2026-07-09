@@ -296,6 +296,54 @@ fn mouse_target_at_maps_visible_message_action_rows() {
 }
 
 #[test]
+fn mouse_target_at_maps_guild_and_channel_action_menu_rows() {
+    type MenuCase = (
+        fn(&mut DashboardState),
+        fn(&DashboardState) -> usize,
+        PopupListTarget,
+    );
+    let area = Rect::new(0, 0, 120, 20);
+    let cases: [MenuCase; 2] = [
+        (
+            |state| {
+                state.focus_pane(FocusPane::Guilds);
+                state.open_selected_guild_actions();
+            },
+            DashboardState::guild_action_row_count,
+            PopupListTarget::GuildAction,
+        ),
+        (
+            |state| {
+                state.focus_pane(FocusPane::Channels);
+                state.open_selected_channel_actions();
+            },
+            DashboardState::channel_action_row_count,
+            PopupListTarget::ChannelAction,
+        ),
+    ];
+
+    for (open_menu, row_count, target) in cases {
+        let mut state = state_with_message();
+        open_menu(&mut state);
+        let count = row_count(&state);
+        assert!(count > 0, "{target:?} menu should list rows");
+        let popup_height = count as u16 + 2;
+        let first_row_y = area.y + (area.height - popup_height) / 2 + 1;
+
+        assert_eq!(
+            mouse_target_at(area, &state, 46, first_row_y - 1),
+            Some(MouseTarget::ModalBackdrop),
+            "{target:?}"
+        );
+        assert_eq!(
+            mouse_target_at(area, &state, 46, first_row_y),
+            Some(MouseTarget::PopupRow { target, row: 0 }),
+            "{target:?}"
+        );
+    }
+}
+
+#[test]
 fn one_to_one_dm_carries_presence_in_dot() {
     let channel = channel_with_recipients("dm", &[PresenceStatus::DoNotDisturb]);
 

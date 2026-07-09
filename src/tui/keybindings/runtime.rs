@@ -811,7 +811,8 @@ impl KeyBindings {
         ChannelActionItem,
         channel_action_shortcuts,
         channel_action_label,
-        default_channel_action_shortcut
+        default_channel_action_shortcut,
+        channel_action_shortcut_label
     );
 
     fn default_channel_action_shortcut(&self, kind: ChannelActionKind) -> Vec<KeyChord> {
@@ -830,7 +831,8 @@ impl KeyBindings {
         GuildActionItem,
         guild_action_shortcuts,
         guild_action_label,
-        default_guild_action_shortcut
+        default_guild_action_shortcut,
+        guild_action_shortcut_label
     );
 
     fn default_guild_action_shortcut(&self, kind: GuildActionKind) -> Vec<KeyChord> {
@@ -848,7 +850,8 @@ impl KeyBindings {
         MemberActionItem,
         member_action_shortcuts,
         member_action_label,
-        default_member_action_shortcut
+        default_member_action_shortcut,
+        member_action_shortcut_label
     );
 
     fn default_member_action_shortcut(&self, kind: MemberActionKind) -> Vec<KeyChord> {

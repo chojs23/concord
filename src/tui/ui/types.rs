@@ -103,6 +103,10 @@ pub(crate) enum MouseTarget {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PopupListTarget {
     MessageAction,
+    GuildAction,
+    ChannelAction,
+    MemberAction,
+    ThreadAction,
     MessageUrl,
 }
 

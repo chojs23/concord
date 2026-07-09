@@ -135,7 +135,7 @@ impl DashboardState {
         }
     }
 
-    pub(super) fn channel_action_row_count(&self) -> usize {
+    pub(in crate::tui) fn channel_action_row_count(&self) -> usize {
         match self.popups.channel_action_menu() {
             Some(ChannelActionMenuState::Actions { .. }) => {
                 self.selected_channel_action_items().len()

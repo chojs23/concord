@@ -1,5 +1,6 @@
 use super::*;
-use crate::tui::keybindings::{KeyBindings, KeyChord};
+use crate::tui::keybindings::KeyBindings;
+use crate::tui::state::ActionItem;
 
 const LEADER_POPUP_MIN_WIDTH: u16 = 74;
 const LEADER_POPUP_ROWS: usize = 4;
@@ -16,6 +17,24 @@ struct ActionMenuRow {
     shortcut: String,
     label: String,
     enabled: bool,
+}
+
+/// Builds the menu rows for one scope from its action items and the
+/// keybindings lookups for that scope.
+fn action_menu_rows<K>(
+    actions: &[ActionItem<K>],
+    shortcut: impl Fn(&[ActionItem<K>], usize) -> String,
+    label: impl Fn(&ActionItem<K>) -> String,
+) -> Vec<ActionMenuRow> {
+    actions
+        .iter()
+        .enumerate()
+        .map(|(index, action)| ActionMenuRow {
+            shortcut: shortcut(actions, index),
+            label: label(action),
+            enabled: action.enabled,
+        })
+        .collect()
 }
 
 fn action_menu_lines(rows: &[ActionMenuRow], selected: usize) -> Vec<Line<'static>> {
@@ -64,13 +83,18 @@ fn indexed_action_menu_rows(labels: impl IntoIterator<Item = String>) -> Vec<Act
         .collect()
 }
 
-fn render_action_menu(frame: &mut Frame, area: Rect, title: String, lines: Vec<Line<'static>>) {
-    let popup = message_action_menu_area(area, lines.len());
+fn render_action_menu(
+    frame: &mut Frame,
+    area: Rect,
+    title: impl Into<String>,
+    lines: Vec<Line<'static>>,
+) {
+    let popup = action_menu_area(area, lines.len());
     let lines = truncate_popup_lines(lines, popup.width.saturating_sub(2).max(1) as usize);
     render_modal_paragraph(frame, popup, title, lines);
 }
 
-pub(in crate::tui::ui) fn message_action_menu_area(area: Rect, action_count: usize) -> Rect {
+pub(in crate::tui::ui) fn action_menu_area(area: Rect, action_count: usize) -> Rect {
     centered_rect(area, 54, (action_count as u16).saturating_add(2))
 }
 
@@ -145,34 +169,37 @@ pub(in crate::tui::ui) fn render_guild_action_menu(
     if !state.is_active_modal_popup(ActiveModalPopupKind::GuildActionMenu) {
         return;
     }
+    let Some((title, lines)) = guild_action_menu_content(state) else {
+        return;
+    };
+    render_action_menu(frame, area, title, lines);
+}
+
+fn guild_action_menu_content(state: &DashboardState) -> Option<(&'static str, Vec<Line<'static>>)> {
     let selected = state.selected_guild_action_index().unwrap_or(0);
-    let (title, lines) = if state.is_guild_action_mute_duration_phase() {
+    if state.is_guild_action_mute_duration_phase() {
         let rows = indexed_action_menu_rows(
             state
                 .selected_guild_mute_duration_items()
                 .iter()
                 .map(|item| item.label.to_owned()),
         );
-        ("Mute server", action_menu_lines(&rows, selected))
-    } else {
-        let actions = state.selected_guild_action_items();
-        if actions.is_empty() {
-            return;
-        }
-        let rows: Vec<ActionMenuRow> = actions
-            .iter()
-            .enumerate()
-            .map(|(index, action)| ActionMenuRow {
-                shortcut: action_shortcut_key_label(
-                    &state.key_bindings().guild_action_shortcuts(&actions, index),
-                ),
-                label: state.key_bindings().guild_action_label(action),
-                enabled: action.enabled,
-            })
-            .collect();
-        ("Server actions", action_menu_lines(&rows, selected))
-    };
-    render_action_menu(frame, area, title.to_owned(), lines);
+        return Some(("Mute server", action_menu_lines(&rows, selected)));
+    }
+    let actions = state.selected_guild_action_items();
+    if actions.is_empty() {
+        return None;
+    }
+    let rows = action_menu_rows(
+        &actions,
+        |actions, index| {
+            state
+                .key_bindings()
+                .guild_action_shortcut_label(actions, index)
+        },
+        |action| state.key_bindings().guild_action_label(action),
+    );
+    Some(("Server actions", action_menu_lines(&rows, selected)))
 }
 
 pub(in crate::tui::ui) fn render_channel_action_menu(
@@ -183,14 +210,15 @@ pub(in crate::tui::ui) fn render_channel_action_menu(
     if !state.is_active_modal_popup(ActiveModalPopupKind::ChannelActionMenu) {
         return;
     }
-    let (title, lines) = channel_action_menu_content(state);
-    if lines.is_empty() {
+    let Some((title, lines)) = channel_action_menu_content(state) else {
         return;
-    }
-    render_action_menu(frame, area, title.to_owned(), lines);
+    };
+    render_action_menu(frame, area, title, lines);
 }
 
-fn channel_action_menu_content(state: &DashboardState) -> (&'static str, Vec<Line<'static>>) {
+fn channel_action_menu_content(
+    state: &DashboardState,
+) -> Option<(&'static str, Vec<Line<'static>>)> {
     let selected = state.selected_channel_action_index().unwrap_or(0);
     if state.is_channel_action_mute_duration_phase() {
         let rows = indexed_action_menu_rows(
@@ -199,23 +227,22 @@ fn channel_action_menu_content(state: &DashboardState) -> (&'static str, Vec<Lin
                 .iter()
                 .map(|item| item.label.to_owned()),
         );
-        return ("Mute channel", action_menu_lines(&rows, selected));
+        return Some(("Mute channel", action_menu_lines(&rows, selected)));
     }
     let actions = state.selected_channel_action_items();
-    let rows: Vec<ActionMenuRow> = actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| ActionMenuRow {
-            shortcut: action_shortcut_key_label(
-                &state
-                    .key_bindings()
-                    .channel_action_shortcuts(&actions, index),
-            ),
-            label: state.key_bindings().channel_action_label(action),
-            enabled: action.enabled,
-        })
-        .collect();
-    ("Channel actions", action_menu_lines(&rows, selected))
+    if actions.is_empty() {
+        return None;
+    }
+    let rows = action_menu_rows(
+        &actions,
+        |actions, index| {
+            state
+                .key_bindings()
+                .channel_action_shortcut_label(actions, index)
+        },
+        |action| state.key_bindings().channel_action_label(action),
+    );
+    Some(("Channel actions", action_menu_lines(&rows, selected)))
 }
 
 pub(in crate::tui::ui) fn render_member_action_menu(
@@ -231,23 +258,19 @@ pub(in crate::tui::ui) fn render_member_action_menu(
         return;
     }
     let selected = state.selected_member_action_index().unwrap_or(0);
-    let rows: Vec<ActionMenuRow> = actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| ActionMenuRow {
-            shortcut: action_shortcut_key_label(
-                &state
-                    .key_bindings()
-                    .member_action_shortcuts(&actions, index),
-            ),
-            label: state.key_bindings().member_action_label(action),
-            enabled: action.enabled,
-        })
-        .collect();
+    let rows = action_menu_rows(
+        &actions,
+        |actions, index| {
+            state
+                .key_bindings()
+                .member_action_shortcut_label(actions, index)
+        },
+        |action| state.key_bindings().member_action_label(action),
+    );
     render_action_menu(
         frame,
         area,
-        "Member actions".to_owned(),
+        "Member actions",
         action_menu_lines(&rows, selected),
     );
 }
@@ -256,7 +279,9 @@ pub(in crate::tui::ui) fn render_member_action_menu(
 pub(in crate::tui::ui) fn channel_action_menu_lines_for_test(
     state: &DashboardState,
 ) -> Vec<Line<'static>> {
-    channel_action_menu_content(state).1
+    channel_action_menu_content(state)
+        .map(|(_, lines)| lines)
+        .unwrap_or_default()
 }
 
 fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'static>> {
@@ -315,17 +340,6 @@ fn leader_line_width(line: &Line<'_>) -> usize {
     line.spans.iter().map(|span| span.content.width()).sum()
 }
 
-fn action_shortcut_key_label(keys: &[KeyChord]) -> String {
-    if keys.is_empty() {
-        " ".to_owned()
-    } else {
-        keys.iter()
-            .map(|key| key.label())
-            .collect::<Vec<_>>()
-            .join("/")
-    }
-}
-
 fn leader_shortcut_text_line(key: &str, label: &str, enabled: bool) -> Line<'static> {
     let style = if enabled {
         Style::default()
@@ -359,7 +373,7 @@ pub(in crate::tui::ui) fn render_message_action_menu(
     let selected = state.selected_message_action_index().unwrap_or(0);
     let lines =
         message_action_menu_lines_with_key_bindings(&actions, selected, state.key_bindings());
-    render_action_menu(frame, area, "Message actions".to_owned(), lines);
+    render_action_menu(frame, area, "Message actions", lines);
 }
 
 #[cfg(test)]
@@ -390,15 +404,11 @@ fn message_action_menu_lines_with_key_bindings(
     selected: usize,
     key_bindings: &KeyBindings,
 ) -> Vec<Line<'static>> {
-    let rows: Vec<ActionMenuRow> = actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| ActionMenuRow {
-            shortcut: key_bindings.message_action_shortcut_label(actions, index),
-            label: key_bindings.message_action_label(action),
-            enabled: action.enabled,
-        })
-        .collect();
+    let rows = action_menu_rows(
+        actions,
+        |actions, index| key_bindings.message_action_shortcut_label(actions, index),
+        |action| key_bindings.message_action_label(action),
+    );
     action_menu_lines(&rows, selected)
 }
 
@@ -453,14 +463,10 @@ fn thread_action_menu_lines(
     selected: usize,
     key_bindings: &KeyBindings,
 ) -> Vec<Line<'static>> {
-    let rows: Vec<ActionMenuRow> = actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| ActionMenuRow {
-            shortcut: key_bindings.thread_action_shortcut_label(actions, index),
-            label: key_bindings.thread_action_label(action),
-            enabled: action.enabled,
-        })
-        .collect();
+    let rows = action_menu_rows(
+        actions,
+        |actions, index| key_bindings.thread_action_shortcut_label(actions, index),
+        |action| key_bindings.thread_action_label(action),
+    );
     action_menu_lines(&rows, selected)
 }

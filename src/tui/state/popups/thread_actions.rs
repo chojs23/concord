@@ -236,7 +236,7 @@ impl DashboardState {
 
     /// Move the highlight to `row` within the current phase's list. Returns
     /// `false` when the row is out of range.
-    fn select_thread_action_row(&mut self, row: usize) -> bool {
+    pub fn select_thread_action_row(&mut self, row: usize) -> bool {
         if row >= self.thread_action_row_count() {
             return false;
         }
@@ -319,7 +319,7 @@ impl DashboardState {
         }
     }
 
-    pub(super) fn thread_action_row_count(&self) -> usize {
+    pub(in crate::tui) fn thread_action_row_count(&self) -> usize {
         match self.popups.thread_action_menu() {
             Some(ThreadActionMenuState::Actions { .. }) => {
                 self.selected_thread_action_items().len()

@@ -3,10 +3,11 @@ use ratatui::layout::Rect;
 use super::super::state::{ActiveModalPopupKind, DashboardState, FocusPane};
 use super::{
     channel_pane_header_height,
-    layout::{centered_rect, dashboard_areas, message_areas},
+    layout::{dashboard_areas, message_areas},
     panel_block, panel_block_owned,
     popups::{
-        channel_switcher_item_index_at, channel_switcher_popup_area, user_profile_popup_area,
+        action_menu_area, channel_switcher_item_index_at, channel_switcher_popup_area,
+        message_url_picker_popup_area, user_profile_popup_area,
     },
     types::{MouseTarget, PopupListTarget},
 };
@@ -106,23 +107,37 @@ fn popup_list_mouse_target(
     column: u16,
     row: u16,
 ) -> Option<MouseTarget> {
-    match state.active_modal_popup_kind()? {
-        ActiveModalPopupKind::MessageUrlPicker => popup_list_row_target(
-            message_url_picker_area(area, state),
-            state.selected_message_url_items().len(),
-            PopupListTarget::MessageUrl,
-            column,
-            row,
-        ),
-        ActiveModalPopupKind::MessageActionMenu => popup_list_row_target(
-            message_action_menu_area(area, state),
+    let (item_count, target) = match state.active_modal_popup_kind()? {
+        ActiveModalPopupKind::MessageActionMenu => (
             state.selected_message_action_items().len(),
             PopupListTarget::MessageAction,
-            column,
-            row,
         ),
-        _ => None,
-    }
+        ActiveModalPopupKind::GuildActionMenu => {
+            (state.guild_action_row_count(), PopupListTarget::GuildAction)
+        }
+        ActiveModalPopupKind::ChannelActionMenu => (
+            state.channel_action_row_count(),
+            PopupListTarget::ChannelAction,
+        ),
+        ActiveModalPopupKind::MemberActionMenu => (
+            state.selected_member_action_items().len(),
+            PopupListTarget::MemberAction,
+        ),
+        ActiveModalPopupKind::ThreadActionMenu => (
+            state.thread_action_row_count(),
+            PopupListTarget::ThreadAction,
+        ),
+        ActiveModalPopupKind::MessageUrlPicker => (
+            state.selected_message_url_items().len(),
+            PopupListTarget::MessageUrl,
+        ),
+        _ => return None,
+    };
+    let popup = (item_count > 0).then(|| match target {
+        PopupListTarget::MessageUrl => message_url_picker_popup_area(area, item_count),
+        _ => action_menu_area(area, item_count),
+    });
+    popup_list_row_target(popup, item_count, target, column, row)
 }
 
 fn popup_list_row_target(
@@ -146,16 +161,6 @@ fn popup_list_row_target(
         }
     }
     Some(MouseTarget::ModalBackdrop)
-}
-
-fn message_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    let item_count = state.selected_message_action_items().len();
-    (item_count > 0).then(|| centered_rect(area, 54, (item_count as u16).saturating_add(2)))
-}
-
-fn message_url_picker_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    let item_count = state.selected_message_url_items().len();
-    (item_count > 0).then(|| centered_rect(area, 54, (item_count as u16).saturating_add(2)))
 }
 
 fn pane_row_mouse_target(

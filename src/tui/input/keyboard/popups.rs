@@ -359,15 +359,6 @@ pub(super) fn handle_thread_action_menu_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    fn activate_thread_action_shortcut(
-        state: &mut DashboardState,
-        shortcut: KeyChord,
-    ) -> Option<AppCommand> {
-        state
-            .thread_action_shortcut_matches(shortcut)
-            .then(|| state.activate_thread_action_shortcut(shortcut))?
-    }
-
     // Esc (or a close key) backs out of the mute/notification submenu first,
     // then closes the menu.
     fn close_or_back(state: &mut DashboardState) {
@@ -379,12 +370,14 @@ pub(super) fn handle_thread_action_menu_key(
     handle_action_menu_key(
         state,
         key,
-        DashboardState::thread_action_shortcut_matches,
-        close_or_back,
-        DashboardState::move_thread_action_down,
-        DashboardState::move_thread_action_up,
-        DashboardState::activate_selected_thread_action,
-        activate_thread_action_shortcut,
+        ActionMenuCallbacks {
+            shortcut_matches: DashboardState::thread_action_shortcut_matches,
+            close_or_back,
+            move_down: DashboardState::move_thread_action_down,
+            move_up: DashboardState::move_thread_action_up,
+            activate_selected: DashboardState::activate_selected_thread_action,
+            activate_shortcut: DashboardState::activate_thread_action_shortcut,
+        },
     )
 }
 
@@ -392,15 +385,6 @@ pub(super) fn handle_guild_action_menu_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    fn activate_guild_action_shortcut(
-        state: &mut DashboardState,
-        shortcut: KeyChord,
-    ) -> Option<AppCommand> {
-        state
-            .guild_action_shortcut_matches(shortcut)
-            .then(|| state.activate_guild_action_shortcut(shortcut))?
-    }
-
     fn close_or_back(state: &mut DashboardState) {
         if !state.back_guild_action_menu() {
             state.close_guild_action_menu();
@@ -410,12 +394,14 @@ pub(super) fn handle_guild_action_menu_key(
     handle_action_menu_key(
         state,
         key,
-        DashboardState::guild_action_shortcut_matches,
-        close_or_back,
-        DashboardState::move_guild_action_down,
-        DashboardState::move_guild_action_up,
-        DashboardState::activate_selected_guild_action,
-        activate_guild_action_shortcut,
+        ActionMenuCallbacks {
+            shortcut_matches: DashboardState::guild_action_shortcut_matches,
+            close_or_back,
+            move_down: DashboardState::move_guild_action_down,
+            move_up: DashboardState::move_guild_action_up,
+            activate_selected: DashboardState::activate_selected_guild_action,
+            activate_shortcut: DashboardState::activate_guild_action_shortcut,
+        },
     )
 }
 
@@ -423,15 +409,6 @@ pub(super) fn handle_channel_action_menu_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    fn activate_channel_action_shortcut(
-        state: &mut DashboardState,
-        shortcut: KeyChord,
-    ) -> Option<AppCommand> {
-        state
-            .channel_action_shortcut_matches(shortcut)
-            .then(|| state.activate_channel_action_shortcut(shortcut))?
-    }
-
     fn close_or_back(state: &mut DashboardState) {
         if !state.back_channel_action_menu() {
             state.close_channel_action_menu();
@@ -441,12 +418,14 @@ pub(super) fn handle_channel_action_menu_key(
     handle_action_menu_key(
         state,
         key,
-        DashboardState::channel_action_shortcut_matches,
-        close_or_back,
-        DashboardState::move_channel_action_down,
-        DashboardState::move_channel_action_up,
-        DashboardState::activate_selected_channel_action,
-        activate_channel_action_shortcut,
+        ActionMenuCallbacks {
+            shortcut_matches: DashboardState::channel_action_shortcut_matches,
+            close_or_back,
+            move_down: DashboardState::move_channel_action_down,
+            move_up: DashboardState::move_channel_action_up,
+            activate_selected: DashboardState::activate_selected_channel_action,
+            activate_shortcut: DashboardState::activate_channel_action_shortcut,
+        },
     )
 }
 
@@ -454,24 +433,17 @@ pub(super) fn handle_member_action_menu_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    fn activate_member_action_shortcut(
-        state: &mut DashboardState,
-        shortcut: KeyChord,
-    ) -> Option<AppCommand> {
-        state
-            .member_action_shortcut_matches(shortcut)
-            .then(|| state.activate_member_action_shortcut(shortcut))?
-    }
-
     handle_action_menu_key(
         state,
         key,
-        DashboardState::member_action_shortcut_matches,
-        DashboardState::close_member_action_menu,
-        DashboardState::move_member_action_down,
-        DashboardState::move_member_action_up,
-        DashboardState::activate_selected_member_action,
-        activate_member_action_shortcut,
+        ActionMenuCallbacks {
+            shortcut_matches: DashboardState::member_action_shortcut_matches,
+            close_or_back: DashboardState::close_member_action_menu,
+            move_down: DashboardState::move_member_action_down,
+            move_up: DashboardState::move_member_action_up,
+            activate_selected: DashboardState::activate_selected_member_action,
+            activate_shortcut: DashboardState::activate_member_action_shortcut,
+        },
     )
 }
 
@@ -626,24 +598,17 @@ pub(super) fn handle_message_action_menu_key(
     state: &mut DashboardState,
     key: KeyEvent,
 ) -> Option<AppCommand> {
-    fn activate_message_action_shortcut(
-        state: &mut DashboardState,
-        shortcut: KeyChord,
-    ) -> Option<AppCommand> {
-        state
-            .message_action_shortcut_matches(shortcut)
-            .then(|| state.activate_message_action_shortcut(shortcut))?
-    }
-
     handle_action_menu_key(
         state,
         key,
-        DashboardState::message_action_shortcut_matches,
-        DashboardState::close_message_action_menu,
-        DashboardState::move_message_action_down,
-        DashboardState::move_message_action_up,
-        DashboardState::activate_selected_message_action,
-        activate_message_action_shortcut,
+        ActionMenuCallbacks {
+            shortcut_matches: DashboardState::message_action_shortcut_matches,
+            close_or_back: DashboardState::close_message_action_menu,
+            move_down: DashboardState::move_message_action_down,
+            move_up: DashboardState::move_message_action_up,
+            activate_selected: DashboardState::activate_selected_message_action,
+            activate_shortcut: DashboardState::activate_message_action_shortcut,
+        },
     )
 }
 
@@ -675,6 +640,17 @@ fn action_menu_shortcut_claims_key(state: &DashboardState, key: KeyEvent) -> boo
     }
 }
 
+/// The per-scope state callbacks one action menu wires into
+/// [`handle_action_menu_key`].
+pub(super) struct ActionMenuCallbacks {
+    shortcut_matches: fn(&DashboardState, KeyChord) -> bool,
+    close_or_back: fn(&mut DashboardState),
+    move_down: fn(&mut DashboardState),
+    move_up: fn(&mut DashboardState),
+    activate_selected: fn(&mut DashboardState) -> Option<AppCommand>,
+    activate_shortcut: fn(&mut DashboardState, KeyChord) -> Option<AppCommand>,
+}
+
 /// Shared key handling for the action menu family (message, thread, and the
 /// server/channel/member menus). On top of the regular popup-list keys
 /// (j/k/arrows, Enter, Esc):
@@ -683,35 +659,29 @@ fn action_menu_shortcut_claims_key(state: &DashboardState, key: KeyEvent) -> boo
 /// - A displayed action shortcut wins over the j/k selection keys, so menus
 ///   whose shortcuts overlap them (e.g. an action rebound to `j`) stay
 ///   activatable; arrows and Ctrl+n/p always navigate.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_action_menu_key(
     state: &mut DashboardState,
     key: KeyEvent,
-    shortcut_matches: impl Fn(&DashboardState, KeyChord) -> bool,
-    close_or_back: impl Fn(&mut DashboardState),
-    move_down: impl Fn(&mut DashboardState),
-    move_up: impl Fn(&mut DashboardState),
-    activate_selected: impl Fn(&mut DashboardState) -> Option<AppCommand>,
-    activate_shortcut: impl Fn(&mut DashboardState, KeyChord) -> Option<AppCommand>,
+    menu: ActionMenuCallbacks,
 ) -> Option<AppCommand> {
     if key.code == KeyCode::Left && key.modifiers.is_empty() {
-        close_or_back(state);
+        (menu.close_or_back)(state);
         return None;
     }
     if matches!(key.code, KeyCode::Char(_)) {
         let shortcut = state.key_bindings().keymap_chord_for_event(key);
-        if shortcut_matches(state, shortcut) {
-            return activate_shortcut(state, shortcut);
+        if (menu.shortcut_matches)(state, shortcut) {
+            return (menu.activate_shortcut)(state, shortcut);
         }
     }
     handle_popup_list_key(
         state,
         key,
-        close_or_back,
-        move_down,
-        move_up,
-        activate_selected,
-        activate_shortcut,
+        menu.close_or_back,
+        menu.move_down,
+        menu.move_up,
+        menu.activate_selected,
+        menu.activate_shortcut,
     )
 }
 

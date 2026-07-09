@@ -112,7 +112,7 @@ impl DashboardState {
         }
     }
 
-    pub(super) fn guild_action_row_count(&self) -> usize {
+    pub(in crate::tui) fn guild_action_row_count(&self) -> usize {
         match self.popups.guild_action_menu() {
             Some(GuildActionMenuState::Actions { .. }) => self.selected_guild_action_items().len(),
             Some(GuildActionMenuState::MuteDuration { .. }) => {

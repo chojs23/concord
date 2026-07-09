@@ -24,15 +24,15 @@ mod thread_edit;
 mod toast;
 mod url_picker;
 
+pub(super) use action_menu::{
+    action_menu_area, leader_popup_area_for_state, render_channel_action_menu,
+    render_guild_action_menu, render_leader_popup, render_member_action_menu,
+    render_message_action_menu, render_thread_action_menu,
+};
 #[cfg(test)]
 pub(super) use action_menu::{
     channel_action_menu_lines_for_test, message_action_menu_lines,
     message_action_menu_lines_with_keymap_options,
-};
-pub(super) use action_menu::{
-    leader_popup_area_for_state, message_action_menu_area, render_channel_action_menu,
-    render_guild_action_menu, render_leader_popup, render_member_action_menu,
-    render_message_action_menu, render_thread_action_menu,
 };
 #[cfg(test)]
 pub(super) use attachment_viewer::centered_viewer_preview_area;
@@ -144,27 +144,19 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
     match kind {
         ActiveModalPopupKind::MessageActionMenu => {
             let actions = state.selected_message_action_items();
-            (!actions.is_empty()).then(|| message_action_menu_area(frame_area, actions.len()))
+            (!actions.is_empty()).then(|| action_menu_area(frame_area, actions.len()))
         }
         ActiveModalPopupKind::GuildActionMenu => {
-            let count = if state.is_guild_action_mute_duration_phase() {
-                state.selected_guild_mute_duration_items().len()
-            } else {
-                state.selected_guild_action_items().len()
-            };
-            (count > 0).then(|| message_action_menu_area(frame_area, count))
+            let count = state.guild_action_row_count();
+            (count > 0).then(|| action_menu_area(frame_area, count))
         }
         ActiveModalPopupKind::ChannelActionMenu => {
-            let count = if state.is_channel_action_mute_duration_phase() {
-                state.selected_channel_mute_duration_items().len()
-            } else {
-                state.selected_channel_action_items().len()
-            };
-            (count > 0).then(|| message_action_menu_area(frame_area, count))
+            let count = state.channel_action_row_count();
+            (count > 0).then(|| action_menu_area(frame_area, count))
         }
         ActiveModalPopupKind::MemberActionMenu => {
             let count = state.selected_member_action_items().len();
-            (count > 0).then(|| message_action_menu_area(frame_area, count))
+            (count > 0).then(|| action_menu_area(frame_area, count))
         }
         ActiveModalPopupKind::MessageUrlPicker => {
             let urls = state.selected_message_url_items();
@@ -205,14 +197,8 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
         ActiveModalPopupKind::ForumPostComposer => Some(forum_post_composer_popup_area(frame_area)),
         ActiveModalPopupKind::ThreadEdit => Some(thread_edit_popup_area(frame_area)),
         ActiveModalPopupKind::ThreadActionMenu => {
-            let count = if state.is_thread_action_mute_duration_phase() {
-                state.selected_thread_mute_duration_items().len()
-            } else if state.is_thread_action_notification_phase() {
-                state.selected_thread_notification_items().len()
-            } else {
-                state.selected_thread_action_items().len()
-            };
-            (count > 0).then(|| message_action_menu_area(frame_area, count))
+            let count = state.thread_action_row_count();
+            (count > 0).then(|| action_menu_area(frame_area, count))
         }
     }
 }
