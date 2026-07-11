@@ -1311,6 +1311,46 @@ fn udp_discovery_and_select_protocol_match_expected_shapes() {
 }
 
 #[test]
+fn udp_keepalive_packet_round_trips_little_endian_counter() {
+    let packet = udp_keepalive_packet(0x01020304);
+
+    assert_eq!(packet, [0x04, 0x03, 0x02, 0x01, 0, 0, 0, 0]);
+    assert_eq!(parse_udp_keepalive_response(&packet), Some(0x01020304));
+    assert_eq!(parse_udp_keepalive_response(&packet[..7]), None);
+}
+
+#[tokio::test]
+async fn voice_udp_keepalive_sends_initial_counter() {
+    let receiver = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("receiver should bind");
+    let sender = Arc::new(
+        UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("sender should bind"),
+    );
+    sender
+        .connect(
+            receiver
+                .local_addr()
+                .expect("receiver should have an address"),
+        )
+        .await
+        .expect("sender should connect");
+    let keepalive = tokio::spawn(run_voice_udp_keepalive(sender));
+    let mut packet = [0u8; UDP_KEEPALIVE_PACKET_LEN];
+
+    let received = timeout(Duration::from_secs(1), receiver.recv(&mut packet))
+        .await
+        .expect("keepalive should arrive")
+        .expect("receiver should read the keepalive");
+
+    keepalive.abort();
+    assert_eq!(received, UDP_KEEPALIVE_PACKET_LEN);
+    assert_eq!(parse_udp_keepalive_response(&packet), Some(0));
+}
+
+#[test]
 fn voice_session_description_parses_mode_and_redacts_secret() {
     let payload = json!({
         "op": 4,

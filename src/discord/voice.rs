@@ -117,6 +117,8 @@ const VOICE_WEBSOCKET_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const VOICE_CONNECTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 const UDP_DISCOVERY_PACKET_LEN: usize = 74;
 const UDP_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+const UDP_KEEPALIVE_PACKET_LEN: usize = 8;
+const UDP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 const RTP_HEADER_MIN_LEN: usize = 12;
 const RTP_VERSION: u8 = 2;
 const DISCORD_VOICE_PAYLOAD_TYPE: u8 = 0x78;
@@ -481,6 +483,7 @@ impl ManagedTask {
 
 struct VoiceChildTasks {
     heartbeat: ManagedTask,
+    udp_keepalive: ManagedTask,
     udp_receive: ManagedTask,
     #[cfg(feature = "voice-playback")]
     udp_transmit: Option<JoinHandle<()>>,
@@ -506,6 +509,7 @@ impl Default for VoiceChildTasks {
     fn default() -> Self {
         Self {
             heartbeat: ManagedTask::new("voice heartbeat task"),
+            udp_keepalive: ManagedTask::new("voice UDP keepalive task"),
             udp_receive: ManagedTask::new("voice UDP receive task"),
             #[cfg(feature = "voice-playback")]
             udp_transmit: None,
@@ -636,6 +640,10 @@ impl VoiceChildTasks {
         self.udp_receive.replace(task);
     }
 
+    fn replace_udp_keepalive(&mut self, task: JoinHandle<()>) {
+        self.udp_keepalive.replace(task);
+    }
+
     #[cfg(feature = "voice-playback")]
     async fn replace_udp_transmit(
         &mut self,
@@ -698,6 +706,7 @@ impl VoiceChildTasks {
 
     fn abort_all(&mut self) {
         self.heartbeat.abort();
+        self.udp_keepalive.abort();
         self.udp_receive.abort();
         #[cfg(feature = "voice-playback")]
         if let Some(task) = self.udp_transmit.take() {

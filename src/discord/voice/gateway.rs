@@ -373,6 +373,11 @@ async fn start_voice_session_audio(
         playback_tx,
         audio.remote_speaking_tx.clone(),
     )));
+    child_tasks.replace_udp_keepalive(
+        audio
+            .audio_handle
+            .spawn(run_voice_udp_keepalive(Arc::clone(audio.socket))),
+    );
     #[cfg(feature = "voice-playback")]
     if let Some(ready) = audio.voice_ready {
         let (pcm_tx, pcm_rx) = mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
@@ -396,6 +401,27 @@ async fn start_voice_session_audio(
             )
             .await;
         child_tasks.set_voice_transmit_gate(audio.current_capture_gate);
+    }
+}
+
+pub(super) async fn run_voice_udp_keepalive(socket: Arc<UdpSocket>) {
+    let mut interval = tokio::time::interval(UDP_KEEPALIVE_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut counter = 0u32;
+
+    loop {
+        interval.tick().await;
+        if let Err(error) = socket.send(&udp_keepalive_packet(counter)).await {
+            logging::error("voice", format!("voice UDP keepalive failed: {error}"));
+            break;
+        }
+        if counter == 0 || counter.is_multiple_of(12) {
+            logging::debug(
+                "voice",
+                format!("voice UDP keepalive sent: counter={counter}"),
+            );
+        }
+        counter = counter.wrapping_add(1);
     }
 }
 
@@ -528,9 +554,22 @@ pub(super) async fn run_voice_udp_receive(
     let mut non_audio_packets = 0u64;
     let mut rtcp_packets = 0u64;
     let mut malformed_packets = 0u64;
+    let mut keepalive_acks = 0u64;
     loop {
         match socket.recv(&mut packet).await {
             Ok(len) => {
+                if let Some(counter) = parse_udp_keepalive_response(&packet[..len]) {
+                    keepalive_acks = keepalive_acks.saturating_add(1);
+                    if keepalive_acks == 1 || keepalive_acks.is_multiple_of(12) {
+                        logging::debug(
+                            "voice",
+                            format!(
+                                "voice UDP keepalive acknowledged: count={keepalive_acks} counter={counter}"
+                            ),
+                        );
+                    }
+                    continue;
+                }
                 if looks_like_rtcp_packet(&packet[..len]) {
                     rtcp_packets = rtcp_packets.saturating_add(1);
                     if rtcp_packets == 1 || rtcp_packets.is_multiple_of(100) {
@@ -851,6 +890,17 @@ pub(super) fn udp_discovery_request(ssrc: u32) -> [u8; UDP_DISCOVERY_PACKET_LEN]
     packet[2..4].copy_from_slice(&70u16.to_be_bytes());
     packet[4..8].copy_from_slice(&ssrc.to_be_bytes());
     packet
+}
+
+pub(super) fn udp_keepalive_packet(counter: u32) -> [u8; UDP_KEEPALIVE_PACKET_LEN] {
+    let mut packet = [0u8; UDP_KEEPALIVE_PACKET_LEN];
+    packet[..size_of::<u32>()].copy_from_slice(&counter.to_le_bytes());
+    packet
+}
+
+pub(super) fn parse_udp_keepalive_response(packet: &[u8]) -> Option<u32> {
+    let counter = packet.get(..size_of::<u32>())?.try_into().ok()?;
+    (packet.len() == UDP_KEEPALIVE_PACKET_LEN).then(|| u32::from_le_bytes(counter))
 }
 
 pub(super) fn parse_udp_discovery_response(
