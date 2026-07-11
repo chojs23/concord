@@ -240,10 +240,10 @@ impl DashboardState {
     }
 
     pub fn cycle_search_field_next(&mut self) {
-        if let Some(search) = self.popups.search_popup_mut() {
-            if !search.fields.is_empty() {
-                search.active_field = (search.active_field + 1) % search.fields.len();
-            }
+        if let Some(search) = self.popups.search_popup_mut()
+            && !search.fields.is_empty()
+        {
+            search.active_field = (search.active_field + 1) % search.fields.len();
         }
         self.refresh_message_search_suggestions();
     }

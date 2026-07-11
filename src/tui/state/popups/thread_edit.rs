@@ -287,11 +287,11 @@ impl super::super::DashboardState {
             return;
         };
         if editing_tags {
-            if tag_count > 0 {
-                if let Some(popup) = self.popups.thread_edit_mut() {
-                    popup.selected_tag_index =
-                        (popup.selected_tag_index + 1).min(tag_count.saturating_sub(1));
-                }
+            if tag_count > 0
+                && let Some(popup) = self.popups.thread_edit_mut()
+            {
+                popup.selected_tag_index =
+                    (popup.selected_tag_index + 1).min(tag_count.saturating_sub(1));
             }
         } else {
             self.cycle_thread_edit_field_next();

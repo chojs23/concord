@@ -22,13 +22,13 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
             truncate_display_width(&server_name, width),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ))];
-        if header_area.height >= 2 {
-            if let Some(boost) = &boost_label {
-                lines.push(Line::from(Span::styled(
-                    truncate_display_width(boost, width),
-                    Style::default().fg(DIM),
-                )));
-            }
+        if header_area.height >= 2
+            && let Some(boost) = &boost_label
+        {
+            lines.push(Line::from(Span::styled(
+                truncate_display_width(boost, width),
+                Style::default().fg(DIM),
+            )));
         }
         frame.render_widget(Paragraph::new(lines), header_area);
     }

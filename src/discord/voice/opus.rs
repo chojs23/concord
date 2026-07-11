@@ -6,9 +6,9 @@ use std::{
 #[cfg(feature = "voice-playback")]
 use std::sync::Arc;
 #[cfg(feature = "voice-playback")]
-use std::sync::atomic::{AtomicBool, AtomicU8};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 #[cfg(feature = "voice-playback")]
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::{SyncSender, TrySendError};
 
 use ::opus::{
     Application as OpusApplication, Channels, Decoder as OpusDecoder, Encoder as OpusEncoder,
@@ -20,6 +20,8 @@ use tokio::{
 };
 
 #[cfg(feature = "voice-playback")]
+use super::audio_buffer::VoiceAudioOutputStats;
+#[cfg(feature = "voice-playback")]
 use super::playback::VoiceAudioOutput;
 use super::playback::{
     VoicePlaybackFrame, VoicePlaybackGate, VoicePlaybackPlayoutBuffers, VoicePlaybackPostProcess,
@@ -28,7 +30,8 @@ use super::playback::{
 use super::{
     DISCORD_OPUS_20MS_STEREO_SAMPLES, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL,
     DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE, OPUS_MAX_ENCODED_FRAME_BYTES,
-    OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL, VOICE_PLAYBACK_FRAME_QUEUE, VOICE_PLAYBACK_POLL_DURATION,
+    OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL, VOICE_OUTPUT_STATS_LOG_INTERVAL,
+    VOICE_PLAYBACK_FRAME_QUEUE, VOICE_PLAYBACK_POLL_DURATION,
     VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL,
 };
 use crate::logging;
@@ -52,6 +55,8 @@ pub(super) struct VoiceOpusDecode {
 struct VoiceDecodedAudio {
     #[cfg(feature = "voice-playback")]
     samples_tx: Option<SyncSender<Vec<f32>>>,
+    #[cfg(feature = "voice-playback")]
+    stats: Option<Arc<VoiceAudioOutputStats>>,
 }
 
 #[derive(Default)]
@@ -89,7 +94,10 @@ impl VoiceOpusDecode {
         let playback_volume = Arc::new(AtomicU8::new(playback_gate.volume.value()));
         match VoiceAudioOutput::start(Arc::clone(&playback_enabled), Arc::clone(&playback_volume)) {
             Ok(audio_output) => {
-                let decoded_audio = VoiceDecodedAudio::output(audio_output.samples_tx.clone());
+                let decoded_audio = VoiceDecodedAudio::output(
+                    audio_output.samples_tx.clone(),
+                    Arc::clone(&audio_output.stats),
+                );
                 let task = audio_handle.spawn(run_voice_playback_decode(frames_rx, decoded_audio));
                 logging::debug(
                     "voice",
@@ -129,24 +137,60 @@ impl VoiceDecodedAudio {
         Self {
             #[cfg(feature = "voice-playback")]
             samples_tx: None,
+            #[cfg(feature = "voice-playback")]
+            stats: None,
         }
     }
 
     #[cfg(feature = "voice-playback")]
-    fn output(samples_tx: SyncSender<Vec<f32>>) -> Self {
+    fn output(samples_tx: SyncSender<Vec<f32>>, stats: Arc<VoiceAudioOutputStats>) -> Self {
         Self {
             samples_tx: Some(samples_tx),
+            stats: Some(stats),
         }
     }
 
     fn try_send(&self, samples: Vec<f32>) {
         #[cfg(feature = "voice-playback")]
-        if let Some(samples_tx) = self.samples_tx.as_ref() {
-            let _ = samples_tx.try_send(samples);
+        if let (Some(samples_tx), Some(stats)) = (self.samples_tx.as_ref(), self.stats.as_ref()) {
+            let frames = samples.len() / usize::from(DISCORD_VOICE_CHANNELS);
+            stats
+                .queued_frames
+                .fetch_add(frames as u64, Ordering::Relaxed);
+            match samples_tx.try_send(samples) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    stats
+                        .queued_frames
+                        .fetch_sub(frames as u64, Ordering::Relaxed);
+                    stats.queue_full_drops.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    stats
+                        .queued_frames
+                        .fetch_sub(frames as u64, Ordering::Relaxed);
+                }
+            }
         }
         #[cfg(not(feature = "voice-playback"))]
         {
             let _ = samples;
+        }
+    }
+
+    fn log_output_stats(&self) {
+        #[cfg(feature = "voice-playback")]
+        if let Some(stats) = self.stats.as_ref() {
+            logging::debug(
+                "voice",
+                format!(
+                    "voice audio stats: queue_full_drops={} output_underruns={} callback_max_gap_ms={} queued_frames={}",
+                    stats.queue_full_drops.swap(0, Ordering::Relaxed),
+                    stats.output_underruns.swap(0, Ordering::Relaxed),
+                    stats.callback_max_gap_ms.swap(0, Ordering::Relaxed),
+                    stats.queued_frames.load(Ordering::Relaxed),
+                ),
+            );
         }
     }
 }
@@ -186,6 +230,9 @@ async fn run_voice_playback_decode(
     let mut post_process = VoicePlaybackPostProcess::default();
     let mut playout_tick = interval(VOICE_PLAYBACK_POLL_DURATION);
     playout_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut output_stats_tick = interval(VOICE_OUTPUT_STATS_LOG_INTERVAL);
+    output_stats_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    output_stats_tick.tick().await;
     let mut decoded_frames = 0u64;
     loop {
         tokio::select! {
@@ -202,7 +249,7 @@ async fn run_voice_playback_decode(
                     let pcm_samples = samples.len();
                     decoded_audio.try_send(samples);
                     decoded_frames = decoded_frames.saturating_add(1);
-                    if decoded_frames == 1 || decoded_frames % 500 == 0 {
+                    if decoded_frames == 1 || decoded_frames.is_multiple_of(500) {
                         logging::debug(
                             "voice",
                             format!(
@@ -213,6 +260,7 @@ async fn run_voice_playback_decode(
                     }
                 }
             }
+            _ = output_stats_tick.tick() => decoded_audio.log_output_stats(),
         }
     }
 }

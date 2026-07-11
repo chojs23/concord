@@ -1,9 +1,17 @@
-use std::sync::mpsc::{Receiver as StdReceiver, TryRecvError};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+    mpsc::{Receiver as StdReceiver, TryRecvError},
+};
 
-use super::{DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE, VOICE_OUTPUT_UNDERRUN_FADE_MILLIS};
+use super::{
+    DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE, VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES,
+    VOICE_OUTPUT_UNDERRUN_FADE_MILLIS,
+};
 
 pub(super) struct VoiceAudioBuffer {
     samples_rx: StdReceiver<Vec<f32>>,
+    stats: Arc<VoiceAudioOutputStats>,
     current: Vec<f32>,
     offset: usize,
     output_sample_rate: u32,
@@ -11,12 +19,28 @@ pub(super) struct VoiceAudioBuffer {
     last_frame: [f32; 2],
     fade_remaining_frames: usize,
     fade_total_frames: usize,
+    received_audio: bool,
+    underrunning: bool,
+    buffering: bool,
+}
+
+#[derive(Default)]
+pub(super) struct VoiceAudioOutputStats {
+    pub(super) queue_full_drops: AtomicU64,
+    pub(super) output_underruns: AtomicU64,
+    pub(super) callback_max_gap_ms: AtomicU64,
+    pub(super) queued_frames: AtomicU64,
 }
 
 impl VoiceAudioBuffer {
-    pub(super) fn new(samples_rx: StdReceiver<Vec<f32>>, output_sample_rate: u32) -> Self {
+    pub(super) fn new(
+        samples_rx: StdReceiver<Vec<f32>>,
+        output_sample_rate: u32,
+        stats: Arc<VoiceAudioOutputStats>,
+    ) -> Self {
         Self {
             samples_rx,
+            stats,
             current: Vec::new(),
             offset: 0,
             output_sample_rate,
@@ -24,10 +48,25 @@ impl VoiceAudioBuffer {
             last_frame: [0.0, 0.0],
             fade_remaining_frames: 0,
             fade_total_frames: voice_output_underrun_fade_frames(output_sample_rate),
+            received_audio: false,
+            underrunning: false,
+            buffering: true,
+        }
+    }
+
+    pub(super) fn begin_output(&mut self) {
+        if self.buffering
+            && self.stats.queued_frames.load(Ordering::Relaxed)
+                >= VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES
+        {
+            self.buffering = false;
         }
     }
 
     pub(super) fn next_stereo_frame(&mut self) -> Option<[f32; 2]> {
+        if self.buffering {
+            return self.next_fade_stereo_frame();
+        }
         let frame = if self.output_sample_rate == DISCORD_VOICE_SAMPLE_RATE {
             self.next_native_stereo_frame()
         } else {
@@ -35,11 +74,19 @@ impl VoiceAudioBuffer {
         };
         match frame {
             Some(frame) => {
+                self.underrunning = false;
                 self.last_frame = frame;
                 self.fade_remaining_frames = self.fade_total_frames;
                 Some(frame)
             }
-            None => self.next_fade_stereo_frame(),
+            None => {
+                if self.received_audio && !self.underrunning {
+                    self.stats.output_underruns.fetch_add(1, Ordering::Relaxed);
+                    self.underrunning = true;
+                }
+                self.buffering = true;
+                self.next_fade_stereo_frame()
+            }
         }
     }
 
@@ -87,12 +134,21 @@ impl VoiceAudioBuffer {
     fn receive_next_samples(&mut self) -> bool {
         match self.samples_rx.try_recv() {
             Ok(samples) => {
+                self.record_dequeued_samples(&samples);
                 self.current = samples;
                 self.offset = 0;
+                self.received_audio = true;
                 true
             }
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => false,
         }
+    }
+
+    fn record_dequeued_samples(&self, samples: &[f32]) {
+        let frames = samples.len() / usize::from(DISCORD_VOICE_CHANNELS);
+        self.stats
+            .queued_frames
+            .fetch_sub(frames as u64, Ordering::Relaxed);
     }
 
     fn next_fade_stereo_frame(&mut self) -> Option<[f32; 2]> {
@@ -110,7 +166,12 @@ impl VoiceAudioBuffer {
         self.source_position = 0.0;
         self.last_frame = [0.0, 0.0];
         self.fade_remaining_frames = 0;
-        while self.samples_rx.try_recv().is_ok() {}
+        self.received_audio = false;
+        self.underrunning = false;
+        self.buffering = true;
+        while let Ok(samples) = self.samples_rx.try_recv() {
+            self.record_dequeued_samples(&samples);
+        }
     }
 }
 

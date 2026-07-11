@@ -438,16 +438,14 @@ async fn handle_voice_speaking(
     if let (Some(user_id), Some(speaking)) = (
         speaking.user_id.and_then(Id::<UserMarker>::new_checked),
         speaking.speaking,
+    ) && let Some(speaking) = speaking_tracker.record_remote(
+        user_id,
+        voice_speaking_microphone_active(speaking),
+        Instant::now(),
     ) {
-        if let Some(speaking) = speaking_tracker.record_remote(
-            user_id,
-            voice_speaking_microphone_active(speaking),
-            Instant::now(),
-        ) {
-            status_publisher
-                .publish_speaking(session, user_id, speaking)
-                .await;
-        }
+        status_publisher
+            .publish_speaking(session, user_id, speaking)
+            .await;
     }
 }
 
@@ -535,7 +533,7 @@ pub(super) async fn run_voice_udp_receive(
             Ok(len) => {
                 if looks_like_rtcp_packet(&packet[..len]) {
                     rtcp_packets = rtcp_packets.saturating_add(1);
-                    if rtcp_packets == 1 || rtcp_packets % 100 == 0 {
+                    if rtcp_packets == 1 || rtcp_packets.is_multiple_of(100) {
                         logging::debug(
                             "voice",
                             format!(
@@ -554,7 +552,7 @@ pub(super) async fn run_voice_udp_receive(
                         rtp_packets = rtp_packets.saturating_add(1);
                         if header.payload_type != DISCORD_VOICE_PAYLOAD_TYPE {
                             non_audio_packets = non_audio_packets.saturating_add(1);
-                            if non_audio_packets == 1 || non_audio_packets % 100 == 0 {
+                            if non_audio_packets == 1 || non_audio_packets.is_multiple_of(100) {
                                 logging::debug(
                                     "voice",
                                     format!(
@@ -589,7 +587,7 @@ pub(super) async fn run_voice_udp_receive(
                                         dave_pending_packets =
                                             dave_pending_packets.saturating_add(1);
                                         if dave_pending_packets == 1
-                                            || dave_pending_packets % 100 == 0
+                                            || dave_pending_packets.is_multiple_of(100)
                                         {
                                             logging::debug(
                                                 "voice",
@@ -606,7 +604,9 @@ pub(super) async fn run_voice_udp_receive(
                                     }
                                     VoiceMediaPayload::DaveDecryptFailed { message, .. } => {
                                         decrypt_failures = decrypt_failures.saturating_add(1);
-                                        if decrypt_failures == 1 || decrypt_failures % 100 == 0 {
+                                        if decrypt_failures == 1
+                                            || decrypt_failures.is_multiple_of(100)
+                                        {
                                             logging::debug(
                                                 "voice",
                                                 format!(
@@ -626,22 +626,21 @@ pub(super) async fn run_voice_udp_receive(
                                         opus.len()
                                     }
                                 };
-                                if dave_decrypted_packets == 1 || dave_decrypted_packets % 500 == 0
+                                if (dave_decrypted_packets == 1
+                                    || dave_decrypted_packets.is_multiple_of(500))
+                                    && let VoiceMediaPayload::DaveDecrypted { user_id, .. } = &media
                                 {
-                                    if let VoiceMediaPayload::DaveDecrypted { user_id, .. } = &media
-                                    {
-                                        logging::debug(
-                                            "voice",
-                                            format!(
-                                                "DAVE media decrypted: count={} user_id={} ssrc={} seq={} opus_len={}",
-                                                dave_decrypted_packets,
-                                                user_id,
-                                                header.ssrc,
-                                                header.sequence,
-                                                media_payload_len
-                                            ),
-                                        );
-                                    }
+                                    logging::debug(
+                                        "voice",
+                                        format!(
+                                            "DAVE media decrypted: count={} user_id={} ssrc={} seq={} opus_len={}",
+                                            dave_decrypted_packets,
+                                            user_id,
+                                            header.ssrc,
+                                            header.sequence,
+                                            media_payload_len
+                                        ),
+                                    );
                                 }
                                 if let Some(frame) = voice_playback_frame(&media, &header)
                                     && let Some(tx) = playback_tx.as_ref()
@@ -653,7 +652,7 @@ pub(super) async fn run_voice_udp_receive(
                                 {
                                     let _ = remote_speaking_tx.send(user_id);
                                 }
-                                if decrypted_packets == 1 || decrypted_packets % 500 == 0 {
+                                if decrypted_packets == 1 || decrypted_packets.is_multiple_of(500) {
                                     logging::debug(
                                         "voice",
                                         format!(
@@ -671,7 +670,7 @@ pub(super) async fn run_voice_udp_receive(
                             }
                             Err(error) => {
                                 decrypt_failures = decrypt_failures.saturating_add(1);
-                                if decrypt_failures == 1 || decrypt_failures % 100 == 0 {
+                                if decrypt_failures == 1 || decrypt_failures.is_multiple_of(100) {
                                     logging::debug(
                                         "voice",
                                         format!(
@@ -689,7 +688,7 @@ pub(super) async fn run_voice_udp_receive(
                     }
                     Err(error) => {
                         malformed_packets = malformed_packets.saturating_add(1);
-                        if malformed_packets == 1 || malformed_packets % 100 == 0 {
+                        if malformed_packets == 1 || malformed_packets.is_multiple_of(100) {
                             logging::debug(
                                 "voice",
                                 format!(

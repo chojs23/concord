@@ -166,10 +166,10 @@ impl VoiceDaveState {
                         transition_id, protocol_version
                     ),
                 );
-                if protocol_version == 0 {
-                    if let Some(session) = self.session.as_mut() {
-                        session.set_passthrough_mode(true, Some(120));
-                    }
+                if protocol_version == 0
+                    && let Some(session) = self.session.as_mut()
+                {
+                    session.set_passthrough_mode(true, Some(120));
                 }
                 if transition_id == 0 {
                     self.execute_transition(transition_id)?;

@@ -251,10 +251,10 @@ impl DiscordState {
                 .member_display_name(guild_id, user_id)
                 .map(str::to_owned),
             VoiceScope::Private(channel_id) => {
-                if self.session.current_user_id == Some(user_id) {
-                    if let Some(name) = self.session.current_user.clone() {
-                        return Some(name);
-                    }
+                if self.session.current_user_id == Some(user_id)
+                    && let Some(name) = self.session.current_user.clone()
+                {
+                    return Some(name);
                 }
                 self.channel(channel_id)?
                     .recipients

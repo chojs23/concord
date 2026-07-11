@@ -55,10 +55,10 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     // Only intercept filter input when the pane that owns the filter is still
     // focused. Moving the mouse to another pane should let normal shortcuts
     // work (e.g. pressing `i` after clicking Messages).
-    if state.is_pane_filter_active(focus) {
-        if let Some(command) = handle_pane_filter_key(state, key, focus) {
-            return command;
-        }
+    if state.is_pane_filter_active(focus)
+        && let Some(command) = handle_pane_filter_key(state, key, focus)
+    {
+        return command;
     }
 
     if state.is_folder_settings_open() {

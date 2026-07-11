@@ -421,10 +421,9 @@ impl DiscordState {
         if let Some(member) = guild_id
             .and_then(|guild_id| self.guild_details.members.get(&guild_id))
             .and_then(|members| members.get(&author_id))
+            && !is_fallback_identity(member.username.as_deref(), &member.display_name)
         {
-            if !is_fallback_identity(member.username.as_deref(), &member.display_name) {
-                return member.display_name.clone();
-            }
+            return member.display_name.clone();
         }
         self.profiles
             .user_profiles
@@ -551,10 +550,10 @@ impl DiscordState {
                         message.author_avatar_url = avatar_url.map(str::to_owned);
                     }
                 }
-                if let Some(reply) = &mut message.reply {
-                    if reply.author_id == Some(user_id) {
-                        reply.author = display_name.to_owned();
-                    }
+                if let Some(reply) = &mut message.reply
+                    && reply.author_id == Some(user_id)
+                {
+                    reply.author = display_name.to_owned();
                 }
             }
         });
@@ -1225,10 +1224,10 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     if incoming.interaction.is_some() || existing.interaction.is_none() {
         existing.interaction = incoming.interaction.clone();
     }
-    if let Some(content) = &incoming.content {
-        if !content.is_empty() || message_content_is_empty(existing) {
-            existing.content = Some(content.clone());
-        }
+    if let Some(content) = &incoming.content
+        && (!content.is_empty() || message_content_is_empty(existing))
+    {
+        existing.content = Some(content.clone());
     }
     if !incoming.sticker_names.is_empty() || existing.sticker_names.is_empty() {
         existing.sticker_names = incoming.sticker_names.clone();

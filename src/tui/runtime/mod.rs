@@ -202,15 +202,16 @@ pub(super) async fn run_dashboard(
                             &mut last_frame_area,
                             &mut mouse_clicks,
                         )?;
-                        if state.take_open_composer_in_editor_request() {
-                            if let Err(error) = open_composer_in_editor(terminal, &mut state) {
-                                logging::error("tui", format!("editor failed: {error}"));
-                            }
+                        if state.take_open_composer_in_editor_request()
+                            && let Err(error) = open_composer_in_editor(terminal, &mut state)
+                        {
+                            logging::error("tui", format!("editor failed: {error}"));
                         }
-                        if state.take_open_forum_post_body_in_editor_request() {
-                            if let Err(error) = open_forum_post_body_in_editor(terminal, &mut state) {
-                                logging::error("tui", format!("editor failed: {error}"));
-                            }
+                        if state.take_open_forum_post_body_in_editor_request()
+                            && let Err(error) =
+                                open_forum_post_body_in_editor(terminal, &mut state)
+                        {
+                            logging::error("tui", format!("editor failed: {error}"));
                         }
                         if state.take_paste_clipboard_request()
                             && state.accepts_clipboard_paste()

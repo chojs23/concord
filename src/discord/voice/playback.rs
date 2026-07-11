@@ -15,8 +15,10 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 #[cfg(feature = "voice-playback")]
 use super::VOICE_AUDIO_OUTPUT_QUEUE;
+#[cfg(all(feature = "voice-playback", target_os = "linux"))]
+use super::VOICE_PULSE_OUTPUT_BUFFER_FRAMES;
 #[cfg(feature = "voice-playback")]
-use super::audio_buffer::VoiceAudioBuffer;
+use super::audio_buffer::{VoiceAudioBuffer, VoiceAudioOutputStats};
 #[cfg(all(feature = "voice-playback", target_os = "linux"))]
 use super::log_captured_alsa_errors;
 use super::{
@@ -83,6 +85,7 @@ pub(super) struct VoicePlaybackPlayoutBuffer {
 #[cfg(feature = "voice-playback")]
 pub(super) struct VoiceAudioOutput {
     pub(super) samples_tx: SyncSender<Vec<f32>>,
+    pub(super) stats: Arc<VoiceAudioOutputStats>,
     _stream: cpal::Stream,
 }
 
@@ -477,7 +480,12 @@ impl VoiceAudioOutput {
             .ok_or_else(|| "no default audio output device is available".to_owned())?;
         let supported_config = select_voice_output_config(&device)?;
         let sample_format = supported_config.sample_format();
-        let stream_config = supported_config.config();
+        let mut stream_config = supported_config.config();
+        #[cfg(target_os = "linux")]
+        if host.id() == cpal::HostId::PulseAudio {
+            stream_config.buffer_size = cpal::BufferSize::Fixed(VOICE_PULSE_OUTPUT_BUFFER_FRAMES);
+        }
+        let stats = Arc::new(VoiceAudioOutputStats::default());
         let stream = build_voice_output_stream(
             &device,
             &stream_config,
@@ -485,6 +493,7 @@ impl VoiceAudioOutput {
             samples_rx,
             playback_enabled,
             playback_volume,
+            Arc::clone(&stats),
         )?;
         stream
             .play()
@@ -492,12 +501,17 @@ impl VoiceAudioOutput {
         logging::debug(
             "voice",
             format!(
-                "voice audio output stream started: sample_rate={} channels={} format={:?}",
-                stream_config.sample_rate, stream_config.channels, sample_format
+                "voice audio output stream started: host={} sample_rate={} channels={} format={:?} buffer_size={:?}",
+                host.id(),
+                stream_config.sample_rate,
+                stream_config.channels,
+                sample_format,
+                stream_config.buffer_size,
             ),
         );
         Ok(Self {
             samples_tx,
+            stats,
             _stream: stream,
         })
     }
@@ -545,15 +559,18 @@ fn build_voice_output_stream(
     samples_rx: StdReceiver<Vec<f32>>,
     playback_enabled: Arc<AtomicBool>,
     playback_volume: Arc<AtomicU8>,
+    stats: Arc<VoiceAudioOutputStats>,
 ) -> Result<cpal::Stream, String> {
     audio_output::build_f32_output_stream(
         device,
         config,
         sample_format,
         VoiceOutputSource {
-            buffer: VoiceAudioBuffer::new(samples_rx, config.sample_rate),
+            buffer: VoiceAudioBuffer::new(samples_rx, config.sample_rate, Arc::clone(&stats)),
             playback_enabled,
             playback_volume,
+            stats,
+            last_callback_at: None,
         },
         log_voice_output_stream_error,
         "voice audio output",
@@ -566,6 +583,8 @@ struct VoiceOutputSource {
     buffer: VoiceAudioBuffer,
     playback_enabled: Arc<AtomicBool>,
     playback_volume: Arc<AtomicU8>,
+    stats: Arc<VoiceAudioOutputStats>,
+    last_callback_at: Option<Instant>,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -574,6 +593,16 @@ impl F32OutputSource for VoiceOutputSource {
     where
         T: Default + Copy,
     {
+        let callback_at = Instant::now();
+        if let Some(previous) = self.last_callback_at.replace(callback_at) {
+            let gap_ms = callback_at
+                .duration_since(previous)
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64;
+            self.stats
+                .callback_max_gap_ms
+                .fetch_max(gap_ms, Ordering::Relaxed);
+        }
         if !self.playback_enabled.load(Ordering::Relaxed) {
             self.buffer.clear_pending();
             for frame in output.chunks_mut(channels) {
@@ -581,6 +610,7 @@ impl F32OutputSource for VoiceOutputSource {
             }
             return;
         }
+        self.buffer.begin_output();
         let gain = f32::from(self.playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
         for frame in output.chunks_mut(channels) {
             let [left, right] = self.buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);

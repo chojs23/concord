@@ -39,7 +39,8 @@ impl VoiceMicrophoneCapture {
         logging::debug(
             "voice",
             format!(
-                "voice microphone capture started: sample_rate={} channels={} format={:?} buffer_size={:?}",
+                "voice microphone capture started: host={} sample_rate={} channels={} format={:?} buffer_size={:?}",
+                host.id(),
                 stream_config.sample_rate,
                 stream_config.channels,
                 sample_format,

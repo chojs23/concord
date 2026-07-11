@@ -545,11 +545,12 @@ fn merge_adjacent_highlights(mut highlights: Vec<TextHighlight>) -> Vec<TextHigh
     highlights.sort_by_key(|highlight| (highlight.start, highlight.end));
     let mut merged: Vec<TextHighlight> = Vec::new();
     for highlight in highlights {
-        if let Some(last) = merged.last_mut() {
-            if last.kind == highlight.kind && last.end == highlight.start {
-                last.end = highlight.end;
-                continue;
-            }
+        if let Some(last) = merged.last_mut()
+            && last.kind == highlight.kind
+            && last.end == highlight.start
+        {
+            last.end = highlight.end;
+            continue;
         }
         merged.push(highlight);
     }

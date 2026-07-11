@@ -132,12 +132,12 @@ pub(super) fn parse_member_list_update(data: &Value) -> Vec<AppEvent> {
                 }
             }
             Some("INSERT" | "UPDATE") => {
-                if let Some(item) = op.get("item") {
-                    if let Some(item) = parse_member_list_item(guild_id, item) {
-                        members.push(item.member);
-                        if let Some(presence) = item.presence {
-                            presences.push(presence);
-                        }
+                if let Some(item) = op.get("item")
+                    && let Some(item) = parse_member_list_item(guild_id, item)
+                {
+                    members.push(item.member);
+                    if let Some(presence) = item.presence {
+                        presences.push(presence);
                     }
                 }
             }

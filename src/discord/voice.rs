@@ -55,7 +55,7 @@ use self::outbound::{VoiceOutboundSendEvent, VoiceOutboundSendOutcome, VoiceOutb
 #[cfg(test)]
 use ::opus::{Channels, Decoder as OpusDecoder};
 #[cfg(all(test, feature = "voice-playback"))]
-use audio_buffer::VoiceAudioBuffer;
+use audio_buffer::{VoiceAudioBuffer, VoiceAudioOutputStats};
 use audio_runtime::VoiceAudioRuntime;
 use dave::{VoiceDaveState, VoiceMediaPayload, voice_speaking_microphone_active};
 #[cfg(test)]
@@ -194,6 +194,7 @@ const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
 #[cfg(any(test, feature = "voice-playback"))]
 const VOICE_PLAYBACK_FRAME_DURATION: Duration = Duration::from_millis(20);
 const VOICE_PLAYBACK_POLL_DURATION: Duration = Duration::from_millis(10);
+const VOICE_OUTPUT_STATS_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL: usize = 480;
 #[cfg(feature = "voice-playback")]
 const VOICE_TRANSMIT_STATS_LOG_INTERVAL: Duration = Duration::from_secs(5);
@@ -205,6 +206,10 @@ const VOICE_OUTPUT_UNDERRUN_FADE_MILLIS: u32 = 5;
 const VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ: f32 = 8_000.0;
 #[cfg(feature = "voice-playback")]
 const VOICE_AUDIO_OUTPUT_QUEUE: usize = 64;
+#[cfg(feature = "voice-playback")]
+const VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES: u64 = DISCORD_VOICE_SAMPLE_RATE as u64 * 60 / 1_000;
+#[cfg(all(feature = "voice-playback", target_os = "linux"))]
+const VOICE_PULSE_OUTPUT_BUFFER_FRAMES: u32 = 2_400;
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
 const AEAD_XCHACHA20_POLY1305_RTPSIZE: &str = "aead_xchacha20_poly1305_rtpsize";
 const VOICE_REMOTE_SPEAKING_TTL: Duration = Duration::from_millis(500);

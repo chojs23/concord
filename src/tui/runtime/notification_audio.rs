@@ -395,7 +395,7 @@ fn decode_wav_samples(
     data: &[u8],
 ) -> std::result::Result<NotificationAudio, String> {
     let bytes_per_sample = usize::from(format.bits_per_sample / 8);
-    if bytes_per_sample == 0 || data.len() % bytes_per_sample != 0 {
+    if bytes_per_sample == 0 || !data.len().is_multiple_of(bytes_per_sample) {
         return Err("notification sound data is not sample-aligned".to_owned());
     }
     let samples = match (format.audio_format, format.bits_per_sample) {

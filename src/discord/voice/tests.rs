@@ -741,7 +741,12 @@ fn voice_audio_buffer_resamples_non_48khz_output_clock() {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     tx.try_send(vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
         .expect("decoded samples should queue");
-    let mut buffer = VoiceAudioBuffer::new(rx, 24_000);
+    let stats = Arc::new(VoiceAudioOutputStats::default());
+    stats
+        .queued_frames
+        .store(VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES, Ordering::Relaxed);
+    let mut buffer = VoiceAudioBuffer::new(rx, 24_000, stats);
+    buffer.begin_output();
 
     assert_eq!(buffer.next_stereo_frame(), Some([0.0, 0.0]));
     assert_eq!(buffer.next_stereo_frame(), Some([2.0, 2.0]));
@@ -758,7 +763,12 @@ fn voice_audio_buffer_fades_short_underruns() {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     tx.try_send(vec![1.0, -1.0])
         .expect("decoded samples should queue");
-    let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE);
+    let stats = Arc::new(VoiceAudioOutputStats::default());
+    stats
+        .queued_frames
+        .store(VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES, Ordering::Relaxed);
+    let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE, stats);
+    buffer.begin_output();
 
     assert_eq!(buffer.next_stereo_frame(), Some([1.0, -1.0]));
     let faded = buffer

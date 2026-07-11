@@ -906,11 +906,10 @@ impl DiscordState {
                 .members
                 .get_mut(guild_id)
                 .and_then(|members| members.get_mut(&user_id))
+                && member.username.is_none()
             {
-                if member.username.is_none() {
-                    member.display_name = profile_display_name;
-                    member.username = Some(username);
-                }
+                member.display_name = profile_display_name;
+                member.username = Some(username);
             }
         } else {
             self.refresh_dm_channel_info_from_profile(

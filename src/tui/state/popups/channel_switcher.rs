@@ -149,11 +149,11 @@ impl DashboardState {
     }
 
     pub fn pop_channel_switcher_char(&mut self) {
-        if let Some(switcher) = self.popups.channel_switcher_mut() {
-            if switcher.query.delete_previous_grapheme() {
-                switcher.selection.select(0);
-                switcher.refresh_query_items();
-            }
+        if let Some(switcher) = self.popups.channel_switcher_mut()
+            && switcher.query.delete_previous_grapheme()
+        {
+            switcher.selection.select(0);
+            switcher.refresh_query_items();
         }
     }
 
