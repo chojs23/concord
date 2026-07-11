@@ -83,7 +83,10 @@ pub use popups::{
     NotificationInboxMessage, NotificationInboxTab, PollVotePickerState, ReactionUsersEntry,
     ReactionUsersPopupState, UserProfileSettingsField, UserProfileSettingsTab,
 };
-pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
+pub use presentation::{
+    apply_discord_foreground, discord_role_mention_background, folder_style, normal_text_style,
+    presence_marker, presence_style,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToastKind {

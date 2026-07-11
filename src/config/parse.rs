@@ -3,7 +3,10 @@
 
 use crate::Result;
 
-use super::{AppOptions, KeymapFileOptions, KeymapOptions, ThemeOptions, UiStateOptions};
+use super::{
+    AppOptions, BorderShape, BorderSurface, HighlightGroup, HighlightLinkOptions,
+    KeymapFileOptions, KeymapOptions, ThemeOptions, UiStateOptions,
+};
 
 /// Parse `config.toml` tolerantly: a value with a wrong type or unknown variant
 /// is skipped (its field falls back to default) instead of discarding the whole
@@ -78,9 +81,178 @@ pub(super) fn parse_ui_state_options(content: &str) -> Result<(UiStateOptions, V
 
 pub(super) fn parse_theme_options(content: &str) -> Result<(ThemeOptions, Vec<String>)> {
     let root: toml::Table = toml::from_str(content)?;
-    let mut warnings = Vec::new();
-    let theme = section(&root, "theme", &mut warnings);
-    Ok((theme, warnings))
+    let mut parser = ThemeLeafParser::default();
+    for (section, value) in &root {
+        match section.as_str() {
+            "highlight" => {
+                if let Some(table) = value.as_table() {
+                    parser.parse_highlights(table);
+                } else {
+                    parser
+                        .warnings
+                        .push("[highlight] must be a table and was ignored".to_owned());
+                }
+            }
+            "ui" => {
+                if let Some(table) = value.as_table() {
+                    parser.parse_ui(table);
+                } else {
+                    parser
+                        .warnings
+                        .push("[ui] must be a table and was ignored".to_owned());
+                }
+            }
+            _ => parser
+                .warnings
+                .push(format!("[{section}] is unknown and was ignored")),
+        }
+    }
+    Ok((parser.options, parser.warnings))
+}
+
+#[derive(Default)]
+struct ThemeLeafParser {
+    options: ThemeOptions,
+    warnings: Vec<String>,
+}
+
+impl ThemeLeafParser {
+    fn parse_ui(&mut self, table: &toml::Table) {
+        for (field, value) in table {
+            if field != "border" {
+                self.warnings
+                    .push(format!("[ui] {field} is unknown and was ignored"));
+                continue;
+            }
+            let Some(fields) = value.as_table() else {
+                self.warnings
+                    .push("[ui.border] must be a table and was ignored".to_owned());
+                continue;
+            };
+            self.parse_border_shapes(fields);
+        }
+    }
+
+    fn parse_border_shapes(&mut self, fields: &toml::Table) {
+        for (field, value) in fields {
+            let surface = if field == "default" {
+                None
+            } else {
+                match BorderSurface::from_name(field) {
+                    Some(surface) => Some(surface),
+                    None => {
+                        self.warnings
+                            .push(format!("[ui.border] {field} is unknown and was ignored"));
+                        continue;
+                    }
+                }
+            };
+            let Some(raw) = value.as_str() else {
+                self.warnings.push(format!(
+                    "[ui.border] {field} must be a string and was ignored"
+                ));
+                continue;
+            };
+            let Some(shape) = BorderShape::from_name(raw) else {
+                self.warnings.push(format!(
+                    "[ui.border] {field} = \"{raw}\" is not a supported border shape and was ignored"
+                ));
+                continue;
+            };
+            match surface {
+                Some(surface) => self.options.border_shapes_mut().set(surface, shape),
+                None => {
+                    self.options.border_shapes_mut().default = Some(shape);
+                }
+            }
+        }
+    }
+
+    fn parse_highlights(&mut self, table: &toml::Table) {
+        for (name, value) in table {
+            let Some(group) = HighlightGroup::from_name(name) else {
+                self.warnings
+                    .push(format!("[highlight] {name} is unknown and was ignored"));
+                continue;
+            };
+            let Some(fields) = value.as_table() else {
+                self.warnings.push(format!(
+                    "[highlight.{name}] must be a table and was ignored"
+                ));
+                continue;
+            };
+            self.parse_highlight_fields(group, fields);
+        }
+    }
+
+    fn parse_highlight_fields(&mut self, group: HighlightGroup, fields: &toml::Table) {
+        for (field, value) in fields {
+            match field.as_str() {
+                "link" => match value.as_str() {
+                    Some("none") => {
+                        self.options.highlight_mut(group).link =
+                            Some(HighlightLinkOptions::Detached);
+                    }
+                    Some(name) => match HighlightGroup::from_name(name) {
+                        Some(link) => {
+                            self.options.highlight_mut(group).link =
+                                Some(HighlightLinkOptions::Inherit(link));
+                        }
+                        None => self.warnings.push(format!(
+                            "[highlight.{}] link references unknown group {name} and was ignored",
+                            group.name()
+                        )),
+                    },
+                    None => self.highlight_type_warning(group, field, "a string"),
+                },
+                "foreground" => match value.as_str() {
+                    Some(raw) => {
+                        self.options.highlight_mut(group).foreground = Some(raw.to_owned());
+                    }
+                    None => self.highlight_type_warning(group, field, "a string"),
+                },
+                "background" => match value.as_str() {
+                    Some(raw) => {
+                        self.options.highlight_mut(group).background = Some(raw.to_owned());
+                    }
+                    None => self.highlight_type_warning(group, field, "a string"),
+                },
+                "bold" => match value.as_bool() {
+                    Some(enabled) => self.options.highlight_mut(group).bold = Some(enabled),
+                    None => self.highlight_type_warning(group, field, "a boolean"),
+                },
+                "italic" => match value.as_bool() {
+                    Some(enabled) => self.options.highlight_mut(group).italic = Some(enabled),
+                    None => self.highlight_type_warning(group, field, "a boolean"),
+                },
+                "dim" => match value.as_bool() {
+                    Some(enabled) => self.options.highlight_mut(group).dim = Some(enabled),
+                    None => self.highlight_type_warning(group, field, "a boolean"),
+                },
+                "underline" => match value.as_bool() {
+                    Some(enabled) => self.options.highlight_mut(group).underline = Some(enabled),
+                    None => self.highlight_type_warning(group, field, "a boolean"),
+                },
+                "strikethrough" => match value.as_bool() {
+                    Some(enabled) => {
+                        self.options.highlight_mut(group).strikethrough = Some(enabled);
+                    }
+                    None => self.highlight_type_warning(group, field, "a boolean"),
+                },
+                _ => self.warnings.push(format!(
+                    "[highlight.{}] {field} is unknown and was ignored",
+                    group.name()
+                )),
+            }
+        }
+    }
+
+    fn highlight_type_warning(&mut self, group: HighlightGroup, field: &str, expected: &str) {
+        self.warnings.push(format!(
+            "[highlight.{}] {field} must be {expected} and was ignored",
+            group.name()
+        ));
+    }
 }
 
 /// Named map fields of `KeymapOptions`. Any other `[keymap]` key flattens into

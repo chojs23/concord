@@ -82,16 +82,25 @@ fn render_pane_filter_bar(
     let cursor_col = prompt_width + query[start..cursor_byte].width();
 
     let theme = theme::current();
-    let accent = if focused { theme.accent } else { theme.border };
-    let shown_query = if query.is_empty() {
-        Span::styled("search...", Style::default().fg(theme.dim))
+    let prompt_style = if focused {
+        theme.style(theme::HighlightGroup::ActiveField)
     } else {
-        Span::raw(visible.to_owned())
+        theme.style(theme::HighlightGroup::Disabled)
     };
-    let line = Line::from(vec![
-        Span::styled(prompt, Style::default().fg(accent)),
-        shown_query,
-    ]);
+    let shown_query = if query.is_empty() {
+        Span::styled("search...", theme.style(theme::HighlightGroup::Placeholder))
+    } else if focused {
+        Span::styled(
+            visible.to_owned(),
+            theme.style(theme::HighlightGroup::ActiveField),
+        )
+    } else {
+        Span::styled(
+            visible.to_owned(),
+            theme.style(theme::HighlightGroup::Disabled),
+        )
+    };
+    let line = Line::from(vec![Span::styled(prompt, prompt_style), shown_query]);
     frame.render_widget(Paragraph::new(line), area);
     cursor_col
 }

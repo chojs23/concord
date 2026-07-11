@@ -246,15 +246,18 @@ pub struct TextHighlight {
     pub kind: TextHighlightKind,
 }
 
-/// Style class for a mention highlight. The renderer maps each kind to a
-/// distinct background colour so the user can tell at a glance whether they
-/// were the target or just a witness.
+/// Style class for an inline mention or link highlight.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TextHighlightKind {
     /// The current user is being notified (`<@me>`, `@everyone`, `@here`).
     SelfMention,
-    /// Some other user is being mentioned. Subdued background for information.
+    /// Some other user or channel is being mentioned.
     OtherMention,
+    /// A role mention with a nonzero Discord RGB role color.
+    RoleMention {
+        color: u32,
+        notifies_current_user: bool,
+    },
     /// A detected URL that can be opened from message actions.
     Url,
 }

@@ -41,6 +41,11 @@ pub fn load_theme_options_with_warnings() -> Result<(ThemeOptions, Vec<String>)>
     load_theme_options_from_path(&path)
 }
 
+#[cfg(test)]
+pub(crate) fn parse_theme_options_for_test(content: &str) -> Result<(ThemeOptions, Vec<String>)> {
+    parse_theme_options(content)
+}
+
 /// User-facing description of where config lives, e.g. for help text. Falls
 /// back to the legacy path string when XDG resolution fails so the message
 /// stays readable.

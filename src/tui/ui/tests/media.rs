@@ -122,11 +122,15 @@ fn selected_author_group_keeps_avatar_body_inside_border() {
     assert!(texts[2].ends_with("╯"));
     assert_eq!(
         lines[0].spans[0].style.fg,
-        Some(theme::current().selected_message_border)
+        theme::current()
+            .style(theme::HighlightGroup::MessageSelectedBorder)
+            .fg
     );
     assert_eq!(
         lines[1].spans[0].style.fg,
-        Some(theme::current().selected_message_border)
+        theme::current()
+            .style(theme::HighlightGroup::MessageSelectedBorder)
+            .fg
     );
     assert!(
         lines[1].spans[0]

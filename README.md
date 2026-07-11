@@ -707,48 +707,432 @@ ToggleReplyPing = "<A-p>"
 
 You can customize key bindings. Check the [Keymap options](./docs/keymap-options.md) for the config format, supported actions.
 
-You can also customize colors via `theme.toml`. Every field is optional — anything left
-unset, or set to something that isn't a valid `"#rrggbb"` string, falls back to its built-in
-default (and an invalid value logs a warning instead of failing to start).
+You can customize Concord's named UI Highlight Groups and border shapes in
+`theme.toml`. A Highlight Group may set foreground, background, bold, italic,
+dim, underline, and strikethrough, or link to another group and inherit its
+unset fields. Every group and field is optional.
 
 <details>
-<summary>Example theme config</summary>
+<summary>Default theme config</summary>
 
+<!-- default-theme-config:start -->
 ```toml
-[theme]
-# Main body/foreground text color.
-text = "#FFFFFF"
+# Complete Highlight Group reference with Concord's built-in defaults.
+# Copy this configuration to `theme.toml` in the Concord config directory,
+# then keep only the groups you want to override.
+#
+# A group accepts `link`, `foreground`, `background`, `bold`, `italic`, `dim`,
+# `underline`, and `strikethrough`. Colors accept `none`, `terminal_default`, a
+# canonical lowercase ANSI name, or six-digit RGB such as `#39ff14`. `none`
+# clears that color channel after inheritance. A linked group inherits fields
+# it does not set. Use `link = "none"` to detach a built-in link.
 
-# Accent color: focused pane borders, selection markers, tag chips, links.
-accent = "#00FFFF"
+# Border shapes are UI geometry rather than Highlight Group styles. An omitted
+# surface uses `default`. These values reproduce Concord's built-in layout.
+[ui.border]
+default = "plain"
+composer = "rounded"
+message = "rounded"
+forum = "rounded"
 
-# Panel/highlighted-row background, e.g. the selected member row.
-background = "#183641"
+[highlight.Normal]
+foreground = "terminal_default"
+background = "terminal_default"
 
-# Positive/online indicators: success toasts, online presence dot, accepted friend requests.
-success = "#00FF00"
+[highlight.Strong]
+bold = true
 
-# Warnings and highlights: badges, muted/deafened icons, editing labels, pending friend requests.
-warning = "#FFFF00"
+[highlight.Emphasis]
+italic = true
 
-# Errors and danger actions: error toasts, delete confirmations, blocked users, DnD presence dot.
-error = "#FF0000"
+[highlight.Muted]
+dim = true
 
-# Discord's own "blurple" brand color: unread-message banner, bot badges, slash commands.
-blurple = "#5865F2"
+[highlight.Title]
+link = "Strong"
 
-# Discord's "you were mentioned" orange: mention badges, and inline code spans by default.
-mention = "#FFA500"
+[highlight.Heading]
+link = "Strong"
 
-# Selection/highlight background used behind mention pickers and dropdowns.
-selection_bg = "#282D5A"
+[highlight.Decoration]
+link = "Muted"
+
+[highlight.Hint]
+link = "Muted"
+
+[highlight.Description]
+link = "Muted"
+
+[highlight.Shortcut]
+link = "Muted"
+
+[highlight.Activity]
+link = "Muted"
+
+[highlight.ChannelTypeMarker]
+link = "Muted"
+
+[highlight.FieldLabel]
+link = "Muted"
+
+[highlight.SearchContext]
+link = "Muted"
+
+[highlight.Timestamp]
+link = "Muted"
+
+[highlight.Placeholder]
+link = "Muted"
+
+[highlight.Disabled]
+link = "Muted"
+
+[highlight.Loading]
+link = "Muted"
+
+[highlight.Edited]
+link = "Muted"
+italic = true
+
+[highlight.Unavailable]
+link = "Muted"
+strikethrough = true
+
+[highlight.LoginTitle]
+link = "Title"
+foreground = "cyan"
+
+[highlight.LoginHint]
+link = "Muted"
+
+[highlight.PaneTitle]
+link = "Title"
+
+[highlight.ModalTitle]
+link = "Title"
+
+[highlight.ComposerTitle]
+link = "Title"
+
+[highlight.HeaderTitle]
+link = "Title"
+foreground = "cyan"
+
+[highlight.HeaderLabel]
+link = "Muted"
+
+[highlight.MessageAuthor]
+link = "Strong"
+
+[highlight.MessageTimestamp]
+link = "Timestamp"
+
+[highlight.CategoryHeading]
+link = "Heading"
+
+[highlight.MemberGroupHeading]
+link = "Heading"
+
+[highlight.MessageSecondary]
+link = "Muted"
+
+[highlight.ForumSecondary]
+link = "Muted"
+
+[highlight.EmbedAuthor]
+link = "Emphasis"
+
+[highlight.EmbedTitle]
+link = "Strong"
+foreground = "blue"
+
+[highlight.EmbedFieldName]
+link = "Strong"
+underline = true
+
+[highlight.EmbedFooter]
+link = "Muted"
+italic = true
+
+[highlight.CodeBlockBorder]
+link = "Border"
+dim = true
+
+[highlight.ScrollbarTrack]
+link = "ScrollbarThumb"
+dim = true
+
+[highlight.UnavailableEmoji]
+link = "Unavailable"
+
+[highlight.HeaderError]
+link = "Error"
+bold = true
+
+[highlight.HeaderWarning]
+link = "Warning"
+bold = true
+
+[highlight.Border]
+foreground = "dark_gray"
+
+[highlight.FocusBorder]
+foreground = "cyan"
+
+[highlight.Selection]
+foreground = "cyan"
+background = "none"
+bold = true
+dim = false
+
+[highlight.SelectionBorder]
+foreground = "green"
+bold = true
+
+[highlight.PaneBorder]
+link = "Border"
+
+[highlight.FocusedPaneBorder]
+link = "FocusBorder"
+bold = true
+
+[highlight.LoginBorder]
+link = "FocusBorder"
+
+[highlight.ComposerBorder]
+link = "Border"
+
+[highlight.ActiveComposerBorder]
+link = "FocusBorder"
+bold = true
+
+[highlight.ModalBorder]
+link = "FocusBorder"
+bold = true
+
+[highlight.ComposerPickerBorder]
+link = "FocusBorder"
+
+[highlight.SelectedRow]
+link = "Selection"
+
+[highlight.SelectionMarker]
+link = "Selection"
+
+[highlight.ActiveField]
+foreground = "cyan"
+bold = true
+
+[highlight.ActiveTab]
+link = "Selection"
+
+[highlight.MessageSelectedBorder]
+link = "SelectionBorder"
+
+[highlight.ForumBorder]
+link = "FocusBorder"
+
+[highlight.ForumSelectedBorder]
+link = "SelectionBorder"
+
+[highlight.ScrollbarThumb]
+foreground = "#AAAAAA"
+
+[highlight.UnreadNotice]
+foreground = "cyan"
+bold = true
+
+[highlight.Editing]
+foreground = "yellow"
+
+[highlight.Reaction]
+foreground = "cyan"
+
+[highlight.SelfReaction]
+foreground = "yellow"
+
+[highlight.PresenceOnline]
+foreground = "green"
+
+[highlight.PresenceIdle]
+foreground = "#B48C00"
+
+[highlight.PresenceDnd]
+foreground = "red"
+
+[highlight.PresenceOffline]
+link = "Normal"
+dim = true
+
+[highlight.VoiceDisabled]
+foreground = "yellow"
+
+[highlight.VoiceConnection]
+foreground = "yellow"
+bold = true
+
+[highlight.FolderFallback]
+foreground = "cyan"
+
+[highlight.NavigationActive]
+foreground = "green"
+bold = true
+
+[highlight.NavigationMentioned]
+foreground = "#FFA500"
+
+[highlight.NavigationNotified]
+foreground = "terminal_default"
+
+[highlight.NavigationUnread]
+foreground = "terminal_default"
+
+[highlight.MentionBadge]
+foreground = "#FFA500"
+
+[highlight.NotificationBadge]
+foreground = "terminal_default"
+
+[highlight.JoinedVoiceChannel]
+foreground = "yellow"
+bold = true
+
+[highlight.VoiceSpeaking]
+foreground = "green"
+bold = true
+
+[highlight.ReplyPingEnabled]
+foreground = "cyan"
+
+[highlight.Tag]
+foreground = "cyan"
+
+[highlight.RelationshipFriend]
+foreground = "green"
+
+[highlight.RelationshipIncoming]
+foreground = "yellow"
+
+[highlight.RelationshipOutgoing]
+foreground = "yellow"
+
+[highlight.RelationshipBlocked]
+foreground = "red"
+
+[highlight.RelationshipNone]
+foreground = "terminal_default"
+dim = true
+
+[highlight.GaugeFill]
+foreground = "cyan"
+
+[highlight.MessageBody]
+foreground = "terminal_default"
+
+[highlight.MarkdownHeading1]
+link = "Heading"
+foreground = "cyan"
+
+[highlight.MarkdownHeading2]
+link = "Heading"
+underline = true
+
+[highlight.MarkdownHeading3]
+link = "Heading"
+
+[highlight.MarkdownQuote]
+foreground = "dark_gray"
+
+[highlight.MarkdownMarker]
+foreground = "dark_gray"
+
+[highlight.MessageAttachment]
+foreground = "cyan"
+
+[highlight.ImageOverflow]
+link = "MessageAttachment"
+bold = true
+
+[highlight.InlineCode]
+foreground = "#FFA500"
+
+[highlight.MessageLink]
+foreground = "cyan"
+underline = true
+
+[highlight.MentionSelf]
+foreground = "yellow"
+background = "#5C4C23"
+
+[highlight.MentionOther]
+foreground = "#C1CEF7"
+background = "#28325C"
+
+[highlight.MentionRole]
+# Discord supplies the foreground and a darker role-color background by default.
+# This group controls colored role mentions that do not notify the current user.
+# Notifying role mentions use MentionSelf with the Discord role foreground.
+
+[highlight.MentionPickerRole]
+foreground = "magenta"
+
+[highlight.EmbedGutter]
+foreground = "red"
+
+[highlight.EmbedLink]
+foreground = "blue"
+underline = true
+
+[highlight.CommandName]
+link = "MessageSecondary"
+foreground = "#5865F2"
+
+[highlight.SystemThreadName]
+foreground = "cyan"
+bold = true
+
+[highlight.PollAnswerSelected]
+foreground = "terminal_default"
+bold = true
+
+[highlight.PollWinner]
+foreground = "terminal_default"
+bold = true
+
+[highlight.UnreadBanner]
+foreground = "terminal_default"
+background = "#5865F2"
+
+[highlight.UnreadDivider]
+foreground = "#ED4245"
+
+[highlight.ForumPinnedBadge]
+foreground = "yellow"
+bold = true
+
+[highlight.BotBadge]
+link = "Normal"
+background = "#5865F2"
+bold = true
+
+[highlight.Error]
+foreground = "red"
+
+[highlight.Warning]
+foreground = "yellow"
+
+[highlight.Success]
+foreground = "green"
+
+[highlight.Info]
+foreground = "cyan"
 ```
+<!-- default-theme-config:end -->
 
 </details><br>
 
-That's a representative subset. Check the [Theme options](./docs/theme-options.md) for the
-full field reference, or copy [`theme.toml.example`](./theme.toml.example) from the repo root
-for every themeable field already filled in at its default value.
+Check [Theme options](./docs/theme-options.md) for the complete group list,
+accepted values, links, exact defaults, and warning behavior.
 
 ## Performance
 

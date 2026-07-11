@@ -164,7 +164,7 @@ fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
 }
 
 #[test]
-fn reply_composer_hint_line_shows_dim_excerpt_and_accented_ping_indicator() {
+fn reply_composer_hint_line_shows_dim_excerpt_and_semantic_ping_indicator() {
     let mut state = state_with_message();
     state.direct_reply_to_selected_message();
 
@@ -174,10 +174,12 @@ fn reply_composer_hint_line_shows_dim_excerpt_and_accented_ping_indicator() {
         line_texts_from_ratatui(&lines),
         vec!["reply to hello  @ on", "> "]
     );
-    assert_eq!(lines[0].spans[0].style.fg, Some(theme::current().dim));
+    assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::DIM));
     assert_eq!(
         lines[0].spans.last().unwrap().style.fg,
-        Some(theme::current().accent)
+        theme::current()
+            .style(theme::HighlightGroup::ReplyPingEnabled)
+            .fg
     );
     assert_eq!(lines[1].spans[0].style.fg, None);
 
@@ -187,9 +189,14 @@ fn reply_composer_hint_line_shows_dim_excerpt_and_accented_ping_indicator() {
         line_texts_from_ratatui(&lines),
         vec!["reply to hello  @ off", "> "]
     );
-    assert_eq!(
-        lines[0].spans.last().unwrap().style.fg,
-        Some(theme::current().dim)
+    assert!(
+        lines[0]
+            .spans
+            .last()
+            .unwrap()
+            .style
+            .add_modifier
+            .contains(Modifier::DIM)
     );
 }
 
@@ -217,6 +224,30 @@ fn composer_border_title_tracks_message_mode() {
     );
     assert!(reply_rendered.contains("Reply"), "{reply_rendered}");
     assert!(edit_rendered.contains("Edit Message"), "{edit_rendered}");
+
+    let inactive = state_with_message();
+    let custom = theme::Theme::default()
+        .with_border_type(theme::BorderSurface::Composer, BorderType::Double)
+        .with_style(
+            theme::HighlightGroup::ComposerBorder,
+            Style::default().fg(Color::Red),
+        )
+        .with_style(
+            theme::HighlightGroup::ActiveComposerBorder,
+            Style::default().fg(Color::Green),
+        );
+    theme::with_test_theme(custom, || {
+        for (state, expected) in [(&normal, Color::Green), (&inactive, Color::Red)] {
+            let backend = TestBackend::new(40, 4);
+            let mut terminal = Terminal::new(backend).expect("test terminal should build");
+            terminal
+                .draw(|frame| render_composer(frame, frame.area(), state, &[]))
+                .expect("composer should render");
+
+            assert_eq!(terminal.backend().buffer()[(0, 0)].fg, expected);
+            assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "╔");
+        }
+    });
 }
 
 #[test]
@@ -246,7 +277,7 @@ fn composer_lines_show_pending_upload_rows_above_input() {
             "> ",
         ]
     );
-    assert_eq!(lines[0].spans[0].style.fg, Some(theme::current().accent));
+    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Yellow));
     assert_eq!(composer_content_line_count(&state, 80), 10);
 
     let mut processing = state_with_message();
@@ -260,10 +291,7 @@ fn composer_lines_show_pending_upload_rows_above_input() {
         line_texts_from_ratatui(&processing_lines),
         vec!["upload: ⠋ processing clipboard attachment...", "> "]
     );
-    assert_eq!(
-        processing_lines[0].spans[0].style.fg,
-        Some(theme::current().accent)
-    );
+    assert_eq!(processing_lines[0].spans[0].style.fg, Some(Color::Yellow));
     assert_eq!(composer_content_line_count(&processing, 80), 2);
 }
 
@@ -446,6 +474,117 @@ fn dashboard_renders_composer_pickers_across_composer_width() {
 }
 
 #[test]
+fn mention_picker_selection_keeps_presence_foreground_and_base_background() {
+    let entries = vec![
+        MentionPickerEntry {
+            target: MentionPickerTarget::User(Id::new(101)),
+            display_name: "Unselected User".to_owned(),
+            username: Some("unselected".to_owned()),
+            status: PresenceStatus::Online,
+            is_bot: false,
+            role_color: None,
+        },
+        MentionPickerEntry {
+            target: MentionPickerTarget::User(Id::new(102)),
+            display_name: "Selected Bot".to_owned(),
+            username: Some("selected".to_owned()),
+            status: PresenceStatus::Offline,
+            is_bot: true,
+            role_color: None,
+        },
+        MentionPickerEntry {
+            target: MentionPickerTarget::Role(Id::new(103)),
+            display_name: "Uncolored Role".to_owned(),
+            username: None,
+            status: PresenceStatus::Unknown,
+            is_bot: false,
+            role_color: None,
+        },
+        MentionPickerEntry {
+            target: MentionPickerTarget::Role(Id::new(104)),
+            display_name: "Colored Role".to_owned(),
+            username: None,
+            status: PresenceStatus::Unknown,
+            is_bot: false,
+            role_color: Some(0x3366CC),
+        },
+    ];
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::MentionPickerRole,
+        Style::default().fg(Color::LightMagenta),
+    );
+
+    theme::with_test_theme(custom, || {
+        let lines = mention_picker_lines_for_test(&entries, 1, 80);
+
+        assert_eq!(lines[0].spans[1].style.fg, Some(Color::Green));
+        assert_eq!(lines[0].spans[3].style.fg, None);
+        assert_eq!(lines[0].spans[4].style.fg, None);
+        assert_eq!(
+            lines[1].spans[3].style.fg,
+            theme::current()
+                .style(theme::HighlightGroup::SelectedRow)
+                .fg
+        );
+        assert!(
+            lines[1].spans[3]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(
+            lines[1].spans[1].style.fg,
+            presence_style(PresenceStatus::Offline).fg
+        );
+        assert_eq!(
+            lines[1].spans[1].style.bg,
+            theme::current().style(theme::HighlightGroup::Normal).bg
+        );
+        assert!(
+            lines[1].spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(lines[1].spans[4].style.fg, None);
+        assert_eq!(
+            lines[1].spans[5].style.fg,
+            theme::current()
+                .style(theme::HighlightGroup::SelectedRow)
+                .fg
+        );
+        assert_eq!(lines[2].spans[1].style.fg, Some(Color::LightMagenta));
+        assert_eq!(lines[2].spans[3].style.fg, Some(Color::LightMagenta));
+        assert_eq!(
+            lines[3].spans[1].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+        assert_eq!(
+            lines[3].spans[3].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+
+        let selected_role = mention_picker_lines_for_test(&entries, 3, 80);
+        assert_eq!(
+            selected_role[3].spans[3].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+        assert_eq!(
+            selected_role[3].spans[3].style.bg,
+            theme::current()
+                .style(theme::HighlightGroup::SelectedRow)
+                .bg
+        );
+        assert!(
+            selected_role[3].spans[3]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+    });
+}
+
+#[test]
 fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
     let lines = emoji_picker_lines(
         &[
@@ -511,7 +650,7 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
         lines[2].spans[4].content.as_ref(),
         "available as image link"
     );
-    assert_eq!(lines[2].spans[4].style.fg, Some(theme::current().dim));
+    assert!(lines[2].spans[4].style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]

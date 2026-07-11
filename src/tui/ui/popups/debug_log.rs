@@ -67,16 +67,13 @@ pub(in crate::tui::ui) fn debug_log_popup_lines(
         "Channels: {} visible · {} hidden by permissions",
         channel_visibility.visible, channel_visibility.hidden,
     );
-    lines.push(Line::from(Span::styled(
-        visibility_text,
-        Style::default().fg(theme::current().accent),
-    )));
+    lines.push(Line::from(Span::styled(visibility_text, Style::default())));
     lines.push(Line::from(Span::raw(String::new())));
 
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
             "No errors recorded in this process.",
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     } else {
         let wrapped = entries
@@ -87,7 +84,7 @@ pub(in crate::tui::ui) fn debug_log_popup_lines(
         for entry in wrapped.into_iter().skip(start) {
             lines.push(Line::from(Span::styled(
                 entry,
-                Style::default().fg(theme::current().error),
+                theme::current().style(theme::HighlightGroup::Error),
             )));
         }
     }

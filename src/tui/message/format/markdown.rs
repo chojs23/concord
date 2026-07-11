@@ -109,7 +109,7 @@ fn wrap_markdown_message_line(
         )];
     }
 
-    if let Some((prefix_len, heading_style)) = markdown_heading(&rendered.text) {
+    if let Some((prefix_len, heading_style)) = markdown_heading(&rendered.text, style) {
         let prefix = rendered.text[..prefix_len].to_owned();
         let content = rendered_text_without_prefix(rendered, prefix_len);
         return wrap_prefixed_markdown_line(
@@ -117,7 +117,7 @@ fn wrap_markdown_message_line(
             width,
             heading_style,
             &prefix,
-            Style::default().fg(theme::current().dim),
+            markdown_marker_style(),
         );
     }
 
@@ -126,9 +126,9 @@ fn wrap_markdown_message_line(
         return wrap_prefixed_markdown_line(
             content,
             width,
-            style.fg(theme::current().dim),
+            theme::current().apply(theme::HighlightGroup::MarkdownQuote, style),
             MARKDOWN_QUOTE_PREFIX,
-            Style::default().fg(theme::current().dim),
+            markdown_marker_style(),
         );
     }
 
@@ -139,7 +139,7 @@ fn wrap_markdown_message_line(
             width,
             style,
             MARKDOWN_BULLET_PREFIX,
-            Style::default().fg(theme::current().dim),
+            markdown_marker_style(),
         );
     }
 
@@ -256,15 +256,16 @@ fn code_box_border_line(
             }
         })
         .unwrap_or_else(|| "─".repeat(inner_width));
-    MessageContentLine::dim(format!("{left}{inner}{right}"))
+    MessageContentLine::styled_text(
+        format!("{left}{inner}{right}"),
+        code_box_border_style(),
+        Vec::new(),
+    )
 }
 
 fn code_box_body_line(regions: Vec<(Style, String)>, content_width: usize) -> MessageContentLine {
-    let mut line = MessageContentLine::styled_text(
-        "│ ".to_owned(),
-        Style::default().fg(theme::current().dim),
-        Vec::new(),
-    );
+    let mut line =
+        MessageContentLine::styled_text("│ ".to_owned(), code_box_border_style(), Vec::new());
     let content_start = line.text.len();
     let mut width = 0usize;
     let mut current_pos = content_start;
@@ -281,7 +282,7 @@ fn code_box_body_line(regions: Vec<(Style, String)>, content_width: usize) -> Me
     }
     let padding = content_width.saturating_sub(width);
     line.text.push_str(&" ".repeat(padding));
-    line.append_styled_suffix(" │", Style::default().fg(theme::current().dim));
+    line.append_styled_suffix(" │", code_box_border_style());
     line
 }
 
@@ -299,24 +300,21 @@ fn wrap_prefixed_markdown_line(
         .collect()
 }
 
-fn markdown_heading(value: &str) -> Option<(usize, Style)> {
-    if value.starts_with("# ") {
-        Some((
-            "# ".len(),
-            Style::default()
-                .fg(theme::current().accent)
-                .add_modifier(Modifier::BOLD),
-        ))
+fn markdown_heading(value: &str, base: Style) -> Option<(usize, Style)> {
+    let (prefix_len, group) = if value.starts_with("# ") {
+        ("# ".len(), theme::HighlightGroup::MarkdownHeading1)
     } else if value.starts_with("## ") {
-        Some((
-            "## ".len(),
-            Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        ))
+        ("## ".len(), theme::HighlightGroup::MarkdownHeading2)
     } else if value.starts_with("### ") {
-        Some(("### ".len(), Style::default().add_modifier(Modifier::BOLD)))
+        ("### ".len(), theme::HighlightGroup::MarkdownHeading3)
     } else {
-        None
-    }
+        return None;
+    };
+    Some((prefix_len, theme::current().apply(group, base)))
+}
+
+fn markdown_marker_style() -> Style {
+    theme::current().style(theme::HighlightGroup::MarkdownMarker)
 }
 
 fn markdown_quote_prefix_len(value: &str) -> Option<usize> {
@@ -351,11 +349,15 @@ fn markdown_code_fence_closing_content_end(value: &str) -> Option<usize> {
 }
 
 fn markdown_code_style() -> Style {
-    Style::default().fg(theme::current().text)
+    Style::default()
 }
 
 fn inline_code_style() -> Style {
-    Style::default().fg(theme::current().mention)
+    theme::current().style(theme::HighlightGroup::InlineCode)
+}
+
+fn code_box_border_style() -> Style {
+    theme::current().style(theme::HighlightGroup::CodeBlockBorder)
 }
 
 fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {

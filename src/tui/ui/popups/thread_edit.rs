@@ -110,14 +110,9 @@ fn build_edit_layout(view: &ThreadEditView, width: usize) -> EditLayout {
     let tags_row = if view.is_forum_post {
         lines.push(Line::from(""));
         let tags_row = lines.len();
-        let tag_label = if view.requires_tag {
-            "tags: required"
-        } else {
-            "tags:"
-        };
-        lines.push(section_line(
-            tag_label,
+        lines.push(editable_tags_section_line(
             view.active_field == ThreadEditField::Tags,
+            view.requires_tag,
         ));
         push_tag_summary(&mut lines, &view.tags, width);
         tags_row
@@ -163,7 +158,7 @@ fn build_edit_layout(view: &ThreadEditView, width: usize) -> EditLayout {
             &mut lines,
             status,
             width,
-            Style::default().fg(theme::current().error),
+            theme::current().style(theme::HighlightGroup::Error),
         );
     }
 
@@ -337,7 +332,7 @@ fn tag_line(tag: &ThreadEditTagView, width: usize, thumbnail_ready: bool) -> Lin
     let style = if tag.active {
         highlight_style()
     } else if !tag.selectable {
-        Style::default().fg(theme::current().dim)
+        theme::current().style(theme::HighlightGroup::Disabled)
     } else {
         Style::default()
     };
@@ -391,7 +386,7 @@ fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], 
     if tags.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no tags available",
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
         return;
     }
@@ -408,9 +403,9 @@ fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], 
             false,
         );
         let style = if tag.selected {
-            Style::default().fg(theme::current().accent)
+            theme::current().style(theme::HighlightGroup::Tag)
         } else {
-            Style::default().fg(theme::current().dim)
+            theme::current().style(theme::HighlightGroup::Disabled)
         };
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  {checkbox}{emoji} {}", tag.name), width),
@@ -421,7 +416,7 @@ fn push_tag_summary(lines: &mut Vec<Line<'static>>, tags: &[ThreadEditTagView], 
     if remaining > 0 {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  ...(+{remaining} more)"), width),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Hint),
         )));
     }
 }
@@ -434,22 +429,22 @@ fn field_line(
     width: usize,
     placeholder: &str,
 ) -> Line<'static> {
-    let marker = field_marker(active);
+    let marker = editable_field_marker(active);
     let prefix = format!("{marker}{label}: ");
     let available = width.saturating_sub(prefix.width()).max(1);
     let content = if value.is_empty() {
         Span::styled(
             truncate_display_width(placeholder, available),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )
     } else {
         Span::styled(
             truncate_display_width(value, available),
-            editing_value_style(editing),
+            editable_field_value_style(active, editing),
         )
     };
     Line::from(vec![
-        Span::styled(prefix, field_label_style(active, editing)),
+        Span::styled(prefix, editable_field_label_style(active, editing)),
         content,
     ])
 }
@@ -463,14 +458,12 @@ fn selector_line(
     changeable: bool,
     width: usize,
 ) -> Line<'static> {
-    let marker = field_marker(active);
+    let marker = editable_field_marker(active);
     let prefix = format!("{marker}{label}: ");
     let value_style = if !changeable {
-        Style::default().fg(theme::current().dim)
-    } else if active {
-        highlight_style()
+        theme::current().style(theme::HighlightGroup::Disabled)
     } else {
-        Style::default().fg(theme::current().accent)
+        editable_field_value_style(active, false)
     };
     let arrows = if active && changeable {
         format!("‹ {value} ›")
@@ -478,42 +471,9 @@ fn selector_line(
         value.to_owned()
     };
     Line::from(vec![
-        Span::styled(prefix, field_label_style(active, false)),
+        Span::styled(prefix, editable_field_label_style(active, false)),
         Span::styled(truncate_display_width(&arrows, width.max(1)), value_style),
     ])
-}
-
-fn section_line(label: &str, active: bool) -> Line<'static> {
-    Line::from(Span::styled(
-        format!("{}{}", field_marker(active), label),
-        field_label_style(active, false),
-    ))
-}
-
-fn field_marker(active: bool) -> &'static str {
-    if active { "› " } else { "  " }
-}
-
-fn field_label_style(active: bool, editing: bool) -> Style {
-    if editing {
-        Style::default()
-            .fg(theme::current().warning)
-            .add_modifier(Modifier::BOLD)
-    } else if active {
-        Style::default()
-            .fg(theme::current().accent)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    }
-}
-
-fn editing_value_style(editing: bool) -> Style {
-    if editing {
-        Style::default().fg(theme::current().warning)
-    } else {
-        Style::default()
-    }
 }
 
 fn cursor_column(value: &str, cursor: usize) -> usize {

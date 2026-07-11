@@ -27,26 +27,46 @@ fn server_pane_shows_guild_mention_badge() {
             ..ReadStateInfo::test(channel_id)
         }],
     });
-    let backend = TestBackend::new(80, 20);
+    state.set_guild_view_height(20);
+    state.focus_pane(FocusPane::Guilds);
+    assert!(state.select_visible_pane_row(FocusPane::Guilds, 1));
+    let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
     terminal
-        .draw(|frame| {
-            sync_view_heights(frame.area(), &mut state);
-            super::super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
-        })
+        .draw(|frame| render_guilds(frame, frame.area(), &state))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
     let server_rows = (0..buffer.area.height)
         .map(|row| {
-            (0..20)
+            (0..buffer.area.width)
                 .map(|col| buffer[(col, row)].symbol().to_owned())
                 .collect::<String>()
         })
         .collect::<Vec<_>>();
 
     assert!(server_rows.iter().any(|row| row.contains("(2)")));
+    let row = server_rows
+        .iter()
+        .position(|row| row.contains("(2)") && row.contains("guild"))
+        .expect("selected mentioned guild row");
+    let badge_start = server_rows[row].find("(2)").expect("mention badge");
+    let name_start = server_rows[row].find("guild").expect("guild name");
+    let badge_col = server_rows[row][..badge_start].width();
+    let name_col = server_rows[row][..name_start].width();
+    assert_eq!(
+        buffer[(badge_col as u16, row as u16)].fg,
+        theme::current().foreground(theme::HighlightGroup::SelectedRow)
+    );
+    assert_eq!(
+        buffer[(name_col as u16, row as u16)].fg,
+        theme::current().foreground(theme::HighlightGroup::SelectedRow)
+    );
+    assert_eq!(
+        buffer[(name_col as u16, row as u16)].bg,
+        theme::current().background(theme::HighlightGroup::SelectedRow)
+    );
 }
 
 #[test]
@@ -92,7 +112,10 @@ fn active_server_mention_badge_keeps_active_name_style() {
                 .find('g')
                 .map(|offset| badge_col + offset)
                 .expect("guild name starts with g after mention badge");
-            assert_eq!(buffer[(badge_col as u16, row)].fg, theme::current().mention);
+            assert_eq!(
+                buffer[(badge_col as u16, row)].fg,
+                theme::current().foreground(theme::HighlightGroup::MentionBadge)
+            );
             assert_eq!(buffer[(name_col as u16, row)].fg, Color::Green);
             assert!(
                 buffer[(name_col as u16, row)]
@@ -148,26 +171,38 @@ fn message_viewport_author_uses_resolved_role_color() {
         ..MessageCreateFixture::test_fixture_default()
     }));
 
-    let messages = state.messages();
-    let lines = message_viewport_lines(
-        &messages,
-        None,
-        &state,
-        super::narrow_message_viewport_layout(40),
-        &[],
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::MessageAuthor,
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
     );
+    theme::with_test_theme(custom, || {
+        let messages = state.messages();
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &state,
+            super::narrow_message_viewport_layout(40),
+            &[],
+        );
 
-    assert_eq!(
-        lines[1].spans[1].style.fg,
-        Some(Color::Rgb(0x33, 0x66, 0xCC))
-    );
+        assert_eq!(
+            lines[1].spans[1].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+        assert!(
+            lines[1].spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
 
-    assert_eq!(lines[1].spans[2].content.as_ref(), " ");
-    assert_eq!(lines[1].spans[2].style.fg, None);
-    assert_eq!(lines[1].spans[2].style.bg, None);
-    assert_eq!(lines[1].spans[3].content.as_ref(), "[bot]");
-    assert_eq!(lines[1].spans[3].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[3].style.bg, Some(Color::Rgb(88, 101, 242)));
+        assert_eq!(lines[1].spans[2].content.as_ref(), " ");
+        assert_eq!(lines[1].spans[2].style.fg, None);
+        assert_eq!(lines[1].spans[2].style.bg, None);
+        assert_eq!(lines[1].spans[3].content.as_ref(), "[bot]");
+        assert_eq!(lines[1].spans[3].style.fg, Some(Color::Reset));
+        assert_eq!(lines[1].spans[3].style.bg, Some(Color::Rgb(88, 101, 242)));
+    });
 }
 
 #[test]
@@ -293,7 +328,10 @@ fn attachment_summary_uses_own_accent_line_after_text_content() {
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
     assert_eq!(line_texts(&lines), vec!["look", "[image: cat.png] 640x480"]);
-    assert_eq!(lines[1].style, Style::default().fg(theme::current().accent));
+    assert_eq!(
+        lines[1].style,
+        theme::current().style(theme::HighlightGroup::MessageAttachment)
+    );
 }
 
 #[test]
@@ -309,7 +347,8 @@ fn edited_message_appends_dim_italic_marker_to_content() {
         .into_iter()
         .find(|span| span.content == " (edited)")
         .expect("edited marker span should be present");
-    assert_eq!(marker.style.fg, Some(theme::current().dim));
+    assert_eq!(marker.style.fg, None);
+    assert!(marker.style.add_modifier.contains(Modifier::DIM));
     assert!(marker.style.add_modifier.contains(Modifier::ITALIC));
 }
 
@@ -324,8 +363,14 @@ fn attachment_summary_renders_multiple_attachments_one_per_line() {
         line_texts(&lines),
         vec!["look", "[image: cat.png] 640x480", "[file: notes.txt]"]
     );
-    assert_eq!(lines[1].style, Style::default().fg(theme::current().accent));
-    assert_eq!(lines[2].style, Style::default().fg(theme::current().accent));
+    assert_eq!(
+        lines[1].style,
+        theme::current().style(theme::HighlightGroup::MessageAttachment)
+    );
+    assert_eq!(
+        lines[2].style,
+        theme::current().style(theme::HighlightGroup::MessageAttachment)
+    );
 }
 
 #[test]
@@ -346,7 +391,8 @@ fn message_content_lines_render_discord_embed_preview() {
             "  ▎ A video description",
         ]
     );
-    assert_eq!(lines[1].style.fg, Some(theme::current().dim));
+    assert_eq!(lines[1].style.fg, None);
+    assert!(lines[1].style.add_modifier.contains(Modifier::DIM));
     assert!(lines[2].style.add_modifier.contains(Modifier::BOLD));
     assert_eq!(lines[2].style.fg, Some(Color::Blue));
     let marker_spans = lines[1].spans();
@@ -357,6 +403,26 @@ fn message_content_lines_render_discord_embed_preview() {
             .style
             .add_modifier
             .contains(Modifier::UNDERLINED)
+    );
+
+    message.embeds[0].color = None;
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::EmbedGutter,
+        Style::default().fg(Color::LightMagenta),
+    );
+    theme::with_test_theme(custom, || {
+        let fallback_lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+        assert_eq!(
+            fallback_lines[1].spans()[0].style.fg,
+            Some(Color::LightMagenta)
+        );
+    });
+
+    message.embeds[0].color = Some(0);
+    let black_lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    assert_eq!(
+        black_lines[1].spans()[0].style.fg,
+        Some(Color::Rgb(0, 0, 0))
     );
 }
 
@@ -499,34 +565,37 @@ fn message_content_applies_supported_markdown_formatting() {
         ]
     );
 
-    assert_eq!(lines[0].style.fg, Some(theme::current().accent));
+    assert_eq!(lines[0].style.fg, Some(Color::Cyan));
     assert!(lines[0].style.add_modifier.contains(Modifier::BOLD));
     assert!(lines[1].style.add_modifier.contains(Modifier::BOLD));
     assert!(lines[1].style.add_modifier.contains(Modifier::UNDERLINED));
     assert!(lines[2].style.add_modifier.contains(Modifier::BOLD));
-    assert_eq!(lines[4].style.fg, Some(theme::current().dim));
-    assert_eq!(lines[14].style, Style::default());
+    assert_eq!(lines[4].style.fg, Some(Color::DarkGray));
+    assert_eq!(
+        lines[14].style,
+        theme::current().style(theme::HighlightGroup::MessageBody)
+    );
 
     let h1_spans = lines[0].spans();
     assert_eq!(h1_spans[0].content.as_ref(), "# ");
-    assert_eq!(h1_spans[0].style.fg, Some(theme::current().dim));
+    assert_eq!(h1_spans[0].style.fg, Some(Color::DarkGray));
 
     let h2_spans = lines[1].spans();
     assert_eq!(h2_spans[0].content.as_ref(), "## ");
-    assert_eq!(h2_spans[0].style.fg, Some(theme::current().dim));
+    assert_eq!(h2_spans[0].style.fg, Some(Color::DarkGray));
 
     let h3_spans = lines[2].spans();
     assert_eq!(h3_spans[0].content.as_ref(), "### ");
-    assert_eq!(h3_spans[0].style.fg, Some(theme::current().dim));
+    assert_eq!(h3_spans[0].style.fg, Some(Color::DarkGray));
 
     let quote_spans = lines[4].spans();
     assert_eq!(quote_spans[0].content.as_ref(), "▎ ");
-    assert_eq!(quote_spans[0].style.fg, Some(theme::current().dim));
+    assert_eq!(quote_spans[0].style.fg, Some(Color::DarkGray));
 
     for line in [&lines[7], &lines[8]] {
         let bullet_spans = line.spans();
         assert_eq!(bullet_spans[0].content.as_ref(), "• ");
-        assert_eq!(bullet_spans[0].style.fg, Some(theme::current().dim));
+        assert_eq!(bullet_spans[0].style.fg, Some(Color::DarkGray));
     }
 
     let inline_spans = lines[9].spans();
@@ -562,22 +631,34 @@ fn message_content_applies_supported_markdown_formatting() {
     assert_eq!(code.style.fg, Some(Color::Rgb(255, 165, 0)));
     assert_eq!(code.style.bg, None);
 
-    assert_eq!(lines[10].style.fg, Some(theme::current().dim));
-    assert_eq!(lines[13].style.fg, Some(theme::current().dim));
+    assert_eq!(
+        lines[10].style.fg,
+        theme::current().style(theme::HighlightGroup::Border).fg
+    );
+    assert_eq!(
+        lines[13].style.fg,
+        theme::current().style(theme::HighlightGroup::Border).fg
+    );
+    assert!(lines[10].style.add_modifier.contains(Modifier::DIM));
+    assert!(lines[13].style.add_modifier.contains(Modifier::DIM));
 
     let code_line = lines[11].spans();
     assert_eq!(
         code_line,
         vec![
-            ratatui::text::Span::from("│ ").fg(theme::current().dim),
+            ratatui::text::Span::from("│ ")
+                .fg(theme::current().foreground(theme::HighlightGroup::Border))
+                .dim(),
             ratatui::text::Span::from("let").fg(Color::Rgb(180, 142, 173)),
             ratatui::text::Span::from(" answer ").fg(Color::Rgb(192, 197, 206)),
             ratatui::text::Span::from("=").fg(Color::Rgb(192, 197, 206)),
             ratatui::text::Span::from(" ").fg(Color::Rgb(192, 197, 206)),
             ratatui::text::Span::from("42").fg(Color::Rgb(208, 135, 112)),
             ratatui::text::Span::from(";").fg(Color::Rgb(192, 197, 206)),
-            ratatui::text::Span::from("    ").dark_gray(),
-            ratatui::text::Span::from(" │").fg(theme::current().dim)
+            ratatui::text::Span::from("    ").dark_gray().dim(),
+            ratatui::text::Span::from(" │")
+                .fg(theme::current().foreground(theme::HighlightGroup::Border))
+                .dim()
         ]
     );
 
@@ -598,8 +679,8 @@ fn message_content_applies_supported_markdown_formatting() {
         .find(|span| span.content == "@alice")
         .expect("mention span should survive quote formatting");
     assert_eq!(
-        mention.style.bg,
-        mention_highlight_style(TextHighlightKind::OtherMention).bg
+        mention.style.fg,
+        mention_highlight_style(TextHighlightKind::OtherMention).fg
     );
 
     let emoji = message_with_content(Some("- <:party:99> party".to_owned()));
@@ -632,8 +713,8 @@ fn message_content_applies_supported_markdown_formatting() {
         .expect("mention span should survive inline formatting");
     assert!(mention_span.style.add_modifier.contains(Modifier::BOLD));
     assert_eq!(
-        mention_span.style.bg,
-        mention_highlight_style(TextHighlightKind::OtherMention).bg
+        mention_span.style.fg,
+        mention_highlight_style(TextHighlightKind::OtherMention).fg
     );
 
     let emoji = message_with_content(Some("**<:party:99>**".to_owned()));
@@ -654,7 +735,7 @@ fn message_content_applies_supported_markdown_formatting() {
         .into_iter()
         .find(|span| span.content == "bold quote")
         .expect("inline bold span should survive quote formatting");
-    assert_eq!(quote_span.style.fg, Some(theme::current().dim));
+    assert_eq!(quote_span.style.fg, Some(Color::DarkGray));
     assert!(quote_span.style.add_modifier.contains(Modifier::BOLD));
 
     let lines = format_message_content_lines(
@@ -672,7 +753,7 @@ fn message_content_applies_supported_markdown_formatting() {
             "╰───────╯",
         ]
     );
-    assert_eq!(lines[1].spans()[1].style.fg, Some(Color::White));
+    assert_eq!(lines[1].spans()[1].style.fg, None);
 
     let lines = format_message_content_lines(
         &message_with_content(Some("```".to_owned())),
@@ -680,7 +761,10 @@ fn message_content_applies_supported_markdown_formatting() {
         200,
     );
     assert_eq!(line_texts(&lines), vec!["```"]);
-    assert_eq!(lines[0].style, Style::default());
+    assert_eq!(
+        lines[0].style,
+        theme::current().style(theme::HighlightGroup::MessageBody)
+    );
 
     let lines = format_message_content_lines(
         &message_with_content(Some("```\none\n\nthree\n```".to_owned())),
@@ -724,7 +808,53 @@ fn message_content_applies_supported_markdown_formatting() {
         ]
     );
     assert!(lines.iter().all(|line| line.image_slots.is_empty()));
-    assert_eq!(lines[1].spans()[1].style.fg, Some(Color::White));
+    assert_eq!(lines[1].spans()[1].style.fg, None);
+}
+
+#[test]
+fn markdown_colors_follow_theme_groups() {
+    let message = message_with_content(Some(
+        "# one\n## two\n### three\n> quote\n- bullet".to_owned(),
+    ));
+    let custom = theme::Theme::default()
+        .with_style(
+            theme::HighlightGroup::MessageBody,
+            Style::default().fg(Color::White).bg(Color::Blue),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownHeading1,
+            Style::default().fg(Color::LightRed),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownHeading2,
+            Style::default().fg(Color::LightGreen),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownHeading3,
+            Style::default().fg(Color::LightBlue),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownQuote,
+            Style::default().fg(Color::Magenta),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownMarker,
+            Style::default().fg(Color::Yellow),
+        );
+
+    theme::with_test_theme(custom, || {
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+
+        assert_eq!(lines[0].style.fg, Some(Color::LightRed));
+        assert_eq!(lines[1].style.fg, Some(Color::LightGreen));
+        assert_eq!(lines[2].style.fg, Some(Color::LightBlue));
+        assert_eq!(lines[3].style.fg, Some(Color::Magenta));
+        assert_eq!(lines[4].style.fg, Some(Color::White));
+        for line in &lines {
+            assert_eq!(line.style.bg, Some(Color::Blue));
+            assert_eq!(line.spans()[0].style.fg, Some(Color::Yellow));
+        }
+    });
 }
 
 #[test]
@@ -801,8 +931,8 @@ fn message_content_highlights_current_user_mentions() {
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@server alias");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
 }
 
@@ -836,12 +966,12 @@ fn message_content_highlights_other_user_mentions_with_softer_color() {
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@alice");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::OtherMention).bg
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::OtherMention).fg
     );
     assert_ne!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg,
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg,
         "other-user mentions must not look like a self-mention notification"
     );
 }
@@ -900,7 +1030,7 @@ fn message_content_highlights_everyone_mentions_for_current_user() {
         user: "neo".to_owned(),
         user_id: Some(Id::new(99)),
     });
-    let highlight_bg = mention_highlight_style(TextHighlightKind::SelfMention).bg;
+    let highlight_fg = mention_highlight_style(TextHighlightKind::SelfMention).fg;
 
     let lines = message_item_lines(
         message.author.clone(),
@@ -918,7 +1048,7 @@ fn message_content_highlights_everyone_mentions_for_current_user() {
         vec!["  oooo  neo 00:00", "  oooo  ping @everyone", ""]
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
-    assert_eq!(lines[1].spans[2].style.bg, highlight_bg);
+    assert_eq!(lines[1].spans[2].style.fg, highlight_fg);
 }
 
 #[test]
@@ -950,12 +1080,12 @@ fn message_content_highlights_mixed_everyone_and_direct_mentions_in_order() {
     assert_eq!(lines[1].spans[1].content.as_ref(), "@everyone");
     assert_eq!(lines[1].spans[3].content.as_ref(), "@neo");
     assert_eq!(
-        lines[1].spans[1].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[1].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
     assert_eq!(
-        lines[1].spans[3].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[3].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
 }
 
@@ -986,15 +1116,15 @@ fn message_content_highlights_here_mentions_for_current_user() {
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@here");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
 }
 
 #[test]
 fn message_content_highlights_role_mentions_with_role_name() {
     let message = message_with_content(Some("hello <@&10>".to_owned()));
-    let state = state_with_role(10, "moderators");
+    let state = state_with_role(10, "moderators", Some(0x123456));
 
     let lines = message_item_lines(
         message.author.clone(),
@@ -1013,9 +1143,75 @@ fn message_content_highlights_role_mentions_with_role_name() {
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@moderators");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::OtherMention).bg
+        lines[1].spans[2].style.fg,
+        Some(Color::Rgb(0x12, 0x34, 0x56))
     );
+    assert_eq!(
+        lines[1].spans[2].style.bg,
+        Some(Color::Rgb(0x07, 0x14, 0x22))
+    );
+
+    let light_background = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().bg(Color::Rgb(0xFF, 0xFF, 0xFF)),
+    );
+    theme::with_test_theme(light_background, || {
+        let lines = format_message_content_lines(&message, &state, 200);
+        let mention = lines[0]
+            .spans()
+            .into_iter()
+            .find(|span| span.content.as_ref() == "@moderators")
+            .expect("colored role mention span");
+        assert_eq!(mention.style.bg, Some(Color::Rgb(0xA0, 0xAD, 0xBB)));
+    });
+
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::MentionRole,
+        Style::default()
+            .fg(Color::Red)
+            .bg(Color::LightMagenta)
+            .add_modifier(Modifier::BOLD),
+    );
+    theme::with_test_theme(custom, || {
+        let lines = format_message_content_lines(&message, &state, 200);
+        let mention = lines[0]
+            .spans()
+            .into_iter()
+            .find(|span| span.content.as_ref() == "@moderators")
+            .expect("colored role mention span");
+        assert_eq!(mention.style.fg, Some(Color::Rgb(0x12, 0x34, 0x56)));
+        assert_eq!(mention.style.bg, Some(Color::LightMagenta));
+        assert!(mention.style.add_modifier.contains(Modifier::BOLD));
+    });
+
+    let mut options = crate::config::ThemeOptions::default();
+    options
+        .highlight_mut(theme::HighlightGroup::MentionRole)
+        .background = Some("none".to_owned());
+    let cleared = theme::Theme::from_options(&options, &mut Vec::new());
+    theme::with_test_theme(cleared, || {
+        let lines = format_message_content_lines(&message, &state, 200);
+        let mention = lines[0]
+            .spans()
+            .into_iter()
+            .find(|span| span.content.as_ref() == "@moderators")
+            .expect("colored role mention span");
+        assert_eq!(mention.style.fg, Some(Color::Rgb(0x12, 0x34, 0x56)));
+        assert_eq!(mention.style.bg, None);
+    });
+
+    let uncolored = state_with_role(10, "moderators", None);
+    let lines = format_message_content_lines(&message, &uncolored, 200);
+    let mention = lines[0]
+        .spans()
+        .into_iter()
+        .find(|span| span.content.as_ref() == "@moderators")
+        .expect("resolved role mention should have its own span");
+    assert_eq!(
+        mention.style.fg,
+        mention_highlight_style(TextHighlightKind::OtherMention).fg
+    );
+    assert_eq!(mention.style.bg, Some(Color::Rgb(40, 50, 92)));
 }
 
 #[test]
@@ -1035,6 +1231,7 @@ fn message_content_highlights_current_user_role_mentions_as_self_mentions() {
         }],
         roles: vec![RoleInfo {
             position: 1,
+            color: Some(0x12_34_56),
             ..RoleInfo::test(role_id, "moderators")
         }],
         ..GuildCreateFixture::new(Id::new(1))
@@ -1053,16 +1250,17 @@ fn message_content_highlights_current_user_role_mentions_as_self_mentions() {
 
     assert_eq!(lines[1].spans[2].content.as_ref(), "@moderators");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[2].style.fg,
+        Some(Color::Rgb(0x12, 0x34, 0x56))
     );
+    assert_eq!(lines[1].spans[2].style.bg, Some(Color::Rgb(92, 76, 35)));
 }
 
 #[test]
 fn message_content_keeps_role_mentions_raw_without_guild_context() {
     let mut message = message_with_content(Some("hello <@&10>".to_owned()));
     message.guild_id = None;
-    let state = state_with_role(10, "moderators");
+    let state = state_with_role(10, "moderators", None);
 
     let lines = format_message_content_lines(&message, &state, 200);
 
@@ -1097,8 +1295,8 @@ fn mention_like_display_name_does_not_duplicate_highlight_spans() {
     assert_eq!(lines[1].spans.len(), 3);
     assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
 }
 
@@ -1182,7 +1380,7 @@ fn thread_created_message_uses_cached_thread_details() {
     assert!(texts[4].contains("12 comments"));
     assert!(texts[4].contains("2 minutes ago"));
     assert!(texts[5].starts_with("  ╰"));
-    assert_eq!(lines[0].style, Style::default().fg(Color::White));
+    assert_eq!(lines[0].style, Style::default());
 }
 
 #[test]
@@ -1367,8 +1565,8 @@ fn poll_message_body_highlights_mentions_inside_box() {
     assert_eq!(spans[0].content.as_ref(), "│ ");
     assert_eq!(spans[1].content.as_ref(), "@server alias");
     assert_eq!(
-        spans[1].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        spans[1].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
 }
 
@@ -1686,7 +1884,12 @@ fn new_messages_notice_line_centers_count_within_full_width() {
 
     assert_eq!(text.width(), 30);
     assert!(text.contains("↓ 3 new messages"));
-    assert_eq!(line.spans[0].style.fg, Some(theme::current().accent));
+    assert_eq!(
+        line.spans[0].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::UnreadNotice)
+            .fg
+    );
     assert_eq!(line.spans[0].style.bg, None);
     assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
 }
@@ -1808,4 +2011,19 @@ fn message_viewport_lines_render_overflow_marker_as_text_fallback() {
     );
 
     assert!(line_texts_from_ratatui(&lines).contains(&"        +2 more images".to_owned()));
+    let overflow = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content == "+2 more images")
+        .expect("image overflow label should be present");
+    assert_eq!(
+        overflow.style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ImageOverflow)
+            .fg
+    );
+    assert_eq!(
+        overflow.style.bg,
+        Some(theme::current().background(theme::HighlightGroup::Normal))
+    );
 }

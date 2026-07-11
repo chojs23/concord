@@ -43,12 +43,19 @@ pub(in crate::tui::ui) fn poll_vote_picker_lines(
                 index,
             ));
             let checkbox = if answer.selected { "[x]" } else { "[ ]" };
-            let style = selectable_popup_label_style(selected, true);
-            Line::from(vec![
-                selectable_popup_marker(selected),
-                selectable_popup_shortcut_span(shortcut),
-                Span::styled(format!("{checkbox} {}", answer.label), style),
-            ])
+            let style = if answer.selected {
+                theme::current().style(theme::HighlightGroup::Selection)
+            } else {
+                selectable_popup_label_style(selected, true)
+            };
+            selected_row_line(
+                Line::from(vec![
+                    selectable_popup_marker(selected),
+                    selectable_popup_shortcut_span(shortcut),
+                    Span::styled(format!("{checkbox} {}", answer.label), style),
+                ]),
+                selected,
+            )
         })
         .collect()
 }

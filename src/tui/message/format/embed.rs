@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
@@ -264,48 +264,34 @@ fn push_embed_text(
 }
 
 fn embed_provider_style() -> Style {
-    Style::default()
-        .fg(theme::current().dim)
-        .add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedFooter)
 }
 
 fn embed_author_style() -> Style {
-    Style::default().add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedAuthor)
 }
 
 fn embed_title_style() -> Style {
-    Style::default()
-        .fg(theme::current().info)
-        .add_modifier(Modifier::BOLD)
+    theme::current().style(theme::HighlightGroup::EmbedTitle)
 }
 
 fn embed_field_name_style() -> Style {
-    Style::default()
-        .add_modifier(Modifier::BOLD)
-        .add_modifier(Modifier::UNDERLINED)
+    theme::current().style(theme::HighlightGroup::EmbedFieldName)
 }
 
 fn embed_footer_style() -> Style {
-    Style::default()
-        .fg(theme::current().dim)
-        .add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedFooter)
 }
 
 fn embed_url_style() -> Style {
-    Style::default()
-        .fg(theme::current().info)
-        .add_modifier(Modifier::UNDERLINED)
+    theme::current().style(theme::HighlightGroup::EmbedLink)
 }
 
 fn embed_line_style(embed: &EmbedInfo) -> Style {
-    Style::default().fg(embed_line_color(embed))
-}
-
-fn embed_line_color(embed: &EmbedInfo) -> Color {
+    let style = theme::current().style(theme::HighlightGroup::EmbedGutter);
     embed
         .color
-        .map(embed_color)
-        .unwrap_or(theme::current().error)
+        .map_or(style, |color| style.fg(embed_color(color)))
 }
 
 pub(in crate::tui) fn embed_color(color: u32) -> Color {

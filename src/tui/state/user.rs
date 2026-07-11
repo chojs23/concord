@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ratatui::{
     layout::Alignment,
-    style::Style,
     text::{Line, Span},
 };
 
@@ -220,7 +219,10 @@ impl DashboardState {
         };
         let total = guild.and_then(|g| g.member_count).unwrap_or(0);
         Line::from(vec![
-            Span::styled("●", Style::default().fg(theme::current().success)),
+            Span::styled(
+                "●",
+                theme::current().style(theme::HighlightGroup::PresenceOnline),
+            ),
             Span::raw(format!(
                 " {}  ○ {}",
                 fmt_with_separators(online as u64),

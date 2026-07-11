@@ -35,8 +35,6 @@ pub(in crate::tui) use wrap::wrap_text_lines;
 use wrap::{highlights_for_range, styled_ranges_for_range, wrap_text_with_metadata};
 
 use crate::discord::ids::{Id, marker::GuildMarker};
-#[cfg(test)]
-use ratatui::style::Color;
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
@@ -45,7 +43,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{MessageState, ReplyInfo};
 use crate::tui::{
-    state::DashboardState,
+    state::{DashboardState, apply_discord_foreground, discord_role_mention_background},
     text::{
         InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, detected_url_ranges,
         truncate_text,
@@ -101,13 +99,17 @@ impl MessageContentLine {
     }
 
     fn dim(text: String) -> Self {
-        Self::styled_text(text, Style::default().fg(theme::current().dim), Vec::new())
-    }
-
-    fn accent(text: String) -> Self {
         Self::styled_text(
             text,
-            Style::default().fg(theme::current().accent),
+            theme::current().style(theme::HighlightGroup::MessageSecondary),
+            Vec::new(),
+        )
+    }
+
+    fn attachment(text: String) -> Self {
+        Self::styled_text(
+            text,
+            theme::current().style(theme::HighlightGroup::MessageAttachment),
             Vec::new(),
         )
     }
@@ -367,7 +369,7 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
             state,
             rendered,
             width,
-            Style::default(),
+            theme::current().style(theme::HighlightGroup::MessageBody),
             loaded_custom_emoji_urls,
         ));
     }
@@ -379,7 +381,7 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
         loaded_custom_emoji_urls,
     ));
     for attachment in attachment_summary_lines {
-        lines.push(MessageContentLine::accent(truncate_text(
+        lines.push(MessageContentLine::attachment(truncate_text(
             &attachment,
             width,
         )));
@@ -393,11 +395,18 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
         ));
     }
     if lines.is_empty() {
-        lines.push(MessageContentLine::plain(if message.content.is_some() {
-            "<empty message>".to_owned()
-        } else {
-            "<message content unavailable>".to_owned()
-        }));
+        lines.push(MessageContentLine::styled_text(
+            if message.content.is_some() {
+                "<empty message>".to_owned()
+            } else {
+                "<message content unavailable>".to_owned()
+            },
+            theme::current().apply(
+                theme::HighlightGroup::Muted,
+                theme::current().style(theme::HighlightGroup::MessageBody),
+            ),
+            Vec::new(),
+        ));
     }
 
     if message.edited_timestamp.is_some() {
@@ -410,9 +419,7 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
 }
 
 fn append_edited_marker(lines: &mut Vec<MessageContentLine>, width: usize) {
-    let marker_style = Style::default()
-        .fg(theme::current().dim)
-        .add_modifier(Modifier::ITALIC);
+    let marker_style = theme::current().style(theme::HighlightGroup::Edited);
     let marker_width = EDITED_MARKER.width();
     if let Some(line) = lines.last_mut()
         && line.text.width().saturating_add(marker_width) <= width
@@ -747,7 +754,7 @@ fn format_reply_line(
     let content = prepend_rendered_text(format!("╭─ {} : ", reply.author), content);
     rendered_text_line(
         truncate_rendered_text(content, width),
-        Style::default().fg(theme::current().dim),
+        theme::current().style(theme::HighlightGroup::MessageSecondary),
     )
 }
 
@@ -775,23 +782,33 @@ fn sticker_display_text(sticker_names: &[String]) -> Option<String> {
 pub(in crate::tui) fn mention_highlight_style(kind: TextHighlightKind) -> Style {
     let theme = theme::current();
     match kind {
-        // The current user got pinged, so match Discord's gold highlight.
-        TextHighlightKind::SelfMention => Style::default()
-            .bg(theme.mention_self_bg)
-            .fg(theme.self_reaction),
-        // Someone else was pinged, so use Discord's softer blue tint.
-        TextHighlightKind::OtherMention => Style::default()
-            .bg(theme.mention_other_bg)
-            .fg(theme.mention_other_fg),
-        TextHighlightKind::Url => Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::UNDERLINED),
+        TextHighlightKind::SelfMention => theme.style(theme::HighlightGroup::MentionSelf),
+        TextHighlightKind::OtherMention => theme.style(theme::HighlightGroup::MentionOther),
+        TextHighlightKind::RoleMention {
+            color,
+            notifies_current_user,
+        } => {
+            let mut style = if notifies_current_user {
+                theme.style(theme::HighlightGroup::MentionSelf)
+            } else {
+                theme.style(theme::HighlightGroup::MentionRole)
+            };
+            if !notifies_current_user
+                && style.bg.is_none()
+                && !theme.background_is_cleared(theme::HighlightGroup::MentionRole)
+            {
+                style = style.bg(discord_role_mention_background(color));
+            }
+            apply_discord_foreground(style, Some(color))
+        }
+        TextHighlightKind::Url => theme.style(theme::HighlightGroup::MessageLink),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
 
     #[test]
     fn message_content_line_spans_combine_prefix_and_mention_styles() {

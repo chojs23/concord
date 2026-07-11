@@ -11,15 +11,15 @@ pub(in crate::tui::ui) fn render_toast(frame: &mut Frame, area: Rect, state: &Da
         return;
     }
 
-    frame.render_widget(Clear, popup);
+    let feedback_style = toast_feedback_style(toast.kind);
+    clear_area(frame, popup);
     frame.render_widget(
         Paragraph::new(toast_line(
             toast.text,
             popup.width.saturating_sub(2) as usize,
         ))
-        .block(
-            panel_block("", true).border_style(Style::default().fg(toast_border_color(toast.kind))),
-        ),
+        .style(feedback_style)
+        .block(panel_block("", true).border_style(feedback_style)),
         popup,
     );
 }
@@ -43,10 +43,10 @@ pub(in crate::tui::ui) fn toast_line(text: &str, width: usize) -> Line<'static> 
     Line::from(Span::raw(truncate_display_width(text, width)))
 }
 
-fn toast_border_color(kind: ToastKind) -> Color {
-    match kind {
-        ToastKind::Info => theme::current().info,
-        ToastKind::Success => theme::current().success,
-        ToastKind::Error => theme::current().error,
-    }
+fn toast_feedback_style(kind: ToastKind) -> Style {
+    theme::current().style(match kind {
+        ToastKind::Info => theme::HighlightGroup::Info,
+        ToastKind::Success => theme::HighlightGroup::Success,
+        ToastKind::Error => theme::HighlightGroup::Error,
+    })
 }

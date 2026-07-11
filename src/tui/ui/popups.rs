@@ -62,6 +62,8 @@ pub(super) use downloads::downloads_popup_lines;
 pub(super) use downloads::{
     downloads_popup_area, downloads_popup_line_count, render_downloads_popup,
 };
+#[cfg(test)]
+pub(super) use folder_settings::folder_settings_input_line_for_test;
 pub(super) use folder_settings::{folder_settings_popup_area, render_folder_settings_popup};
 pub(super) use forum_post::{
     forum_post_composer_metrics, forum_post_composer_popup_area,
@@ -207,8 +209,8 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
 /// returns the inner content rect. Every modal popup opens with this
 /// sequence and then renders its content into the returned rect.
 fn render_modal_frame(frame: &mut Frame, popup: Rect, title: impl Into<String>) -> Rect {
-    frame.render_widget(Clear, popup);
-    let block = panel_block_owned(title.into(), true);
+    clear_area(frame, popup);
+    let block = modal_block_owned(title.into());
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
     inner
@@ -245,7 +247,7 @@ fn popup_danger_button_line(
         shortcut,
         label,
         active,
-        Style::default().fg(theme::current().error),
+        theme::current().style(theme::HighlightGroup::Error),
     )
 }
 
@@ -255,15 +257,23 @@ fn popup_button_line_with_style(
     active: bool,
     label_style: Style,
 ) -> Line<'static> {
+    let active_style = |style| {
+        if active {
+            theme::current().apply(theme::HighlightGroup::ActiveField, style)
+        } else {
+            style
+        }
+    };
     Line::from(vec![
-        selectable_popup_marker(active),
+        Span::styled(
+            editable_field_marker(active),
+            active_style(Style::default()),
+        ),
         Span::styled(
             format!("[{shortcut}] "),
-            Style::default()
-                .fg(theme::current().accent)
-                .add_modifier(Modifier::BOLD),
+            active_style(theme::current().style(theme::HighlightGroup::Shortcut)),
         ),
-        Span::styled(label, label_style),
+        Span::styled(label, active_style(label_style)),
     ])
 }
 
@@ -346,24 +356,65 @@ fn push_wrapped_styled_popup_text(
 }
 
 fn selectable_popup_marker(selected: bool) -> Span<'static> {
-    let marker = if selected { "› " } else { "  " };
-    Span::styled(marker, Style::default().fg(theme::current().accent))
+    selection_marker_with("› ", selected)
+}
+
+fn editable_field_marker(active: bool) -> &'static str {
+    if active { "› " } else { "  " }
+}
+
+fn editable_field_label_style(active: bool, editing: bool) -> Style {
+    if editing {
+        theme::current().apply(
+            theme::HighlightGroup::Strong,
+            theme::current().style(theme::HighlightGroup::Editing),
+        )
+    } else if active {
+        theme::current().style(theme::HighlightGroup::ActiveField)
+    } else {
+        theme::current().style(theme::HighlightGroup::Disabled)
+    }
+}
+
+fn editable_field_value_style(active: bool, editing: bool) -> Style {
+    if editing {
+        theme::current().style(theme::HighlightGroup::Editing)
+    } else if active {
+        theme::current().style(theme::HighlightGroup::ActiveField)
+    } else {
+        theme::current().style(theme::HighlightGroup::Disabled)
+    }
+}
+
+fn editable_tags_section_line(active: bool, required: bool) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        format!("{}tags:", editable_field_marker(active)),
+        editable_field_label_style(active, false),
+    )];
+    if required {
+        spans.push(Span::styled(
+            " required",
+            theme::current().style(theme::HighlightGroup::Error),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn selectable_popup_shortcut_span(shortcut: impl Into<String>) -> Span<'static> {
-    Span::styled(shortcut.into(), Style::default().fg(theme::current().dim))
+    Span::styled(
+        shortcut.into(),
+        theme::current().style(theme::HighlightGroup::Shortcut),
+    )
 }
 
 fn selectable_popup_label_style(selected: bool, enabled: bool) -> Style {
     let mut style = if enabled {
         Style::default()
     } else {
-        Style::default().fg(theme::current().dim)
+        theme::current().style(theme::HighlightGroup::Disabled)
     };
     if selected {
-        style = style
-            .bg(theme::current().selection_bg)
-            .add_modifier(Modifier::BOLD);
+        style = theme::current().apply(theme::HighlightGroup::SelectedRow, style);
     }
     style
 }

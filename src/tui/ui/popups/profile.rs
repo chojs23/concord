@@ -159,7 +159,7 @@ fn user_profile_popup_text_for_render(
         UserProfilePopupText {
             lines: vec![Line::from(Span::styled(
                 truncate_display_width(&format!("Failed to load profile: {message}"), width.into()),
-                Style::default().fg(theme::current().error),
+                theme::current().style(theme::HighlightGroup::Error),
             ))],
             emoji_overlays: Vec::new(),
             cursor: None,
@@ -168,7 +168,7 @@ fn user_profile_popup_text_for_render(
         UserProfilePopupText {
             lines: vec![Line::from(Span::styled(
                 "Loading profile...",
-                Style::default().fg(theme::current().dim),
+                theme::current().style(theme::HighlightGroup::Loading),
             ))],
             emoji_overlays: Vec::new(),
             cursor: None,
@@ -233,23 +233,21 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
     )));
     lines.push(Line::from(Span::styled(
         truncate_display_width(&format!("@{}", profile.username), inner_width),
-        Style::default().fg(theme::current().dim),
+        theme::current().style(theme::HighlightGroup::Description),
     )));
 
     if let Some(pronouns) = profile.pronouns.as_deref() {
         lines.push(Line::from(Span::styled(
             truncate_display_width(pronouns, inner_width),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Description),
         )));
     }
 
     if !is_self {
-        let (badge_label, badge_color) = friend_status_badge(profile.friend_status);
+        let (badge_label, badge_style) = friend_status_badge(profile.friend_status);
         lines.push(Line::from(Span::styled(
             badge_label,
-            Style::default()
-                .fg(badge_color)
-                .add_modifier(Modifier::BOLD),
+            theme::current().apply(theme::HighlightGroup::Strong, badge_style),
         )));
     }
 
@@ -308,7 +306,7 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
         if profile.mutual_guilds.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  (none)".to_owned(),
-                Style::default().fg(theme::current().dim),
+                theme::current().style(theme::HighlightGroup::Placeholder),
             )));
         } else {
             for entry in &profile.mutual_guilds {
@@ -321,10 +319,7 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
                     None => format!("• {name}"),
                 };
                 lines.push(Line::from(vec![
-                    Span::styled(
-                        "  ".to_owned(),
-                        Style::default().fg(theme::current().accent),
-                    ),
+                    Span::styled("  ".to_owned(), Style::default()),
                     Span::styled(
                         truncate_display_width(&body, inner_width.saturating_sub(2)),
                         Style::default(),
@@ -362,7 +357,7 @@ fn user_profile_settings_popup_text(
     )));
     lines.push(Line::from(Span::styled(
         truncate_display_width(&format!("@{}", profile.username), width),
-        Style::default().fg(theme::current().dim),
+        theme::current().style(theme::HighlightGroup::Description),
     )));
     lines.push(Line::from(Span::raw(String::new())));
 
@@ -399,7 +394,7 @@ fn user_profile_settings_popup_text(
             if state.user_profile_popup_guild_id().is_none() {
                 lines.push(Line::from(Span::styled(
                     "Server profile is available only inside a server.",
-                    Style::default().fg(theme::current().dim),
+                    theme::current().style(theme::HighlightGroup::Disabled),
                 )));
             } else {
                 push_profile_settings_field_lines(
@@ -440,7 +435,7 @@ fn user_profile_settings_popup_text(
             &mut lines,
             &status,
             width,
-            Style::default().fg(theme::current().accent),
+            theme::current().style(theme::HighlightGroup::Warning),
         );
     }
     lines.push(Line::from(Span::raw(String::new())));
@@ -476,18 +471,20 @@ fn push_profile_status_picker_lines(
     lines.push(Line::from(Span::raw(String::new())));
     lines.push(Line::from(Span::styled(
         "Choose status",
-        Style::default()
-            .fg(theme::current().accent)
-            .add_modifier(Modifier::BOLD),
+        theme::current().style(theme::HighlightGroup::Heading),
     )));
     for (status, selected) in rows {
-        lines.push(Line::from(vec![
-            selectable_popup_marker(*selected),
-            Span::styled(
-                truncate_display_width(status.label(), width.saturating_sub(2)),
-                Style::default().fg(presence_color(*status)),
-            ),
-        ]));
+        let style = selected_presence_style(*selected, *status);
+        lines.push(selected_row_line(
+            Line::from(vec![
+                selectable_popup_marker(*selected),
+                Span::styled(
+                    truncate_display_width(status.label(), width.saturating_sub(2)),
+                    style,
+                ),
+            ]),
+            *selected,
+        ));
     }
 }
 
@@ -499,15 +496,19 @@ fn push_profile_activity_picker_lines(
     lines.push(Line::from(Span::raw(String::new())));
     lines.push(Line::from(Span::styled(
         "Choose activity",
-        Style::default()
-            .fg(theme::current().accent)
-            .add_modifier(Modifier::BOLD),
+        theme::current().style(theme::HighlightGroup::Heading),
     )));
     for (label, selected) in rows {
-        lines.push(Line::from(vec![
-            selectable_popup_marker(*selected),
-            Span::raw(truncate_display_width(label, width.saturating_sub(2))),
-        ]));
+        lines.push(selected_row_line(
+            Line::from(vec![
+                selectable_popup_marker(*selected),
+                Span::styled(
+                    truncate_display_width(label, width.saturating_sub(2)),
+                    selected_text_style(*selected, Style::default()),
+                ),
+            ]),
+            *selected,
+        ));
     }
 }
 
@@ -520,11 +521,9 @@ fn profile_tab_span(shortcut: &str, label: &str, active: bool) -> Span<'static> 
     Span::styled(
         text,
         if active {
-            Style::default()
-                .fg(theme::current().accent)
-                .add_modifier(Modifier::BOLD)
+            theme::current().style(theme::HighlightGroup::ActiveTab)
         } else {
-            Style::default().fg(theme::current().dim)
+            theme::current().style(theme::HighlightGroup::Disabled)
         },
     )
 }
@@ -542,19 +541,16 @@ fn push_profile_settings_field_lines(
         let selected = active == Some(*field);
         let value = state.user_profile_settings_field_value(*field);
         let is_editing = editing == Some(*field);
-        let label_style = if is_editing {
-            Style::default()
-                .fg(theme::current().warning)
-                .add_modifier(Modifier::BOLD)
+        let label_style = editable_field_label_style(selected, is_editing);
+        let marker_style = if is_editing {
+            theme::current().style(theme::HighlightGroup::Editing)
         } else if selected {
-            Style::default()
-                .fg(theme::current().accent)
-                .add_modifier(Modifier::BOLD)
+            theme::current().style(theme::HighlightGroup::ActiveField)
         } else {
-            Style::default()
+            theme::current().style(theme::HighlightGroup::Disabled)
         };
         lines.push(Line::from(vec![
-            selectable_popup_marker(selected),
+            Span::styled(editable_field_marker(selected), marker_style),
             Span::styled(label.to_string(), label_style),
         ]));
         let display = if is_editing {
@@ -565,15 +561,18 @@ fn push_profile_settings_field_lines(
             &value
         };
         let value_style = if is_editing {
-            Style::default().fg(theme::current().warning)
+            theme::current().style(theme::HighlightGroup::Editing)
+        } else if selected {
+            theme::current().style(theme::HighlightGroup::ActiveField)
         } else if value.is_empty() {
-            Style::default().fg(theme::current().dim)
+            theme::current().style(theme::HighlightGroup::Placeholder)
         } else if *field == UserProfileSettingsField::CurrentStatus {
-            Style::default().fg(presence_color(
-                state.user_profile_settings_presence_status(),
-            ))
+            theme::current().apply(
+                theme::HighlightGroup::Muted,
+                presence_style(state.user_profile_settings_presence_status()),
+            )
         } else {
-            Style::default()
+            theme::current().style(theme::HighlightGroup::Description)
         };
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  {display}"), width),
@@ -588,33 +587,43 @@ fn push_profile_settings_field_lines(
 }
 
 pub(in crate::tui::ui) fn user_profile_display_name_style(status: PresenceStatus) -> Style {
-    Style::default()
-        .fg(presence_color(status))
-        .add_modifier(Modifier::BOLD)
+    let mut style = theme::current().style(theme::HighlightGroup::Strong);
+    if matches!(status, PresenceStatus::Offline | PresenceStatus::Unknown) {
+        style = theme::current().apply(theme::HighlightGroup::Muted, style);
+    }
+    style
 }
 
-fn friend_status_badge(status: FriendStatus) -> (String, Color) {
+fn friend_status_badge(status: FriendStatus) -> (String, Style) {
+    let theme = theme::current();
     match status {
-        FriendStatus::Friend => ("● Friend".to_owned(), theme::current().success),
+        FriendStatus::Friend => (
+            "● Friend".to_owned(),
+            theme.style(theme::HighlightGroup::RelationshipFriend),
+        ),
         FriendStatus::IncomingRequest => (
             "● Incoming friend request".to_owned(),
-            theme::current().warning,
+            theme.style(theme::HighlightGroup::RelationshipIncoming),
         ),
         FriendStatus::OutgoingRequest => (
             "● Outgoing friend request".to_owned(),
-            theme::current().warning,
+            theme.style(theme::HighlightGroup::RelationshipOutgoing),
         ),
-        FriendStatus::Blocked => ("● Blocked".to_owned(), theme::current().error),
-        FriendStatus::None => ("● Not friends".to_owned(), theme::current().dim),
+        FriendStatus::Blocked => (
+            "● Blocked".to_owned(),
+            theme.style(theme::HighlightGroup::RelationshipBlocked),
+        ),
+        FriendStatus::None => (
+            "● Not friends".to_owned(),
+            theme.style(theme::HighlightGroup::RelationshipNone),
+        ),
     }
 }
 
 fn push_section_header(lines: &mut Vec<Line<'static>>, label: &str) {
     lines.push(Line::from(Span::styled(
         label.to_owned(),
-        Style::default()
-            .fg(theme::current().accent)
-            .add_modifier(Modifier::BOLD),
+        theme::current().style(theme::HighlightGroup::Heading),
     )));
 }
 
@@ -637,24 +646,21 @@ fn push_activity_lines(
                     Span::raw("  "),
                     Span::styled(
                         truncate_display_width(&render.body, width.saturating_sub(2)),
-                        Style::default().fg(theme::current().dim),
+                        theme::current().style(theme::HighlightGroup::Activity),
                     ),
                 ])
             }
             ActivityLeading::Icon(icon) => Line::from(vec![
-                Span::styled(
-                    icon.to_string(),
-                    Style::default().fg(theme::current().success),
-                ),
+                Span::styled(icon.to_string(), Style::default()),
                 Span::raw(" "),
                 Span::styled(
                     truncate_display_width(&render.body, width.saturating_sub(2)),
-                    Style::default().fg(theme::current().dim),
+                    theme::current().style(theme::HighlightGroup::Activity),
                 ),
             ]),
             ActivityLeading::None => Line::from(Span::styled(
                 truncate_display_width(&render.body, width),
-                Style::default().fg(theme::current().dim),
+                theme::current().style(theme::HighlightGroup::Activity),
             )),
         };
         lines.push(line);
@@ -662,13 +668,13 @@ fn push_activity_lines(
     if let Some(secondary) = activity_secondary_line(activity) {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&secondary, width),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Activity),
         )));
     }
     if let Some(tertiary) = activity_tertiary_line(activity) {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&tertiary, width),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Activity),
         )));
     }
 }

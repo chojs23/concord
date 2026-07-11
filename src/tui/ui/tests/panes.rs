@@ -116,7 +116,7 @@ fn header_shows_voice_status_icons_without_voice_connection() {
 }
 
 #[test]
-fn header_keeps_current_user_white_while_speaking() {
+fn header_keeps_current_user_on_terminal_foreground_while_speaking() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "muri".to_owned(),
@@ -132,7 +132,7 @@ fn header_keeps_current_user_white_while_speaking() {
         .map(|col| buffer[(col, 0)].symbol().to_owned())
         .collect::<String>();
     let user_col = header.find("muri").expect("header should include user") as u16;
-    assert_eq!(buffer[(user_col, 0)].fg, Color::White);
+    assert_eq!(buffer[(user_col, 0)].fg, Color::Reset);
 
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo::test(Id::new(1), Some(Id::new(11)), Id::new(10)),
@@ -153,7 +153,7 @@ fn header_keeps_current_user_white_while_speaking() {
         .map(|col| buffer[(col, 0)].symbol().to_owned())
         .collect::<String>();
     let user_col = header.find("muri").expect("header should include user") as u16;
-    assert_eq!(buffer[(user_col, 0)].fg, Color::White);
+    assert_eq!(buffer[(user_col, 0)].fg, Color::Reset);
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn server_pane_shows_direct_message_unread_channel_count() {
 }
 
 #[test]
-fn muted_server_name_is_dimmed() {
+fn selected_muted_server_name_uses_selection_emphasis() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
@@ -410,7 +410,7 @@ fn muted_server_name_is_dimmed() {
             .collect::<String>();
         if let Some(name_col) = text.find("guild") {
             assert!(
-                buffer[(name_col as u16, row)]
+                !buffer[(name_col as u16, row)]
                     .modifier
                     .contains(Modifier::DIM)
             );
@@ -426,6 +426,9 @@ fn muted_server_name_is_dimmed() {
 fn dm_channel_pane_shows_unread_channel_count_badge() {
     let mut state = state_with_unread_direct_messages();
     state.confirm_selected_guild();
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(10);
+    assert!(state.select_visible_pane_row(FocusPane::Channels, 0));
     let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
@@ -443,6 +446,20 @@ fn dm_channel_pane_shows_unread_channel_count_badge() {
         .collect::<Vec<_>>();
 
     assert!(channel_rows.iter().any(|row| row.contains("(1) @ new")));
+    let row = channel_rows
+        .iter()
+        .position(|row| row.contains("(1) @ new"))
+        .expect("selected unread channel row");
+    let name_start = channel_rows[row].find("new").expect("channel name");
+    let name_col = channel_rows[row][..name_start].width();
+    assert_eq!(
+        buffer[(name_col as u16, row as u16)].fg,
+        theme::current().foreground(theme::HighlightGroup::SelectedRow)
+    );
+    assert_eq!(
+        buffer[(name_col as u16, row as u16)].bg,
+        theme::current().background(theme::HighlightGroup::SelectedRow)
+    );
 }
 
 #[test]
@@ -553,7 +570,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let lobby_icon_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
         .expect("populated voice row should use loud speaker icon");
-    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Reset);
     let lobby_name_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, lobby_row)].symbol() == "L")
         .expect("populated voice row should render channel name");
@@ -570,7 +587,11 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let empty_icon_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, empty_row)].symbol() == "🔈")
         .expect("empty voice row should use quiet speaker icon");
-    assert_eq!(buffer[(empty_icon_col, empty_row)].fg, theme::current().dim);
+    assert!(
+        buffer[(empty_icon_col, empty_row)]
+            .modifier
+            .contains(Modifier::DIM)
+    );
 
     assert!(
         channel_rows.iter().any(|row| row.contains("Alice")),
@@ -636,7 +657,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let lobby_icon_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
         .expect("populated voice row should keep loud speaker icon");
-    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Reset);
 }
 
 #[test]
@@ -728,7 +749,7 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
         .expect("draw should succeed");
     let buffer = terminal.backend().buffer();
     let alice_cell = find_cell(buffer, "Alice").expect("member should render");
-    assert_eq!(buffer[alice_cell].fg, Color::White);
+    assert_eq!(buffer[alice_cell].fg, Color::Reset);
 
     state.push_event(voice_speaking_update_event(VoiceSpeakingUpdateFixture {
         scope: VoiceScope::Guild(guild_id),
@@ -743,7 +764,7 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
         .expect("draw should succeed");
     let buffer = terminal.backend().buffer();
     let alice_cell = find_cell(buffer, "Alice").expect("member should render");
-    assert_eq!(buffer[alice_cell].fg, Color::White);
+    assert_eq!(buffer[alice_cell].fg, Color::Reset);
 
     state.focus_pane(FocusPane::Members);
     let backend = TestBackend::new(40, 6);
@@ -752,15 +773,24 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
         .draw(|frame| render_members(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
     let buffer = terminal.backend().buffer();
-    let alice_row = (0..buffer.area.height)
-        .map(|row| {
-            (0..buffer.area.width)
-                .map(|col| buffer[(col, row)].symbol().to_owned())
-                .collect::<String>()
-        })
-        .find(|row| row.contains("Alice"))
-        .expect("member should render");
+    let alice_cell = find_cell(buffer, "Alice").expect("member should render");
+    let alice_row = (0..buffer.area.width)
+        .map(|column| buffer[(column, alice_cell.1)].symbol().to_owned())
+        .collect::<String>();
     assert!(alice_row.contains("▸ ● Alice"), "{alice_row}");
+    let marker_column = (0..buffer.area.width)
+        .find(|column| buffer[(*column, alice_cell.1)].symbol() == "▸")
+        .expect("selected member should render a marker");
+    let marker = (marker_column, alice_cell.1);
+    assert_eq!(buffer[marker].symbol(), "▸");
+    assert_eq!(
+        buffer[marker].fg,
+        theme::current().foreground(theme::HighlightGroup::SelectionMarker)
+    );
+    assert_eq!(
+        buffer[(buffer.area.width.saturating_sub(2), alice_cell.1)].bg,
+        theme::current().background(theme::HighlightGroup::SelectedRow)
+    );
 }
 
 #[test]
@@ -956,12 +986,17 @@ fn forum_post_lines_render_title_author_and_preview() {
         ..ChannelThreadItem::test(Id::new(30))
     };
 
-    let lines = forum_post_viewport_lines(&[post], Some(0), 80, false);
+    let custom =
+        theme::Theme::default().with_border_type(theme::BorderSurface::Forum, BorderType::Thick);
+    let lines = theme::with_test_theme(custom, || {
+        forum_post_viewport_lines(&[post], Some(0), 80, false)
+    });
     let texts = line_texts_from_ratatui(&lines);
 
     assert_eq!(texts.len(), 7);
     assert_eq!(texts[0].trim_end(), "Active posts");
-    assert!(texts[1].starts_with("› ╭"));
+    assert!(texts[1].starts_with("› ┏"));
+    assert!(texts[2].starts_with("  ┃ "));
     assert!(texts.iter().all(|text| text.width() == 80));
     assert!(texts[2].contains("A useful Rust crate"));
     assert!(texts[2].contains("PINNED"));
@@ -972,32 +1007,47 @@ fn forum_post_lines_render_title_author_and_preview() {
     assert!(texts[5].contains("3 new messages"));
     assert!(texts[5].contains("[👍 2]"));
     assert!(texts[5].contains("locked"));
-    assert!(texts[6].starts_with("  ╰"));
-    assert_eq!(lines[2].spans[2].style.fg, Some(Color::White));
+    assert!(texts[6].starts_with("  ┗"));
+    assert_eq!(lines[2].spans[2].style.fg, None);
     assert_eq!(lines[2].spans[3].style.fg, Some(Color::Yellow));
     assert_eq!(
         lines[3].spans[2].style.fg,
         Some(Color::Rgb(0x33, 0x66, 0xCC))
     );
-    assert_eq!(lines[3].spans[4].style.fg, Some(Color::White));
-    assert_eq!(lines[5].spans[2].style.fg, Some(Color::White));
-    assert_eq!(lines[5].spans[4].style.fg, Some(Color::Yellow));
+    assert_eq!(lines[3].spans[4].style.fg, None);
+    assert_eq!(lines[5].spans[2].style.fg, None);
+    assert_eq!(
+        lines[5].spans[4].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::UnreadNotice)
+            .fg
+    );
     assert_eq!(lines[5].spans[6].style.fg, Some(Color::Yellow));
-    assert_eq!(lines[5].spans[8].style.fg, Some(Color::White));
+    assert_eq!(lines[5].spans[8].style.fg, None);
+    assert!(lines[5].spans[8].style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(
+        lines[1].spans[0].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ForumSelectedBorder)
+            .fg
+    );
     assert_eq!(
         lines[1].spans[1].style.fg,
-        Some(theme::current().selected_forum_post_border)
+        theme::current()
+            .style(theme::HighlightGroup::ForumSelectedBorder)
+            .fg
     );
     assert_eq!(
         lines[2].spans[1].style.fg,
-        Some(theme::current().selected_forum_post_border)
+        theme::current()
+            .style(theme::HighlightGroup::ForumSelectedBorder)
+            .fg
     );
-    assert!(
-        lines
-            .iter()
-            .flat_map(|line| line.spans.iter())
-            .all(|span| span.style.bg.is_none())
-    );
+    assert!(lines.iter().skip(1).all(|line| line.style.bg.is_none()));
+    assert!(lines.iter().flat_map(|line| line.spans.iter()).all(|span| {
+        span.style.bg.is_none()
+            || span.style.bg == Some(theme::current().background(theme::HighlightGroup::Normal))
+    }));
 }
 
 #[test]

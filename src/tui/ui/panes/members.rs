@@ -30,12 +30,12 @@ pub(in crate::tui::ui) fn render_members(
     if loading_members {
         lines.push(Line::from(Span::styled(
             "Loading...",
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Loading),
         )));
     } else if groups.is_empty() {
         lines.push(Line::from(Span::styled(
             "No members loaded yet.",
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     }
 
@@ -54,7 +54,7 @@ pub(in crate::tui::ui) fn render_members(
             let member = *member;
             if line_index >= scroll && line_index < visible_end {
                 let is_selected = focused && selected_line == Some(line_index);
-                let marker_style = Style::default().fg(presence_color(member.status()));
+                let marker_style = selected_presence_style(is_selected, member.status());
                 let name_style =
                     member_name_style(member, state.member_role_color(member), is_selected);
 
@@ -65,14 +65,33 @@ pub(in crate::tui::ui) fn render_members(
                     state.member_horizontal_scroll(),
                     max_name_width,
                 );
-                lines.push(Line::from(vec![
+                let mut spans = vec![
                     selection_marker(is_selected),
                     Span::styled(
                         format!("{} ", presence_marker(member.status())),
                         marker_style,
                     ),
-                    Span::styled(display, name_style),
-                ]));
+                ];
+                if member.is_bot()
+                    && let Some(name) = display.strip_suffix(" [bot]")
+                {
+                    spans.push(Span::styled(name.to_owned(), name_style));
+                    spans.push(Span::styled(
+                        " [bot]",
+                        selected_text_style(
+                            is_selected,
+                            theme::current().style(theme::HighlightGroup::Emphasis),
+                        ),
+                    ));
+                } else {
+                    spans.push(Span::styled(display, name_style));
+                }
+                let mut line = Line::from(spans);
+                let padding = content_width.saturating_sub(line.width());
+                if padding > 0 {
+                    line.spans.push(Span::raw(" ".repeat(padding)));
+                }
+                lines.push(selected_row_line(line, is_selected));
             }
             line_index += 1;
 
@@ -97,7 +116,10 @@ pub(in crate::tui::ui) fn render_members(
                                 emoji_line_urls.push((line_index, url));
                                 Line::from(vec![
                                     Span::raw("      "),
-                                    Span::styled(body, Style::default().fg(theme::current().dim)),
+                                    Span::styled(
+                                        body,
+                                        theme::current().style(theme::HighlightGroup::Activity),
+                                    ),
                                 ])
                             }
                             ActivityLeading::Icon(icon) => {
@@ -110,10 +132,14 @@ pub(in crate::tui::ui) fn render_members(
                                     Span::raw("    "),
                                     Span::styled(
                                         icon.to_string(),
-                                        Style::default().fg(theme::current().success),
+                                        theme::current()
+                                            .style(theme::HighlightGroup::PresenceOnline),
                                     ),
                                     Span::raw(" "),
-                                    Span::styled(body, Style::default().fg(theme::current().dim)),
+                                    Span::styled(
+                                        body,
+                                        theme::current().style(theme::HighlightGroup::Activity),
+                                    ),
                                 ])
                             }
                             ActivityLeading::None => {
@@ -124,7 +150,10 @@ pub(in crate::tui::ui) fn render_members(
                                 );
                                 Line::from(vec![
                                     Span::raw("    "),
-                                    Span::styled(body, Style::default().fg(theme::current().dim)),
+                                    Span::styled(
+                                        body,
+                                        theme::current().style(theme::HighlightGroup::Activity),
+                                    ),
                                 ])
                             }
                         };
@@ -172,14 +201,22 @@ fn member_group_header(group: &MemberGroup<'_>, content_width: usize) -> Line<'s
     let count_suffix = format!(" - {}", group.entries.len());
     let label_max = content_width.saturating_sub(count_suffix.width());
     let label = truncate_display_width(&sanitize_for_display_width(&group.label), label_max);
-    Line::from(vec![
-        Span::styled(
-            label,
-            Style::default()
-                .fg(discord_color(group.color, theme::current().dim))
-                .add_modifier(Modifier::BOLD),
+    let style = match group.color {
+        Some(color) if color != 0 => apply_discord_foreground(
+            theme::current().apply(
+                theme::HighlightGroup::MemberGroupHeading,
+                normal_text_style(),
+            ),
+            Some(color),
         ),
-        Span::styled(count_suffix, Style::default().fg(theme::current().dim)),
+        _ => theme::current().apply(
+            theme::HighlightGroup::Muted,
+            theme::current().style(theme::HighlightGroup::MemberGroupHeading),
+        ),
+    };
+    Line::from(vec![
+        Span::styled(label, style),
+        Span::styled(count_suffix, style),
     ])
 }
 
@@ -188,22 +225,17 @@ pub(in crate::tui::ui) fn member_name_style(
     role_color: Option<u32>,
     is_selected: bool,
 ) -> Style {
-    let mut style = Style::default().fg(discord_color(role_color, theme::current().text));
+    let mut style = apply_discord_foreground(normal_text_style(), role_color);
     if matches!(
         member.status(),
         PresenceStatus::Offline | PresenceStatus::Unknown
     ) {
-        style = style.add_modifier(Modifier::DIM);
+        style = theme::current().apply(theme::HighlightGroup::Muted, style);
     }
     if member.is_bot() {
-        style = style.add_modifier(Modifier::ITALIC);
+        style = theme::current().apply(theme::HighlightGroup::Emphasis, style);
     }
-    if is_selected {
-        style = style
-            .bg(theme::current().background)
-            .add_modifier(Modifier::BOLD);
-    }
-    style
+    selected_discord_text_style(is_selected, style, role_color)
 }
 
 pub(in crate::tui::ui) fn member_display_label(

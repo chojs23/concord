@@ -2,11 +2,11 @@ use crate::discord::ids::{Id, marker::MessageMarker};
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, Gauge, ListItem, Paragraph, Scrollbar,
-        ScrollbarOrientation, ScrollbarState, Wrap,
+        Block, Borders, Clear, Gauge, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
     },
 };
 use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage};
@@ -26,7 +26,8 @@ use super::{
         AttachmentViewerItem, ChannelSwitcherItem, ChannelThreadItem, DashboardState,
         DisplayOptionItem, EmojiReactionItem, FocusPane, MessageActionItem, MessageUrlItem,
         PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
-        ThreadActionItem, discord_color, presence_color, presence_marker,
+        ThreadActionItem, apply_discord_foreground, normal_text_style, presence_marker,
+        presence_style,
     },
     text::truncate_display_width,
 };
@@ -65,7 +66,7 @@ use self::panes::{
 use self::panes::{
     composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
     composer_text, emoji_picker_lines, member_display_label, member_name_style,
-    primary_activity_summary,
+    mention_picker_lines_for_test, primary_activity_summary, render_composer,
 };
 use self::popups::{
     channel_switcher_visible_items, emoji_reaction_picker_visible_items_for_area,
@@ -110,7 +111,7 @@ use self::{
         channel_switcher_cursor_position, channel_switcher_lines, debug_log_popup_lines,
         emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
         emoji_reaction_picker_lines_with_own_reactions, filtered_emoji_reaction_picker_lines,
-        keymap_help_popup_lines, message_action_menu_lines,
+        folder_settings_input_line_for_test, keymap_help_popup_lines, message_action_menu_lines,
         message_action_menu_lines_with_keymap_options, message_delete_confirmation_lines,
         message_pin_confirmation_lines, message_remove_embeds_confirmation_lines,
         message_url_picker_lines_for_width, options_popup_lines, poll_vote_picker_lines,
@@ -279,10 +280,12 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     profile_avatar: Option<AvatarImage>,
     message_viewport_plan: Option<&MessageViewportPlan<'_>>,
 ) {
-    let areas = dashboard_areas(frame.area(), state);
+    let frame_area = frame.area();
+    clear_area(frame, frame_area);
+    let areas = dashboard_areas(frame_area, state);
     // Modal popups and menus center on the whole terminal rather than the
     // message pane, so they are not clipped to the chat column.
-    let popup_area = frame.area();
+    let popup_area = frame_area;
     let mut inline_image_previews = Vec::new();
     let mut viewer_image_preview = None;
     for image_preview in image_previews {
@@ -348,6 +351,14 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     render_toast(frame, frame.area(), state);
 }
 
+pub(super) fn clear_area(frame: &mut Frame, area: Rect) {
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::default().style(theme::current().style(theme::HighlightGroup::Normal)),
+        area,
+    );
+}
+
 pub(in crate::tui) fn background_media_occlusion_areas(
     frame_area: Rect,
     state: &DashboardState,
@@ -398,32 +409,24 @@ pub(in crate::tui) fn avatar_gutter_width(show_avatars: bool) -> u16 {
     }
 }
 
-fn styled_list_item<'a>(item: ListItem<'a>, selected: bool) -> ListItem<'a> {
-    if selected {
-        item.style(highlight_style())
-    } else {
-        item
-    }
+fn selection_marker(selected: bool) -> Span<'static> {
+    selection_marker_with("▸ ", selected)
 }
 
-fn selection_marker(selected: bool) -> Span<'static> {
+fn selection_marker_with(symbol: &'static str, selected: bool) -> Span<'static> {
     if selected {
         Span::styled(
-            "▸ ",
-            Style::default()
-                .fg(theme::current().accent)
-                .add_modifier(Modifier::BOLD),
+            symbol,
+            theme::current().style(theme::HighlightGroup::SelectionMarker),
         )
     } else {
-        Span::raw("  ")
+        Span::raw(" ".repeat(symbol.width()))
     }
 }
 
 fn active_text_style(active: bool, style: Style) -> Style {
     if active {
-        style
-            .fg(theme::current().active)
-            .add_modifier(Modifier::BOLD)
+        theme::current().apply(theme::HighlightGroup::NavigationActive, style)
     } else {
         style
     }
@@ -464,8 +467,8 @@ fn render_vertical_scrollbar(
         .end_symbol(None)
         .track_symbol(Some("│"))
         .thumb_symbol("┃")
-        .thumb_style(Style::default().fg(theme.scrollbar_thumb))
-        .track_style(Style::default().fg(theme.dim));
+        .thumb_style(theme.style(theme::HighlightGroup::ScrollbarThumb))
+        .track_style(theme.style(theme::HighlightGroup::ScrollbarTrack));
 
     frame.render_stateful_widget(scrollbar, area, &mut state);
 }
@@ -484,10 +487,8 @@ fn channel_prefix(kind: &str) -> &'static str {
 
 fn dm_presence_dot_span(channel: &ChannelState) -> Option<Span<'static>> {
     let status = one_to_one_dm_recipient_status(channel)?;
-    Some(Span::styled(
-        format!("{} ", presence_marker(status)),
-        Style::default().fg(presence_color(status)),
-    ))
+    let style = presence_style(status);
+    Some(Span::styled(format!("{} ", presence_marker(status)), style))
 }
 
 /// Active channels skip decoration because the highlight bar handles them and
@@ -503,18 +504,41 @@ fn channel_unread_decoration(
     let theme = theme::current();
     match unread {
         ChannelUnreadState::Mentioned(count) => {
-            let style = base.fg(theme.mention).add_modifier(Modifier::BOLD);
-            (Some(Span::styled(format!("({count}) "), style)), style)
+            let item_style = theme.apply(
+                theme::HighlightGroup::Strong,
+                theme.apply(theme::HighlightGroup::NavigationMentioned, base),
+            );
+            let badge_style = theme.apply(
+                theme::HighlightGroup::Strong,
+                theme.apply(theme::HighlightGroup::MentionBadge, base),
+            );
+            (
+                Some(Span::styled(format!("({count}) "), badge_style)),
+                item_style,
+            )
         }
         ChannelUnreadState::Notified(count) => {
-            let style = base.fg(theme.unread_bright).add_modifier(Modifier::BOLD);
-            (Some(Span::styled(format!("({count}) "), style)), style)
+            let item_style = theme.apply(
+                theme::HighlightGroup::Strong,
+                theme.apply(theme::HighlightGroup::NavigationNotified, base),
+            );
+            let badge_style = theme.apply(
+                theme::HighlightGroup::Strong,
+                theme.apply(theme::HighlightGroup::NotificationBadge, base),
+            );
+            (
+                Some(Span::styled(format!("({count}) "), badge_style)),
+                item_style,
+            )
         }
         ChannelUnreadState::Unread => (
             None,
-            base.fg(theme.unread_bright).add_modifier(Modifier::BOLD),
+            theme.apply(
+                theme::HighlightGroup::Strong,
+                theme.apply(theme::HighlightGroup::NavigationUnread, base),
+            ),
         ),
-        ChannelUnreadState::Seen => (None, base.fg(theme.read_dim)),
+        ChannelUnreadState::Seen => (None, theme.apply(theme::HighlightGroup::Muted, base)),
     }
 }
 
@@ -527,11 +551,70 @@ fn one_to_one_dm_recipient_status(channel: &ChannelState) -> Option<PresenceStat
 }
 
 fn highlight_style() -> Style {
-    let theme = theme::current();
-    Style::default()
-        .bg(theme.background)
-        .fg(theme.text)
-        .add_modifier(Modifier::BOLD)
+    selected_text_style(true, Style::default())
+}
+
+fn selected_row_style(selected: bool) -> Style {
+    if !selected {
+        return Style::default();
+    }
+    match theme::current()
+        .style(theme::HighlightGroup::SelectedRow)
+        .bg
+    {
+        Some(background) => Style::default().bg(background),
+        None => Style::default(),
+    }
+}
+
+fn apply_selected_row_style(line: &mut Line<'_>, selected: bool) {
+    if !selected {
+        return;
+    }
+    let selection = theme::current().style(theme::HighlightGroup::SelectedRow);
+    line.style = line.style.patch(selection);
+    let mut span_selection = selection;
+    span_selection.fg = None;
+    for span in &mut line.spans {
+        span.style = span.style.patch(span_selection);
+    }
+}
+
+fn selected_row_line<'a>(mut line: Line<'a>, selected: bool) -> Line<'a> {
+    apply_selected_row_style(&mut line, selected);
+    line
+}
+
+fn styled_list_item<'a>(line: Line<'a>, selected: bool) -> ListItem<'a> {
+    ListItem::new(selected_row_line(line, selected)).style(selected_row_style(selected))
+}
+
+fn selected_text_style(selected: bool, style: Style) -> Style {
+    if selected {
+        theme::current().apply(theme::HighlightGroup::SelectedRow, style)
+    } else {
+        style
+    }
+}
+
+fn selected_text_span<'a>(selected: bool, mut span: Span<'a>) -> Span<'a> {
+    span.style = selected_text_style(selected, span.style);
+    span
+}
+
+fn selected_discord_text_style(selected: bool, style: Style, discord_color: Option<u32>) -> Style {
+    apply_discord_foreground(selected_text_style(selected, style), discord_color)
+}
+
+fn selected_presence_style(selected: bool, status: PresenceStatus) -> Style {
+    let presence = presence_style(status);
+    if !selected {
+        return presence;
+    }
+
+    let mut style = selected_text_style(true, presence);
+    style.fg = presence.fg;
+    style
 }
 
 fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
@@ -540,26 +623,44 @@ fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
 
 fn panel_block_owned(title: String, focused: bool) -> Block<'static> {
     let theme = theme::current();
-    let border = if focused { theme.accent } else { theme.border };
+    let border_style = theme.style(if focused {
+        theme::HighlightGroup::FocusedPaneBorder
+    } else {
+        theme::HighlightGroup::PaneBorder
+    });
 
     Block::default()
         .title(format!(" {title} "))
         .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(border))
-        .title_style(Style::default().fg(theme.panel_title).bold())
+        .border_type(theme.border_type(theme::BorderSurface::Pane))
+        .border_style(border_style)
+        .title_style(theme.style(theme::HighlightGroup::PaneTitle))
 }
 
 pub(super) fn panel_block_line(title: Line<'static>, focused: bool) -> Block<'static> {
     let theme = theme::current();
-    let border = if focused { theme.accent } else { theme.border };
+    let border_style = theme.style(if focused {
+        theme::HighlightGroup::FocusedPaneBorder
+    } else {
+        theme::HighlightGroup::PaneBorder
+    });
 
     Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(border))
-        .title_style(Style::default().fg(theme.panel_title).bold())
+        .border_type(theme.border_type(theme::BorderSurface::Pane))
+        .border_style(border_style)
+        .title_style(theme.style(theme::HighlightGroup::PaneTitle))
+}
+
+fn modal_block_owned(title: String) -> Block<'static> {
+    let theme = theme::current();
+    Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(theme.border_type(theme::BorderSurface::Modal))
+        .border_style(theme.style(theme::HighlightGroup::ModalBorder))
+        .title_style(theme.style(theme::HighlightGroup::ModalTitle))
 }
 
 #[cfg(test)]

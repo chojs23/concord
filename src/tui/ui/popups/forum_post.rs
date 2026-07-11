@@ -129,16 +129,17 @@ fn build_composer_layout(
     ));
     let body_content_row = lines.len();
     let body_lines = visible_body_lines(&view.body);
+    let body_active = view.active_field == ForumPostComposerField::Body;
     for line in &body_lines {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  {line}"), width),
-            editing_value_style(editing_body),
+            editable_field_value_style(body_active, editing_body),
         )));
     }
     if body_lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "  (empty)",
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     }
 
@@ -151,7 +152,7 @@ fn build_composer_layout(
     if view.attachments.is_empty() && !view.paste_pending {
         lines.push(Line::from(Span::styled(
             "  (empty)",
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     } else {
         for attachment in &view.attachments {
@@ -164,13 +165,13 @@ fn build_composer_layout(
                     ),
                     width,
                 ),
-                Style::default().fg(theme::current().accent),
+                theme::current().style(theme::HighlightGroup::Warning),
             )));
         }
         if view.paste_pending {
             lines.push(Line::from(Span::styled(
                 truncate_display_width("  upload: processing clipboard attachment...", width),
-                Style::default().fg(theme::current().dim),
+                theme::current().style(theme::HighlightGroup::Loading),
             )));
         }
     }
@@ -184,15 +185,9 @@ fn build_composer_layout(
     });
 
     let tags_row = lines.len();
-    let tag_label = if view.requires_tag {
-        "tags: required"
-    } else {
-        "tags:"
-    };
-    lines.push(section_line(
-        tag_label,
+    lines.push(editable_tags_section_line(
         view.active_field == ForumPostComposerField::Tags,
-        false,
+        view.requires_tag,
     ));
     push_tag_summary(&mut lines, &view.tags, width);
 
@@ -215,7 +210,7 @@ fn build_composer_layout(
             &mut lines,
             status,
             width,
-            Style::default().fg(theme::current().error),
+            theme::current().style(theme::HighlightGroup::Error),
         );
     }
 
@@ -317,7 +312,7 @@ fn tag_line(tag: &ForumPostComposerTagView, width: usize, thumbnail_ready: bool)
     let style = if tag.active {
         highlight_style()
     } else if !tag.selectable {
-        Style::default().fg(theme::current().dim)
+        theme::current().style(theme::HighlightGroup::Disabled)
     } else {
         Style::default()
     };
@@ -338,7 +333,7 @@ fn push_tag_summary(
     if tags.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no tags available",
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
         return;
     }
@@ -355,9 +350,9 @@ fn push_tag_summary(
             false,
         );
         let style = if tag.selected {
-            Style::default().fg(theme::current().accent)
+            theme::current().style(theme::HighlightGroup::Tag)
         } else {
-            Style::default().fg(theme::current().dim)
+            theme::current().style(theme::HighlightGroup::Disabled)
         };
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  {checkbox}{emoji} {}", tag.name), width),
@@ -368,7 +363,7 @@ fn push_tag_summary(
     if remaining > 0 {
         lines.push(Line::from(Span::styled(
             truncate_display_width(&format!("  ...(+{remaining} more)"), width),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Hint),
         )));
     }
 }
@@ -497,13 +492,13 @@ fn render_forum_post_attachment_preview(
     match preview {
         LocalUploadPreviewView::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(theme::current().dim))
+                .style(theme::current().style(theme::HighlightGroup::Loading))
                 .wrap(Wrap { trim: false }),
             area,
         ),
         LocalUploadPreviewView::Failed { filename, message } => frame.render_widget(
             Paragraph::new(format!("{filename}: {message}"))
-                .style(Style::default().fg(theme::current().warning))
+                .style(theme::current().style(theme::HighlightGroup::Warning))
                 .wrap(Wrap { trim: false }),
             area,
         ),
@@ -521,57 +516,31 @@ fn field_line(
     width: usize,
     placeholder: &str,
 ) -> Line<'static> {
-    let marker = field_marker(active);
+    let marker = editable_field_marker(active);
     let prefix = format!("{marker}{label}: ");
     let available = width.saturating_sub(prefix.width()).max(1);
     let content = if value.is_empty() {
         Span::styled(
             truncate_display_width(placeholder, available),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )
     } else {
         Span::styled(
             truncate_display_width(value, available),
-            editing_value_style(editing),
+            editable_field_value_style(active, editing),
         )
     };
     Line::from(vec![
-        Span::styled(prefix, field_label_style(active, editing)),
+        Span::styled(prefix, editable_field_label_style(active, editing)),
         content,
     ])
 }
 
 fn section_line(label: &str, active: bool, editing: bool) -> Line<'static> {
     Line::from(Span::styled(
-        format!("{}{}", field_marker(active), label),
-        field_label_style(active, editing),
+        format!("{}{}", editable_field_marker(active), label),
+        editable_field_label_style(active, editing),
     ))
-}
-
-fn field_marker(active: bool) -> &'static str {
-    if active { "› " } else { "  " }
-}
-
-fn field_label_style(active: bool, editing: bool) -> Style {
-    if editing {
-        Style::default()
-            .fg(theme::current().warning)
-            .add_modifier(Modifier::BOLD)
-    } else if active {
-        Style::default()
-            .fg(theme::current().accent)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    }
-}
-
-fn editing_value_style(editing: bool) -> Style {
-    if editing {
-        Style::default().fg(theme::current().warning)
-    } else {
-        Style::default()
-    }
 }
 
 fn visible_body_lines(body: &str) -> Vec<&str> {

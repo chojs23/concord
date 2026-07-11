@@ -20,16 +20,14 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
         let server_name = selected_channel_server_label(state);
         let mut lines = vec![Line::from(Span::styled(
             truncate_display_width(&server_name, width),
-            Style::default()
-                .fg(theme::current().accent)
-                .add_modifier(Modifier::BOLD),
+            theme::current().style(theme::HighlightGroup::Heading),
         ))];
         if header_area.height >= 2
             && let Some(boost) = &boost_label
         {
             lines.push(Line::from(Span::styled(
                 truncate_display_width(boost, width),
-                Style::default().fg(theme::current().dim),
+                theme::current().style(theme::HighlightGroup::Description),
             )));
         }
         frame.render_widget(Paragraph::new(lines), header_area);
@@ -96,15 +94,16 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
                         let label_width = max_width.saturating_sub(arrow.width());
-                        let mut label_style = Style::default()
-                            .fg(theme::current().accent)
-                            .add_modifier(Modifier::BOLD);
+                        let mut label_style =
+                            theme::current().style(theme::HighlightGroup::CategoryHeading);
                         if dashboard.channel_notification_muted(state.id) {
-                            label_style = label_style.add_modifier(Modifier::DIM);
+                            label_style =
+                                theme::current().apply(theme::HighlightGroup::Muted, label_style);
                         }
-                        ListItem::new(Line::from(vec![
+                        label_style = selected_text_style(is_selected, label_style);
+                        Line::from(vec![
                             selection_marker(is_selected),
-                            Span::styled(arrow, Style::default().fg(theme::current().accent)),
+                            Span::raw(arrow),
                             Span::styled(
                                 truncate_display_width_from(
                                     &state.name,
@@ -113,7 +112,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                                 ),
                                 label_style,
                             ),
-                        ]))
+                        ])
                     }
                     ChannelPaneEntry::Channel { state, branch } => {
                         let branch_prefix = branch.prefix();
@@ -130,13 +129,14 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         let (badge, mut name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
                         if state.is_voice() && dashboard.is_joined_voice_channel(state.id) {
-                            name_style = name_style
-                                .fg(theme::current().warning)
-                                .add_modifier(Modifier::BOLD);
+                            name_style = theme::current()
+                                .apply(theme::HighlightGroup::JoinedVoiceChannel, name_style);
                         }
                         if is_muted {
-                            name_style = name_style.add_modifier(Modifier::DIM);
+                            name_style =
+                                theme::current().apply(theme::HighlightGroup::Muted, name_style);
                         }
+                        name_style = selected_text_style(is_selected, name_style);
                         let badge = if state.guild_id.is_none()
                             && !is_active
                             && unread != ChannelUnreadState::Seen
@@ -155,6 +155,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         } else {
                             badge
                         };
+                        let badge = badge.map(|badge| selected_text_span(is_selected, badge));
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let request_tag = state.dm_request_tag();
@@ -169,7 +170,10 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                             .saturating_sub(tag_width);
                         let mut spans = vec![
                             selection_marker(is_selected),
-                            Span::styled(branch_prefix, Style::default().fg(theme::current().dim)),
+                            Span::styled(
+                                branch_prefix,
+                                theme::current().style(theme::HighlightGroup::Decoration),
+                            ),
                         ];
                         if let Some(badge) = badge {
                             spans.push(badge);
@@ -179,14 +183,13 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         } else if populated_voice_channel {
                             spans.push(Span::styled(
                                 "🔊",
-                                Style::default().fg(theme::current().accent),
+                                theme::current().style(theme::HighlightGroup::ChannelTypeMarker),
                             ));
-                            spans
-                                .push(Span::styled(" ", Style::default().fg(theme::current().dim)));
+                            spans.push(Span::raw(" "));
                         } else {
                             spans.push(Span::styled(
                                 channel_prefix,
-                                Style::default().fg(theme::current().dim),
+                                theme::current().style(theme::HighlightGroup::ChannelTypeMarker),
                             ));
                         }
                         spans.push(Span::styled(
@@ -200,12 +203,13 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         if let Some(tag) = request_tag {
                             spans.push(Span::styled(
                                 format!(" [{tag}]"),
-                                Style::default()
-                                    .fg(theme::current().dim)
-                                    .add_modifier(Modifier::ITALIC),
+                                theme::current().apply(
+                                    theme::HighlightGroup::Emphasis,
+                                    theme::current().style(theme::HighlightGroup::Description),
+                                ),
                             ));
                         }
-                        ListItem::new(Line::from(spans))
+                        Line::from(spans)
                     }
                     ChannelPaneEntry::Thread {
                         state,
@@ -225,8 +229,10 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                         let (badge, mut name_style) =
                             channel_unread_decoration(unread, base_style, is_active);
                         if is_muted {
-                            name_style = name_style.add_modifier(Modifier::DIM);
+                            name_style =
+                                theme::current().apply(theme::HighlightGroup::Muted, name_style);
                         }
+                        name_style = selected_text_style(is_selected, name_style);
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let label_width = max_width
@@ -236,15 +242,21 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                             .saturating_sub(badge_width);
                         let mut spans = vec![
                             selection_marker(is_selected),
-                            Span::styled(parent_prefix, Style::default().fg(theme::current().dim)),
-                            Span::styled(branch_prefix, Style::default().fg(theme::current().dim)),
+                            Span::styled(
+                                parent_prefix,
+                                theme::current().style(theme::HighlightGroup::Decoration),
+                            ),
+                            Span::styled(
+                                branch_prefix,
+                                theme::current().style(theme::HighlightGroup::Decoration),
+                            ),
                         ];
                         if let Some(badge) = badge {
                             spans.push(badge);
                         }
                         spans.push(Span::styled(
                             thread_prefix,
-                            Style::default().fg(theme::current().dim),
+                            theme::current().style(theme::HighlightGroup::ChannelTypeMarker),
                         ));
                         spans.push(Span::styled(
                             truncate_display_width_from(
@@ -254,7 +266,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                             ),
                             name_style,
                         ));
-                        ListItem::new(Line::from(spans))
+                        Line::from(spans)
                     }
                     ChannelPaneEntry::VoiceParticipant {
                         participant,
@@ -263,18 +275,24 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                     } => {
                         let branch_prefix = parent_branch.participant_prefix();
                         let label_style = if participant.speaking {
-                            Style::default().fg(theme::current().success).bold()
+                            theme::current().style(theme::HighlightGroup::VoiceSpeaking)
                         } else {
-                            Style::default().fg(theme::current().dim)
+                            theme::current().style(theme::HighlightGroup::Muted)
                         };
                         let prefix = "  • ";
                         let label_width = max_width
                             .saturating_sub(branch_prefix.width())
                             .saturating_sub(prefix.width());
-                        ListItem::new(Line::from(vec![
+                        Line::from(vec![
                             selection_marker(false),
-                            Span::styled(branch_prefix, Style::default().fg(theme::current().dim)),
-                            Span::styled(prefix, Style::default().fg(theme::current().dim)),
+                            Span::styled(
+                                branch_prefix,
+                                theme::current().style(theme::HighlightGroup::Decoration),
+                            ),
+                            Span::styled(
+                                prefix,
+                                theme::current().style(theme::HighlightGroup::Decoration),
+                            ),
                             Span::styled(
                                 voice_participant_label(
                                     participant,
@@ -283,7 +301,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                                 ),
                                 label_style,
                             ),
-                        ]))
+                        ])
                     }
                 },
                 is_selected,
@@ -291,7 +309,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
         })
         .collect();
 
-    let list = List::new(items).highlight_style(highlight_style());
+    let list = List::new(items);
     frame.render_widget(list, list_area);
 
     render_pane_filter_bar_with_cursor(

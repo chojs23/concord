@@ -4,12 +4,12 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::{MessageKind, MessageSnapshotInfo, MessageState};
 use crate::tui::message::time as message_time;
-use crate::tui::state::{DashboardState, discord_color};
+use crate::tui::state::{DashboardState, apply_discord_foreground, normal_text_style};
 use crate::tui::text::{truncate_display_width, truncate_text};
 use crate::tui::theme;
 use crate::tui::ui::forum::forum_post_card_lines;
@@ -45,16 +45,21 @@ pub(super) fn format_system_message_lines(
     width: usize,
 ) -> Option<Vec<MessageContentLine>> {
     match message.message_kind.code() {
-        8 => Some(vec![MessageContentLine::accent(truncate_text(
-            &format!("{} boosted the server", message.author),
-            width,
-        ))]),
+        8 => Some(vec![MessageContentLine::styled_text(
+            truncate_text(&format!("{} boosted the server", message.author), width),
+            theme::current().style(theme::HighlightGroup::Info),
+            Vec::new(),
+        )]),
         9..=11 => {
             let tier = message.message_kind.code() - 8;
-            Some(vec![MessageContentLine::accent(truncate_text(
-                &format!("{} boosted the server to Level {tier}", message.author),
-                width,
-            ))])
+            Some(vec![MessageContentLine::styled_text(
+                truncate_text(
+                    &format!("{} boosted the server to Level {tier}", message.author),
+                    width,
+                ),
+                theme::current().style(theme::HighlightGroup::Info),
+                Vec::new(),
+            )])
         }
         18 => Some(format_thread_created_lines(message, state, width)),
         21 => Some(format_thread_starter_lines(message, state, width)),
@@ -90,16 +95,15 @@ pub(super) fn format_chat_input_command_line(
     line.styled_range(
         user_start,
         interaction.user.len(),
-        Style::default()
-            .fg(discord_color(user_color, theme::current().text))
-            .add_modifier(Modifier::DIM),
+        apply_discord_foreground(
+            theme::current().apply(theme::HighlightGroup::MessageSecondary, normal_text_style()),
+            user_color,
+        ),
     );
     line.styled_range(
         command_start,
         command.len(),
-        Style::default()
-            .fg(theme::current().blurple)
-            .add_modifier(Modifier::DIM),
+        theme::current().style(theme::HighlightGroup::CommandName),
     );
     Some(line)
 }
@@ -156,14 +160,13 @@ fn format_thread_created_starter_line(
     thread_name: &str,
     width: usize,
 ) -> MessageContentLine {
-    let author_style = Style::default()
-        .fg(discord_color(
-            state.message_author_role_color(message),
-            theme::current().text,
-        ))
-        .bold();
-    let thread_style = Style::default().fg(theme::current().accent).bold();
-    let base_style = Style::default().fg(theme::current().text);
+    let role_color = state.message_author_role_color(message);
+    let author_style = apply_discord_foreground(
+        theme::current().apply(theme::HighlightGroup::MessageAuthor, normal_text_style()),
+        role_color,
+    );
+    let thread_style = theme::current().style(theme::HighlightGroup::SystemThreadName);
+    let base_style = Style::default();
 
     let author = message.author.as_str();
     let (starter, thread_start) = if thread_name == "thread" {
@@ -234,10 +237,11 @@ fn format_thread_starter_lines(
     state: &DashboardState,
     width: usize,
 ) -> Vec<MessageContentLine> {
-    let mut lines = vec![MessageContentLine::accent(truncate_text(
-        "Thread starter message",
-        width,
-    ))];
+    let mut lines = vec![MessageContentLine::styled_text(
+        truncate_text("Thread starter message", width),
+        theme::current().style(theme::HighlightGroup::Info),
+        Vec::new(),
+    )];
     if let Some(reply) = message.reply.as_ref() {
         lines.push(format_reply_line(reply, message.guild_id, state, width));
     } else {
@@ -284,10 +288,11 @@ pub(super) fn format_forwarded_snapshot(
         );
     }
     for attachment in attachment_summary_lines {
-        lines.push(MessageContentLine::accent(truncate_text(
-            &format!("│ {attachment}"),
-            width,
-        )));
+        lines.push(MessageContentLine::styled_text(
+            truncate_text(&format!("│ {attachment}"), width),
+            theme::current().style(theme::HighlightGroup::MessageAttachment),
+            Vec::new(),
+        ));
     }
     lines.extend(
         format_embed_lines(

@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
@@ -19,8 +19,8 @@ use super::super::{
     state::{
         ChannelPaneEntry, CommandPickerEntry, ComposerLock, DashboardState, EmojiPickerEntry,
         FocusPane, GuildPaneEntry, LocalUploadPreviewView, MAX_MENTION_PICKER_VISIBLE, MemberEntry,
-        MemberGroup, MentionPickerEntry, MentionPickerTarget, discord_color, folder_color,
-        presence_color, presence_marker,
+        MemberGroup, MentionPickerEntry, MentionPickerTarget, apply_discord_foreground,
+        folder_style, normal_text_style, presence_marker,
     },
     text::{
         format_byte_size, sanitize_for_display_width, truncate_display_width,
@@ -30,13 +30,14 @@ use super::super::{
 use super::{
     LOCAL_UPLOAD_PREVIEW_HEIGHT, LOCAL_UPLOAD_PREVIEW_WIDTH, active_text_style,
     activity::{ActivityLeading, ActivityRender, build_activity_render},
-    channel_prefix, channel_unread_decoration, dm_presence_dot_span, highlight_style,
+    channel_prefix, channel_unread_decoration, clear_area, dm_presence_dot_span,
     layout::{
         composer_inner_width, composer_rows_before_input, composer_upload_preview_line_count,
         panel_scrollbar_area, prefixed_composer_input, vertical_scrollbar_visible,
     },
-    panel_block, panel_block_line, render_vertical_scrollbar, selection_marker, styled_list_item,
-    theme,
+    panel_block, panel_block_line, render_vertical_scrollbar, selected_discord_text_style,
+    selected_presence_style, selected_row_line, selected_text_span, selected_text_style,
+    selection_marker, selection_marker_with, styled_list_item, theme,
     types::{EmojiImage, MessageAreas},
 };
 
@@ -55,7 +56,7 @@ pub(super) use composer::{
 #[cfg(test)]
 pub(super) use composer::{
     composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
-    emoji_picker_lines,
+    emoji_picker_lines, mention_picker_lines_for_test,
 };
 pub(super) use guilds::render_guilds;
 pub(super) use header::render_header;

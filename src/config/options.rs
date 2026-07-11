@@ -204,39 +204,290 @@ pub struct AppOptions {
     pub presence: PresenceOptions,
 }
 
-/// Raw `[theme]` values from `theme.toml`: hex strings (`"#rrggbb"`), one per
-/// [`crate::tui::Theme`] field. Missing or invalid entries fall back to that
-/// field's built-in default instead of failing the whole file.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
-#[serde(default)]
+/// Validated Highlight Group and UI definitions from `theme.toml`.
+///
+/// The storage is private so only registered names cross the configuration
+/// boundary into runtime theme resolution.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ThemeOptions {
-    pub accent: Option<String>,
-    pub dim: Option<String>,
-    pub border: Option<String>,
-    pub background: Option<String>,
-    pub text: Option<String>,
-    pub active: Option<String>,
-    pub panel_title: Option<String>,
-    pub mention: Option<String>,
-    pub read_dim: Option<String>,
-    pub unread_bright: Option<String>,
-    pub scrollbar_thumb: Option<String>,
-    pub selected_forum_post_border: Option<String>,
-    pub selected_message_border: Option<String>,
-    pub success: Option<String>,
-    pub warning: Option<String>,
-    pub error: Option<String>,
-    pub info: Option<String>,
-    pub blurple: Option<String>,
-    pub selection_bg: Option<String>,
-    pub unread_badge: Option<String>,
-    pub self_reaction: Option<String>,
-    pub mention_self_bg: Option<String>,
-    pub mention_other_bg: Option<String>,
-    pub mention_other_fg: Option<String>,
-    pub presence_idle: Option<String>,
-    pub mention_role_fallback: Option<String>,
-    pub dm_icon: Option<String>,
+    highlights: BTreeMap<HighlightGroup, HighlightDefinitionOptions>,
+    border_shapes: BorderShapeOptions,
+}
+
+impl ThemeOptions {
+    pub(crate) fn highlights(&self) -> &BTreeMap<HighlightGroup, HighlightDefinitionOptions> {
+        &self.highlights
+    }
+
+    pub(crate) const fn border_shapes(&self) -> &BorderShapeOptions {
+        &self.border_shapes
+    }
+
+    pub(crate) const fn border_shapes_mut(&mut self) -> &mut BorderShapeOptions {
+        &mut self.border_shapes
+    }
+
+    pub(crate) fn highlight_mut(
+        &mut self,
+        group: HighlightGroup,
+    ) -> &mut HighlightDefinitionOptions {
+        self.highlights.entry(group).or_default()
+    }
+}
+
+macro_rules! define_border_surfaces {
+    ($($variant:ident => $name:literal, rounded_by_default = $rounded:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        #[repr(usize)]
+        pub(crate) enum BorderSurface {
+            $($variant),+
+        }
+
+        impl BorderSurface {
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant),+];
+            pub(crate) const COUNT: usize = Self::ALL.len();
+
+            pub(crate) fn from_name(name: &str) -> Option<Self> {
+                match name {
+                    $($name => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+
+            pub(crate) const fn rounded_by_default(self) -> bool {
+                match self {
+                    $(Self::$variant => $rounded),+
+                }
+            }
+        }
+    };
+}
+
+define_border_surfaces! {
+    Pane => "pane", rounded_by_default = false,
+    Composer => "composer", rounded_by_default = true,
+    Modal => "modal", rounded_by_default = false,
+    Picker => "picker", rounded_by_default = false,
+    Login => "login", rounded_by_default = false,
+    Message => "message", rounded_by_default = true,
+    Forum => "forum", rounded_by_default = true,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct BorderShapeOptions {
+    pub(crate) default: Option<BorderShape>,
+    surfaces: [Option<BorderShape>; BorderSurface::COUNT],
+}
+
+impl BorderShapeOptions {
+    pub(crate) const fn get(&self, surface: BorderSurface) -> Option<BorderShape> {
+        self.surfaces[surface as usize]
+    }
+
+    pub(crate) fn set(&mut self, surface: BorderSurface, shape: BorderShape) {
+        self.surfaces[surface as usize] = Some(shape);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BorderShape {
+    Plain,
+    Rounded,
+    Double,
+    Thick,
+    LightDoubleDashed,
+    HeavyDoubleDashed,
+    LightTripleDashed,
+    HeavyTripleDashed,
+    LightQuadrupleDashed,
+    HeavyQuadrupleDashed,
+    QuadrantInside,
+    QuadrantOutside,
+}
+
+impl BorderShape {
+    pub(super) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "plain" => Some(Self::Plain),
+            "rounded" => Some(Self::Rounded),
+            "double" => Some(Self::Double),
+            "thick" => Some(Self::Thick),
+            "light_double_dashed" => Some(Self::LightDoubleDashed),
+            "heavy_double_dashed" => Some(Self::HeavyDoubleDashed),
+            "light_triple_dashed" => Some(Self::LightTripleDashed),
+            "heavy_triple_dashed" => Some(Self::HeavyTripleDashed),
+            "light_quadruple_dashed" => Some(Self::LightQuadrupleDashed),
+            "heavy_quadruple_dashed" => Some(Self::HeavyQuadrupleDashed),
+            "quadrant_inside" => Some(Self::QuadrantInside),
+            "quadrant_outside" => Some(Self::QuadrantOutside),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct HighlightDefinitionOptions {
+    pub(crate) link: Option<HighlightLinkOptions>,
+    pub(crate) foreground: Option<String>,
+    pub(crate) background: Option<String>,
+    pub(crate) bold: Option<bool>,
+    pub(crate) italic: Option<bool>,
+    pub(crate) dim: Option<bool>,
+    pub(crate) underline: Option<bool>,
+    pub(crate) strikethrough: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HighlightLinkOptions {
+    Inherit(HighlightGroup),
+    Detached,
+}
+
+macro_rules! define_highlight_groups {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+        #[repr(usize)]
+        pub(crate) enum HighlightGroup {
+            $($variant),+
+        }
+
+        impl HighlightGroup {
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant),+];
+            pub(crate) const COUNT: usize = Self::ALL.len();
+
+            pub(crate) const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name),+
+                }
+            }
+
+            pub(super) fn from_name(name: &str) -> Option<Self> {
+                match name {
+                    $($name => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+define_highlight_groups! {
+    Normal => "Normal",
+    Strong => "Strong",
+    Emphasis => "Emphasis",
+    Muted => "Muted",
+    Title => "Title",
+    Heading => "Heading",
+    Decoration => "Decoration",
+    Hint => "Hint",
+    Description => "Description",
+    Shortcut => "Shortcut",
+    Activity => "Activity",
+    ChannelTypeMarker => "ChannelTypeMarker",
+    FieldLabel => "FieldLabel",
+    SearchContext => "SearchContext",
+    Timestamp => "Timestamp",
+    Placeholder => "Placeholder",
+    Disabled => "Disabled",
+    Loading => "Loading",
+    Edited => "Edited",
+    Unavailable => "Unavailable",
+    LoginTitle => "LoginTitle",
+    LoginHint => "LoginHint",
+    PaneTitle => "PaneTitle",
+    ModalTitle => "ModalTitle",
+    ComposerTitle => "ComposerTitle",
+    HeaderTitle => "HeaderTitle",
+    HeaderLabel => "HeaderLabel",
+    MessageAuthor => "MessageAuthor",
+    MessageTimestamp => "MessageTimestamp",
+    CategoryHeading => "CategoryHeading",
+    MemberGroupHeading => "MemberGroupHeading",
+    MessageSecondary => "MessageSecondary",
+    ForumSecondary => "ForumSecondary",
+    EmbedAuthor => "EmbedAuthor",
+    EmbedTitle => "EmbedTitle",
+    EmbedFieldName => "EmbedFieldName",
+    EmbedFooter => "EmbedFooter",
+    CodeBlockBorder => "CodeBlockBorder",
+    ScrollbarTrack => "ScrollbarTrack",
+    UnavailableEmoji => "UnavailableEmoji",
+    HeaderError => "HeaderError",
+    HeaderWarning => "HeaderWarning",
+    Border => "Border",
+    FocusBorder => "FocusBorder",
+    Selection => "Selection",
+    SelectionBorder => "SelectionBorder",
+    PaneBorder => "PaneBorder",
+    FocusedPaneBorder => "FocusedPaneBorder",
+    LoginBorder => "LoginBorder",
+    ComposerBorder => "ComposerBorder",
+    ActiveComposerBorder => "ActiveComposerBorder",
+    ModalBorder => "ModalBorder",
+    ComposerPickerBorder => "ComposerPickerBorder",
+    SelectedRow => "SelectedRow",
+    SelectionMarker => "SelectionMarker",
+    ActiveField => "ActiveField",
+    ActiveTab => "ActiveTab",
+    MessageSelectedBorder => "MessageSelectedBorder",
+    ForumBorder => "ForumBorder",
+    ForumSelectedBorder => "ForumSelectedBorder",
+    ScrollbarThumb => "ScrollbarThumb",
+    UnreadNotice => "UnreadNotice",
+    Editing => "Editing",
+    Reaction => "Reaction",
+    SelfReaction => "SelfReaction",
+    PresenceOnline => "PresenceOnline",
+    PresenceIdle => "PresenceIdle",
+    PresenceDnd => "PresenceDnd",
+    PresenceOffline => "PresenceOffline",
+    VoiceDisabled => "VoiceDisabled",
+    VoiceConnection => "VoiceConnection",
+    FolderFallback => "FolderFallback",
+    NavigationActive => "NavigationActive",
+    NavigationMentioned => "NavigationMentioned",
+    NavigationNotified => "NavigationNotified",
+    NavigationUnread => "NavigationUnread",
+    MentionBadge => "MentionBadge",
+    NotificationBadge => "NotificationBadge",
+    JoinedVoiceChannel => "JoinedVoiceChannel",
+    VoiceSpeaking => "VoiceSpeaking",
+    ReplyPingEnabled => "ReplyPingEnabled",
+    Tag => "Tag",
+    RelationshipFriend => "RelationshipFriend",
+    RelationshipIncoming => "RelationshipIncoming",
+    RelationshipOutgoing => "RelationshipOutgoing",
+    RelationshipBlocked => "RelationshipBlocked",
+    RelationshipNone => "RelationshipNone",
+    GaugeFill => "GaugeFill",
+    MessageBody => "MessageBody",
+    MarkdownHeading1 => "MarkdownHeading1",
+    MarkdownHeading2 => "MarkdownHeading2",
+    MarkdownHeading3 => "MarkdownHeading3",
+    MarkdownQuote => "MarkdownQuote",
+    MarkdownMarker => "MarkdownMarker",
+    MessageAttachment => "MessageAttachment",
+    ImageOverflow => "ImageOverflow",
+    InlineCode => "InlineCode",
+    MessageLink => "MessageLink",
+    MentionSelf => "MentionSelf",
+    MentionOther => "MentionOther",
+    MentionRole => "MentionRole",
+    MentionPickerRole => "MentionPickerRole",
+    EmbedGutter => "EmbedGutter",
+    EmbedLink => "EmbedLink",
+    CommandName => "CommandName",
+    SystemThreadName => "SystemThreadName",
+    PollAnswerSelected => "PollAnswerSelected",
+    PollWinner => "PollWinner",
+    UnreadBanner => "UnreadBanner",
+    UnreadDivider => "UnreadDivider",
+    ForumPinnedBadge => "ForumPinnedBadge",
+    BotBadge => "BotBadge",
+    Error => "Error",
+    Warning => "Warning",
+    Success => "Success",
+    Info => "Info",
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]

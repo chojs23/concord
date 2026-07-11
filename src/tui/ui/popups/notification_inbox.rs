@@ -53,7 +53,7 @@ fn notification_inbox_lines(
         ),
         Line::from(Span::styled(
             "─".repeat(width.max(1)),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Decoration),
         )),
     ];
 
@@ -85,7 +85,7 @@ fn notification_inbox_lines(
 fn notification_inbox_notice_line(text: &str) -> Line<'static> {
     Line::from(Span::styled(
         text.to_owned(),
-        Style::default().fg(theme::current().dim),
+        theme::current().style(theme::HighlightGroup::Hint),
     ))
 }
 
@@ -97,11 +97,9 @@ fn notification_inbox_tab_line(
     let tab_span = |label: &str, count: usize, active: bool| {
         let text = format!(" {label} ({count}) ");
         let style = if active {
-            Style::default()
-                .fg(theme::current().accent)
-                .add_modifier(Modifier::BOLD)
+            theme::current().style(theme::HighlightGroup::ActiveTab)
         } else {
-            Style::default().fg(theme::current().dim)
+            theme::current().style(theme::HighlightGroup::Disabled)
         };
         Span::styled(text, style)
     };
@@ -111,7 +109,10 @@ fn notification_inbox_tab_line(
             unread_count,
             tab == NotificationInboxTab::Unreads,
         ),
-        Span::styled("│", Style::default().fg(theme::current().dim)),
+        Span::styled(
+            "│",
+            theme::current().style(theme::HighlightGroup::Decoration),
+        ),
         tab_span(
             "Mentions",
             mention_count,
@@ -160,27 +161,31 @@ fn notification_inbox_card_lines(
     selected: bool,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let marker = if selected { "› " } else { "  " };
-    let card_width = width.saturating_sub(marker.width()).max(4);
+    let marker = selectable_popup_marker(selected);
+    let card_width = width.saturating_sub(marker.content.width()).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
     let border = notification_inbox_border_style(selected);
 
     let mut lines = vec![
         Line::from(vec![
-            Span::styled(marker, border),
+            marker,
             Span::styled(
                 format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
                 border,
             ),
         ]),
-        notification_inbox_inner_line(notification_inbox_header_spans(item), inner_width, selected),
+        notification_inbox_inner_line(
+            notification_inbox_header_spans(item, selected),
+            inner_width,
+            selected,
+        ),
     ];
 
     if item.messages.is_empty() {
         lines.push(notification_inbox_inner_line(
             vec![Span::styled(
                 notification_inbox_placeholder_text(item),
-                Style::default().fg(theme::current().dim),
+                theme::current().style(theme::HighlightGroup::Placeholder),
             )],
             inner_width,
             selected,
@@ -202,6 +207,9 @@ fn notification_inbox_card_lines(
             border,
         ),
     ]));
+    for line in &mut lines {
+        apply_selected_row_style(line, selected);
+    }
     lines
 }
 
@@ -218,7 +226,10 @@ fn notification_inbox_inner_line(
     Line::from(spans)
 }
 
-fn notification_inbox_header_spans(item: &NotificationInboxItem) -> Vec<Span<'static>> {
+fn notification_inbox_header_spans(
+    item: &NotificationInboxItem,
+    selected: bool,
+) -> Vec<Span<'static>> {
     let (badge, title_style) = channel_unread_decoration(item.unread, Style::default(), false);
     let mut spans = Vec::new();
     if let Some(badge) = badge {
@@ -226,12 +237,15 @@ fn notification_inbox_header_spans(item: &NotificationInboxItem) -> Vec<Span<'st
     }
     spans.push(Span::styled(
         item.title.clone(),
-        title_style.add_modifier(Modifier::BOLD),
+        selected_text_style(
+            selected,
+            theme::current().apply(theme::HighlightGroup::Strong, title_style),
+        ),
     ));
     if let Some(context) = &item.context {
         spans.push(Span::styled(
             format!("  {context}"),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::SearchContext),
         ));
     }
     spans
@@ -241,13 +255,14 @@ fn notification_inbox_message_spans(message: &NotificationInboxMessage) -> Vec<S
     vec![
         Span::styled(
             format!("{}: ", message.author),
-            Style::default()
-                .fg(theme::current().dim)
-                .add_modifier(Modifier::BOLD),
+            theme::current().apply(
+                theme::HighlightGroup::Strong,
+                theme::current().style(theme::HighlightGroup::Description),
+            ),
         ),
         Span::styled(
             message.content.clone(),
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Description),
         ),
     ]
 }
@@ -270,11 +285,12 @@ fn notification_inbox_placeholder_text(item: &NotificationInboxItem) -> String {
 
 fn notification_inbox_border_style(selected: bool) -> Style {
     if selected {
-        Style::default()
-            .fg(theme::current().accent)
-            .add_modifier(Modifier::BOLD)
+        theme::current().apply(
+            theme::HighlightGroup::Strong,
+            theme::current().style(theme::HighlightGroup::Border),
+        )
     } else {
-        Style::default().fg(theme::current().dim)
+        theme::current().style(theme::HighlightGroup::Border)
     }
 }
 
@@ -291,6 +307,6 @@ fn notification_inbox_help_line() -> Line<'static> {
             ("←/→", "switch tab"),
             ("Esc", "close"),
         ]),
-        Style::default().fg(theme::current().dim),
+        theme::current().style(theme::HighlightGroup::Hint),
     ))
 }

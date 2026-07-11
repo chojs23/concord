@@ -61,7 +61,7 @@ fn channel_switcher_lines_show_unread_badges_like_channel_pane() {
 }
 
 #[test]
-fn selected_channel_switcher_unread_row_keeps_highlight() {
+fn selected_channel_switcher_unread_row_uses_selection_color() {
     let items = vec![ChannelSwitcherItem {
         guild_id: Some(Id::new(1)),
         guild_name: Some("guild".to_owned()),
@@ -80,8 +80,18 @@ fn selected_channel_switcher_unread_row_keeps_highlight() {
     let label = item_line.spans.last().expect("channel label span");
 
     assert_eq!(label.content, "#alerts");
-    assert!(label.style.bg.is_some());
-    assert_eq!(label.style.fg, Some(theme::current().mention));
+    assert_eq!(
+        label.style.bg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .bg
+    );
+    assert_eq!(
+        label.style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .fg
+    );
 }
 
 #[test]

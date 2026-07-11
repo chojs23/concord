@@ -38,11 +38,14 @@ pub(in crate::tui::ui) fn message_url_picker_lines(
                 index,
             ));
             let style = selectable_popup_label_style(selected, true);
-            Line::from(vec![
-                selectable_popup_marker(selected),
-                selectable_popup_shortcut_span(shortcut),
-                Span::styled(item.label.to_owned(), style),
-            ])
+            selected_row_line(
+                Line::from(vec![
+                    selectable_popup_marker(selected),
+                    selectable_popup_shortcut_span(shortcut),
+                    Span::styled(item.label.to_owned(), style),
+                ]),
+                selected,
+            )
         })
         .collect()
 }

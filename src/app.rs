@@ -36,6 +36,19 @@ impl App {
     }
 
     pub async fn run(self) -> Result<()> {
+        let theme_warnings = match config::load_theme_options_with_warnings() {
+            Ok((theme_options, mut warnings)) => {
+                warnings.extend(tui::initialize_theme(&theme_options));
+                warnings
+            }
+            Err(error) => {
+                logging::error("config", format!("failed to load theme config: {error}"));
+                let mut warnings = vec![format!("theme.toml could not be loaded: {error}")];
+                warnings.extend(tui::initialize_theme(&config::ThemeOptions::default()));
+                warnings
+            }
+        };
+
         loop {
             let (fingerprint, http) = crate::discord::load_client_fingerprint_and_http().await;
             let auth_session = DiscordAuthSession::with_http(fingerprint, http);
@@ -85,7 +98,14 @@ impl App {
                         .await;
                 }
 
-                tui::run(effects, snapshots, commands_tx, client.clone()).await
+                tui::run(
+                    effects,
+                    snapshots,
+                    commands_tx,
+                    client.clone(),
+                    theme_warnings.clone(),
+                )
+                .await
             }
             .await;
 

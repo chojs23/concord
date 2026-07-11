@@ -45,6 +45,13 @@ pub fn theme_options_warnings(theme_options: &ThemeOptions) -> Vec<String> {
     warnings
 }
 
+pub fn initialize_theme(theme_options: &ThemeOptions) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let resolved = theme::Theme::from_options(theme_options, &mut warnings);
+    theme::init(resolved);
+    warnings
+}
+
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
     let (fingerprint, http) = load_client_fingerprint_and_http().await;
     let auth_session = DiscordAuthSession::with_http(fingerprint, http);
@@ -63,6 +70,7 @@ pub async fn run(
     mut snapshots: watch::Receiver<SnapshotRevision>,
     commands: mpsc::Sender<AppCommand>,
     client: DiscordClient,
+    config_warnings: Vec<String>,
 ) -> Result<DashboardExit> {
     let mut terminal = ratatui::init();
     let _restore_guard = match terminal::TerminalRestoreGuard::new() {
@@ -79,6 +87,7 @@ pub async fn run(
         &mut snapshots,
         commands,
         client,
+        config_warnings,
     )
     .await
 }

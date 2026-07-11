@@ -12,26 +12,26 @@ pub(in crate::tui::ui) fn render_composer(
     let prompt = composer_lines_with_loaded_custom_emoji_urls(state, inner_width, &ready_urls);
     let composer_active = state.is_composing() && state.composer_lock().is_none();
     let theme = theme::current();
-    let border_color = if composer_active {
-        theme.accent
+    let border_style = if composer_active {
+        theme.style(theme::HighlightGroup::ActiveComposerBorder)
     } else {
-        theme.dim
+        theme.style(theme::HighlightGroup::ComposerBorder)
     };
 
     frame.render_widget(
         Paragraph::new(prompt)
             .style(if composer_active {
-                Style::default().fg(theme.text)
+                Style::default()
             } else {
-                Style::default().fg(theme.dim)
+                theme.style(theme::HighlightGroup::Disabled)
             })
             .block(
                 Block::default()
                     .title(state.composer_title())
                     .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(border_color))
-                    .title_style(Style::default().fg(theme.text).bold()),
+                    .border_type(theme.border_type(theme::BorderSurface::Composer))
+                    .border_style(border_style)
+                    .title_style(theme.style(theme::HighlightGroup::ComposerTitle)),
             ),
         area,
     );
@@ -124,15 +124,15 @@ pub(in crate::tui::ui) fn render_composer_mention_picker(
     ) else {
         return;
     };
-    frame.render_widget(Clear, setup.area);
+    clear_area(frame, setup.area);
     let visible_candidates = &candidates[setup.visible_range.clone()];
     let lines = mention_picker_lines(visible_candidates, setup.selected_offset, setup.inner_width);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(theme::current().dim))
+        .border_type(theme::current().border_type(theme::BorderSurface::Picker))
+        .border_style(theme::current().style(theme::HighlightGroup::ComposerPickerBorder))
         .title(" mention ")
-        .title_style(Style::default().fg(theme::current().text).bold());
+        .title_style(theme::current().style(theme::HighlightGroup::ComposerTitle));
     frame.render_widget(Paragraph::new(lines).block(block), setup.area);
     render_composer_picker_scrollbar(frame, &setup, candidates.len());
 }
@@ -162,9 +162,15 @@ pub(in crate::tui::ui) fn render_composer_command_picker(
         setup.selected_offset,
         setup.inner_width,
     );
-    frame.render_widget(Clear, setup.area);
+    clear_area(frame, setup.area);
     frame.render_widget(
-        Paragraph::new(lines).block(Block::default().title(" Commands ").borders(Borders::ALL)),
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" Commands ")
+                .borders(Borders::ALL)
+                .border_type(theme::current().border_type(theme::BorderSurface::Picker))
+                .border_style(theme::current().style(theme::HighlightGroup::ComposerPickerBorder)),
+        ),
         setup.area,
     );
     render_composer_picker_scrollbar(frame, &setup, candidates.len());
@@ -191,7 +197,7 @@ pub(in crate::tui::ui) fn render_composer_emoji_picker(
     ) else {
         return;
     };
-    frame.render_widget(Clear, setup.area);
+    clear_area(frame, setup.area);
     let visible_candidates = &candidates[setup.visible_range.clone()];
     let ready_urls = emoji_images
         .iter()
@@ -206,10 +212,10 @@ pub(in crate::tui::ui) fn render_composer_emoji_picker(
     );
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(theme::current().dim))
+        .border_type(theme::current().border_type(theme::BorderSurface::Picker))
+        .border_style(theme::current().style(theme::HighlightGroup::ComposerPickerBorder))
         .title(" emoji ")
-        .title_style(Style::default().fg(theme::current().text).bold());
+        .title_style(theme::current().style(theme::HighlightGroup::ComposerTitle));
     frame.render_widget(Paragraph::new(lines).block(block), setup.area);
     if state.show_custom_emoji() {
         render_composer_emoji_picker_images(frame, setup.area, visible_candidates, emoji_images);
@@ -328,7 +334,6 @@ fn mention_picker_lines(
         .enumerate()
         .map(|(index, entry)| {
             let cursor = if index == selected { "› " } else { "  " };
-            let bot_marker = if entry.is_bot { " [BOT]" } else { "" };
             // Show the raw username next to the alias when they differ so the
             // user can see which row matched their query when they typed
             // against the username instead of the alias.
@@ -338,36 +343,71 @@ fn mention_picker_lines(
                 .filter(|name| !name.eq_ignore_ascii_case(&entry.display_name))
                 .map(|name| format!(" @{name}"))
                 .unwrap_or_default();
-            let label = format!("{}{bot_marker}{username_hint}", entry.display_label());
-            let label = truncate_display_width(&label, max_label_width);
-            let mut row_style = mention_picker_entry_style(entry);
-            if index == selected {
-                row_style = row_style
-                    .bg(theme::current().selection_bg)
-                    .add_modifier(Modifier::BOLD);
-            }
+            let bot_marker = if entry.is_bot { " [BOT]" } else { "" };
+            let bot_width = bot_marker.width().min(max_label_width);
+            let label = truncate_display_width(
+                entry.display_label(),
+                max_label_width.saturating_sub(bot_width),
+            );
+            let username_hint = truncate_display_width(
+                &username_hint,
+                max_label_width
+                    .saturating_sub(bot_width)
+                    .saturating_sub(label.width()),
+            );
+            let selected = index == selected;
+            let role_color = match entry.target {
+                MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => entry.role_color,
+                MentionPickerTarget::User(_) | MentionPickerTarget::Channel(_) => None,
+            };
+            let row_style = selected_discord_text_style(
+                selected,
+                mention_picker_entry_style(entry),
+                role_color,
+            );
             let marker = match entry.target {
                 MentionPickerTarget::User(_) => presence_marker(entry.status).to_string(),
                 MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => "@".to_owned(),
                 MentionPickerTarget::Channel(_) => "#".to_owned(),
             };
-            Line::from(vec![
-                Span::styled(cursor, Style::default().fg(theme::current().accent)),
-                Span::styled(marker, row_style),
+            let marker_style = if matches!(entry.target, MentionPickerTarget::User(_)) {
+                selected_presence_style(selected, entry.status)
+            } else {
+                row_style
+            };
+            let mut spans = vec![
+                Span::styled(cursor, row_style),
+                Span::styled(marker, marker_style),
                 Span::styled(" ", row_style),
                 Span::styled(label, row_style),
-            ])
+            ];
+            if entry.is_bot && bot_width == bot_marker.width() {
+                spans.push(Span::raw(bot_marker));
+            }
+            spans.push(Span::styled(username_hint, row_style));
+            selected_row_line(Line::from(spans), selected)
         })
         .collect()
 }
 
+#[cfg(test)]
+pub(in crate::tui::ui) fn mention_picker_lines_for_test(
+    candidates: &[MentionPickerEntry],
+    selected: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
+    mention_picker_lines(candidates, selected, width)
+}
+
 fn mention_picker_entry_style(entry: &MentionPickerEntry) -> Style {
     match entry.target {
-        MentionPickerTarget::User(_) => Style::default().fg(presence_color(entry.status)),
-        MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => Style::default().fg(
-            discord_color(entry.role_color, theme::current().mention_role_fallback),
-        ),
-        MentionPickerTarget::Channel(_) => Style::default().fg(theme::current().accent),
+        MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => {
+            apply_discord_foreground(
+                theme::current().style(theme::HighlightGroup::MentionPickerRole),
+                entry.role_color,
+            )
+        }
+        MentionPickerTarget::User(_) | MentionPickerTarget::Channel(_) => Style::default(),
     }
 }
 
@@ -380,27 +420,32 @@ fn command_picker_lines(
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let marker = selection_marker(index == selected);
+            let selected = index == selected;
+            let marker = selection_marker(selected);
             let marker_width = marker.content.width();
             let label_width = entry.label.width();
             let detail_width = inner_width
                 .saturating_sub(marker_width)
                 .saturating_sub(label_width)
                 .saturating_sub(1);
-            Line::from(vec![
-                marker,
-                Span::styled(
-                    entry.label.clone(),
-                    Style::default()
-                        .fg(theme::current().accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    truncate_display_width(&entry.detail, detail_width),
-                    Style::default().fg(theme::current().dim),
-                ),
-            ])
+            selected_row_line(
+                Line::from(vec![
+                    marker,
+                    Span::styled(
+                        entry.label.clone(),
+                        selected_text_style(
+                            selected,
+                            theme::current().style(theme::HighlightGroup::Strong),
+                        ),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        truncate_display_width(&entry.detail, detail_width),
+                        theme::current().style(theme::HighlightGroup::Description),
+                    ),
+                ]),
+                selected,
+            )
         })
         .collect()
 }
@@ -416,7 +461,7 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let cursor = if index == selected { "› " } else { "  " };
+            let cursor = selection_marker_with("› ", index == selected);
             let custom_image_ready = show_custom_emoji
                 && entry
                     .custom_image_url
@@ -435,21 +480,14 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
             let label = format!(":{}: {}", entry.shortcode, entry.name);
             let label = truncate_display_width(&label, max_label_width);
             let mut row_style = if entry.available {
-                Style::default().fg(theme::current().text)
-            } else {
                 Style::default()
-                    .fg(theme::current().dim)
-                    .add_modifier(Modifier::CROSSED_OUT)
+            } else {
+                theme::current().style(theme::HighlightGroup::UnavailableEmoji)
             };
             if index == selected {
-                row_style = row_style
-                    .bg(theme::current().selection_bg)
-                    .add_modifier(Modifier::BOLD);
+                row_style = theme::current().apply(theme::HighlightGroup::SelectedRow, row_style);
             }
-            let mut spans = vec![Span::styled(
-                cursor,
-                Style::default().fg(theme::current().accent),
-            )];
+            let mut spans = vec![cursor];
             spans.extend(emoji_picker_entry_prefix(
                 entry,
                 custom_image_ready,
@@ -459,14 +497,14 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
             if let Some(description) = description {
                 spans.push(Span::styled(
                     " - ",
-                    Style::default().fg(theme::current().dim),
+                    theme::current().style(theme::HighlightGroup::Description),
                 ));
                 spans.push(Span::styled(
                     description,
-                    Style::default().fg(theme::current().dim),
+                    theme::current().style(theme::HighlightGroup::Description),
                 ));
             }
-            Line::from(spans)
+            selected_row_line(Line::from(spans), index == selected)
         })
         .collect()
 }
@@ -548,7 +586,7 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
             lines.push(Line::from(vec![
                 Span::styled(
                     reply_target_hint(message, state, width),
-                    Style::default().fg(theme::current().dim),
+                    theme::current().style(theme::HighlightGroup::MessageSecondary),
                 ),
                 Span::raw(REPLY_PING_SEPARATOR),
                 Span::styled(ping_label, ping_style),
@@ -574,7 +612,7 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
             .map(|subline| {
                 Line::from(Span::styled(
                     subline,
-                    Style::default().fg(theme::current().error),
+                    theme::current().style(theme::HighlightGroup::Error),
                 ))
             })
             .collect();
@@ -806,13 +844,13 @@ fn render_composer_attachment_preview(
     match preview {
         LocalUploadPreviewView::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(theme::current().dim))
+                .style(theme::current().style(theme::HighlightGroup::Loading))
                 .wrap(Wrap { trim: false }),
             area,
         ),
         LocalUploadPreviewView::Failed { filename, message } => frame.render_widget(
             Paragraph::new(format!("{filename}: {message}"))
-                .style(Style::default().fg(theme::current().warning))
+                .style(theme::current().style(theme::HighlightGroup::Warning))
                 .wrap(Wrap { trim: false }),
             area,
         ),
@@ -828,7 +866,7 @@ fn pending_upload_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>
         .map(|label| {
             Line::from(Span::styled(
                 label,
-                Style::default().fg(theme::current().accent),
+                theme::current().style(theme::HighlightGroup::Warning),
             ))
         })
         .collect()
@@ -865,7 +903,7 @@ fn append_composer_upload_preview_lines(
     append_composer_upload_preview_rows(lines, state, width, |text| {
         Line::from(Span::styled(
             text,
-            Style::default().fg(theme::current().dim),
+            theme::current().style(theme::HighlightGroup::Description),
         ))
     });
 }
@@ -1007,9 +1045,15 @@ fn reply_target_hint(message: &MessageState, state: &DashboardState, width: u16)
 
 fn reply_ping_indicator(state: &DashboardState) -> (&'static str, Style) {
     if state.ping_on_reply() {
-        ("@ on", Style::default().fg(theme::current().accent))
+        (
+            "@ on",
+            theme::current().style(theme::HighlightGroup::ReplyPingEnabled),
+        )
     } else {
-        ("@ off", Style::default().fg(theme::current().dim))
+        (
+            "@ off",
+            theme::current().style(theme::HighlightGroup::Disabled),
+        )
     }
 }
 

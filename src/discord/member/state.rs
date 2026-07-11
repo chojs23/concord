@@ -138,6 +138,14 @@ impl DiscordState {
             .unwrap_or_default()
     }
 
+    pub fn role_for_guild(
+        &self,
+        guild_id: Id<GuildMarker>,
+        role_id: Id<RoleMarker>,
+    ) -> Option<&RoleState> {
+        self.guild_details.roles.get(&guild_id)?.get(&role_id)
+    }
+
     pub fn member_role_color(
         &self,
         guild_id: Id<GuildMarker>,
