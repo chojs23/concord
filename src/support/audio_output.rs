@@ -17,7 +17,7 @@ pub(crate) fn build_f32_output_stream<S, E>(
 ) -> Result<cpal::Stream, String>
 where
     S: F32OutputSource + Send + 'static,
-    E: FnMut(cpal::StreamError) + Send + 'static,
+    E: FnMut(cpal::Error) + Send + 'static,
 {
     match sample_format {
         cpal::SampleFormat::F32 => build_f32_output_stream_as::<f32, _, _>(
@@ -69,12 +69,12 @@ fn build_f32_output_stream_as<T, S, E>(
 where
     T: cpal::SizedSample + Default + Copy + 'static,
     S: F32OutputSource + Send + 'static,
-    E: FnMut(cpal::StreamError) + Send + 'static,
+    E: FnMut(cpal::Error) + Send + 'static,
 {
     let channels = usize::from(config.channels.max(1));
     device
         .build_output_stream(
-            config,
+            *config,
             move |output: &mut [T], _| source.fill(output, channels, convert),
             error_callback,
             None,

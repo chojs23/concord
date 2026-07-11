@@ -616,7 +616,7 @@ pub(super) fn clamp_voice_sample(sample: f32) -> f32 {
 }
 
 #[cfg(feature = "voice-playback")]
-fn log_voice_output_stream_error(error: cpal::StreamError) {
+fn log_voice_output_stream_error(error: cpal::Error) {
     logging::error(
         "voice",
         format!("voice audio output stream failed: {error}"),

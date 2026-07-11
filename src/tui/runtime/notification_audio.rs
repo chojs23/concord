@@ -186,7 +186,7 @@ fn fill_notification_output<T>(
 }
 
 #[cfg(feature = "voice-playback")]
-fn log_notification_output_stream_error(error: cpal::StreamError) {
+fn log_notification_output_stream_error(error: cpal::Error) {
     logging::error(
         "voice",
         format!("notification audio output stream failed: {error}"),
