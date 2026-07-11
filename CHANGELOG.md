@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.3] - 2026-07-08
+
+### Bug Fixes
+
+- Upgrade CPAL to 0.18.1 for audio stream recovery (#249) in [#249](https://github.com/chojs23/concord/pull/249) by @chojs23
+- Add a 60ms prebuffer and fixed 2400-frame PulseAudio output buffer by @chojs23
+
+### Features
+
+- Support mouse row clicks and scroll in action menus by @chojs23
+
 ## [2.3.2] - 2026-07-08
 
 ### Bug Fixes
@@ -994,8 +1005,17 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-- _(flake)_ Use crane (#4) in [#4](https://github.com/chojs23/concord/pull/4) by @M4jor-Tom
 - Keep original image width:height ratio (#6) in [#6](https://github.com/chojs23/concord/pull/6) by @chojs23
+
+### Cd
+
+- Chain crates publish after release by @chojs23
+
+## [1.1.0] - 2026-05-09
+
+### Bug Fixes
+
+- _(flake)_ Use crane (#4) in [#4](https://github.com/chojs23/concord/pull/4) by @M4jor-Tom
 
 ### Documentation
 
@@ -1010,10 +1030,6 @@ All notable changes to this project will be documented in this file.
 ### Miscellaneous Tasks
 
 - Enable generated github release notes by @chojs23
-
-### Cd
-
-- Chain crates publish after release by @chojs23
 
 ### New Contributors
 
