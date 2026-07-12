@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use reqwest::StatusCode;
-use reqwest::header::RETRY_AFTER;
+use reqwest::{StatusCode, header::RETRY_AFTER};
 use serde_json::{Value, json};
 
 use crate::discord::ids::{

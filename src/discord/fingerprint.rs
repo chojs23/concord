@@ -1,10 +1,9 @@
-use std::process::Command;
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::{process::Command, sync::Arc, time::Duration};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::header::{
-    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, HeaderMap, HeaderValue, ORIGIN, REFERER, USER_AGENT,
+    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, CACHE_CONTROL, HeaderMap, HeaderValue, ORIGIN,
+    PRAGMA, REFERER, USER_AGENT,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -13,34 +12,62 @@ use super::auth_http::DISCORD_ORIGIN;
 
 /// Fallback used only when the live build number cannot be fetched at startup.
 pub(super) const CLIENT_BUILD_NUMBER: u64 = 573_410;
-static CLIENT_BUILD_NUMBER_CACHE: OnceLock<u64> = OnceLock::new();
-
 pub(super) const CLIENT_BROWSER: &str = "Chrome";
 pub(super) const CLIENT_BROWSER_VERSION: &str = "143.0.0.0";
 
 const DISCORD_CHANNELS_REFERER: &str = "https://discord.com/channels/@me";
-const ACCEPT_LANGUAGE_VALUE: &str = "en-US,en;q=0.9";
-const DISCORD_LOCALE: &str = "en-US";
-const SYSTEM_LOCALE: &str = "en-US";
-const DISCORD_TIMEZONE: &str = "America/New_York";
 
-#[derive(Serialize)]
-struct SuperProperties {
-    os: &'static str,
-    device: &'static str,
-    browser: &'static str,
-    release_channel: &'static str,
-    os_version: String,
-    os_arch: &'static str,
-    system_locale: &'static str,
-    has_client_mods: bool,
-    browser_user_agent: String,
-    browser_version: &'static str,
-    client_build_number: u64,
-    client_event_source: Option<String>,
+#[derive(Clone, Debug)]
+pub(crate) struct ClientFingerprint {
+    pub(super) os: &'static str,
+    pub(super) os_version: String,
+    pub(super) os_arch: &'static str,
+    pub(super) system_locale: String,
+    pub(super) timezone: String,
+    pub(super) user_agent: String,
+    pub(super) client_build_number: u64,
     launch_signature: String,
     client_launch_id: String,
     client_heartbeat_session_id: String,
+}
+
+impl ClientFingerprint {
+    pub(super) fn new(client_build_number: u64) -> Self {
+        let os = operating_system();
+        let os_version = operating_system_version();
+        let os_arch = operating_system_arch();
+        Self {
+            os,
+            user_agent: web_user_agent(os, &os_version, os_arch),
+            os_version,
+            os_arch,
+            system_locale: system_locale(),
+            timezone: iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_owned()),
+            client_build_number,
+            launch_signature: generate_launch_signature(),
+            client_launch_id: Uuid::new_v4().to_string(),
+            client_heartbeat_session_id: Uuid::new_v4().to_string(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct SuperProperties<'a> {
+    os: &'a str,
+    device: &'static str,
+    browser: &'static str,
+    release_channel: &'static str,
+    os_version: &'a str,
+    os_arch: &'a str,
+    system_locale: &'a str,
+    has_client_mods: bool,
+    browser_user_agent: &'a str,
+    browser_version: &'static str,
+    client_build_number: u64,
+    client_event_source: Option<String>,
+    launch_signature: &'a str,
+    client_launch_id: &'a str,
+    client_heartbeat_session_id: &'a str,
     client_app_state: &'static str,
     referrer: &'static str,
     referrer_current: &'static str,
@@ -48,27 +75,51 @@ struct SuperProperties {
     referring_domain_current: &'static str,
 }
 
-struct ClientIdentity {
-    os: &'static str,
-    os_version: String,
-    os_arch: &'static str,
-    user_agent: String,
+/// Creates the login-session fingerprint after reading Discord's current web
+/// build. REST and Gateway keep this same value for the full login session.
+pub(crate) async fn load_client_fingerprint() -> Arc<ClientFingerprint> {
+    let bootstrap = Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER));
+    let client = discord_http_client(&bootstrap);
+    let client_build_number = match fetch_client_build_number(&client).await {
+        Some(build) => build,
+        None => {
+            crate::logging::debug(
+                "fingerprint",
+                "could not fetch Discord build number; using compiled fallback",
+            );
+            CLIENT_BUILD_NUMBER
+        }
+    };
+    Arc::new(ClientFingerprint::new(client_build_number))
 }
 
-pub(super) fn discord_rest_client() -> reqwest::Client {
+pub(super) fn discord_http_client(fingerprint: &ClientFingerprint) -> reqwest::Client {
     reqwest::Client::builder()
         .cookie_store(true)
-        .default_headers(discord_rest_headers())
+        .default_headers(discord_browser_headers(fingerprint))
         .build()
         .expect("static Discord REST client configuration is valid")
 }
 
-pub(super) fn discord_rest_headers() -> HeaderMap {
-    let identity = client_identity();
+fn discord_browser_headers(fingerprint: &ClientFingerprint) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
         USER_AGENT,
-        HeaderValue::from_str(&identity.user_agent).expect("web user agent is valid"),
+        HeaderValue::from_str(&fingerprint.user_agent).expect("web user agent is valid"),
+    );
+    headers.insert(
+        ACCEPT_LANGUAGE,
+        HeaderValue::from_str(&accept_language(&fingerprint.system_locale))
+            .expect("system locale is a valid header value"),
+    );
+    headers
+}
+
+pub(super) fn discord_rest_headers(fingerprint: &ClientFingerprint) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_str(&fingerprint.user_agent).expect("web user agent is valid"),
     );
     headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
     headers.insert(
@@ -77,7 +128,8 @@ pub(super) fn discord_rest_headers() -> HeaderMap {
     );
     headers.insert(
         ACCEPT_LANGUAGE,
-        HeaderValue::from_static(ACCEPT_LANGUAGE_VALUE),
+        HeaderValue::from_str(&accept_language(&fingerprint.system_locale))
+            .expect("system locale is a valid header value"),
     );
     headers.insert(ORIGIN, HeaderValue::from_static(DISCORD_ORIGIN));
     headers.insert(REFERER, HeaderValue::from_static(DISCORD_CHANNELS_REFERER));
@@ -85,10 +137,14 @@ pub(super) fn discord_rest_headers() -> HeaderMap {
     headers.insert("Sec-Fetch-Dest", HeaderValue::from_static("empty"));
     headers.insert("Sec-Fetch-Mode", HeaderValue::from_static("cors"));
     headers.insert("Sec-Fetch-Site", HeaderValue::from_static("same-origin"));
-    headers.insert("X-Discord-Locale", HeaderValue::from_static(DISCORD_LOCALE));
+    headers.insert(
+        "X-Discord-Locale",
+        HeaderValue::from_str(&fingerprint.system_locale)
+            .expect("system locale is a valid header value"),
+    );
     headers.insert(
         "X-Discord-Timezone",
-        HeaderValue::from_static(DISCORD_TIMEZONE),
+        HeaderValue::from_str(&fingerprint.timezone).expect("timezone is a valid header value"),
     );
     headers.insert(
         "X-Debug-Options",
@@ -96,29 +152,46 @@ pub(super) fn discord_rest_headers() -> HeaderMap {
     );
     headers.insert(
         "X-Super-Properties",
-        HeaderValue::from_str(&build_super_properties(&identity))
+        HeaderValue::from_str(&build_super_properties(fingerprint))
             .expect("base64 super properties are a valid header value"),
     );
     headers
 }
 
-fn build_super_properties(identity: &ClientIdentity) -> String {
+pub(super) fn discord_gateway_headers(fingerprint: &ClientFingerprint) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_str(&fingerprint.user_agent).expect("web user agent is valid"),
+    );
+    headers.insert(
+        ACCEPT_LANGUAGE,
+        HeaderValue::from_str(&accept_language(&fingerprint.system_locale))
+            .expect("system locale is a valid header value"),
+    );
+    headers.insert(ORIGIN, HeaderValue::from_static(DISCORD_ORIGIN));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+    headers
+}
+
+fn build_super_properties(fingerprint: &ClientFingerprint) -> String {
     let properties = SuperProperties {
-        os: identity.os,
+        os: fingerprint.os,
         device: "",
         browser: CLIENT_BROWSER,
         release_channel: "stable",
-        os_version: identity.os_version.clone(),
-        os_arch: identity.os_arch,
-        system_locale: SYSTEM_LOCALE,
+        os_version: &fingerprint.os_version,
+        os_arch: fingerprint.os_arch,
+        system_locale: &fingerprint.system_locale,
         has_client_mods: false,
-        browser_user_agent: identity.user_agent.clone(),
+        browser_user_agent: &fingerprint.user_agent,
         browser_version: CLIENT_BROWSER_VERSION,
-        client_build_number: client_build_number(),
+        client_build_number: fingerprint.client_build_number,
         client_event_source: None,
-        launch_signature: generate_launch_signature(),
-        client_launch_id: Uuid::new_v4().to_string(),
-        client_heartbeat_session_id: Uuid::new_v4().to_string(),
+        launch_signature: &fingerprint.launch_signature,
+        client_launch_id: &fingerprint.client_launch_id,
+        client_heartbeat_session_id: &fingerprint.client_heartbeat_session_id,
         client_app_state: "unfocused",
         referrer: "",
         referrer_current: "",
@@ -129,33 +202,7 @@ fn build_super_properties(identity: &ClientIdentity) -> String {
     STANDARD.encode(raw)
 }
 
-pub(super) fn client_build_number() -> u64 {
-    CLIENT_BUILD_NUMBER_CACHE
-        .get()
-        .copied()
-        .unwrap_or(CLIENT_BUILD_NUMBER)
-}
-
-/// Aligns our advertised build number with Discord's live value. A stale build
-/// number is a self-bot signal that can get accounts flagged. Best-effort. On
-/// any failure the compiled fallback stays in place.
-pub(crate) async fn refresh_client_build_number() {
-    if CLIENT_BUILD_NUMBER_CACHE.get().is_some() {
-        return;
-    }
-    match fetch_client_build_number().await {
-        Some(build) => {
-            let _ = CLIENT_BUILD_NUMBER_CACHE.set(build);
-        }
-        None => crate::logging::debug(
-            "fingerprint",
-            "could not fetch Discord build number; using compiled fallback",
-        ),
-    }
-}
-
-async fn fetch_client_build_number() -> Option<u64> {
-    let client = discord_rest_client();
+async fn fetch_client_build_number(client: &reqwest::Client) -> Option<u64> {
     let app_html = client
         .get(format!("{DISCORD_ORIGIN}/app"))
         .timeout(Duration::from_secs(5))
@@ -197,31 +244,6 @@ fn parse_build_number(js: &str) -> Option<u64> {
     digits.parse::<u64>().ok()
 }
 
-fn client_identity() -> ClientIdentity {
-    let os = operating_system();
-    let os_version = operating_system_version();
-    let os_arch = operating_system_arch();
-    let user_agent = web_user_agent(os, &os_version, os_arch);
-    ClientIdentity {
-        os,
-        os_version,
-        os_arch,
-        user_agent,
-    }
-}
-
-pub(super) fn discord_web_os() -> &'static str {
-    operating_system()
-}
-
-pub(super) fn discord_web_os_version() -> String {
-    operating_system_version()
-}
-
-pub(super) fn discord_web_user_agent() -> String {
-    client_identity().user_agent
-}
-
 fn web_user_agent(os: &str, os_version: &str, os_arch: &str) -> String {
     let platform = match os {
         "Windows" => "Windows NT 10.0; Win64; x64".to_owned(),
@@ -233,6 +255,28 @@ fn web_user_agent(os: &str, os_version: &str, os_arch: &str) -> String {
         "Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) \
          Chrome/{CLIENT_BROWSER_VERSION} Safari/537.36"
     )
+}
+
+fn system_locale() -> String {
+    sys_locale::get_locale()
+        .map(|locale| {
+            locale
+                .split(['.', '@'])
+                .next()
+                .unwrap_or("en-US")
+                .replace('_', "-")
+        })
+        .filter(|locale| !locale.is_empty() && HeaderValue::from_str(locale).is_ok())
+        .unwrap_or_else(|| "en-US".to_owned())
+}
+
+pub(super) fn accept_language(locale: &str) -> String {
+    let language = locale.split('-').next().unwrap_or(locale);
+    if locale == language {
+        format!("{locale},en;q=0.9")
+    } else {
+        format!("{locale},{language};q=0.9,en;q=0.8")
+    }
 }
 
 fn generate_launch_signature() -> String {

@@ -26,14 +26,14 @@ fn finds_sentry_asset_path_in_app_html() {
 
 #[test]
 fn rest_headers_match_web_fingerprint_plan() {
-    let headers = discord_rest_headers();
-    let identity = client_identity();
+    let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
+    let headers = discord_rest_headers(&fingerprint);
 
     assert_eq!(
         headers
             .get(USER_AGENT)
             .and_then(|value| value.to_str().ok()),
-        Some(identity.user_agent.as_str())
+        Some(fingerprint.user_agent.as_str())
     );
     assert_eq!(
         headers.get(ACCEPT).and_then(|value| value.to_str().ok()),
@@ -49,7 +49,7 @@ fn rest_headers_match_web_fingerprint_plan() {
         headers
             .get(ACCEPT_LANGUAGE)
             .and_then(|value| value.to_str().ok()),
-        Some(ACCEPT_LANGUAGE_VALUE)
+        Some(accept_language(&fingerprint.system_locale).as_str())
     );
     assert_eq!(
         headers.get(ORIGIN).and_then(|value| value.to_str().ok()),
@@ -87,13 +87,13 @@ fn rest_headers_match_web_fingerprint_plan() {
         headers
             .get("X-Discord-Locale")
             .and_then(|value| value.to_str().ok()),
-        Some(DISCORD_LOCALE)
+        Some(fingerprint.system_locale.as_str())
     );
     assert_eq!(
         headers
             .get("X-Discord-Timezone")
             .and_then(|value| value.to_str().ok()),
-        Some(DISCORD_TIMEZONE)
+        Some(fingerprint.timezone.as_str())
     );
     assert_eq!(
         headers
@@ -106,22 +106,22 @@ fn rest_headers_match_web_fingerprint_plan() {
 
 #[test]
 fn super_properties_are_base64_encoded_web_fields() {
-    let identity = client_identity();
-    let encoded = build_super_properties(&identity);
+    let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
+    let encoded = build_super_properties(&fingerprint);
     let decoded = STANDARD
         .decode(encoded)
         .expect("super properties should decode from base64");
     let value: Value =
         serde_json::from_slice(&decoded).expect("super properties should decode as json");
 
-    assert_eq!(value["os"], identity.os);
+    assert_eq!(value["os"], fingerprint.os);
     assert_eq!(value["device"], "");
     assert_eq!(value["browser"], CLIENT_BROWSER);
     assert_eq!(value["release_channel"], "stable");
-    assert_eq!(value["os_arch"], identity.os_arch);
-    assert_eq!(value["system_locale"], SYSTEM_LOCALE);
+    assert_eq!(value["os_arch"], fingerprint.os_arch);
+    assert_eq!(value["system_locale"], fingerprint.system_locale);
     assert_eq!(value["has_client_mods"], false);
-    assert_eq!(value["browser_user_agent"], identity.user_agent);
+    assert_eq!(value["browser_user_agent"], fingerprint.user_agent);
     assert_eq!(value["browser_version"], CLIENT_BROWSER_VERSION);
     assert_eq!(value["client_build_number"], CLIENT_BUILD_NUMBER);
     assert!(value["client_event_source"].is_null());
@@ -170,6 +170,7 @@ fn assert_uuid_field(value: &Value, field: &str) {
 #[test]
 fn rest_client_sends_default_headers_and_replays_cookies() {
     let _ = rustls::crypto::ring::default_provider().install_default();
+    let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
     let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
     let address = listener
         .local_addr()
@@ -211,9 +212,10 @@ fn rest_client_sends_default_headers_and_replays_cookies() {
 
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime should start");
     runtime.block_on(async {
-        let client = discord_rest_client();
+        let client = discord_http_client(&fingerprint);
         client
             .get(format!("http://{address}/first"))
+            .headers(discord_rest_headers(&fingerprint))
             .send()
             .await
             .expect("first local request should succeed")
@@ -221,6 +223,7 @@ fn rest_client_sends_default_headers_and_replays_cookies() {
             .expect("first local response should be successful");
         client
             .get(format!("http://{address}/second"))
+            .headers(discord_rest_headers(&fingerprint))
             .send()
             .await
             .expect("second local request should succeed")

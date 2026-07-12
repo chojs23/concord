@@ -1,6 +1,10 @@
+use std::sync::Arc;
+
 use crate::{
-    DiscordClient, Result, config, discord::validate_token_header, error::AppError, token_store,
-    tui,
+    DiscordClient, Result, config,
+    discord::{ClientFingerprint, validate_token_header},
+    error::AppError,
+    token_store, tui,
 };
 
 pub(super) struct ResolvedToken {
@@ -8,12 +12,12 @@ pub(super) struct ResolvedToken {
     pub(super) warnings: Vec<String>,
 }
 
-pub(super) async fn resolve_token() -> Result<ResolvedToken> {
+pub(super) async fn resolve_token(fingerprint: Arc<ClientFingerprint>) -> Result<ResolvedToken> {
     let mut warnings = Vec::new();
 
     if let Some(token) = token_store::env_token() {
         validate_token_header(&token)?;
-        if let Err(error) = validate_token_with_discord(&token).await {
+        if let Err(error) = validate_token_with_discord(&token, Arc::clone(&fingerprint)).await {
             match error {
                 AppError::DiscordTokenRejected => return Err(AppError::DiscordTokenRejected),
                 error => warnings.push(format!(
@@ -41,7 +45,9 @@ pub(super) async fn resolve_token() -> Result<ResolvedToken> {
                     "saved Discord token is invalid: {error}; enter a new token"
                 ));
                 delete_rejected_saved_token(credential_store, &mut warnings).await;
-            } else if let Err(error) = validate_token_with_discord(&token).await {
+            } else if let Err(error) =
+                validate_token_with_discord(&token, Arc::clone(&fingerprint)).await
+            {
                 match error {
                     AppError::DiscordTokenRejected => {
                         warnings.push(
@@ -66,14 +72,15 @@ pub(super) async fn resolve_token() -> Result<ResolvedToken> {
 
     let token = loop {
         let login_notice = login_notice_for_token_warnings(&warnings);
-        let token = tui::prompt_login(login_notice).await?;
+        let token =
+            tui::prompt_login_with_fingerprint(login_notice, Arc::clone(&fingerprint)).await?;
         if let Err(error) = validate_token_header(&token) {
             warnings = vec![format!(
                 "entered Discord token is invalid: {error}; enter a new token"
             )];
             continue;
         }
-        match validate_token_with_discord(&token).await {
+        match validate_token_with_discord(&token, Arc::clone(&fingerprint)).await {
             Ok(()) => break token,
             Err(AppError::DiscordTokenRejected) => {
                 warnings = vec![
@@ -104,8 +111,11 @@ pub(super) async fn resolve_token() -> Result<ResolvedToken> {
     Ok(ResolvedToken { token, warnings })
 }
 
-async fn validate_token_with_discord(token: &str) -> Result<()> {
-    DiscordClient::new(token.to_owned())?
+async fn validate_token_with_discord(
+    token: &str,
+    fingerprint: Arc<ClientFingerprint>,
+) -> Result<()> {
+    DiscordClient::new_with_fingerprint(token.to_owned(), fingerprint)?
         .validate_token_authentication()
         .await
 }

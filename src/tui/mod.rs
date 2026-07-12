@@ -15,12 +15,17 @@ mod text_cursor;
 mod text_input;
 mod ui;
 
+use std::sync::Arc;
+
 use tokio::sync::{mpsc, watch};
 
 use crate::{
     AppError, Result,
     config::KeymapOptions,
-    discord::{AppCommand, DiscordClient, SequencedAppEvent, SnapshotRevision},
+    discord::{
+        AppCommand, ClientFingerprint, DiscordClient, SequencedAppEvent, SnapshotRevision,
+        load_client_fingerprint,
+    },
 };
 
 pub use runtime::DashboardExit;
@@ -32,7 +37,14 @@ pub fn validate_keymap_options(keymap_options: &KeymapOptions) -> Result<()> {
 }
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
-    login::prompt_login(notice).await
+    login::prompt_login(notice, load_client_fingerprint().await).await
+}
+
+pub(crate) async fn prompt_login_with_fingerprint(
+    notice: Option<String>,
+    fingerprint: Arc<ClientFingerprint>,
+) -> Result<String> {
+    login::prompt_login(notice, fingerprint).await
 }
 
 pub async fn run(

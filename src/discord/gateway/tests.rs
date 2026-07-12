@@ -1,6 +1,13 @@
+use super::{
+    ConnectionOutcome, GATEWAY_WEBSOCKET_LIMIT, GatewayCommand, HeartbeatAckState, SessionState,
+    SubscriptionDeduper, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
+    close_code_outcome, direct_message_subscribe_payload, gateway_request,
+    gateway_websocket_config, guild_channel_subscribe_payload, presence_update_payload,
+    request_guild_members_by_ids_payload, request_guild_members_payload,
+    voice_state_update_payload,
+};
 use crate::discord::fingerprint::{
-    CLIENT_BROWSER, CLIENT_BROWSER_VERSION, CLIENT_BUILD_NUMBER, discord_web_os,
-    discord_web_os_version, discord_web_user_agent,
+    CLIENT_BROWSER, CLIENT_BROWSER_VERSION, CLIENT_BUILD_NUMBER, ClientFingerprint, accept_language,
 };
 use crate::discord::ids::{
     Id,
@@ -8,13 +15,8 @@ use crate::discord::ids::{
 };
 use crate::discord::{ActivityEmoji, ActivityInfo, ActivityKind, PresenceStatus};
 use serde_json::json;
-
-use super::{
-    ConnectionOutcome, GATEWAY_WEBSOCKET_LIMIT, GatewayCommand, HeartbeatAckState, SessionState,
-    SubscriptionDeduper, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
-    close_code_outcome, direct_message_subscribe_payload, gateway_websocket_config,
-    guild_channel_subscribe_payload, presence_update_payload, request_guild_members_by_ids_payload,
-    request_guild_members_payload, voice_state_update_payload,
+use tokio_tungstenite::tungstenite::http::header::{
+    ACCEPT_LANGUAGE, CACHE_CONTROL, ORIGIN, PRAGMA, USER_AGENT,
 };
 
 #[test]
@@ -26,9 +28,46 @@ fn gateway_websocket_config_allows_large_ready_payloads() {
 }
 
 #[test]
+fn gateway_handshake_headers_match_shared_fingerprint() {
+    let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
+    let request =
+        gateway_request(super::GATEWAY_URL, &fingerprint).expect("gateway request should be valid");
+    let headers = request.headers();
+
+    assert_eq!(
+        headers
+            .get(USER_AGENT)
+            .and_then(|value| value.to_str().ok()),
+        Some(fingerprint.user_agent.as_str())
+    );
+    assert_eq!(
+        headers
+            .get(ACCEPT_LANGUAGE)
+            .and_then(|value| value.to_str().ok()),
+        Some(accept_language(&fingerprint.system_locale).as_str())
+    );
+    assert_eq!(
+        headers.get(ORIGIN).and_then(|value| value.to_str().ok()),
+        Some("https://discord.com")
+    );
+    assert_eq!(
+        headers
+            .get(CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-cache")
+    );
+    assert_eq!(
+        headers.get(PRAGMA).and_then(|value| value.to_str().ok()),
+        Some("no-cache")
+    );
+}
+
+#[test]
 fn identify_payload_carries_user_account_capabilities() {
-    let payload: serde_json::Value = serde_json::from_str(&build_identify_payload("dummy-token"))
-        .expect("identify payload should be valid json");
+    let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
+    let payload: serde_json::Value =
+        serde_json::from_str(&build_identify_payload("dummy-token", &fingerprint))
+            .expect("identify payload should be valid json");
     assert_eq!(payload["op"].as_u64(), Some(2));
     assert_eq!(
         payload["d"]["capabilities"].as_u64(),
@@ -36,7 +75,7 @@ fn identify_payload_carries_user_account_capabilities() {
     );
     assert_eq!(
         payload["d"]["properties"]["os"].as_str(),
-        Some(discord_web_os())
+        Some(fingerprint.os)
     );
     assert_eq!(
         payload["d"]["properties"]["browser"].as_str(),
@@ -44,7 +83,7 @@ fn identify_payload_carries_user_account_capabilities() {
     );
     assert_eq!(
         payload["d"]["properties"]["browser_user_agent"].as_str(),
-        Some(discord_web_user_agent().as_str())
+        Some(fingerprint.user_agent.as_str())
     );
     assert_eq!(
         payload["d"]["properties"]["browser_version"].as_str(),
@@ -52,11 +91,15 @@ fn identify_payload_carries_user_account_capabilities() {
     );
     assert_eq!(
         payload["d"]["properties"]["os_version"].as_str(),
-        Some(discord_web_os_version().as_str())
+        Some(fingerprint.os_version.as_str())
     );
     assert_eq!(
         payload["d"]["properties"]["client_build_number"].as_u64(),
         Some(CLIENT_BUILD_NUMBER)
+    );
+    assert_eq!(
+        payload["d"]["properties"]["system_locale"].as_str(),
+        Some(fingerprint.system_locale.as_str())
     );
     assert_eq!(payload["d"]["compress"].as_bool(), Some(false));
     assert_eq!(payload["d"]["presence"]["status"].as_str(), Some("online"));

@@ -17,6 +17,8 @@ use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::{
         Message as WsMessage,
+        client::IntoClientRequest,
+        handshake::client::Request,
         protocol::{CloseFrame, WebSocketConfig},
     },
 };
@@ -26,8 +28,7 @@ use super::{
     client::publish_app_event,
     events::{AppEvent, SequencedAppEvent},
     fingerprint::{
-        CLIENT_BROWSER, CLIENT_BROWSER_VERSION, client_build_number, discord_web_os,
-        discord_web_os_version, discord_web_user_agent,
+        CLIENT_BROWSER, CLIENT_BROWSER_VERSION, ClientFingerprint, discord_gateway_headers,
     },
     state::{DiscordState, SnapshotRevision},
     voice::{self, VoiceRuntimeEvent},
@@ -83,6 +84,7 @@ pub enum GatewayCommand {
 
 #[derive(Clone)]
 pub(crate) struct GatewayRuntime {
+    pub(crate) fingerprint: Arc<ClientFingerprint>,
     pub(crate) effects_tx: mpsc::Sender<SequencedAppEvent>,
     pub(crate) snapshots_tx: watch::Sender<SnapshotRevision>,
     pub(crate) state: Arc<RwLock<DiscordState>>,
@@ -293,7 +295,15 @@ pub async fn run_gateway(
             publish_lock: &runtime.publish_lock,
             voice_events_tx: &runtime.voice_events_tx,
         };
-        let outcome = match connect_and_run(&token, &mut commands, &mut session, publish).await {
+        let outcome = match connect_and_run(
+            &token,
+            &mut commands,
+            &mut session,
+            &runtime.fingerprint,
+            publish,
+        )
+        .await
+        {
             Ok(outcome) => outcome,
             Err(error) => {
                 logging::error("gateway", format!("connection error: {error}"));
@@ -362,14 +372,17 @@ async fn connect_and_run(
     token: &str,
     commands: &mut mpsc::UnboundedReceiver<GatewayCommand>,
     session: &mut SessionState,
+    fingerprint: &ClientFingerprint,
     publish: GatewayPublishContext<'_>,
 ) -> Result<ConnectionOutcome, String> {
     let url = session.next_url();
     logging::debug("gateway", format!("connecting to {url}"));
 
-    let (ws, _response) = connect_async_with_config(&url, Some(gateway_websocket_config()), false)
-        .await
-        .map_err(|error| format!("websocket connect failed: {error}"))?;
+    let request = gateway_request(&url, fingerprint)?;
+    let (ws, _response) =
+        connect_async_with_config(request, Some(gateway_websocket_config()), false)
+            .await
+            .map_err(|error| format!("websocket connect failed: {error}"))?;
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
     let mut subscription_deduper = SubscriptionDeduper::default();
@@ -411,7 +424,7 @@ async fn connect_and_run(
         send_text(&writer, payload).await?;
         logging::debug("gateway", "RESUME sent");
     } else {
-        let payload = build_identify_payload(token);
+        let payload = build_identify_payload(token, fingerprint);
         send_text(&writer, payload).await?;
         logging::debug("gateway", "IDENTIFY sent");
     }
@@ -554,6 +567,16 @@ fn gateway_websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .max_message_size(Some(GATEWAY_WEBSOCKET_LIMIT))
         .max_frame_size(Some(GATEWAY_WEBSOCKET_LIMIT))
+}
+
+fn gateway_request(url: &str, fingerprint: &ClientFingerprint) -> Result<Request, String> {
+    let mut request = url
+        .into_client_request()
+        .map_err(|error| format!("websocket request failed: {error}"))?;
+    request
+        .headers_mut()
+        .extend(discord_gateway_headers(fingerprint));
+    Ok(request)
 }
 
 enum FrameOutcome {
@@ -844,29 +867,26 @@ async fn send_text(writer: &WriterHandle, payload: String) -> Result<(), String>
         .map_err(|error| format!("websocket send failed: {error}"))
 }
 
-fn build_identify_payload(token: &str) -> String {
-    let os = discord_web_os();
-    let os_version = discord_web_os_version();
-    let user_agent = discord_web_user_agent();
+fn build_identify_payload(token: &str, fingerprint: &ClientFingerprint) -> String {
     json!({
         "op": 2,
         "d": {
             "token": token,
             "capabilities": USER_ACCOUNT_CAPABILITIES,
             "properties": {
-                "os": os,
+                "os": fingerprint.os,
                 "browser": CLIENT_BROWSER,
                 "device": "",
-                "system_locale": "en-US",
-                "browser_user_agent": user_agent,
+                "system_locale": fingerprint.system_locale,
+                "browser_user_agent": fingerprint.user_agent,
                 "browser_version": CLIENT_BROWSER_VERSION,
-                "os_version": os_version,
+                "os_version": fingerprint.os_version,
                 "referrer": "",
                 "referring_domain": "",
                 "referrer_current": "",
                 "referring_domain_current": "",
                 "release_channel": "stable",
-                "client_build_number": client_build_number(),
+                "client_build_number": fingerprint.client_build_number,
                 "client_event_source": Value::Null,
             },
             "presence": {

@@ -84,7 +84,7 @@ fn restoring_discord_snapshot_recovers_missed_guilds_and_direct_messages() {
 }
 
 #[test]
-fn dm_composer_locks_until_conversation_is_established() {
+fn dm_composer_lock_policy_waits_until_conversation_is_established() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),
@@ -98,7 +98,8 @@ fn dm_composer_locks_until_conversation_is_established() {
     state.confirm_selected_channel();
     assert_eq!(state.selected_channel_id(), Some(Id::new(20)));
 
-    // Only the other person has written, so the composer stays locked.
+    // Only the other person has written, so the dormant policy still detects
+    // the DM while the temporary runtime switch leaves the composer open.
     state.push_event(message_create_event(MessageCreateFixture {
         guild_id: None,
         channel_id: Id::new(20),
@@ -107,11 +108,12 @@ fn dm_composer_locks_until_conversation_is_established() {
         content: Some("hi".to_owned()),
         ..guild_message_create_fixture()
     }));
+    assert_eq!(state.dm_composer_lock(), None);
+    assert!(state.can_send_in_selected_channel());
     assert_eq!(
-        state.dm_composer_lock(),
+        state.dm_composer_lock_at(u64::MAX),
         Some(DmComposerLock::NotEstablished)
     );
-    assert!(!state.can_send_in_selected_channel());
 
     for message_id in 201..205 {
         state.push_event(message_create_event(MessageCreateFixture {
@@ -124,11 +126,11 @@ fn dm_composer_locks_until_conversation_is_established() {
         }));
     }
     assert_eq!(
-        state.dm_composer_lock(),
+        state.dm_composer_lock_at(u64::MAX),
         Some(DmComposerLock::NotEstablished)
     );
     state.start_composer();
-    assert!(!state.is_composing());
+    assert!(state.is_composing());
 
     state.push_event(message_create_event(MessageCreateFixture {
         guild_id: None,
@@ -145,7 +147,7 @@ fn dm_composer_locks_until_conversation_is_established() {
 }
 
 #[test]
-fn dm_composer_locks_fresh_dm_until_a_day_has_passed() {
+fn dm_composer_lock_policy_waits_a_day_for_a_fresh_dm() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),
@@ -194,7 +196,7 @@ fn recording_dm_established_unlocks_composer_and_persists() {
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     assert_eq!(
-        state.dm_composer_lock(),
+        state.dm_composer_lock_at(u64::MAX),
         Some(DmComposerLock::NotEstablished)
     );
 
@@ -211,7 +213,7 @@ fn recording_dm_established_unlocks_composer_and_persists() {
 }
 
 #[test]
-fn opening_a_fresh_dm_enqueues_an_establishment_check() {
+fn disabled_dm_composer_lock_skips_establishment_check() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),
@@ -225,16 +227,18 @@ fn opening_a_fresh_dm_enqueues_an_establishment_check() {
     state.confirm_selected_channel();
 
     assert!(
-        state
+        !state
             .drain_pending_commands()
-            .contains(&AppCommand::VerifyDmEstablished {
-                channel_id: Id::new(20),
-            })
+            .iter()
+            .any(|command| matches!(
+                command,
+                AppCommand::VerifyDmEstablished { channel_id } if *channel_id == Id::new(20)
+            ))
     );
 }
 
 #[test]
-fn dm_composer_locks_message_request_and_spam_dms_even_after_replying() {
+fn dm_composer_lock_policy_catches_message_request_and_spam_dms() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),
@@ -259,17 +263,21 @@ fn dm_composer_locks_message_request_and_spam_dms_even_after_replying() {
         ..guild_message_create_fixture()
     }));
     assert_eq!(
-        state.dm_composer_lock(),
+        state.dm_composer_lock_at(u64::MAX),
         Some(DmComposerLock::MessageRequest)
     );
-    assert!(!state.can_send_in_selected_channel());
+    assert_eq!(state.dm_composer_lock(), None);
+    assert!(state.can_send_in_selected_channel());
 
     // Spam classification takes precedence and reports the spam reason.
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         is_spam: Some(true),
         ..dm_channel_info(Id::new(20), "stranger")
     }));
-    assert_eq!(state.dm_composer_lock(), Some(DmComposerLock::Spam));
+    assert_eq!(
+        state.dm_composer_lock_at(u64::MAX),
+        Some(DmComposerLock::Spam)
+    );
 }
 
 #[test]

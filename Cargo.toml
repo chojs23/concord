@@ -87,6 +87,8 @@ syntect = { version = "5.3.0", default-features = false, features = [
   "default-fancy",
 ] }
 interprocess = { version = "2.4.2", features = ["tokio"] }
+sys-locale = "0.3.2"
+iana-time-zone = "0.1.65"
 
 [features]
 default = ["voice-playback"]

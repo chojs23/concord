@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use base64::{
     Engine,
@@ -13,12 +13,12 @@ use sha2::Sha256;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
+    tungstenite::{Message, client::IntoClientRequest, handshake::client::Request},
 };
 
 use super::{
-    auth_http::{DISCORD_LOGIN_REFERER, DISCORD_ORIGIN, discord_web_client},
-    fingerprint::discord_web_user_agent,
+    auth_http::{discord_login_headers, discord_web_client},
+    fingerprint::{CLIENT_BUILD_NUMBER, ClientFingerprint, discord_gateway_headers},
 };
 
 const REMOTE_AUTH_URL: &str = "wss://remote-auth-gateway.discord.gg/?v=2";
@@ -39,8 +39,18 @@ pub enum QrEvent {
 }
 
 pub fn spawn(events_tx: mpsc::Sender<QrEvent>) -> JoinHandle<()> {
+    spawn_with_fingerprint(
+        Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)),
+        events_tx,
+    )
+}
+
+pub(crate) fn spawn_with_fingerprint(
+    fingerprint: Arc<ClientFingerprint>,
+    events_tx: mpsc::Sender<QrEvent>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        match run(&events_tx).await {
+        match run(&events_tx, &fingerprint).await {
             Ok(Some(token)) => {
                 let _ = events_tx.send(QrEvent::Token(token)).await;
             }
@@ -58,22 +68,17 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
-async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
+async fn run(
+    tx: &mpsc::Sender<QrEvent>,
+    client_fingerprint: &ClientFingerprint,
+) -> Result<Option<String>, String> {
     let _ = tx
         .send(QrEvent::Status(
             "Connecting to Discord remote auth gateway...".into(),
         ))
         .await;
 
-    let mut request = REMOTE_AUTH_URL.into_client_request().map_err(err)?;
-    {
-        let headers = request.headers_mut();
-        headers.insert("Origin", HeaderValue::from_static(DISCORD_ORIGIN));
-        headers.insert(
-            "User-Agent",
-            HeaderValue::from_str(&discord_web_user_agent()).expect("web user agent is valid"),
-        );
-    }
+    let request = remote_auth_request(client_fingerprint)?;
 
     let (ws, _) = connect_async(request).await.map_err(err)?;
     let (mut writer, mut reader) = ws.split();
@@ -115,7 +120,7 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
     let mut heartbeat_timer = tokio::time::interval(heartbeat_interval);
     heartbeat_timer.tick().await;
 
-    let mut fingerprint: Option<String> = None;
+    let mut remote_fingerprint: Option<String> = None;
 
     loop {
         tokio::select! {
@@ -162,7 +167,7 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
                                 "Scan this QR code in the Discord mobile app to log in.".into(),
                             ))
                             .await;
-                        fingerprint = Some(fp);
+                        remote_fingerprint = Some(fp);
                     }
                     "pending_ticket" => {
                         let payload_b64 = value
@@ -199,7 +204,13 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
                             .send(QrEvent::Status("Authenticating with Discord...".into()))
                             .await;
                         let _ = writer.close().await;
-                        let token = exchange_ticket(&ticket, &private_key, fingerprint.as_deref()).await?;
+                        let token = exchange_ticket(
+                            &ticket,
+                            &private_key,
+                            remote_fingerprint.as_deref(),
+                            client_fingerprint,
+                        )
+                        .await?;
                         return Ok(Some(token));
                     }
                     "cancel" => {
@@ -211,6 +222,14 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
             }
         }
     }
+}
+
+fn remote_auth_request(fingerprint: &ClientFingerprint) -> Result<Request, String> {
+    let mut request = REMOTE_AUTH_URL.into_client_request().map_err(err)?;
+    request
+        .headers_mut()
+        .extend(discord_gateway_headers(fingerprint));
+    Ok(request)
 }
 
 async fn read_text<S>(reader: &mut S) -> Result<String, String>
@@ -258,16 +277,17 @@ fn build_qr_bitmap(content: &str) -> Result<Vec<Vec<bool>>, String> {
 async fn exchange_ticket(
     ticket: &str,
     private_key: &RsaPrivateKey,
-    fingerprint: Option<&str>,
+    remote_fingerprint: Option<&str>,
+    client_fingerprint: &ClientFingerprint,
 ) -> Result<String, String> {
     #[derive(Deserialize)]
     struct ExchangeResponse {
         encrypted_token: String,
     }
 
-    let client = discord_web_client().map_err(err)?;
+    let client = discord_web_client(client_fingerprint);
 
-    let response = send_ticket_exchange(&client, ticket, fingerprint)
+    let response = send_ticket_exchange(&client, ticket, remote_fingerprint, client_fingerprint)
         .await
         .map_err(err)?;
     let response = checked_ticket_exchange_response(response).await?;
@@ -284,14 +304,14 @@ async fn exchange_ticket(
 async fn send_ticket_exchange(
     client: &reqwest::Client,
     ticket: &str,
-    fingerprint: Option<&str>,
+    remote_fingerprint: Option<&str>,
+    client_fingerprint: &ClientFingerprint,
 ) -> Result<reqwest::Response, reqwest::Error> {
     let mut request = client
         .post(TICKET_EXCHANGE_URL)
-        .header("Origin", DISCORD_ORIGIN)
-        .header("Referer", DISCORD_LOGIN_REFERER)
+        .headers(discord_login_headers(client_fingerprint))
         .json(&json!({ "ticket": ticket }));
-    if let Some(fp) = fingerprint {
+    if let Some(fp) = remote_fingerprint {
         request = request.header("X-Fingerprint", fp);
     }
 
@@ -389,9 +409,35 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        QR_QUIET_ZONE_MODULES, build_qr_bitmap, format_ticket_exchange_error,
+        QR_QUIET_ZONE_MODULES, build_qr_bitmap, format_ticket_exchange_error, remote_auth_request,
         sanitize_response_body,
     };
+    use crate::discord::fingerprint::{CLIENT_BUILD_NUMBER, ClientFingerprint, accept_language};
+    use tokio_tungstenite::tungstenite::http::header::{ACCEPT_LANGUAGE, ORIGIN, USER_AGENT};
+
+    #[test]
+    fn remote_auth_headers_match_shared_fingerprint() {
+        let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
+        let request = remote_auth_request(&fingerprint).expect("remote auth request should build");
+        let headers = request.headers();
+
+        assert_eq!(
+            headers
+                .get(USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some(fingerprint.user_agent.as_str())
+        );
+        assert_eq!(
+            headers
+                .get(ACCEPT_LANGUAGE)
+                .and_then(|value| value.to_str().ok()),
+            Some(accept_language(&fingerprint.system_locale).as_str())
+        );
+        assert_eq!(
+            headers.get(ORIGIN).and_then(|value| value.to_str().ok()),
+            Some("https://discord.com")
+        );
+    }
 
     #[test]
     fn qr_bitmap_includes_four_module_quiet_zone() {

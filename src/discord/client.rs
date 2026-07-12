@@ -24,6 +24,9 @@ use super::{
     ActivityInfo, ApplicationCommandInfo, ApplicationCommandInvocation, PresenceStatus,
     application_commands::application_command_interaction_from_invocation,
     events::{AppEvent, SequencedAppEvent},
+    fingerprint::{
+        CLIENT_BUILD_NUMBER, ClientFingerprint, discord_http_client, discord_rest_headers,
+    },
     gateway::{GatewayCommand, GatewayRuntime, run_gateway},
     request_lifecycle::RequestLifecycle,
     rest::DiscordRest,
@@ -51,6 +54,7 @@ type DueMemberListSubscription = (Id<GuildMarker>, Id<ChannelMarker>, Vec<Member
 #[derive(Clone, Debug)]
 pub struct DiscordClient {
     token: String,
+    fingerprint: Arc<ClientFingerprint>,
     rest: DiscordRest,
     effects_tx: mpsc::Sender<SequencedAppEvent>,
     effects_rx: Arc<Mutex<Option<mpsc::Receiver<SequencedAppEvent>>>>,
@@ -75,8 +79,16 @@ pub struct DiscordClient {
 
 impl DiscordClient {
     pub fn new(token: String) -> Result<Self> {
+        Self::new_with_fingerprint(token, Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)))
+    }
+
+    pub(crate) fn new_with_fingerprint(
+        token: String,
+        fingerprint: Arc<ClientFingerprint>,
+    ) -> Result<Self> {
         validate_token_header(&token)?;
-        let rest = DiscordRest::new(token.clone());
+        let http = discord_http_client(&fingerprint);
+        let rest = DiscordRest::new(token.clone(), http, discord_rest_headers(&fingerprint));
         let initial_state = DiscordState::default();
         let (effects_tx, effects_rx) = mpsc::channel(4096);
         let (snapshots_tx, _) = watch::channel(SnapshotRevision::default());
@@ -85,6 +97,7 @@ impl DiscordClient {
 
         Ok(Self {
             token,
+            fingerprint,
             rest,
             effects_tx,
             effects_rx: Arc::new(Mutex::new(Some(effects_rx))),
@@ -170,6 +183,7 @@ impl DiscordClient {
         let state = Arc::clone(&self.state);
         let revision = Arc::clone(&self.revision);
         let gateway_session_id = Arc::clone(&self.gateway_session_id);
+        let fingerprint = Arc::clone(&self.fingerprint);
         let publish_lock = Arc::clone(&self.publish_lock);
         let gateway_commands = self
             .gateway_commands_rx
@@ -205,6 +219,7 @@ impl DiscordClient {
 
         tokio::spawn(async move {
             let runtime = GatewayRuntime {
+                fingerprint,
                 effects_tx,
                 snapshots_tx,
                 state,

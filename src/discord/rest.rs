@@ -1,8 +1,10 @@
-use crate::discord::fingerprint::discord_rest_client;
 use crate::discord::json::extra_fields;
 use crate::{AppError, Result};
 
-use reqwest::{RequestBuilder, header::AUTHORIZATION};
+use reqwest::{
+    RequestBuilder,
+    header::{AUTHORIZATION, HeaderMap},
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -28,19 +30,23 @@ pub use reactions::ReactionUsersPage;
 #[derive(Clone, Debug)]
 pub struct DiscordRest {
     raw_http: reqwest::Client,
+    headers: HeaderMap,
     token: String,
 }
 
 impl DiscordRest {
-    pub fn new(token: String) -> Self {
+    pub fn new(token: String, raw_http: reqwest::Client, headers: HeaderMap) -> Self {
         Self {
-            raw_http: discord_rest_client(),
+            raw_http,
+            headers,
             token,
         }
     }
 
     fn authenticated(&self, request: RequestBuilder) -> RequestBuilder {
-        request.header(AUTHORIZATION, &self.token)
+        request
+            .headers(self.headers.clone())
+            .header(AUTHORIZATION, &self.token)
     }
 
     async fn send_unit(&self, request: RequestBuilder, label: &str) -> Result<()> {

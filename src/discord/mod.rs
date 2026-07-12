@@ -73,7 +73,8 @@ pub use events::{
     PresenceEventFields, SequencedAppEvent, ThreadListSyncInfo, ThreadMemberUpdateInfo,
     ThreadMembersUpdateInfo, UserGuildSettingsInfo,
 };
-pub(crate) use fingerprint::refresh_client_build_number;
+pub(crate) use fingerprint::ClientFingerprint;
+pub(crate) use fingerprint::load_client_fingerprint;
 pub use guild::{CustomEmojiInfo, GuildFolder};
 pub use ids::{Id, marker};
 pub use member::{MemberInfo, RoleInfo};

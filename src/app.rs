@@ -13,6 +13,8 @@ mod shutdown;
 mod user_commands;
 mod voice_commands;
 
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use crate::{DiscordClient, Result, config, discord::AppEvent, logging, tui, version_check};
@@ -33,15 +35,12 @@ impl App {
 
     pub async fn run(self) -> Result<()> {
         loop {
-            let resolved_token = resolve_token().await?;
+            let fingerprint = crate::discord::load_client_fingerprint().await;
+            let resolved_token = resolve_token(Arc::clone(&fingerprint)).await?;
             let token = resolved_token.token;
             let token_warnings = resolved_token.warnings;
 
-            // Must run before the REST client bakes the build number into
-            // X-Super-Properties and the gateway sends IDENTIFY.
-            crate::discord::refresh_client_build_number().await;
-
-            let client = DiscordClient::new(token)?;
+            let client = DiscordClient::new_with_fingerprint(token, fingerprint)?;
             let effects = client.take_effects();
             let snapshots = client.subscribe_snapshots();
             let (commands_tx, commands_rx) = mpsc::channel(64);

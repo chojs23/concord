@@ -53,6 +53,8 @@ const COMPOSER_TYPING_INTERVAL: Duration = Duration::from_secs(8);
 
 const DM_ESTABLISHED_MESSAGE_THRESHOLD: usize = 5;
 const DM_ESTABLISHED_MIN_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+// TODO: Re-enable after the REST transport test confirms DM sends are accepted.
+const DM_COMPOSER_LOCK_ENABLED: bool = false;
 
 const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
 
@@ -360,6 +362,9 @@ impl DashboardState {
     }
 
     pub fn dm_composer_lock(&self) -> Option<DmComposerLock> {
+        if !DM_COMPOSER_LOCK_ENABLED {
+            return None;
+        }
         self.dm_composer_lock_at(current_unix_ms())
     }
 
