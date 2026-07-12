@@ -479,7 +479,7 @@ fn render_vertical_scrollbar(
 fn channel_prefix(kind: &str) -> &'static str {
     match kind {
         "dm" | "Private" => "@ ",
-        "group-dm" | "Group" => "● ",
+        "group-dm" | "Group" => "👥 ",
         "voice" | "GuildVoice" => "🔈 ",
         "category" | "GuildCategory" => "▾ ",
         "forum" | "GuildForum" => "📝 ",

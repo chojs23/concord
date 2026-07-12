@@ -22,7 +22,7 @@ use super::{
     ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MESSAGE_AVATAR_OFFSET,
     MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
     attachment_viewer_image_area, attachment_viewer_popup, background_media_occlusion_areas,
-    centered_viewer_preview_area, channel_action_menu_lines_for_test,
+    centered_viewer_preview_area, channel_action_menu_lines_for_test, channel_prefix,
     channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
     composer_content_line_count, composer_cursor_position, composer_lines,
     composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,

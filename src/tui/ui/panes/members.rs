@@ -20,7 +20,7 @@ pub(in crate::tui::ui) fn render_members(
     // (absolute_line_index, cdn_url) for activity rows that have a loaded emoji image.
     let mut emoji_line_urls: Vec<(usize, String)> = Vec::new();
     let content_width = (area.width as usize).saturating_sub(2);
-    let max_name_width = (area.width as usize).saturating_sub(6).max(8);
+    let max_name_width = (area.width as usize).saturating_sub(7).max(8);
     let selected_line = state
         .focused_member_selection_line_in_groups(&groups)
         .map(|line| line + state.member_scroll());
@@ -66,8 +66,9 @@ pub(in crate::tui::ui) fn render_members(
                     max_name_width,
                 );
                 lines.push(Line::from(vec![
+                    selection_marker(is_selected),
                     Span::styled(
-                        format!(" {} ", presence_marker(member.status())),
+                        format!("{} ", presence_marker(member.status())),
                         marker_style,
                     ),
                     Span::styled(display, name_style),
@@ -95,7 +96,7 @@ pub(in crate::tui::ui) fn render_members(
                                 );
                                 emoji_line_urls.push((line_index, url));
                                 Line::from(vec![
-                                    Span::raw("     "),
+                                    Span::raw("      "),
                                     Span::styled(body, Style::default().fg(DIM)),
                                 ])
                             }
@@ -106,7 +107,7 @@ pub(in crate::tui::ui) fn render_members(
                                     max_name_width.saturating_sub(2),
                                 );
                                 Line::from(vec![
-                                    Span::raw("   "),
+                                    Span::raw("    "),
                                     Span::styled(
                                         icon.to_string(),
                                         Style::default().fg(Color::Green),
@@ -122,7 +123,7 @@ pub(in crate::tui::ui) fn render_members(
                                     max_name_width,
                                 );
                                 Line::from(vec![
-                                    Span::raw("   "),
+                                    Span::raw("    "),
                                     Span::styled(body, Style::default().fg(DIM)),
                                 ])
                             }
@@ -151,7 +152,7 @@ pub(in crate::tui::ui) fn render_members(
             &[],
             emoji_line_urls.iter().map(|(line_idx, url)| EmojiSlot {
                 row_in_list: *line_idx as isize - scroll as isize,
-                col: content_area.x as isize + 3,
+                col: content_area.x as isize + 4,
                 max_width: u16::MAX,
                 url: url.clone(),
             }),

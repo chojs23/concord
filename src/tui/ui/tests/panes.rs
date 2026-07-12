@@ -744,6 +744,23 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
     let buffer = terminal.backend().buffer();
     let alice_cell = find_cell(buffer, "Alice").expect("member should render");
     assert_eq!(buffer[alice_cell].fg, Color::White);
+
+    state.focus_pane(FocusPane::Members);
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let alice_row = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .find(|row| row.contains("Alice"))
+        .expect("member should render");
+    assert!(alice_row.contains("▸ ● Alice"), "{alice_row}");
 }
 
 #[test]
@@ -1066,6 +1083,7 @@ fn group_dm_has_no_presence_dot() {
     );
 
     assert!(dm_presence_dot_span(&channel).is_none());
+    assert_eq!(channel_prefix(&channel.kind), "👥 ");
 }
 
 #[test]
