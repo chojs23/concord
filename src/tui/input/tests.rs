@@ -28,8 +28,8 @@ use crate::{
         CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildFolder,
         GuildNotificationSettingsInfo, MemberInfo, MessageInfo, MessageReferenceInfo,
         MessageSnapshotInfo, MicrophoneSensitivityDb, NotificationLevel, PollAnswerInfo, PollInfo,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, RoleInfo, UserGuildSettingsInfo,
-        UserSettingsInfo, VoiceConnectionStatus, VoiceVolumePercent,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReadStateInfo, RoleInfo,
+        UserGuildSettingsInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceVolumePercent,
     },
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
@@ -196,6 +196,7 @@ fn state_with_channel_tree() -> DashboardState {
                 parent_id: Some(category_id),
                 position: Some(0),
                 name: "general".to_owned(),
+                last_message_id: Some(Id::new(1)),
                 ..ChannelInfo::test(general_id, "text")
             },
             ChannelInfo {
@@ -203,11 +204,24 @@ fn state_with_channel_tree() -> DashboardState {
                 parent_id: Some(category_id),
                 position: Some(1),
                 name: "random".to_owned(),
+                last_message_id: Some(Id::new(1)),
                 ..ChannelInfo::test(random_id, "text")
             },
         ],
         ..GuildCreateFixture::new(guild_id)
     }));
+    state.push_event(AppEvent::ReadStateInit {
+        entries: vec![
+            ReadStateInfo {
+                last_acked_message_id: Some(Id::new(1)),
+                ..ReadStateInfo::test(general_id)
+            },
+            ReadStateInfo {
+                last_acked_message_id: Some(Id::new(1)),
+                ..ReadStateInfo::test(random_id)
+            },
+        ],
+    });
     state.confirm_selected_guild();
     state
 }

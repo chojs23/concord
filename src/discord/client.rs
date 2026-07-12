@@ -21,7 +21,8 @@ use tokio::{
 use crate::{AppError, Result};
 
 use super::{
-    ActivityInfo, ApplicationCommandInfo, ApplicationCommandInvocation, PresenceStatus,
+    ActivityInfo, ApplicationCommandInfo, ApplicationCommandInvocation, DiscordAuthSession,
+    PresenceStatus,
     application_commands::application_command_interaction_from_invocation,
     events::{AppEvent, SequencedAppEvent},
     fingerprint::{
@@ -86,8 +87,27 @@ impl DiscordClient {
         token: String,
         fingerprint: Arc<ClientFingerprint>,
     ) -> Result<Self> {
-        validate_token_header(&token)?;
         let http = discord_http_client(&fingerprint);
+        Self::new_with_fingerprint_and_http(token, fingerprint, http)
+    }
+
+    pub(crate) fn new_with_auth_session(
+        token: String,
+        auth_session: DiscordAuthSession,
+    ) -> Result<Self> {
+        Self::new_with_fingerprint_and_http(
+            token,
+            auth_session.fingerprint_arc(),
+            auth_session.http(),
+        )
+    }
+
+    fn new_with_fingerprint_and_http(
+        token: String,
+        fingerprint: Arc<ClientFingerprint>,
+        http: reqwest::Client,
+    ) -> Result<Self> {
+        validate_token_header(&token)?;
         let rest = DiscordRest::new(token.clone(), http, discord_rest_headers(&fingerprint));
         let initial_state = DiscordState::default();
         let (effects_tx, effects_rx) = mpsc::channel(4096);

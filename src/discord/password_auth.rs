@@ -1,13 +1,8 @@
-use std::sync::Arc;
-
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{sync::mpsc, task::JoinHandle};
 
-use super::{
-    auth_http::{discord_login_headers, discord_web_client},
-    fingerprint::{CLIENT_BUILD_NUMBER, ClientFingerprint},
-};
+use super::{DiscordAuthSession, auth_http::discord_login_headers};
 
 const LOGIN_URL: &str = "https://discord.com/api/v9/auth/login";
 const MFA_VERIFY_URL: &str = "https://discord.com/api/v9/auth/mfa";
@@ -49,18 +44,13 @@ pub fn spawn_login(
     password: String,
     events_tx: mpsc::Sender<PasswordAuthEvent>,
 ) -> JoinHandle<()> {
-    spawn_login_with_fingerprint(
-        login,
-        password,
-        Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)),
-        events_tx,
-    )
+    spawn_login_with_auth_session(login, password, DiscordAuthSession::fallback(), events_tx)
 }
 
-pub(crate) fn spawn_login_with_fingerprint(
+pub(crate) fn spawn_login_with_auth_session(
     login: String,
     password: String,
-    fingerprint: Arc<ClientFingerprint>,
+    auth_session: DiscordAuthSession,
     events_tx: mpsc::Sender<PasswordAuthEvent>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -70,7 +60,7 @@ pub(crate) fn spawn_login_with_fingerprint(
             ))
             .await;
 
-        match login_with_password(&login, &password, &fingerprint).await {
+        match login_with_password(&login, &password, &auth_session).await {
             Ok(LoginOutcome::Token(token)) => {
                 let _ = events_tx.send(PasswordAuthEvent::Token(token)).await;
             }
@@ -93,22 +83,22 @@ pub fn spawn_mfa_verify(
     login_instance_id: String,
     events_tx: mpsc::Sender<PasswordAuthEvent>,
 ) -> JoinHandle<()> {
-    spawn_mfa_verify_with_fingerprint(
+    spawn_mfa_verify_with_auth_session(
         method,
         code,
         ticket,
         login_instance_id,
-        Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)),
+        DiscordAuthSession::fallback(),
         events_tx,
     )
 }
 
-pub(crate) fn spawn_mfa_verify_with_fingerprint(
+pub(crate) fn spawn_mfa_verify_with_auth_session(
     method: MfaMethod,
     code: String,
     ticket: String,
     login_instance_id: String,
-    fingerprint: Arc<ClientFingerprint>,
+    auth_session: DiscordAuthSession,
     events_tx: mpsc::Sender<PasswordAuthEvent>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -118,7 +108,7 @@ pub(crate) fn spawn_mfa_verify_with_fingerprint(
             ))
             .await;
 
-        match verify_mfa(method, &code, &ticket, &login_instance_id, &fingerprint).await {
+        match verify_mfa(method, &code, &ticket, &login_instance_id, &auth_session).await {
             Ok(token) => {
                 let _ = events_tx.send(PasswordAuthEvent::Token(token)).await;
             }
@@ -133,16 +123,12 @@ pub fn spawn_sms_send(
     ticket: String,
     events_tx: mpsc::Sender<PasswordAuthEvent>,
 ) -> JoinHandle<()> {
-    spawn_sms_send_with_fingerprint(
-        ticket,
-        Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)),
-        events_tx,
-    )
+    spawn_sms_send_with_auth_session(ticket, DiscordAuthSession::fallback(), events_tx)
 }
 
-pub(crate) fn spawn_sms_send_with_fingerprint(
+pub(crate) fn spawn_sms_send_with_auth_session(
     ticket: String,
-    fingerprint: Arc<ClientFingerprint>,
+    auth_session: DiscordAuthSession,
     events_tx: mpsc::Sender<PasswordAuthEvent>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -152,7 +138,7 @@ pub(crate) fn spawn_sms_send_with_fingerprint(
             ))
             .await;
 
-        match send_mfa_sms(&ticket, &fingerprint).await {
+        match send_mfa_sms(&ticket, &auth_session).await {
             Ok(phone) => {
                 let _ = events_tx.send(PasswordAuthEvent::SmsSent { phone }).await;
             }
@@ -171,11 +157,12 @@ enum LoginOutcome {
 async fn login_with_password(
     login: &str,
     password: &str,
-    fingerprint: &ClientFingerprint,
+    auth_session: &DiscordAuthSession,
 ) -> Result<LoginOutcome, String> {
-    let response = http_client(fingerprint)
+    let response = auth_session
+        .http()
         .post(LOGIN_URL)
-        .headers(discord_login_headers(fingerprint))
+        .headers(discord_login_headers(auth_session.fingerprint()))
         .json(&json!({
             "login": normalize_login_identifier(login),
             "password": password,
@@ -199,16 +186,17 @@ async fn login_with_password(
 
 async fn send_mfa_sms(
     ticket: &str,
-    fingerprint: &ClientFingerprint,
+    auth_session: &DiscordAuthSession,
 ) -> Result<Option<String>, String> {
     #[derive(Deserialize)]
     struct SmsResponse {
         phone: Option<String>,
     }
 
-    let response = http_client(fingerprint)
+    let response = auth_session
+        .http()
         .post(MFA_SMS_SEND_URL)
-        .headers(discord_login_headers(fingerprint))
+        .headers(discord_login_headers(auth_session.fingerprint()))
         .json(&json!({ "ticket": ticket }))
         .send()
         .await
@@ -234,12 +222,13 @@ async fn verify_mfa(
     code: &str,
     ticket: &str,
     login_instance_id: &str,
-    fingerprint: &ClientFingerprint,
+    auth_session: &DiscordAuthSession,
 ) -> Result<String, String> {
     let url = format!("{MFA_VERIFY_URL}/{}", method.endpoint_name());
-    let response = http_client(fingerprint)
+    let response = auth_session
+        .http()
         .post(url)
-        .headers(discord_login_headers(fingerprint))
+        .headers(discord_login_headers(auth_session.fingerprint()))
         .json(&json!({
             "code": code.trim(),
             "login_instance_id": login_instance_id,
@@ -260,10 +249,6 @@ async fn verify_mfa(
     } else {
         Err(format_login_error(status, &body))
     }
-}
-
-fn http_client(fingerprint: &ClientFingerprint) -> reqwest::Client {
-    discord_web_client(fingerprint)
 }
 
 fn parse_login_success(body: &str) -> Result<LoginOutcome, String> {

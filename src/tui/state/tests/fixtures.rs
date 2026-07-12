@@ -210,24 +210,30 @@ pub(super) fn latest_history_loaded(
 /// VIEW_CHANNEL but loses SEND_MESSAGES. This is an announcement-style
 /// read-only channel that the user can read but not post in.
 pub(super) fn state_with_read_only_channel() -> DashboardState {
-    guild_state_with_overwrites(vec![PermissionOverwriteInfo {
-        deny: 0x800,
-        ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
-    }])
+    guild_state_with_overwrites(
+        vec![PermissionOverwriteInfo {
+            deny: 0x800,
+            ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
+        }],
+        Some(Id::new(1)),
+    )
 }
 
 /// Build a guild with a single hidden channel to verify visibility stats.
 pub(super) fn state_with_view_denied_channel() -> DashboardState {
-    guild_state_with_overwrites(vec![PermissionOverwriteInfo {
-        deny: 0x400,
-        ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
-    }])
+    guild_state_with_overwrites(
+        vec![PermissionOverwriteInfo {
+            deny: 0x400,
+            ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
+        }],
+        Some(Id::new(1)),
+    )
 }
 
 /// Build a guild with a single channel where @everyone has VIEW + SEND + TTS
 /// (no overwrites), so the composer should open and submit normally.
 pub(super) fn state_with_writable_channel() -> DashboardState {
-    guild_state_with_overwrites(Vec::new())
+    guild_state_with_overwrites(Vec::new(), Some(Id::new(1)))
 }
 
 pub(super) fn state_with_other_user_message_permissions(
@@ -324,6 +330,7 @@ pub(super) fn state_with_hidden_and_visible_channels() -> DashboardState {
 
 pub(super) fn guild_state_with_overwrites(
     overwrites: Vec<PermissionOverwriteInfo>,
+    last_message_id: Option<Id<MessageMarker>>,
 ) -> DashboardState {
     let me: Id<UserMarker> = Id::new(10);
     let owner: Id<UserMarker> = Id::new(11);
@@ -339,7 +346,7 @@ pub(super) fn guild_state_with_overwrites(
             member_count: Some(1),
             owner_id: Some(owner),
             channels: vec![ChannelInfo {
-                permission_overwrites: overwrites,
+                permission_overwrites: overwrites.clone(),
                 ..positioned_text_channel_info(guild, channel, "general", 0)
             }],
             members: vec![member_info(me, "me")],
@@ -353,6 +360,11 @@ pub(super) fn guild_state_with_overwrites(
     ));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(channel);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        permission_overwrites: overwrites,
+        last_message_id,
+        ..positioned_text_channel_info(guild, channel, "general", 0)
+    }));
     state
 }
 
@@ -395,6 +407,10 @@ pub(super) fn state_with_writable_channel_and_members() -> DashboardState {
     ));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(channel);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        last_message_id: Some(Id::new(1)),
+        ..positioned_text_channel_info(guild, channel, "general", 0)
+    }));
     state
 }
 

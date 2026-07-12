@@ -167,9 +167,6 @@ impl DashboardState {
             AppEvent::CurrentUserCapabilities { premium_tier } => {
                 self.discord.current_user_premium_tier = Some(*premium_tier);
             }
-            AppEvent::DmEstablished { channel_id } => {
-                self.record_dm_established(*channel_id);
-            }
             AppEvent::ApplicationCommandsLoaded { guild_id, commands } => {
                 self.discord
                     .application_commands

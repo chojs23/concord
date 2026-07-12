@@ -477,9 +477,6 @@ pub enum AppCommand {
     TriggerTyping {
         channel_id: Id<ChannelMarker>,
     },
-    VerifyDmEstablished {
-        channel_id: Id<ChannelMarker>,
-    },
     SubscribeDirectMessage {
         channel_id: Id<ChannelMarker>,
     },

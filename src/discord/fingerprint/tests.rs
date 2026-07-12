@@ -1,9 +1,11 @@
 use super::*;
+use crate::discord::auth_http::DiscordAuthSession;
 use reqwest::header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, ORIGIN, REFERER, USER_AGENT};
 use serde_json::Value;
 use std::{
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
+    sync::Arc,
     thread,
 };
 
@@ -160,6 +162,35 @@ fn launch_signature_applies_discord_mask() {
     }
 }
 
+#[test]
+fn system_locale_normalization_accepts_language_tags_and_rejects_process_locales() {
+    let cases = [
+        ("ko_KR.UTF-8", Some("ko-KR")),
+        ("en_US@calendar", Some("en-US")),
+        ("zh_Hans_CN.UTF-8", Some("zh-Hans-CN")),
+        ("C.UTF-8", None),
+        ("POSIX", None),
+        ("invalid locale", None),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(normalize_system_locale(raw).as_deref(), expected);
+    }
+
+    assert_eq!(accept_language("en"), "en");
+    assert_eq!(accept_language("en-US"), "en-US,en;q=0.9");
+    assert_eq!(accept_language("ko-KR"), "ko-KR,ko;q=0.9,en;q=0.8");
+}
+
+#[test]
+fn windows_version_extracts_the_numeric_os_version() {
+    assert_eq!(
+        windows_version("Microsoft Windows [Version 10.0.26100.4652]").as_deref(),
+        Some("10.0.26100.4652")
+    );
+    assert_eq!(windows_version("Microsoft Windows"), None);
+}
+
 fn assert_uuid_field(value: &Value, field: &str) {
     let raw = value[field]
         .as_str()
@@ -168,9 +199,10 @@ fn assert_uuid_field(value: &Value, field: &str) {
 }
 
 #[test]
-fn rest_client_sends_default_headers_and_replays_cookies() {
+fn shared_auth_session_sends_fingerprint_headers_and_replays_cookies() {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
+    let fingerprint = Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER));
+    let auth_session = DiscordAuthSession::new(Arc::clone(&fingerprint));
     let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
     let address = listener
         .local_addr()
@@ -212,8 +244,8 @@ fn rest_client_sends_default_headers_and_replays_cookies() {
 
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime should start");
     runtime.block_on(async {
-        let client = discord_http_client(&fingerprint);
-        client
+        auth_session
+            .http()
             .get(format!("http://{address}/first"))
             .headers(discord_rest_headers(&fingerprint))
             .send()
@@ -221,7 +253,9 @@ fn rest_client_sends_default_headers_and_replays_cookies() {
             .expect("first local request should succeed")
             .error_for_status()
             .expect("first local response should be successful");
-        client
+        auth_session
+            .clone()
+            .http()
             .get(format!("http://{address}/second"))
             .headers(discord_rest_headers(&fingerprint))
             .send()

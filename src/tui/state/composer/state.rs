@@ -37,37 +37,18 @@ use crate::discord::{AppCommand, ReplyReference};
 use crate::tui::text_cursor::{previous_char_boundary, previous_word_boundary};
 use crate::tui::text_input::{TextEditAction, TextInputState};
 
-/// Why the composer is locked in a DM. Drives both the send gate and the hint.
+/// Why the composer is locked. Drives the send gate, hint, and visual style.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DmComposerLock {
+pub enum ComposerLock {
     Spam,
     MessageRequest,
-    /// The DM is too new or holds too few of our own messages, where an early
-    /// send would trip Discord's CAPTCHA / spam gate.
-    NotEstablished,
+    NewConversation,
+    EmptyChannel,
 }
 
 /// Discord keeps a typing indicator alive for about ten seconds, so resend a
 /// little sooner while the user keeps typing.
 const COMPOSER_TYPING_INTERVAL: Duration = Duration::from_secs(8);
-
-const DM_ESTABLISHED_MESSAGE_THRESHOLD: usize = 5;
-const DM_ESTABLISHED_MIN_AGE_MS: u64 = 24 * 60 * 60 * 1000;
-// TODO: Re-enable after the REST transport test confirms DM sends are accepted.
-const DM_COMPOSER_LOCK_ENABLED: bool = false;
-
-const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
-
-fn snowflake_created_ms<T>(id: Id<T>) -> u64 {
-    (id.get() >> 22) + DISCORD_EPOCH_MS
-}
-
-fn current_unix_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 #[derive(Debug, Default)]
 pub(in crate::tui::state) struct ComposerUiState {
@@ -355,76 +336,50 @@ impl DashboardState {
     pub fn can_send_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
             Some(channel) if channel.is_forum() => false,
-            Some(_) if self.dm_composer_lock().is_some() => false,
+            Some(_) if self.composer_lock().is_some() => false,
             Some(channel) => self.discord.cache.can_send_in_channel(channel),
             None => true,
         }
     }
 
-    pub fn dm_composer_lock(&self) -> Option<DmComposerLock> {
-        if !DM_COMPOSER_LOCK_ENABLED {
-            return None;
-        }
-        self.dm_composer_lock_at(current_unix_ms())
-    }
-
-    pub(in crate::tui::state) fn dm_composer_lock_at(&self, now_ms: u64) -> Option<DmComposerLock> {
+    pub fn composer_lock(&self) -> Option<ComposerLock> {
         let channel = self.selected_channel_state()?;
-        if !channel.is_dm() {
+        let messages = self.discord.cache.messages_for_channel(channel.id);
+        if channel.is_dm() {
+            if channel.is_spam == Some(true) {
+                return Some(ComposerLock::Spam);
+            }
+            if channel.is_message_request == Some(true) {
+                return Some(ComposerLock::MessageRequest);
+            }
+            if channel.last_message_id.is_none() && messages.is_empty() {
+                return Some(ComposerLock::EmptyChannel);
+            }
+            let Some(current_user_id) = self.current_user_id() else {
+                return Some(ComposerLock::NewConversation);
+            };
+            return (!messages
+                .iter()
+                .any(|message| message.author_id == current_user_id))
+            .then_some(ComposerLock::NewConversation);
+        }
+
+        if channel.guild_id.is_none()
+            || channel.is_forum()
+            || !self.discord.cache.can_send_in_channel(channel)
+        {
             return None;
         }
-        if channel.is_spam == Some(true) {
-            return Some(DmComposerLock::Spam);
-        }
-        if channel.is_message_request == Some(true) {
-            return Some(DmComposerLock::MessageRequest);
-        }
-        let aged =
-            now_ms.saturating_sub(snowflake_created_ms(channel.id)) >= DM_ESTABLISHED_MIN_AGE_MS;
-        // Without our own id we cannot count our messages, so allow sending.
-        let has_enough_messages = self
-            .navigation
-            .channels
-            .established_dms
-            .contains(&channel.id)
-            || self.dm_own_message_count(channel.id)? >= DM_ESTABLISHED_MESSAGE_THRESHOLD;
-        (!(aged && has_enough_messages)).then_some(DmComposerLock::NotEstablished)
-    }
-
-    fn dm_own_message_count(&self, channel_id: Id<ChannelMarker>) -> Option<usize> {
-        let current_user_id = self.current_user_id()?;
-        Some(
-            self.discord
-                .cache
-                .messages_for_channel(channel_id)
-                .iter()
-                .filter(|message| message.author_id == current_user_id)
-                .count(),
-        )
-    }
-
-    pub(in crate::tui::state) fn record_dm_established(&mut self, channel_id: Id<ChannelMarker>) {
-        if self.navigation.channels.established_dms.insert(channel_id) {
-            self.options.ui_state_save_pending = true;
-        }
-    }
-
-    pub(in crate::tui::state) fn selected_dm_needs_establishment_verification(&self) -> bool {
-        let Some(channel) = self.selected_channel_state() else {
-            return false;
-        };
-        if self
-            .navigation
-            .channels
-            .established_dms
-            .contains(&channel.id)
+        // Threads can report counts even when no last message is cached. Those
+        // fields prove that a server conversation already exists.
+        if channel.message_count.is_some_and(|count| count > 0)
+            || channel.total_message_sent.is_some_and(|count| count > 0)
         {
-            return false;
+            return None;
         }
-        matches!(
-            self.dm_composer_lock(),
-            Some(DmComposerLock::NotEstablished)
-        )
+
+        (channel.last_message_id.is_none() && messages.is_empty())
+            .then_some(ComposerLock::EmptyChannel)
     }
 
     fn can_send_tts_in_selected_channel(&self) -> bool {

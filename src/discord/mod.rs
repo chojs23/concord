@@ -40,6 +40,7 @@ pub use application_commands::{
     application_command_content_is_complete, application_command_option_scope,
     parsed_application_command_option_names,
 };
+pub(crate) use auth_http::DiscordAuthSession;
 pub use builtin_commands::{
     BuiltinSlashCommandInfo, BuiltinSlashCommandParse, BuiltinSlashCommandSubmit,
     builtin_slash_commands, parse_builtin_slash_command,
@@ -73,8 +74,7 @@ pub use events::{
     PresenceEventFields, SequencedAppEvent, ThreadListSyncInfo, ThreadMemberUpdateInfo,
     ThreadMembersUpdateInfo, UserGuildSettingsInfo,
 };
-pub(crate) use fingerprint::ClientFingerprint;
-pub(crate) use fingerprint::load_client_fingerprint;
+pub(crate) use fingerprint::load_client_fingerprint_and_http;
 pub use guild::{CustomEmojiInfo, GuildFolder};
 pub use ids::{Id, marker};
 pub use member::{MemberInfo, RoleInfo};

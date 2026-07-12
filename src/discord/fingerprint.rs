@@ -13,7 +13,7 @@ use super::auth_http::DISCORD_ORIGIN;
 /// Fallback used only when the live build number cannot be fetched at startup.
 pub(super) const CLIENT_BUILD_NUMBER: u64 = 573_410;
 pub(super) const CLIENT_BROWSER: &str = "Chrome";
-pub(super) const CLIENT_BROWSER_VERSION: &str = "143.0.0.0";
+pub(super) const CLIENT_BROWSER_VERSION: &str = "150.0.0.0";
 
 const DISCORD_CHANNELS_REFERER: &str = "https://discord.com/channels/@me";
 
@@ -76,8 +76,10 @@ struct SuperProperties<'a> {
 }
 
 /// Creates the login-session fingerprint after reading Discord's current web
-/// build. REST and Gateway keep this same value for the full login session.
-pub(crate) async fn load_client_fingerprint() -> Arc<ClientFingerprint> {
+/// build. The returned HTTP client retains the cookies from that bootstrap
+/// request and is reused for authentication and REST.
+pub(crate) async fn load_client_fingerprint_and_http() -> (Arc<ClientFingerprint>, reqwest::Client)
+{
     let bootstrap = Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER));
     let client = discord_http_client(&bootstrap);
     let client_build_number = match fetch_client_build_number(&client).await {
@@ -90,7 +92,10 @@ pub(crate) async fn load_client_fingerprint() -> Arc<ClientFingerprint> {
             CLIENT_BUILD_NUMBER
         }
     };
-    Arc::new(ClientFingerprint::new(client_build_number))
+    (
+        Arc::new(ClientFingerprint::new(client_build_number)),
+        client,
+    )
 }
 
 pub(super) fn discord_http_client(fingerprint: &ClientFingerprint) -> reqwest::Client {
@@ -259,20 +264,45 @@ fn web_user_agent(os: &str, os_version: &str, os_arch: &str) -> String {
 
 fn system_locale() -> String {
     sys_locale::get_locale()
-        .map(|locale| {
-            locale
-                .split(['.', '@'])
-                .next()
-                .unwrap_or("en-US")
-                .replace('_', "-")
-        })
-        .filter(|locale| !locale.is_empty() && HeaderValue::from_str(locale).is_ok())
+        .as_deref()
+        .and_then(normalize_system_locale)
         .unwrap_or_else(|| "en-US".to_owned())
+}
+
+fn normalize_system_locale(raw: &str) -> Option<String> {
+    let locale = raw.split(['.', '@']).next()?.replace('_', "-");
+    if locale.eq_ignore_ascii_case("C") || locale.eq_ignore_ascii_case("POSIX") {
+        return None;
+    }
+    let mut subtags = locale.split('-');
+    let language = subtags.next()?;
+    if !(2..=8).contains(&language.len())
+        || !language
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+        || subtags.any(|subtag| {
+            subtag.is_empty()
+                || subtag.len() > 8
+                || !subtag
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
+        || HeaderValue::from_str(&locale).is_err()
+    {
+        return None;
+    }
+    Some(locale)
 }
 
 pub(super) fn accept_language(locale: &str) -> String {
     let language = locale.split('-').next().unwrap_or(locale);
-    if locale == language {
+    if language.eq_ignore_ascii_case("en") {
+        if locale == language {
+            locale.to_owned()
+        } else {
+            format!("{locale},en;q=0.9")
+        }
+    } else if locale == language {
         format!("{locale},en;q=0.9")
     } else {
         format!("{locale},{language};q=0.9,en;q=0.8")
@@ -316,19 +346,38 @@ fn operating_system() -> &'static str {
 }
 
 fn operating_system_version() -> String {
-    if cfg!(target_os = "linux") {
-        Command::new("uname")
-            .arg("-r")
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .map(|version| version.trim().to_owned())
-            .filter(|version| !version.is_empty())
-            .unwrap_or_default()
+    let version = if cfg!(target_os = "linux") {
+        command_output("uname", &["-r"])
+    } else if cfg!(target_os = "macos") {
+        command_output("sw_vers", &["-productVersion"])
+    } else if cfg!(target_os = "windows") {
+        command_output("cmd", &["/C", "ver"]).and_then(|output| windows_version(&output))
     } else {
-        String::new()
-    }
+        None
+    };
+    version.unwrap_or_default()
+}
+
+fn command_output(program: &str, args: &[&str]) -> Option<String> {
+    Command::new(program)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|version| !version.is_empty())
+}
+
+fn windows_version(output: &str) -> Option<String> {
+    output
+        .split(|character: char| !(character.is_ascii_digit() || character == '.'))
+        .find(|part| {
+            part.contains('.')
+                && part
+                    .split('.')
+                    .all(|component| !component.is_empty() && component.parse::<u32>().is_ok())
+        })
+        .map(str::to_owned)
 }
 
 fn operating_system_arch() -> &'static str {

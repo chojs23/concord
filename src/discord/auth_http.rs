@@ -1,10 +1,43 @@
-use super::fingerprint::{ClientFingerprint, discord_http_client, discord_rest_headers};
+use std::sync::Arc;
+
+use super::fingerprint::{
+    CLIENT_BUILD_NUMBER, ClientFingerprint, discord_http_client, discord_rest_headers,
+};
 
 pub(super) const DISCORD_ORIGIN: &str = "https://discord.com";
 pub(super) const DISCORD_LOGIN_REFERER: &str = "https://discord.com/login";
 
-pub(super) fn discord_web_client(fingerprint: &ClientFingerprint) -> reqwest::Client {
-    discord_http_client(fingerprint)
+#[derive(Clone)]
+pub(crate) struct DiscordAuthSession {
+    fingerprint: Arc<ClientFingerprint>,
+    http: reqwest::Client,
+}
+
+impl DiscordAuthSession {
+    pub(crate) fn fallback() -> Self {
+        Self::new(Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)))
+    }
+
+    pub(crate) fn new(fingerprint: Arc<ClientFingerprint>) -> Self {
+        let http = discord_http_client(&fingerprint);
+        Self { fingerprint, http }
+    }
+
+    pub(crate) fn with_http(fingerprint: Arc<ClientFingerprint>, http: reqwest::Client) -> Self {
+        Self { fingerprint, http }
+    }
+
+    pub(crate) fn fingerprint(&self) -> &ClientFingerprint {
+        &self.fingerprint
+    }
+
+    pub(crate) fn fingerprint_arc(&self) -> Arc<ClientFingerprint> {
+        Arc::clone(&self.fingerprint)
+    }
+
+    pub(crate) fn http(&self) -> reqwest::Client {
+        self.http.clone()
+    }
 }
 
 pub(super) fn discord_login_headers(fingerprint: &ClientFingerprint) -> reqwest::header::HeaderMap {

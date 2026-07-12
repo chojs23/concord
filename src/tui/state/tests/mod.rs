@@ -16,8 +16,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::model::{ChannelBranch, GuildBranch};
 use super::{
-    ActiveGuildScope, AttachmentViewerItem, ChannelActionKind, ChannelPaneEntry, DashboardState,
-    DmComposerLock, FocusPane, GuildActionKind, GuildPaneEntry, MessageActionItem,
+    ActiveGuildScope, AttachmentViewerItem, ChannelActionKind, ChannelPaneEntry, ComposerLock,
+    DashboardState, FocusPane, GuildActionKind, GuildPaneEntry, MessageActionItem,
     MessageActionKind, SearchResultItem,
 };
 use crate::discord::test_builders::{

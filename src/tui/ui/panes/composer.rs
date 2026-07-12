@@ -543,8 +543,8 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
 
     let text = composer_text(state, width);
     let wrapped = wrap_text_lines(&text, width as usize);
-    // A locked DM is a hard stop, so override the dimmed placeholder with red.
-    if state.dm_composer_lock().is_some() {
+    // A locked composer is a hard stop, so override the dimmed placeholder with red.
+    if state.composer_lock().is_some() {
         return wrapped
             .into_iter()
             .map(|subline| Line::from(Span::styled(subline, Style::default().fg(Color::Red))))
@@ -900,21 +900,26 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
             }
             return format!("read-only · cannot create posts in {label}");
         }
-        if let Some(lock) = state.dm_composer_lock() {
+        if let Some(lock) = state.composer_lock() {
             return match lock {
-                DmComposerLock::Spam => {
+                ComposerLock::Spam => {
                     format!(
                         "read-only · {label} is flagged as spam. open it in the official app first"
                     )
                 }
-                DmComposerLock::MessageRequest => {
+                ComposerLock::MessageRequest => {
                     format!(
                         "read-only · {label} is a message request. accept it in the official app first"
                     )
                 }
-                DmComposerLock::NotEstablished => {
+                ComposerLock::NewConversation => {
                     format!(
-                        "read-only · {label} is a new conversation. send at least 5 messages from the official app and wait a day before sending here"
+                        "read-only · {label} is a new conversation. reply in the official app first"
+                    )
+                }
+                ComposerLock::EmptyChannel => {
+                    format!(
+                        "read-only · {label} has no messages. start it in the official app first"
                     )
                 }
             };

@@ -677,8 +677,7 @@ impl DiscordState {
             | AppEvent::ActivateChannel { .. }
             | AppEvent::GatewayResumed
             | AppEvent::GatewayReidentified
-            | AppEvent::GatewayClosed
-            | AppEvent::DmEstablished { .. } => {}
+            | AppEvent::GatewayClosed => {}
         }
     }
 

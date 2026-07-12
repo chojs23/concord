@@ -57,8 +57,7 @@ impl CommandDispatcher {
             | AppCommand::LoadForumPosts { .. }
             | AppCommand::LoadInboxMentions { .. }
             | AppCommand::LoadInboxChannelHistory { .. }
-            | AppCommand::SearchMessages { .. }
-            | AppCommand::VerifyDmEstablished { .. }) => {
+            | AppCommand::SearchMessages { .. }) => {
                 history_commands::handle(self.client.clone(), command).await;
             }
             command @ (AppCommand::LoadGuildMembers { .. }

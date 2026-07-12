@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use base64::{
     Engine,
@@ -17,8 +17,9 @@ use tokio_tungstenite::{
 };
 
 use super::{
-    auth_http::{discord_login_headers, discord_web_client},
-    fingerprint::{CLIENT_BUILD_NUMBER, ClientFingerprint, discord_gateway_headers},
+    DiscordAuthSession,
+    auth_http::discord_login_headers,
+    fingerprint::{ClientFingerprint, discord_gateway_headers},
 };
 
 const REMOTE_AUTH_URL: &str = "wss://remote-auth-gateway.discord.gg/?v=2";
@@ -39,18 +40,15 @@ pub enum QrEvent {
 }
 
 pub fn spawn(events_tx: mpsc::Sender<QrEvent>) -> JoinHandle<()> {
-    spawn_with_fingerprint(
-        Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)),
-        events_tx,
-    )
+    spawn_with_auth_session(DiscordAuthSession::fallback(), events_tx)
 }
 
-pub(crate) fn spawn_with_fingerprint(
-    fingerprint: Arc<ClientFingerprint>,
+pub(crate) fn spawn_with_auth_session(
+    auth_session: DiscordAuthSession,
     events_tx: mpsc::Sender<QrEvent>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        match run(&events_tx, &fingerprint).await {
+        match run(&events_tx, &auth_session).await {
             Ok(Some(token)) => {
                 let _ = events_tx.send(QrEvent::Token(token)).await;
             }
@@ -70,7 +68,7 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 
 async fn run(
     tx: &mpsc::Sender<QrEvent>,
-    client_fingerprint: &ClientFingerprint,
+    auth_session: &DiscordAuthSession,
 ) -> Result<Option<String>, String> {
     let _ = tx
         .send(QrEvent::Status(
@@ -78,7 +76,7 @@ async fn run(
         ))
         .await;
 
-    let request = remote_auth_request(client_fingerprint)?;
+    let request = remote_auth_request(auth_session.fingerprint())?;
 
     let (ws, _) = connect_async(request).await.map_err(err)?;
     let (mut writer, mut reader) = ws.split();
@@ -208,7 +206,7 @@ async fn run(
                             &ticket,
                             &private_key,
                             remote_fingerprint.as_deref(),
-                            client_fingerprint,
+                            auth_session,
                         )
                         .await?;
                         return Ok(Some(token));
@@ -278,16 +276,14 @@ async fn exchange_ticket(
     ticket: &str,
     private_key: &RsaPrivateKey,
     remote_fingerprint: Option<&str>,
-    client_fingerprint: &ClientFingerprint,
+    auth_session: &DiscordAuthSession,
 ) -> Result<String, String> {
     #[derive(Deserialize)]
     struct ExchangeResponse {
         encrypted_token: String,
     }
 
-    let client = discord_web_client(client_fingerprint);
-
-    let response = send_ticket_exchange(&client, ticket, remote_fingerprint, client_fingerprint)
+    let response = send_ticket_exchange(auth_session, ticket, remote_fingerprint)
         .await
         .map_err(err)?;
     let response = checked_ticket_exchange_response(response).await?;
@@ -302,14 +298,14 @@ async fn exchange_ticket(
 }
 
 async fn send_ticket_exchange(
-    client: &reqwest::Client,
+    auth_session: &DiscordAuthSession,
     ticket: &str,
     remote_fingerprint: Option<&str>,
-    client_fingerprint: &ClientFingerprint,
 ) -> Result<reqwest::Response, reqwest::Error> {
-    let mut request = client
+    let mut request = auth_session
+        .http()
         .post(TICKET_EXCHANGE_URL)
-        .headers(discord_login_headers(client_fingerprint))
+        .headers(discord_login_headers(auth_session.fingerprint()))
         .json(&json!({ "ticket": ticket }));
     if let Some(fp) = remote_fingerprint {
         request = request.header("X-Fingerprint", fp);

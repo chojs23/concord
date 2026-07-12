@@ -15,16 +15,14 @@ mod text_cursor;
 mod text_input;
 mod ui;
 
-use std::sync::Arc;
-
 use tokio::sync::{mpsc, watch};
 
 use crate::{
     AppError, Result,
     config::KeymapOptions,
     discord::{
-        AppCommand, ClientFingerprint, DiscordClient, SequencedAppEvent, SnapshotRevision,
-        load_client_fingerprint,
+        AppCommand, DiscordAuthSession, DiscordClient, SequencedAppEvent, SnapshotRevision,
+        load_client_fingerprint_and_http,
     },
 };
 
@@ -37,14 +35,16 @@ pub fn validate_keymap_options(keymap_options: &KeymapOptions) -> Result<()> {
 }
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
-    login::prompt_login(notice, load_client_fingerprint().await).await
+    let (fingerprint, http) = load_client_fingerprint_and_http().await;
+    let auth_session = DiscordAuthSession::with_http(fingerprint, http);
+    login::prompt_login(notice, auth_session).await
 }
 
-pub(crate) async fn prompt_login_with_fingerprint(
+pub(crate) async fn prompt_login_with_auth_session(
     notice: Option<String>,
-    fingerprint: Arc<ClientFingerprint>,
+    auth_session: DiscordAuthSession,
 ) -> Result<String> {
-    login::prompt_login(notice, fingerprint).await
+    login::prompt_login(notice, auth_session).await
 }
 
 pub async fn run(

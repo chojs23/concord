@@ -5,8 +5,6 @@ mod terminal_events;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
-
 use crossterm::event::EventStream;
 use futures::StreamExt;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -14,7 +12,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use crate::{
     AppError, Result,
     discord::{
-        ClientFingerprint,
+        DiscordAuthSession,
         password_auth::{self, MfaMethod, PasswordAuthEvent},
         qr_auth::{self, QrEvent},
     },
@@ -29,7 +27,7 @@ use super::terminal::TerminalRestoreGuard;
 
 pub async fn prompt_login(
     notice: Option<String>,
-    fingerprint: Arc<ClientFingerprint>,
+    auth_session: DiscordAuthSession,
 ) -> Result<String> {
     let mut terminal = ratatui::init();
     let _restore_guard = match TerminalRestoreGuard::new() {
@@ -70,10 +68,10 @@ pub async fn prompt_login(
                             handle.handle.abort();
                         }
                         let (tx, rx) = mpsc::channel(8);
-                        let handle = password_auth::spawn_login_with_fingerprint(
+                        let handle = password_auth::spawn_login_with_auth_session(
                             login,
                             password,
-                            Arc::clone(&fingerprint),
+                            auth_session.clone(),
                             tx,
                         );
                         password_handle = Some(PasswordAuthHandle { rx, handle });
@@ -86,12 +84,12 @@ pub async fn prompt_login(
                             handle.handle.abort();
                         }
                         let (tx, rx) = mpsc::channel(8);
-                        let handle = password_auth::spawn_mfa_verify_with_fingerprint(
+                        let handle = password_auth::spawn_mfa_verify_with_auth_session(
                             method,
                             code,
                             ticket,
                             login_instance_id,
-                            Arc::clone(&fingerprint),
+                            auth_session.clone(),
                             tx,
                         );
                         password_handle = Some(PasswordAuthHandle { rx, handle });
@@ -104,9 +102,9 @@ pub async fn prompt_login(
                             handle.handle.abort();
                         }
                         let (tx, rx) = mpsc::channel(8);
-                        let handle = password_auth::spawn_sms_send_with_fingerprint(
+                        let handle = password_auth::spawn_sms_send_with_auth_session(
                             ticket,
-                            Arc::clone(&fingerprint),
+                            auth_session.clone(),
                             tx,
                         );
                         password_handle = Some(PasswordAuthHandle { rx, handle });
@@ -122,10 +120,7 @@ pub async fn prompt_login(
                     }
                     Some(LoginAction::StartQr) => {
                         let (tx, rx) = mpsc::channel(8);
-                        let handle = qr_auth::spawn_with_fingerprint(
-                            Arc::clone(&fingerprint),
-                            tx,
-                        );
+                        let handle = qr_auth::spawn_with_auth_session(auth_session.clone(), tx);
                         qr_handle = Some(QrHandle { rx, handle });
                         state.qr.reset();
                         state.qr.status = "Starting QR login...".to_string();

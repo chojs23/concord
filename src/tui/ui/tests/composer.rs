@@ -66,6 +66,40 @@ fn composer_lines_show_saved_draft_when_not_composing() {
 }
 
 #[test]
+fn composer_locks_use_the_same_red_hint_for_dm_and_server_channels() {
+    let mut server = DashboardState::new();
+    server.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            name: "general".to_owned(),
+            ..ChannelInfo::test(Id::new(2), "GuildText")
+        }],
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
+    server.confirm_selected_guild();
+    server.confirm_selected_channel();
+
+    let mut dm = DashboardState::new();
+    dm.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        name: "alice".to_owned(),
+        ..ChannelInfo::test(Id::new(20), "dm")
+    }));
+    dm.confirm_selected_guild();
+    dm.confirm_selected_channel();
+
+    for state in [&server, &dm] {
+        assert!(state.composer_lock().is_some());
+        let lines = composer_lines(state, 120);
+        assert!(
+            lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .all(|span| span.style.fg == Some(Color::Red))
+        );
+    }
+}
+
+#[test]
 fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
     let mut state = state_with_message();
     state.direct_reply_to_selected_message();

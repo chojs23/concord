@@ -1197,10 +1197,6 @@ impl DashboardState {
         }
 
         self.refresh_composer_emoji_candidates_for_current_query();
-
-        if self.selected_dm_needs_establishment_verification() {
-            self.enqueue_pending_command(AppCommand::VerifyDmEstablished { channel_id });
-        }
     }
 
     fn record_message_channel_view_transition(

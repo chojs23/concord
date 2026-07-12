@@ -152,7 +152,6 @@ impl DashboardState {
         }
         self.navigation.channels.collapsed_channel_categories =
             options.collapsed_channel_categories.into_iter().collect();
-        self.navigation.channels.established_dms = options.established_dms.into_iter().collect();
         self.navigation.guilds.collapsed_folders = options
             .collapsed_server_folder_ids
             .into_iter()
@@ -175,15 +174,6 @@ impl DashboardState {
             .copied()
             .collect();
         collapsed_channel_categories.sort_by_key(|id| id.get());
-
-        let mut established_dms: Vec<_> = self
-            .navigation
-            .channels
-            .established_dms
-            .iter()
-            .copied()
-            .collect();
-        established_dms.sort_by_key(|id| id.get());
 
         let mut collapsed_server_folder_ids = Vec::new();
         let mut collapsed_server_folder_guilds = Vec::new();
@@ -210,7 +200,6 @@ impl DashboardState {
             collapsed_channel_categories,
             collapsed_server_folder_ids,
             collapsed_server_folder_guilds,
-            established_dms,
         }
     }
 

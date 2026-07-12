@@ -53,7 +53,7 @@ use runtime_state::{
 use scroll::clamp_selected_index;
 
 pub use composer::{
-    CommandPickerEntry, DmComposerLock, EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE,
+    CommandPickerEntry, ComposerLock, EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE,
     MentionPickerEntry, MentionPickerTarget,
 };
 pub use dashboard::DashboardState;

@@ -13,11 +13,13 @@ mod shutdown;
 mod user_commands;
 mod voice_commands;
 
-use std::sync::Arc;
-
 use tokio::sync::mpsc;
 
-use crate::{DiscordClient, Result, config, discord::AppEvent, logging, tui, version_check};
+use crate::{
+    DiscordClient, Result, config,
+    discord::{AppEvent, DiscordAuthSession},
+    logging, tui, version_check,
+};
 
 use self::{
     command_loop::start_command_loop,
@@ -35,12 +37,13 @@ impl App {
 
     pub async fn run(self) -> Result<()> {
         loop {
-            let fingerprint = crate::discord::load_client_fingerprint().await;
-            let resolved_token = resolve_token(Arc::clone(&fingerprint)).await?;
+            let (fingerprint, http) = crate::discord::load_client_fingerprint_and_http().await;
+            let auth_session = DiscordAuthSession::with_http(fingerprint, http);
+            let resolved_token = resolve_token(auth_session.clone()).await?;
             let token = resolved_token.token;
             let token_warnings = resolved_token.warnings;
 
-            let client = DiscordClient::new_with_fingerprint(token, fingerprint)?;
+            let client = DiscordClient::new_with_auth_session(token, auth_session)?;
             let effects = client.take_effects();
             let snapshots = client.subscribe_snapshots();
             let (commands_tx, commands_rx) = mpsc::channel(64);

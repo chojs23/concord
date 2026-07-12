@@ -234,9 +234,6 @@ pub struct UiStateOptions {
     pub collapsed_channel_categories: Vec<Id<ChannelMarker>>,
     pub collapsed_server_folder_ids: Vec<u64>,
     pub collapsed_server_folder_guilds: Vec<Vec<Id<GuildMarker>>>,
-    /// DMs confirmed to hold enough of our own messages, persisted so the
-    /// composer skips re-scanning history on every open.
-    pub established_dms: Vec<Id<ChannelMarker>>,
 }
 
 impl Default for UiStateOptions {
@@ -251,7 +248,6 @@ impl Default for UiStateOptions {
             collapsed_channel_categories: Vec::new(),
             collapsed_server_folder_ids: Vec::new(),
             collapsed_server_folder_guilds: Vec::new(),
-            established_dms: Vec::new(),
         }
     }
 }
