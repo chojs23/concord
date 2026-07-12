@@ -158,7 +158,7 @@ impl VoiceDecodedAudio {
                 .queued_frames
                 .fetch_add(frames as u64, Ordering::Relaxed);
             match samples_tx.try_send(samples) {
-                Ok(()) => {}
+                Ok(()) => stats.record_pcm_enqueue(frames),
                 Err(TrySendError::Full(_)) => {
                     stats
                         .queued_frames
@@ -181,14 +181,29 @@ impl VoiceDecodedAudio {
     fn log_output_stats(&self) {
         #[cfg(feature = "voice-playback")]
         if let Some(stats) = self.stats.as_ref() {
+            let callback_frames_min = stats.callback_frames_min.swap(u64::MAX, Ordering::Relaxed);
             logging::debug(
                 "voice",
                 format!(
-                    "voice audio stats: queue_full_drops={} output_underruns={} callback_max_gap_ms={} queued_frames={}",
+                    "voice audio stats: queue_full_drops={} output_underruns={} recent_pcm_underruns={} callback_count={} callback_requested_frames={} callback_frames_min={} callback_frames_max={} callback_max_gap_ms={} pcm_enqueued_chunks={} pcm_enqueued_frames={} pcm_enqueue_max_gap_ms={} queued_frames={} queued_frames_max={} prebuffer_target_frames={}",
                     stats.queue_full_drops.swap(0, Ordering::Relaxed),
                     stats.output_underruns.swap(0, Ordering::Relaxed),
+                    stats.recent_pcm_underruns.swap(0, Ordering::Relaxed),
+                    stats.callback_count.swap(0, Ordering::Relaxed),
+                    stats.callback_requested_frames.swap(0, Ordering::Relaxed),
+                    if callback_frames_min == u64::MAX {
+                        0
+                    } else {
+                        callback_frames_min
+                    },
+                    stats.callback_frames_max.swap(0, Ordering::Relaxed),
                     stats.callback_max_gap_ms.swap(0, Ordering::Relaxed),
+                    stats.pcm_enqueued_chunks.swap(0, Ordering::Relaxed),
+                    stats.pcm_enqueued_frames.swap(0, Ordering::Relaxed),
+                    stats.pcm_enqueue_max_gap_ms.swap(0, Ordering::Relaxed),
                     stats.queued_frames.load(Ordering::Relaxed),
+                    stats.queued_frames_max.swap(0, Ordering::Relaxed),
+                    stats.prebuffer_target_frames.load(Ordering::Relaxed),
                 ),
             );
         }

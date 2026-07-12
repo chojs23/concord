@@ -210,8 +210,6 @@ const VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ: f32 = 8_000.0;
 const VOICE_AUDIO_OUTPUT_QUEUE: usize = 64;
 #[cfg(feature = "voice-playback")]
 const VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES: u64 = DISCORD_VOICE_SAMPLE_RATE as u64 * 60 / 1_000;
-#[cfg(all(feature = "voice-playback", target_os = "linux"))]
-const VOICE_PULSE_OUTPUT_BUFFER_FRAMES: u32 = 2_400;
 const AEAD_AES256_GCM_RTPSIZE: &str = "aead_aes256_gcm_rtpsize";
 const AEAD_XCHACHA20_POLY1305_RTPSIZE: &str = "aead_xchacha20_poly1305_rtpsize";
 const VOICE_REMOTE_SPEAKING_TTL: Duration = Duration::from_millis(500);

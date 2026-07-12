@@ -15,8 +15,6 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 #[cfg(feature = "voice-playback")]
 use super::VOICE_AUDIO_OUTPUT_QUEUE;
-#[cfg(all(feature = "voice-playback", target_os = "linux"))]
-use super::VOICE_PULSE_OUTPUT_BUFFER_FRAMES;
 #[cfg(feature = "voice-playback")]
 use super::audio_buffer::{VoiceAudioBuffer, VoiceAudioOutputStats};
 #[cfg(all(feature = "voice-playback", target_os = "linux"))]
@@ -482,14 +480,7 @@ impl VoiceAudioOutput {
             .default_output_config()
             .map_err(|error| format!("voice default audio output config failed: {error}"))?;
         let sample_format = supported_config.sample_format();
-        #[cfg(target_os = "linux")]
-        let mut stream_config = supported_config.config();
-        #[cfg(not(target_os = "linux"))]
         let stream_config = supported_config.config();
-        #[cfg(target_os = "linux")]
-        if host.id() == cpal::HostId::PulseAudio {
-            stream_config.buffer_size = cpal::BufferSize::Fixed(VOICE_PULSE_OUTPUT_BUFFER_FRAMES);
-        }
         let stats = Arc::new(VoiceAudioOutputStats::default());
         let stream = build_voice_output_stream(
             &device,
@@ -565,6 +556,8 @@ impl F32OutputSource for VoiceOutputSource {
         T: Default + Copy,
     {
         let callback_at = Instant::now();
+        let callback_frames = output.len() / channels.max(1);
+        self.stats.record_callback(callback_frames);
         if let Some(previous) = self.last_callback_at.replace(callback_at) {
             let gap_ms = callback_at
                 .duration_since(previous)
@@ -581,7 +574,7 @@ impl F32OutputSource for VoiceOutputSource {
             }
             return;
         }
-        self.buffer.begin_output();
+        self.buffer.begin_output(callback_frames);
         let gain = f32::from(self.playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
         for frame in output.chunks_mut(channels) {
             let [left, right] = self.buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);

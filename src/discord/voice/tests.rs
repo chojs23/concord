@@ -1,3 +1,5 @@
+#[cfg(feature = "voice-playback")]
+use super::audio_buffer::voice_output_prebuffer_frames;
 use super::dave::VoiceDaveOutboundPayload;
 use super::opus::VoicePlaybackDecodeState;
 use super::rtp::build_voice_rtp_packet;
@@ -746,7 +748,7 @@ fn voice_audio_buffer_resamples_non_48khz_output_clock() {
         .queued_frames
         .store(VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES, Ordering::Relaxed);
     let mut buffer = VoiceAudioBuffer::new(rx, 24_000, stats);
-    buffer.begin_output();
+    buffer.begin_output(0);
 
     assert_eq!(buffer.next_stereo_frame(), Some([0.0, 0.0]));
     assert_eq!(buffer.next_stereo_frame(), Some([2.0, 2.0]));
@@ -764,11 +766,12 @@ fn voice_audio_buffer_fades_short_underruns() {
     tx.try_send(vec![1.0, -1.0])
         .expect("decoded samples should queue");
     let stats = Arc::new(VoiceAudioOutputStats::default());
+    stats.record_pcm_enqueue(1);
     stats
         .queued_frames
         .store(VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES, Ordering::Relaxed);
-    let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE, stats);
-    buffer.begin_output();
+    let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE, Arc::clone(&stats));
+    buffer.begin_output(0);
 
     assert_eq!(buffer.next_stereo_frame(), Some([1.0, -1.0]));
     let faded = buffer
@@ -777,6 +780,40 @@ fn voice_audio_buffer_fades_short_underruns() {
 
     assert!(faded[0] < 1.0 && faded[0] > 0.0);
     assert!(faded[1] > -1.0 && faded[1] < 0.0);
+    assert_eq!(stats.output_underruns.load(Ordering::Relaxed), 1);
+    assert_eq!(stats.recent_pcm_underruns.load(Ordering::Relaxed), 1);
+}
+
+#[cfg(feature = "voice-playback")]
+#[test]
+fn voice_output_prebuffer_includes_one_device_callback() {
+    let cases = [
+        (4_096, 48_000, 6_976),
+        (96_000, 48_000, 98_880),
+        (4_096, 192_000, 3_904),
+        (4_096, 24_000, 11_072),
+    ];
+
+    for (callback_frames, output_sample_rate, expected) in cases {
+        assert_eq!(
+            voice_output_prebuffer_frames(callback_frames, output_sample_rate),
+            expected
+        );
+    }
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    tx.try_send(vec![1.0, -1.0])
+        .expect("decoded samples should queue");
+    let stats = Arc::new(VoiceAudioOutputStats::default());
+    let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE, Arc::clone(&stats));
+
+    stats.queued_frames.store(6_975, Ordering::Relaxed);
+    buffer.begin_output(4_096);
+    assert_eq!(buffer.next_stereo_frame(), None);
+
+    stats.queued_frames.store(6_976, Ordering::Relaxed);
+    buffer.begin_output(4_096);
+    assert_eq!(buffer.next_stereo_frame(), Some([1.0, -1.0]));
 }
 
 #[test]
