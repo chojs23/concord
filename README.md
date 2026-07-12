@@ -740,6 +740,7 @@ Honestly, no.
 There are some path that did trigger a account block:
 
 - Trying to **create a new DM channel and send a message to an unknown user**(meaning there was no pre-existing DM created through the Discord client) can immediately block your account temporarily.
+- Sending a message in an existing one-to-one DM may also trigger a temporary account block if you only recently started messaging that person or have little conversation history with them.
 - Some features that requires a hCapcha challenge on Discord's side.
 
 Other features have not caused blocks in my testing.
