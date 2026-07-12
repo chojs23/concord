@@ -1122,6 +1122,14 @@ impl DashboardState {
 
     pub(super) fn activate_channel_at(&mut self, channel_id: Id<ChannelMarker>, now: Instant) {
         self.record_message_channel_view_transition(channel_id, now);
+        if self
+            .discord
+            .cache
+            .channel_message_bodies_are_cold(channel_id)
+            || self.message_history_refresh.is_stale(channel_id)
+        {
+            self.record_latest_message_history_loading(channel_id);
+        }
         self.record_recent_channel(channel_id);
         let is_forum = self
             .discord

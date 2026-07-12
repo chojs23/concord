@@ -2,8 +2,9 @@ use std::io::Cursor;
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::test_builders::{
-    ForumPostsLoadedFixture, GuildCreateFixture, MessageCreateFixture, forum_posts_loaded_event,
-    guild_create_event, guild_message_create_fixture, message_create_event,
+    ForumPostsLoadedFixture, GuildCreateFixture, MessageCreateFixture,
+    empty_latest_message_history_loaded_event, forum_posts_loaded_event, guild_create_event,
+    guild_message_create_fixture, message_create_event,
 };
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 
@@ -2035,6 +2036,8 @@ fn state_with_image_messages_and_display_options(
             },
         );
     }
+
+    state.push_event(empty_latest_message_history_loaded_event(channel_id));
 
     state
 }

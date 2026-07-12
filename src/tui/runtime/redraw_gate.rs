@@ -55,6 +55,7 @@ pub(super) fn view_signature(state: &DashboardState) -> u64 {
     hash_dbg(&mut hasher, &state.visible_messages());
     hash_dbg(&mut hasher, &state.visible_thread_card_items());
     hash_dbg(&mut hasher, &state.typing_footer_for_selected_channel());
+    hash_dbg(&mut hasher, &state.composer_lock());
     state.new_messages_count().hash(&mut hasher);
 
     // Guild sidebar with its unread badges.
@@ -129,7 +130,8 @@ pub(super) fn view_signature(state: &DashboardState) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::view_signature;
-    use crate::discord::AppEvent;
+    use crate::discord::ids::Id;
+    use crate::discord::{AppEvent, ChannelInfo, MessageHistoryLoadTarget};
     use crate::tui::state::DashboardState;
 
     #[test]
@@ -146,5 +148,32 @@ mod tests {
             latest_version: "9.9.9".to_owned(),
         });
         assert_ne!(before, view_signature(&state));
+    }
+
+    #[test]
+    fn view_signature_tracks_composer_history_state_changes() {
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo::test(
+            Id::new(20),
+            "dm",
+        )));
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+
+        let loading = view_signature(&state);
+        state.push_event(AppEvent::MessageHistoryLoaded {
+            channel_id: Id::new(20),
+            before: None,
+            messages: Vec::new(),
+        });
+        let loaded = view_signature(&state);
+        assert_ne!(loading, loaded);
+
+        state.push_event(AppEvent::MessageHistoryLoadFailed {
+            channel_id: Id::new(20),
+            target: MessageHistoryLoadTarget::Latest,
+            message: "offline".to_owned(),
+        });
+        assert_ne!(loaded, view_signature(&state));
     }
 }

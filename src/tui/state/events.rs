@@ -4,7 +4,9 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
 };
-use crate::discord::{AppEvent, VoiceConnectionStatus, VoiceScope};
+use crate::discord::{
+    AppEvent, MessageHistoryLoadTarget, MessageInfo, VoiceConnectionStatus, VoiceScope,
+};
 use crate::logging;
 
 use super::{ActiveGuildScope, DashboardState, VoiceConnectionUiState};
@@ -242,6 +244,13 @@ impl DashboardState {
                     popup.apply_load_failed(*channel_id, *message_id, emoji);
                 }
             }
+            AppEvent::MessageHistoryLoadFailed {
+                channel_id,
+                target: MessageHistoryLoadTarget::Latest,
+                ..
+            } => {
+                self.record_latest_message_history_failed(*channel_id);
+            }
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::ForumPostsLoaded {
                 channel_id,
@@ -262,6 +271,14 @@ impl DashboardState {
             }
             AppEvent::MessageSearchLoaded { .. } | AppEvent::MessageSearchLoadFailed { .. } => {
                 self.record_search_event(event);
+            }
+            AppEvent::MessageHistoryLoaded {
+                channel_id,
+                before: None,
+                messages,
+            } => {
+                self.record_latest_message_history_loaded(*channel_id);
+                self.record_dm_established_from_messages(*channel_id, messages);
             }
             AppEvent::MessageHistoryLoaded { .. } | AppEvent::MessageHistoryAfterLoaded { .. } => {}
             AppEvent::InboxMentionsLoaded {
@@ -286,7 +303,12 @@ impl DashboardState {
             } => {
                 self.apply_inbox_channel_messages_load_failed(*request_id, *channel_id);
             }
-            AppEvent::MessageHistoryRefreshed { channel_id, .. } => {
+            AppEvent::MessageHistoryRefreshed {
+                channel_id,
+                messages,
+            } => {
+                self.record_latest_message_history_loaded(*channel_id);
+                self.record_dm_established_from_messages(*channel_id, messages);
                 self.record_message_history_refreshed(*channel_id);
             }
             AppEvent::UserProfileLoaded { guild_id, profile } => {
@@ -331,7 +353,29 @@ impl DashboardState {
             AppEvent::ChannelUpsert(channel) => {
                 self.record_thread_channel_upserted(channel);
             }
+            AppEvent::MessageCreate { message } => {
+                self.record_dm_established_from_messages(
+                    message.channel_id,
+                    std::slice::from_ref(message),
+                );
+            }
             _ => {}
+        }
+    }
+
+    fn record_dm_established_from_messages(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        messages: &[MessageInfo],
+    ) {
+        let Some(current_user_id) = self.current_user_id() else {
+            return;
+        };
+        if messages
+            .iter()
+            .any(|message| message.author_id == current_user_id)
+        {
+            self.record_dm_established(channel_id);
         }
     }
 

@@ -6,8 +6,8 @@ use std::{
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::test_builders::{
     ForumPostsLoadedFixture, GuildCreateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
-    forum_posts_loaded_event, guild_create_event, guild_message_create_fixture,
-    message_create_event, message_history_loaded_event,
+    empty_latest_message_history_loaded_event, forum_posts_loaded_event, guild_create_event,
+    guild_message_create_fixture, message_create_event, message_history_loaded_event,
 };
 use ratatui::{
     Terminal,
@@ -72,9 +72,9 @@ use crate::{
         },
         state::{
             AppliedForumTag, AttachmentDownloadProgressView, AttachmentViewerZoom,
-            ChannelSwitcherItem, ChannelThreadItem, DashboardState, DisplayOptionItem,
-            EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind,
-            PollVotePickerItem,
+            ChannelSwitcherItem, ChannelThreadItem, ComposerLock, DashboardState,
+            DisplayOptionItem, EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem,
+            MessageActionKind, PollVotePickerItem,
         },
         text::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
         ui::{MouseTarget, PopupListTarget, mouse_target_at},
@@ -317,6 +317,7 @@ fn seed_channel_message(
         content: Some(content.to_owned()),
         ..guild_message_create_fixture()
     }));
+    state.push_event(empty_latest_message_history_loaded_event(channel_id));
     state
 }
 

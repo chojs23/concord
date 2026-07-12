@@ -71,6 +71,7 @@ pub(super) struct ChannelPaneNavigationState {
     pub(super) visible: bool,
     pub(super) width: u16,
     pub(super) collapsed_channel_categories: HashSet<Id<ChannelMarker>>,
+    pub(super) established_dms: HashSet<Id<ChannelMarker>>,
 }
 
 #[derive(Debug)]
@@ -247,6 +248,7 @@ impl Default for ChannelPaneNavigationState {
             visible: true,
             width: DEFAULT_CHANNEL_LIST_WIDTH,
             collapsed_channel_categories: HashSet::new(),
+            established_dms: HashSet::new(),
         }
     }
 }

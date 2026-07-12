@@ -78,6 +78,7 @@ fn composer_locks_use_the_same_red_hint_for_dm_and_server_channels() {
     }));
     server.confirm_selected_guild();
     server.confirm_selected_channel();
+    server.push_event(empty_latest_message_history_loaded_event(Id::new(2)));
 
     let mut dm = DashboardState::new();
     dm.push_event(AppEvent::ChannelUpsert(ChannelInfo {
@@ -86,6 +87,7 @@ fn composer_locks_use_the_same_red_hint_for_dm_and_server_channels() {
     }));
     dm.confirm_selected_guild();
     dm.confirm_selected_channel();
+    dm.push_event(empty_latest_message_history_loaded_event(Id::new(20)));
 
     for state in [&server, &dm] {
         assert!(state.composer_lock().is_some());
@@ -97,6 +99,52 @@ fn composer_locks_use_the_same_red_hint_for_dm_and_server_channels() {
                 .all(|span| span.style.fg == Some(Color::Red))
         );
     }
+}
+
+#[test]
+fn message_history_statuses_override_a_saved_draft() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        last_message_id: Some(Id::new(200)),
+        name: "alice".to_owned(),
+        ..ChannelInfo::test(Id::new(20), "dm")
+    }));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    for ch in "draft".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert_eq!(state.composer_lock(), Some(ComposerLock::LoadingMessages));
+    let lines = composer_lines(&state, 120);
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["loading messages in @alice..."]
+    );
+    assert!(
+        lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| span.style.fg != Some(Color::Red))
+    );
+
+    state.push_event(AppEvent::MessageHistoryLoadFailed {
+        channel_id: Id::new(20),
+        target: crate::discord::MessageHistoryLoadTarget::Latest,
+        message: "offline".to_owned(),
+    });
+    assert_eq!(state.composer_lock(), Some(ComposerLock::MessageLoadFailed));
+    let lines = composer_lines(&state, 120);
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["read-only · could not load messages in @alice. reopen it to retry"]
+    );
+    assert!(
+        lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| span.style.fg == Some(Color::Red))
+    );
 }
 
 #[test]

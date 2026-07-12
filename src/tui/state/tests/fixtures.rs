@@ -363,8 +363,12 @@ pub(super) fn guild_state_with_overwrites(
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         permission_overwrites: overwrites,
         last_message_id,
+        message_count: last_message_id.map(|_| 1),
         ..positioned_text_channel_info(guild, channel, "general", 0)
     }));
+    if last_message_id.is_some() {
+        state.push_event(latest_history_loaded(channel, Vec::new()));
+    }
     state
 }
 
@@ -409,8 +413,10 @@ pub(super) fn state_with_writable_channel_and_members() -> DashboardState {
     state.activate_channel(channel);
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         last_message_id: Some(Id::new(1)),
+        message_count: Some(1),
         ..positioned_text_channel_info(guild, channel, "general", 0)
     }));
+    state.push_event(latest_history_loaded(channel, Vec::new()));
     state
 }
 
@@ -604,6 +610,7 @@ pub(super) fn state_with_custom_emojis() -> DashboardState {
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.push_event(message_create_event(guild_text_message(1, "hello")));
+    state.push_event(latest_history_loaded(channel_id, Vec::new()));
     state
 }
 
@@ -714,6 +721,7 @@ pub(super) fn state_with_messages_matching(
             guild_text_message(id, format!("msg {id}")).with_attachments(attachments),
         ));
     }
+    state.push_event(latest_history_loaded(channel_id, Vec::new()));
     state
 }
 

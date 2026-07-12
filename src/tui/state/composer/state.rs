@@ -19,6 +19,7 @@ use super::super::local_upload_preview::{
     LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
     local_upload_preview_view,
 };
+use super::super::request_tracking::LatestMessageHistoryState;
 use super::super::scroll::clamp_list_scroll;
 use super::super::text_completion::EmojiCompletionState;
 use super::super::{
@@ -40,6 +41,8 @@ use crate::tui::text_input::{TextEditAction, TextInputState};
 /// Why the composer is locked. Drives the send gate, hint, and visual style.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ComposerLock {
+    LoadingMessages,
+    MessageLoadFailed,
     Spam,
     MessageRequest,
     NewConversation,
@@ -344,7 +347,17 @@ impl DashboardState {
 
     pub fn composer_lock(&self) -> Option<ComposerLock> {
         let channel = self.selected_channel_state()?;
-        let messages = self.discord.cache.messages_for_channel(channel.id);
+        if channel.is_forum() {
+            return None;
+        }
+        match self.latest_message_history_state(channel.id) {
+            LatestMessageHistoryState::Loading => return Some(ComposerLock::LoadingMessages),
+            LatestMessageHistoryState::Failed => return Some(ComposerLock::MessageLoadFailed),
+            LatestMessageHistoryState::Loaded => {}
+        }
+
+        let has_cached_messages = self.discord.cache.channel_has_cached_messages(channel.id);
+
         if channel.is_dm() {
             if channel.is_spam == Some(true) {
                 return Some(ComposerLock::Spam);
@@ -352,34 +365,55 @@ impl DashboardState {
             if channel.is_message_request == Some(true) {
                 return Some(ComposerLock::MessageRequest);
             }
-            if channel.last_message_id.is_none() && messages.is_empty() {
+            if channel.last_message_id.is_none() && !has_cached_messages {
                 return Some(ComposerLock::EmptyChannel);
+            }
+            if self
+                .navigation
+                .channels
+                .established_dms
+                .contains(&channel.id)
+            {
+                return None;
             }
             let Some(current_user_id) = self.current_user_id() else {
                 return Some(ComposerLock::NewConversation);
             };
-            return (!messages
-                .iter()
-                .any(|message| message.author_id == current_user_id))
-            .then_some(ComposerLock::NewConversation);
+            if self
+                .discord
+                .cache
+                .channel_has_cached_message_from(channel.id, current_user_id)
+            {
+                return None;
+            }
+            return Some(ComposerLock::NewConversation);
         }
 
-        if channel.guild_id.is_none()
-            || channel.is_forum()
-            || !self.discord.cache.can_send_in_channel(channel)
-        {
+        if channel.guild_id.is_none() || !self.discord.cache.can_send_in_channel(channel) {
             return None;
         }
         // Threads can report counts even when no last message is cached. Those
         // fields prove that a server conversation already exists.
         if channel.message_count.is_some_and(|count| count > 0)
             || channel.total_message_sent.is_some_and(|count| count > 0)
+            || has_cached_messages
         {
             return None;
         }
 
-        (channel.last_message_id.is_none() && messages.is_empty())
-            .then_some(ComposerLock::EmptyChannel)
+        Some(ComposerLock::EmptyChannel)
+    }
+
+    pub(in crate::tui::state) fn record_dm_established(&mut self, channel_id: Id<ChannelMarker>) {
+        if self
+            .discord
+            .cache
+            .channel(channel_id)
+            .is_some_and(|channel| channel.is_dm())
+            && self.navigation.channels.established_dms.insert(channel_id)
+        {
+            self.options.ui_state_save_pending = true;
+        }
     }
 
     fn can_send_tts_in_selected_channel(&self) -> bool {

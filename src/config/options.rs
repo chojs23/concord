@@ -234,6 +234,10 @@ pub struct UiStateOptions {
     pub collapsed_channel_categories: Vec<Id<ChannelMarker>>,
     pub collapsed_server_folder_ids: Vec<u64>,
     pub collapsed_server_folder_guilds: Vec<Vec<Id<GuildMarker>>>,
+    /// One-to-one DMs confirmed to contain a message from the current user.
+    /// This avoids reclassifying an established conversation when that message
+    /// later falls outside the latest 50-message window.
+    pub established_dms: Vec<Id<ChannelMarker>>,
 }
 
 impl Default for UiStateOptions {
@@ -248,6 +252,7 @@ impl Default for UiStateOptions {
             collapsed_channel_categories: Vec::new(),
             collapsed_server_folder_ids: Vec::new(),
             collapsed_server_folder_guilds: Vec::new(),
+            established_dms: Vec::new(),
         }
     }
 }

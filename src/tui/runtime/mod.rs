@@ -472,6 +472,7 @@ pub(super) async fn run_dashboard(
         dirty |= command_scheduler
             .schedule_state_driven_commands(&mut state, &client, &commands)
             .await;
+        events::save_options_if_needed(&mut state);
     }
 
     if state.should_sign_out() {

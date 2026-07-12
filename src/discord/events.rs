@@ -878,6 +878,15 @@ pub(crate) mod test_builders {
         }
     }
 
+    pub(crate) fn empty_latest_message_history_loaded_event(
+        channel_id: Id<ChannelMarker>,
+    ) -> AppEvent {
+        message_history_loaded_event(MessageHistoryLoadedFixture {
+            channel_id,
+            ..MessageHistoryLoadedFixture::new()
+        })
+    }
+
     pub(crate) struct MessageHistoryLoadFailedFixture {
         pub(crate) channel_id: Id<ChannelMarker>,
         pub(crate) target: MessageHistoryLoadTarget,

@@ -15,9 +15,17 @@ pub(super) struct ForumPostListState {
     pub(super) has_more: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LatestMessageHistoryState {
+    Loading,
+    Loaded,
+    Failed,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct RequestTrackingState {
     pub(super) forum_post_lists: HashMap<Id<ChannelMarker>, ForumPostListState>,
+    latest_message_history: HashMap<Id<ChannelMarker>, LatestMessageHistoryState>,
     pub(super) pending_commands: VecDeque<AppCommand>,
 }
 
@@ -61,6 +69,35 @@ impl DashboardState {
         targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
     ) {
         self.enqueue_pending_command(AppCommand::AckChannels { targets });
+    }
+
+    pub(super) fn record_latest_message_history_loaded(&mut self, channel_id: Id<ChannelMarker>) {
+        self.requests
+            .latest_message_history
+            .insert(channel_id, LatestMessageHistoryState::Loaded);
+    }
+
+    pub(super) fn record_latest_message_history_loading(&mut self, channel_id: Id<ChannelMarker>) {
+        self.requests
+            .latest_message_history
+            .insert(channel_id, LatestMessageHistoryState::Loading);
+    }
+
+    pub(super) fn record_latest_message_history_failed(&mut self, channel_id: Id<ChannelMarker>) {
+        self.requests
+            .latest_message_history
+            .insert(channel_id, LatestMessageHistoryState::Failed);
+    }
+
+    pub(super) fn latest_message_history_state(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> LatestMessageHistoryState {
+        self.requests
+            .latest_message_history
+            .get(&channel_id)
+            .copied()
+            .unwrap_or(LatestMessageHistoryState::Loading)
     }
 }
 

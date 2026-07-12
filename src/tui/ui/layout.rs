@@ -205,10 +205,11 @@ pub(super) fn inline_image_preview_area(
 }
 
 pub(super) fn composer_height(area: Rect, state: &DashboardState) -> u16 {
-    let content_lines = if state.is_composing()
-        || !state.composer_input().is_empty()
-        || !state.pending_composer_attachments().is_empty()
-        || state.clipboard_paste_pending()
+    let content_lines = if state.composer_lock().is_none()
+        && (state.is_composing()
+            || !state.composer_input().is_empty()
+            || !state.pending_composer_attachments().is_empty()
+            || state.clipboard_paste_pending())
     {
         composer_content_line_count(state, composer_inner_width(area.width))
     } else {

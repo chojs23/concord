@@ -260,6 +260,28 @@ impl DiscordState {
             .unwrap_or_default()
     }
 
+    pub(crate) fn channel_has_cached_messages(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.message_cache
+            .messages
+            .get(&channel_id)
+            .is_some_and(|messages| !messages.is_empty())
+    }
+
+    pub(crate) fn channel_has_cached_message_from(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        author_id: Id<UserMarker>,
+    ) -> bool {
+        self.message_cache
+            .messages
+            .get(&channel_id)
+            .is_some_and(|messages| {
+                messages
+                    .iter()
+                    .any(|message| message.author_id == author_id)
+            })
+    }
+
     pub fn message_history_gap_after(
         &self,
         channel_id: Id<ChannelMarker>,

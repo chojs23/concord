@@ -59,6 +59,17 @@ fn state_with_application_command(command: ApplicationCommandInfo) -> DashboardS
 fn empty_guild_channel_locks_until_a_message_exists() {
     let mut state = guild_state_with_overwrites(Vec::new(), None);
 
+    assert_eq!(state.composer_lock(), Some(ComposerLock::LoadingMessages));
+    assert!(!state.can_send_in_selected_channel());
+
+    state.push_event(AppEvent::MessageHistoryLoadFailed {
+        channel_id: Id::new(2),
+        target: crate::discord::MessageHistoryLoadTarget::Latest,
+        message: "offline".to_owned(),
+    });
+    assert_eq!(state.composer_lock(), Some(ComposerLock::MessageLoadFailed));
+
+    state.push_event(latest_history_loaded(Id::new(2), Vec::new()));
     assert_eq!(state.composer_lock(), Some(ComposerLock::EmptyChannel));
     assert!(!state.can_send_in_selected_channel());
 
@@ -72,6 +83,14 @@ fn empty_guild_channel_locks_until_a_message_exists() {
 
     assert_eq!(state.composer_lock(), None);
     assert!(state.can_send_in_selected_channel());
+
+    state.push_event(AppEvent::MessageDelete {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(100),
+    });
+    assert_eq!(state.composer_lock(), Some(ComposerLock::EmptyChannel));
+    assert!(!state.can_send_in_selected_channel());
 }
 
 fn state_with_forum_post_channel(required_tag: bool) -> DashboardState {
@@ -216,8 +235,10 @@ fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardStat
     state.activate_channel(general);
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         last_message_id: Some(Id::new(1)),
+        message_count: Some(1),
         ..positioned_text_channel_info(guild, general, "general", 0)
     }));
+    state.push_event(latest_history_loaded(general, Vec::new()));
     state.push_event(AppEvent::ApplicationCommandsLoaded {
         guild_id: Some(guild),
         commands: vec![command],
@@ -2215,6 +2236,7 @@ fn composer_sends_to_opened_thread_channel() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Messages);
     state.activate_message_action_kind(MessageActionKind::OpenThread);
+    state.push_event(latest_history_loaded(Id::new(10), Vec::new()));
 
     state.start_composer();
     state.push_composer_char('h');

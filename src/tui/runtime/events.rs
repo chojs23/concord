@@ -26,7 +26,6 @@ pub(super) fn handle_terminal_event(
                 outcome.command = input::handle_key(state, key);
             }
             if key.kind == KeyEventKind::Press {
-                save_options_if_needed(state);
                 outcome.dirty = true;
             }
         }
@@ -35,7 +34,6 @@ pub(super) fn handle_terminal_event(
                 input::handle_mouse_event(state, mouse, *last_frame_area, mouse_clicks);
             outcome.command = mouse_outcome.command;
             if mouse_outcome.handled {
-                save_options_if_needed(state);
                 outcome.dirty = true;
             }
         }
@@ -54,7 +52,7 @@ pub(super) fn handle_terminal_event(
     Ok(outcome)
 }
 
-fn save_options_if_needed(state: &mut DashboardState) {
+pub(super) fn save_options_if_needed(state: &mut DashboardState) {
     if let Some(options) = state.take_options_save_request()
         && let Err(error) = config::save_options(&options)
     {
