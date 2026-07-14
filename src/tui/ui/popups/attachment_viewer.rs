@@ -48,7 +48,7 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
     } else if can_preview && state.show_images() {
         frame.render_widget(
             Paragraph::new(format!("loading {}...", item.filename))
-                .style(Style::default().fg(DIM))
+                .style(theme::current().style(theme::HighlightGroup::Loading))
                 .wrap(Wrap { trim: false }),
             body_area,
         );
@@ -67,8 +67,11 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
             usize::from(hint_area.width),
         );
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(DIM))))
-                .alignment(Alignment::Center),
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                theme::current().style(theme::HighlightGroup::Hint),
+            )))
+            .alignment(Alignment::Center),
             hint_area,
         );
     }
@@ -96,11 +99,17 @@ pub(in crate::tui::ui) fn centered_viewer_preview_area(
 fn render_attachment_details(frame: &mut Frame, area: Rect, item: &AttachmentViewerItem) {
     let lines = vec![
         Line::from(vec![
-            Span::styled("File: ", Style::default().fg(DIM)),
+            Span::styled(
+                "File: ",
+                theme::current().style(theme::HighlightGroup::FieldLabel),
+            ),
             Span::raw(item.filename.clone()),
         ]),
         Line::from(vec![
-            Span::styled("Size: ", Style::default().fg(DIM)),
+            Span::styled(
+                "Size: ",
+                theme::current().style(theme::HighlightGroup::FieldLabel),
+            ),
             Span::raw(format_byte_size(item.size_bytes)),
         ]),
     ];

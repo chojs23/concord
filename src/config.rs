@@ -32,6 +32,20 @@ pub fn load_ui_state_options_with_warnings() -> Result<(UiStateOptions, Vec<Stri
     load_ui_state_options_from_path(&path)
 }
 
+pub fn load_theme_options() -> Result<ThemeOptions> {
+    Ok(load_theme_options_with_warnings()?.0)
+}
+
+pub fn load_theme_options_with_warnings() -> Result<(ThemeOptions, Vec<String>)> {
+    let path = theme_path()?;
+    load_theme_options_from_path(&path)
+}
+
+#[cfg(test)]
+pub(crate) fn parse_theme_options_for_test(content: &str) -> Result<(ThemeOptions, Vec<String>)> {
+    parse_theme_options(content)
+}
+
 /// User-facing description of where config lives, e.g. for help text. Falls
 /// back to the legacy path string when XDG resolution fails so the message
 /// stays readable.
@@ -68,6 +82,10 @@ fn load_keymap_options_from_path(path: &Path) -> Result<(KeymapOptions, Vec<Stri
 
 fn load_ui_state_options_from_path(path: &Path) -> Result<(UiStateOptions, Vec<String>)> {
     load_tolerant_options_from_path(path, parse_ui_state_options)
+}
+
+fn load_theme_options_from_path(path: &Path) -> Result<(ThemeOptions, Vec<String>)> {
+    load_tolerant_options_from_path(path, parse_theme_options)
 }
 
 pub fn save_options(options: &AppOptions) -> Result<()> {
@@ -117,6 +135,13 @@ fn keymap_path() -> Result<PathBuf> {
     )
 }
 
+fn theme_path() -> Result<PathBuf> {
+    resolved_path(
+        paths::theme_file(),
+        "could not resolve user config directory",
+    )
+}
+
 fn state_path() -> Result<PathBuf> {
     resolved_path(
         paths::state_file(),
@@ -134,4 +159,4 @@ mod parse;
 mod tests;
 
 pub use options::*;
-use parse::{parse_app_options, parse_keymap_options, parse_ui_state_options};
+use parse::{parse_app_options, parse_keymap_options, parse_theme_options, parse_ui_state_options};

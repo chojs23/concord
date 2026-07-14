@@ -20,18 +20,18 @@ pub(in crate::tui::ui) fn render_folder_settings_popup(
     let inner_width = popup.width.saturating_sub(2) as usize;
     let lines = truncate_popup_lines(
         vec![
-            folder_settings_input_line("Name", name, name_active),
+            folder_settings_input_line("Name", name, name_active, editing),
             Line::default(),
-            folder_settings_input_line("Color code", color, color_active),
+            folder_settings_input_line("Color code", color, color_active, editing),
             Line::from(Span::styled(
                 color_error
                     .unwrap_or("Use #RRGGBB or leave blank")
                     .to_owned(),
-                Style::default().fg(if color_error.is_some() {
-                    MENTION_ORANGE
+                if color_error.is_some() {
+                    theme::current().style(theme::HighlightGroup::Error)
                 } else {
-                    DIM
-                }),
+                    theme::current().style(theme::HighlightGroup::Placeholder)
+                },
             )),
             Line::default(),
         ],
@@ -73,18 +73,24 @@ pub(in crate::tui::ui) fn folder_settings_popup_area(area: Rect) -> Rect {
     centered_rect(area, 52, 9)
 }
 
-fn folder_settings_input_line(label: &'static str, value: &str, active: bool) -> Line<'static> {
-    let marker = if active { "› " } else { "  " };
-    let style = if active {
-        Style::default().add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    };
+fn folder_settings_input_line(
+    label: &'static str,
+    value: &str,
+    active: bool,
+    editing: bool,
+) -> Line<'static> {
+    let marker = editable_field_marker(active);
+    let style = editable_field_label_style(active, active && editing);
     Line::from(vec![
-        Span::styled(marker, Style::default().fg(ACCENT)),
+        Span::styled(marker, style),
         Span::styled(format!("{label}: "), style),
-        Span::raw(value.to_owned()),
+        Span::styled(value.to_owned(), style),
     ])
+}
+
+#[cfg(test)]
+pub(in crate::tui::ui) fn folder_settings_input_line_for_test(active: bool) -> Line<'static> {
+    folder_settings_input_line("Name", "folder", active, false)
 }
 
 fn folder_settings_input_prefix_width(name_active: bool) -> usize {

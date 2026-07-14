@@ -1,10 +1,15 @@
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{
+    Terminal,
+    backend::TestBackend,
+    style::{Color, Modifier, Style},
+};
+use unicode_width::UnicodeWidthStr;
 
 use crate::discord::password_auth::{MfaChallenge, MfaMethod};
 
 use super::{
-    render::render_mfa_code,
+    render::{render, render_mfa_code},
     state::{LoginScreen, LoginState},
     terminal_events::{LoginAction, handle_terminal},
 };
@@ -29,6 +34,34 @@ fn mfa_challenge(methods: Vec<MfaMethod>) -> MfaChallenge {
 fn token_input_starts_empty() {
     let state = LoginState::new(None);
     assert!(state.token_input.is_empty());
+}
+
+#[test]
+fn login_choices_use_shortcut_theme() {
+    let state = LoginState::new(None);
+    let custom = crate::tui::theme::Theme::default().with_style(
+        crate::tui::theme::HighlightGroup::Shortcut,
+        Style::default().fg(Color::LightMagenta),
+    );
+
+    crate::tui::theme::with_test_theme(custom, || {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| render(frame, &state))
+            .expect("login choices should render");
+
+        let buffer = terminal.backend().buffer();
+        let shortcut = (0..buffer.area.height)
+            .flat_map(|row| {
+                (0..buffer.area.width.saturating_sub(1)).map(move |column| (column, row))
+            })
+            .find(|&(column, row)| {
+                buffer[(column, row)].symbol() == "[" && buffer[(column + 1, row)].symbol() == "t"
+            })
+            .expect("token shortcut should render");
+        assert_eq!(buffer[shortcut].fg, Color::LightMagenta);
+    });
 }
 
 #[test]
@@ -63,10 +96,11 @@ fn password_submit_starts_login_and_clears_password_field() {
 }
 
 #[test]
-fn password_input_accepts_bracketed_paste_text() {
+fn password_input_accepts_paste_and_renders_field_states() {
     let mut state = LoginState::new(None);
     state.screen = LoginScreen::PasswordInput;
     state.password.active_field = super::state::PasswordField::Password;
+    state.password.login = "테스트用户@example.com".to_owned();
     state.error = Some("old error".to_string());
 
     let action = handle_terminal(&mut state, paste("ab[]{};\\cd\n"));
@@ -74,6 +108,46 @@ fn password_input_accepts_bracketed_paste_text() {
     assert!(action.is_none());
     assert_eq!(state.password.password, "ab[]{};\\cd");
     assert!(state.error.is_none());
+
+    let backend = TestBackend::new(100, 18);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| render(frame, &state))
+        .expect("password form should render");
+
+    let buffer = terminal.backend().buffer();
+    let email_start = (0..buffer.area.height)
+        .flat_map(|row| (0..buffer.area.width).map(move |column| (column, row)))
+        .find(|position| buffer[*position].symbol() == "테")
+        .expect("inactive CJK email should render");
+    let mut column = email_start.0;
+    for character in "테스트用户@example.com".chars() {
+        let cell = &buffer[(column, email_start.1)];
+        assert_eq!(cell.fg, Color::Reset);
+        assert!(cell.modifier.contains(Modifier::DIM));
+        column = column.saturating_add(character.to_string().width() as u16);
+    }
+
+    let password_row = (0..buffer.area.height)
+        .find(|row| {
+            (0..buffer.area.width)
+                .map(|column| buffer[(column, *row)].symbol())
+                .collect::<String>()
+                .contains("> Password")
+        })
+        .expect("active password field should render");
+    let marker_column = (0..buffer.area.width)
+        .find(|column| buffer[(*column, password_row)].symbol() == ">")
+        .expect("active password marker should render");
+    let active_value = "•".repeat(state.password.password.chars().count());
+    let active_width = format!("> Password     {active_value}").width() as u16;
+    for column in marker_column..marker_column.saturating_add(active_width) {
+        assert_eq!(
+            buffer[(column, password_row)].fg,
+            crate::tui::theme::current().foreground(crate::tui::theme::HighlightGroup::ActiveField)
+        );
+    }
 }
 
 #[test]

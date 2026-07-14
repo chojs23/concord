@@ -24,18 +24,21 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
             styled_list_item(
                 match entry {
                     GuildPaneEntry::DirectMessages => {
-                        let base_style = active_text_style(
-                            is_active,
-                            Style::default()
-                                .fg(Color::Magenta)
-                                .add_modifier(Modifier::BOLD),
+                        let base_style = selected_text_style(
+                            is_selected,
+                            active_text_style(
+                                is_active,
+                                theme::current().style(theme::HighlightGroup::Strong),
+                            ),
                         );
                         let unread_count = state.direct_message_unread_count();
-                        let badge = (unread_count > 0).then(|| {
-                            notification_count_badge(ChannelUnreadState::Notified(
-                                u32::try_from(unread_count).unwrap_or(u32::MAX),
-                            ))
-                        });
+                        let badge = (unread_count > 0)
+                            .then(|| {
+                                notification_count_badge(ChannelUnreadState::Notified(
+                                    u32::try_from(unread_count).unwrap_or(u32::MAX),
+                                ))
+                            })
+                            .map(|badge| selected_text_span(is_selected, badge));
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let label_width = max_width.saturating_sub(badge_width);
@@ -51,12 +54,12 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                             ),
                             base_style,
                         ));
-                        ListItem::new(Line::from(spans))
+                        Line::from(spans)
                     }
                     GuildPaneEntry::FolderHeader { folder, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
                         let icon = if *collapsed { "📁" } else { "📂" };
-                        let color = folder_color(folder.color);
+                        let folder_style = folder_style(folder.color);
                         let label = folder.name.as_deref().unwrap_or_default();
                         let title = if label.is_empty() {
                             icon.to_owned()
@@ -64,14 +67,21 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                             format!("{icon} {label}")
                         };
                         let label_width = max_width.saturating_sub(arrow.width());
-                        ListItem::new(Line::from(vec![
+                        let arrow_style =
+                            selected_discord_text_style(is_selected, folder_style, folder.color);
+                        let title_style = selected_discord_text_style(
+                            is_selected,
+                            theme::current().apply(theme::HighlightGroup::Strong, folder_style),
+                            folder.color,
+                        );
+                        Line::from(vec![
                             selection_marker(is_selected),
-                            Span::styled(arrow, Style::default().fg(color)),
+                            Span::styled(arrow, arrow_style),
                             Span::styled(
                                 truncate_display_width_from(&title, horizontal_scroll, label_width),
-                                Style::default().fg(color).add_modifier(Modifier::BOLD),
+                                title_style,
                             ),
-                        ]))
+                        ])
                     }
                     GuildPaneEntry::Guild {
                         state: guild,
@@ -90,8 +100,11 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                             channel_unread_decoration(unread, base_style, false)
                         };
                         if is_muted {
-                            name_style = name_style.add_modifier(Modifier::DIM);
+                            name_style =
+                                theme::current().apply(theme::HighlightGroup::Muted, name_style);
                         }
+                        name_style = selected_text_style(is_selected, name_style);
+                        let badge = badge.map(|badge| selected_text_span(is_selected, badge));
                         let badge_width =
                             badge.as_ref().map(|span| span.content.width()).unwrap_or(0);
                         let label_width = max_width
@@ -99,7 +112,10 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                             .saturating_sub(badge_width);
                         let mut spans = vec![
                             selection_marker(is_selected),
-                            Span::styled(prefix, Style::default().fg(DIM)),
+                            Span::styled(
+                                prefix,
+                                theme::current().style(theme::HighlightGroup::Decoration),
+                            ),
                         ];
                         if let Some(badge) = badge {
                             spans.push(badge);
@@ -112,7 +128,7 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                             ),
                             name_style,
                         ));
-                        ListItem::new(Line::from(spans))
+                        Line::from(spans)
                     }
                 },
                 is_selected,
@@ -120,7 +136,7 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
         })
         .collect();
 
-    let list = List::new(items).highlight_style(highlight_style());
+    let list = List::new(items);
     frame.render_widget(list, list_area);
 
     render_pane_filter_bar_with_cursor(

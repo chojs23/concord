@@ -974,6 +974,11 @@ fn history_load_preserves_manual_scroll_position_by_message_id() {
 fn older_history_request_emits_visible_cursor_target() {
     let channel_id: Id<ChannelMarker> = Id::new(2);
     let mut state = state_with_message_ids([10, 11, 12]);
+    state.focus_pane(FocusPane::Members);
+    assert_eq!(state.next_older_history_command(), None);
+    assert_eq!(state.next_older_history_command_for_half_page_up(), None);
+    assert_eq!(state.next_newer_history_command_for_half_page_down(), None);
+
     state.focus_pane(FocusPane::Messages);
     state.jump_top();
 

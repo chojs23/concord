@@ -2,8 +2,9 @@ use ratatui::{style::Style, text::Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{ReactionEmoji, ReactionInfo};
+use crate::tui::theme;
 
-use super::{EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, SELF_REACTION};
+use super::{EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine};
 
 pub(in crate::tui) fn format_message_reaction_lines(
     reactions: &[ReactionInfo],
@@ -19,12 +20,20 @@ pub(in crate::tui) fn format_message_reaction_lines(
         .into_iter()
         .enumerate()
         .map(|(line_index, text)| {
-            let mut line = MessageContentLine::accent(text);
+            let mut line = MessageContentLine::styled_text(
+                text,
+                theme::current().style(theme::HighlightGroup::Reaction),
+                Vec::new(),
+            );
             for range in self_ranges
                 .iter()
                 .filter(|range| range.line as usize == line_index)
             {
-                line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+                line.styled_range(
+                    range.start,
+                    range.len,
+                    theme::current().style(theme::HighlightGroup::SelfReaction),
+                );
             }
             line
         })
@@ -42,7 +51,11 @@ pub(crate) fn reaction_line_spans(
         .iter()
         .filter(|range| range.line as usize == line_index)
     {
-        line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+        line.styled_range(
+            range.start,
+            range.len,
+            theme::current().style(theme::HighlightGroup::SelfReaction),
+        );
     }
     line.spans()
 }
@@ -53,7 +66,12 @@ pub(crate) fn reaction_line_test_spans(
     ranges: &[ReactionStyleRange],
     line_index: usize,
 ) -> Vec<Span<'static>> {
-    reaction_line_spans(text, ranges, line_index, Style::default().fg(super::ACCENT))
+    reaction_line_spans(
+        text,
+        ranges,
+        line_index,
+        theme::current().style(theme::HighlightGroup::Reaction),
+    )
 }
 
 /// Position of a custom-emoji image overlay relative to the start of a

@@ -115,14 +115,14 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
         channel_switcher_search_line(query, query_cursor, width),
         Line::from(Span::styled(
             "─".repeat(width.max(1)),
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Decoration),
         )),
     ];
 
     if items.is_empty() {
         lines.push(Line::from(Span::styled(
             "No channels found",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     } else {
         lines.extend(channel_switcher_result_lines(
@@ -138,12 +138,21 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
 
 fn channel_switcher_search_line(query: &str, query_cursor: usize, width: usize) -> Line<'static> {
     let shown_query = if query.is_empty() {
-        Span::styled("search channels", Style::default().fg(DIM))
+        Span::styled(
+            "search channels",
+            theme::current().style(theme::HighlightGroup::Placeholder),
+        )
     } else {
-        Span::raw(visible_channel_switcher_query(query, query_cursor, width).0)
+        Span::styled(
+            visible_channel_switcher_query(query, query_cursor, width).0,
+            theme::current().style(theme::HighlightGroup::ActiveField),
+        )
     };
     Line::from(vec![
-        Span::styled("🔎 ", Style::default().fg(ACCENT)),
+        Span::styled(
+            "🔎 ",
+            theme::current().style(theme::HighlightGroup::ActiveField),
+        ),
         shown_query,
     ])
 }
@@ -204,7 +213,7 @@ fn channel_switcher_result_lines(
             }
             ChannelSwitcherResultRow::Group(label) => Line::from(Span::styled(
                 label,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::Heading),
             )),
         })
         .collect()
@@ -243,9 +252,10 @@ fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Lin
     } else {
         Style::default()
     };
-    let badge = channel_switcher_unread_badge(item);
+    let badge =
+        channel_switcher_unread_badge(item).map(|badge| selected_text_span(selected, badge));
     let (_, name_style) = channel_unread_decoration(item.unread, style, false);
-    let marker = if selected { "› " } else { "  " };
+    let name_style = selected_text_style(selected, name_style);
     let indent = "  ".repeat(item.depth.saturating_add(1));
     let parent = item
         .parent_label
@@ -253,15 +263,18 @@ fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Lin
         .map(|label| format!("{label} / "))
         .unwrap_or_default();
     let mut spans = vec![
-        Span::styled(marker, Style::default().fg(ACCENT)),
+        selectable_popup_marker(selected),
         Span::raw(indent),
-        Span::styled(parent, Style::default().fg(DIM)),
+        Span::styled(
+            parent,
+            theme::current().style(theme::HighlightGroup::SearchContext),
+        ),
     ];
     if let Some(badge) = badge {
         spans.push(badge);
     }
     spans.push(Span::styled(item.channel_label.clone(), name_style));
-    Line::from(spans)
+    selected_row_line(Line::from(spans), selected)
 }
 
 fn channel_switcher_unread_badge(item: &ChannelSwitcherItem) -> Option<Span<'static>> {

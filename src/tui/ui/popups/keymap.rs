@@ -78,14 +78,14 @@ pub(in crate::tui::ui) fn keymap_help_popup_lines(
             current_scope = summary.scope;
             lines.push(Line::from(Span::styled(
                 format!("[{}]", summary.scope),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::Heading),
             )));
         }
 
         lines.push(Line::from(vec![
             Span::styled(
                 format!("[{}] ", summary.keys.join(" / ")),
-                Style::default().add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::Shortcut),
             ),
             Span::raw(summary.action),
         ]));
@@ -94,7 +94,7 @@ pub(in crate::tui::ui) fn keymap_help_popup_lines(
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "No key mappings.",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     }
 

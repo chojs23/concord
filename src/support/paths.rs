@@ -3,6 +3,7 @@ use std::{env, ffi::OsString, path::PathBuf};
 const APP_DIR: &str = "concord";
 const CONFIG_FILE: &str = "config.toml";
 const KEYMAP_FILE: &str = "keymap.toml";
+const THEME_FILE: &str = "theme.toml";
 const CREDENTIAL_FILE: &str = "credentials.toml";
 const LOG_FILE: &str = "concord.log";
 const STATE_FILE: &str = "state.toml";
@@ -23,6 +24,10 @@ pub fn config_file() -> Option<PathBuf> {
 
 pub fn keymap_file() -> Option<PathBuf> {
     Some(app_dir()?.join(KEYMAP_FILE))
+}
+
+pub fn theme_file() -> Option<PathBuf> {
+    Some(app_dir()?.join(THEME_FILE))
 }
 
 pub fn credential_file() -> Option<PathBuf> {

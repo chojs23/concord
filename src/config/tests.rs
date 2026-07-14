@@ -4,10 +4,11 @@ use std::{
 };
 
 use super::{
-    AppOptions, ComposerOptions, CredentialOptions, CredentialStoreMode, DisplayOptions,
-    ImagePreviewQualityPreset, ImageProtocolPreference, KeymapBinding, KeymapFileOptions,
-    KeymapOptions, NotificationOptions, PresenceOptions, VoiceOptions,
-    load_keymap_options_from_path, load_options_from_path, parse_app_options, save_options_to_path,
+    AppOptions, BorderShape, BorderSurface, ComposerOptions, CredentialOptions,
+    CredentialStoreMode, DisplayOptions, HighlightGroup, ImagePreviewQualityPreset,
+    ImageProtocolPreference, KeymapBinding, KeymapFileOptions, KeymapOptions, NotificationOptions,
+    PresenceOptions, ThemeOptions, VoiceOptions, load_keymap_options_from_path,
+    load_options_from_path, parse_app_options, parse_theme_options, save_options_to_path,
 };
 use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
 
@@ -298,6 +299,36 @@ fn invalid_value_is_skipped_without_discarding_the_rest() {
     assert_eq!(warnings.len(), 2, "one warning per skipped value");
     assert!(warnings.iter().any(|w| w.contains("image_protocol")));
     assert!(warnings.iter().any(|w| w.contains("show_images")));
+
+    let (theme, warnings) = parse_theme_options(
+        "[highlight.Selection]\nforeground = {}\nbackground = \"#112233\"\nstrikethrough = \"yes\"\n\n[ui.border]\npane = 7\ncomposer = \"curved\"\nmodal = \"double\"\n",
+    )
+    .expect("syntactically valid theme config should parse");
+    let (expected, _) = parse_theme_options(
+        "[highlight.Selection]\nbackground = \"#112233\"\n\n[ui.border]\nmodal = \"double\"\n",
+    )
+    .expect("expected theme config should parse");
+    assert_eq!(theme, expected);
+    assert_eq!(warnings.len(), 4);
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("foreground"))
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("strikethrough"))
+    );
+    assert!(warnings.iter().any(|warning| warning.contains("curved")));
+    assert!(warnings.iter().any(|warning| warning.contains("pane")));
+
+    let (theme, warnings) = parse_theme_options(
+        "[theme]\nborder = \"red\"\n\n[highlight.FutureGroup]\nforeground = \"red\"\n\n[highlight.Selection]\nfuture = true\n\n[ui]\nfuture = true\n\n[ui.border]\nfuture = \"plain\"\n",
+    )
+    .expect("unknown theme fields should not fail parsing");
+    assert_eq!(theme, ThemeOptions::default());
+    assert_eq!(warnings.len(), 5);
 }
 
 #[test]
@@ -306,11 +337,36 @@ fn valid_config_reports_no_warnings() {
         parse_app_options("[display]\nshow_avatars = false\n").expect("valid config should parse");
 
     assert!(warnings.is_empty());
+
+    let mut content = String::new();
+    for group in HighlightGroup::ALL {
+        content.push_str(&format!(
+            "\n[highlight.{}]\nforeground = \"terminal_default\"\n",
+            group.name()
+        ));
+    }
+    content.push_str(
+        "\n[ui.border]\ndefault = \"plain\"\ncomposer = \"rounded\"\nmodal = \"thick\"\n",
+    );
+    let (theme, warnings) =
+        parse_theme_options(&content).expect("the highlight inventory should parse");
+    assert_eq!(theme.highlights().len(), HighlightGroup::COUNT);
+    assert_eq!(theme.border_shapes().default, Some(BorderShape::Plain));
+    assert_eq!(
+        theme.border_shapes().get(BorderSurface::Composer),
+        Some(BorderShape::Rounded)
+    );
+    assert_eq!(
+        theme.border_shapes().get(BorderSurface::Modal),
+        Some(BorderShape::Thick)
+    );
+    assert!(warnings.is_empty());
 }
 
 #[test]
 fn syntax_error_still_fails() {
     assert!(parse_app_options("[display]\nshow_avatars = ").is_err());
+    assert!(parse_theme_options("[highlight.Border]\nforeground = ").is_err());
 }
 
 #[test]

@@ -61,7 +61,7 @@ pub(in crate::tui::ui) fn downloads_popup_lines(
     if hidden_count > 0 {
         lines.push(Line::from(Span::styled(
             format!("+{hidden_count} more"),
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Hint),
         )));
     }
     lines

@@ -212,6 +212,10 @@ impl DashboardState {
             .is_some_and(MessagePaneSource::can_load_message_history)
     }
 
+    fn focused_message_pane_can_load_history(&self) -> bool {
+        self.navigation.focus == FocusPane::Messages && self.message_pane_can_load_message_history()
+    }
+
     pub(crate) fn message_pane_shows_unread_markers(&self) -> bool {
         self.message_pane_source()
             .is_some_and(MessagePaneSource::shows_unread_markers)
@@ -560,9 +564,7 @@ impl DashboardState {
     }
 
     pub fn next_newer_history_command_for_down_by(&self, distance: usize) -> Option<AppCommand> {
-        if !self.message_pane_can_load_message_history()
-            || self.navigation.focus != FocusPane::Messages
-        {
+        if !self.focused_message_pane_can_load_history() {
             return None;
         }
         let messages = self.messages();
@@ -631,9 +633,7 @@ impl DashboardState {
     }
 
     fn newer_history_command_in_viewport_rows(&self, rows: usize) -> Option<AppCommand> {
-        if !self.message_pane_can_load_message_history()
-            || self.navigation.focus != FocusPane::Messages
-        {
+        if !self.focused_message_pane_can_load_history() {
             return None;
         }
         let messages = self.messages();
@@ -1404,9 +1404,15 @@ impl DashboardState {
                 }
                 MentionTarget::Role(role_id) => {
                     let role_id = Id::new(role_id);
-                    if mention_roles.contains(&role_id)
-                        && current_user_role_ids.is_some_and(|role_ids| role_ids.contains(&role_id))
-                    {
+                    let notifies_current_user = mention_roles.contains(&role_id)
+                        && current_user_role_ids
+                            .is_some_and(|role_ids| role_ids.contains(&role_id));
+                    if let Some(color) = self.resolve_role_mention_color(guild_id, role_id.get()) {
+                        Some(TextHighlightKind::RoleMention {
+                            color,
+                            notifies_current_user,
+                        })
+                    } else if notifies_current_user {
                         Some(TextHighlightKind::SelfMention)
                     } else {
                         Some(TextHighlightKind::OtherMention)
@@ -1441,10 +1447,21 @@ impl DashboardState {
         let guild_id = guild_id?;
         self.discord
             .cache
-            .roles_for_guild(guild_id)
-            .into_iter()
-            .find(|role| role.id.get() == role_id)
+            .role_for_guild(guild_id, Id::new(role_id))
             .map(|role| role.name.clone())
+    }
+
+    fn resolve_role_mention_color(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        role_id: u64,
+    ) -> Option<u32> {
+        let guild_id = guild_id?;
+        self.discord
+            .cache
+            .role_for_guild(guild_id, Id::new(role_id))
+            .and_then(|role| role.color)
+            .filter(|color| *color != 0)
     }
 
     fn resolve_channel_mention_name(&self, channel_id: u64) -> Option<String> {
@@ -1773,9 +1790,6 @@ impl DashboardState {
     }
 
     pub fn next_older_history_command(&mut self) -> Option<AppCommand> {
-        if !self.message_pane_can_load_message_history() {
-            return None;
-        }
         let channel_id = self.selected_message_history_channel_id()?;
         let before = self.older_history_cursor()?;
         Some(AppCommand::LoadMessageHistory {
@@ -1785,9 +1799,6 @@ impl DashboardState {
     }
 
     pub fn next_older_history_command_for_half_page_up(&mut self) -> Option<AppCommand> {
-        if !self.message_pane_can_load_message_history() {
-            return None;
-        }
         let channel_id = self.selected_message_history_channel_id()?;
         let before = self.older_history_viewport_cursor()?;
         Some(AppCommand::LoadMessageHistory {
@@ -1823,8 +1834,7 @@ impl DashboardState {
     }
 
     fn older_history_cursor(&self) -> Option<Id<MessageMarker>> {
-        if !self.message_pane_can_load_message_history()
-            || self.navigation.focus != FocusPane::Messages
+        if !self.focused_message_pane_can_load_history()
             || self.messages().is_empty()
             || self.selected_message() != 0
         {
@@ -1835,8 +1845,7 @@ impl DashboardState {
     }
 
     fn older_history_viewport_cursor(&self) -> Option<Id<MessageMarker>> {
-        if !self.message_pane_can_load_message_history()
-            || self.navigation.focus != FocusPane::Messages
+        if !self.focused_message_pane_can_load_history()
             || self.messages().is_empty()
             || self.messages.message_scroll != 0
             || self.messages.message_line_scroll != 0

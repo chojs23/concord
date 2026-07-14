@@ -102,7 +102,8 @@ pub(in crate::tui::ui) fn render_messages(
                 forum_card_width,
                 is_loading,
                 state.show_custom_emoji(),
-            )),
+            ))
+            .style(theme::current().style(theme::HighlightGroup::Normal)),
             message_areas.list,
         );
         if state.show_custom_emoji() {
@@ -186,7 +187,10 @@ pub(in crate::tui::ui) fn render_messages(
     let (lines, body_emoji_slots) =
         message_viewport_lines_from_plan(&render_plan, state, &loaded_custom_emoji_urls);
 
-    frame.render_widget(Paragraph::new(lines), message_areas.list);
+    frame.render_widget(
+        Paragraph::new(lines).style(theme::current().style(theme::HighlightGroup::Normal)),
+        message_areas.list,
+    );
     let selected_avatar_body_top =
         selected.and_then(|selected| render_plan.row(selected).map(|row| row.body_top));
     for avatar in media.avatar_images {
@@ -393,7 +397,7 @@ fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardSt
         height: 1,
     };
 
-    frame.render_widget(Clear, area);
+    clear_area(frame, area);
     frame.render_widget(
         Paragraph::new(new_messages_notice_line(count, area.width as usize)),
         area,
@@ -411,7 +415,10 @@ fn render_typing_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
         return;
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(text, Style::default().fg(DIM)))),
+        Paragraph::new(Line::from(Span::styled(
+            text,
+            theme::current().style(theme::HighlightGroup::MessageSecondary),
+        ))),
         area,
     );
 }
@@ -427,9 +434,11 @@ fn render_unread_banner(frame: &mut Frame, area: Rect, state: &DashboardState) {
         return;
     };
 
-    const BG: Color = Color::Rgb(88, 101, 242);
-    const FG: Color = Color::White;
-    let style = Style::default().fg(FG).bg(BG);
+    let theme = theme::current();
+    let style = theme.apply(
+        theme::HighlightGroup::UnreadBanner,
+        theme.style(theme::HighlightGroup::Normal),
+    );
 
     let since_label = format_unread_banner_since(banner.since_message_id);
     let left = match since_label {
@@ -453,7 +462,7 @@ fn unread_banner_line(left: String, right: &str, width: usize, style: Style) -> 
     if right_width >= width {
         return Line::from(Span::styled(
             truncate_display_width(right, width),
-            style.add_modifier(Modifier::BOLD),
+            theme::current().apply(theme::HighlightGroup::Strong, style),
         ));
     }
     let max_left_width = width.saturating_sub(right_width);
@@ -467,7 +476,10 @@ fn unread_banner_line(left: String, right: &str, width: usize, style: Style) -> 
     Line::from(vec![
         Span::styled(left, style),
         Span::styled(" ".repeat(padding), style),
-        Span::styled(right.to_owned(), style.add_modifier(Modifier::BOLD)),
+        Span::styled(
+            right.to_owned(),
+            theme::current().apply(theme::HighlightGroup::Strong, style),
+        ),
     ])
 }
 
@@ -608,13 +620,19 @@ pub(in crate::tui::ui) fn render_image_preview(
     match image_preview {
         ImagePreviewState::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(DIM))
+                .style(theme::current().apply(
+                    theme::HighlightGroup::Loading,
+                    theme::current().style(theme::HighlightGroup::Normal),
+                ))
                 .wrap(Wrap { trim: false }),
             area,
         ),
         ImagePreviewState::Failed { filename, message } => frame.render_widget(
             Paragraph::new(format!("{filename}: {message}"))
-                .style(Style::default().fg(Color::Yellow))
+                .style(theme::current().apply(
+                    theme::HighlightGroup::Error,
+                    theme::current().style(theme::HighlightGroup::Normal),
+                ))
                 .wrap(Wrap { trim: false }),
             area,
         ),
@@ -711,7 +729,10 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
         }
         header.extend([
             Span::raw(" "),
-            Span::styled(sent_time, Style::default().fg(DIM)),
+            Span::styled(
+                sent_time,
+                theme::current().style(theme::HighlightGroup::MessageTimestamp),
+            ),
         ]);
         vec![Line::from(header)]
     } else {
@@ -741,18 +762,16 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
 }
 
 pub(in crate::tui::ui) fn message_author_style(role_color: Option<u32>) -> Style {
-    Style::default()
-        .fg(discord_color(role_color, Color::White))
-        .bold()
+    apply_discord_foreground(
+        theme::current().apply(theme::HighlightGroup::MessageAuthor, normal_text_style()),
+        role_color,
+    )
 }
 
 fn bot_badge_span() -> Span<'static> {
     Span::styled(
         "[bot]",
-        Style::default()
-            .fg(Color::White)
-            .bg(Color::Rgb(88, 101, 242))
-            .add_modifier(Modifier::BOLD),
+        theme::current().style(theme::HighlightGroup::BotBadge),
     )
 }
 
@@ -794,7 +813,7 @@ fn message_avatar_span(avatar_offset: u16) -> Span<'static> {
             "{prefix}{MESSAGE_AVATAR_PLACEHOLDER}{}",
             " ".repeat(padding)
         ),
-        Style::default().fg(DIM),
+        theme::current().style(theme::HighlightGroup::Muted),
     )
 }
 
@@ -838,29 +857,42 @@ fn selected_message_content_line(
     card_width: usize,
     top_line: bool,
 ) -> Line<'static> {
+    let border = theme::current().border_set(theme::BorderSurface::Message);
     let mut spans = line.spans;
-    replace_selection_prefix(&mut spans, if top_line { "╭─" } else { "│ " });
+    let replacement = if top_line {
+        format!("{}{}", border.top_left, border.horizontal_top)
+    } else {
+        format!("{} ", border.vertical_left)
+    };
+    replace_selection_prefix(&mut spans, &replacement);
     let used_width = spans.iter().map(|span| span.content.width()).sum::<usize>();
-    let right_border = if top_line { "╮" } else { " │" };
-    let fill_char = if top_line { '─' } else { ' ' };
+    let right_border = if top_line {
+        border.top_right.to_owned()
+    } else {
+        format!(" {}", border.vertical_right)
+    };
+    let fill = if top_line { border.horizontal_top } else { " " };
     let right_border_width = right_border.width();
     let padding = card_width
         .saturating_sub(used_width)
         .saturating_sub(right_border_width);
     spans.push(Span::styled(
-        fill_char.to_string().repeat(padding),
+        fill.repeat(padding),
         selected_message_border_style(),
     ));
-    spans.push(Span::styled(
-        right_border.to_owned(),
-        selected_message_border_style(),
-    ));
+    spans.push(Span::styled(right_border, selected_message_border_style()));
     Line::from(spans)
 }
 
 fn selected_message_empty_top_line(card_width: usize) -> Line<'static> {
+    let border = theme::current().border_set(theme::BorderSurface::Message);
     Line::from(Span::styled(
-        format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
+        format!(
+            "{}{}{}",
+            border.top_left,
+            border.horizontal_top.repeat(card_width.saturating_sub(2)),
+            border.top_right
+        ),
         selected_message_border_style(),
     ))
 }
@@ -868,20 +900,36 @@ fn selected_message_empty_top_line(card_width: usize) -> Line<'static> {
 /// Bottom border of a selected card, embedding a grouped continuation's sent
 /// time near the right corner: `╰──── 14:30 ─╯`.
 fn selected_message_bottom_line(card_width: usize, sent_time: Option<&str>) -> Line<'static> {
+    let border = theme::current().border_set(theme::BorderSurface::Message);
     let inner = card_width.saturating_sub(2);
     if let Some(time) = sent_time.filter(|time| inner > time.width() + 3) {
-        let dashes = inner.saturating_sub(time.width()).saturating_sub(3);
+        let fill_width = inner.saturating_sub(time.width()).saturating_sub(3);
         return Line::from(vec![
             Span::styled(
-                format!("╰{}", "─".repeat(dashes)),
+                format!(
+                    "{}{}",
+                    border.bottom_left,
+                    border.horizontal_bottom.repeat(fill_width)
+                ),
                 selected_message_border_style(),
             ),
-            Span::styled(format!(" {time} "), Style::default().fg(DIM)),
-            Span::styled("─╯", selected_message_border_style()),
+            Span::styled(
+                format!(" {time} "),
+                theme::current().style(theme::HighlightGroup::MessageTimestamp),
+            ),
+            Span::styled(
+                format!("{}{}", border.horizontal_bottom, border.bottom_right),
+                selected_message_border_style(),
+            ),
         ]);
     }
     Line::from(Span::styled(
-        format!("╰{}╯", "─".repeat(inner)),
+        format!(
+            "{}{}{}",
+            border.bottom_left,
+            border.horizontal_bottom.repeat(inner),
+            border.bottom_right
+        ),
         selected_message_border_style(),
     ))
 }
@@ -912,9 +960,7 @@ fn replace_selection_prefix(spans: &mut Vec<Span<'static>>, replacement: &str) {
 }
 
 fn selected_message_border_style() -> Style {
-    Style::default()
-        .fg(SELECTED_MESSAGE_BORDER)
-        .add_modifier(Modifier::BOLD)
+    theme::current().style(theme::HighlightGroup::MessageSelectedBorder)
 }
 
 const SELECTED_MESSAGE_CONTENT_X_OFFSET: u16 = 0;
@@ -954,16 +1000,19 @@ pub(in crate::tui::ui) fn date_separator_line(
 ) -> Line<'static> {
     let date = message_local_date(message_id);
     let label = format!(" {} ", date.format("%Y-%m-%d"));
-    separator_line(&label, width, Style::default().fg(DIM))
+    separator_line(
+        &label,
+        width,
+        theme::current().style(theme::HighlightGroup::Decoration),
+    )
 }
 
 pub(in crate::tui::ui) fn unread_divider_line(width: usize) -> Line<'static> {
     // Discord-style red bar with a small "New" tag pinned to the right
     // edge so the unread boundary is unambiguous in dark and light themes.
-    const UNREAD: Color = Color::Rgb(237, 66, 69);
     const TAG: &str = " New ";
 
-    let style = Style::default().fg(UNREAD);
+    let style = theme::current().style(theme::HighlightGroup::UnreadDivider);
     if width == 0 {
         return Line::from(Span::raw(""));
     }
@@ -974,7 +1023,10 @@ pub(in crate::tui::ui) fn unread_divider_line(width: usize) -> Line<'static> {
     let dash_count = width.saturating_sub(tag_width);
     Line::from(vec![
         Span::styled("─".repeat(dash_count), style),
-        Span::styled(TAG, style.bold()),
+        Span::styled(
+            TAG,
+            theme::current().apply(theme::HighlightGroup::Strong, style),
+        ),
     ])
 }
 
@@ -988,7 +1040,10 @@ pub(in crate::tui::ui) fn new_messages_notice_line(count: usize, width: usize) -
         let right = padding.saturating_sub(left);
         format!("{}{}{}", " ".repeat(left), label, " ".repeat(right))
     };
-    Line::from(Span::styled(text, Style::default().fg(ACCENT).bold()))
+    Line::from(Span::styled(
+        text,
+        theme::current().style(theme::HighlightGroup::UnreadNotice),
+    ))
 }
 
 fn new_messages_notice_label(count: usize) -> String {
@@ -1019,7 +1074,10 @@ fn image_preview_spacer_lines(
             message_avatar_spacer_span(avatar_offset),
             Span::styled(
                 format!("+{} more images", spacer.overflow_count),
-                Style::default().fg(Color::White).bg(Color::Black).bold(),
+                theme::current().apply(
+                    theme::HighlightGroup::ImageOverflow,
+                    theme::current().style(theme::HighlightGroup::Normal),
+                ),
             ),
         ]));
     }

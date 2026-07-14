@@ -15,35 +15,37 @@ use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
+    widgets::BorderType,
 };
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MESSAGE_AVATAR_OFFSET,
-    MemberEntry, READ_DIM, SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
+    ImagePreview, ImagePreviewState, MESSAGE_AVATAR_OFFSET, MemberEntry,
     attachment_viewer_image_area, attachment_viewer_popup, background_media_occlusion_areas,
     centered_viewer_preview_area, channel_action_menu_lines_for_test, channel_prefix,
     channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
-    composer_content_line_count, composer_cursor_position, composer_lines,
+    clear_area, composer_content_line_count, composer_cursor_position, composer_lines,
     composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
     date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
     emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
     emoji_reaction_picker_lines_with_own_reactions, filtered_emoji_reaction_picker_lines,
-    focus_pane_at, format_message_sent_time, forum_post_reaction_summary,
-    forum_post_scrollbar_visible_count, forum_post_tag_rows_for_test, forum_post_viewport_lines,
-    inline_image_preview_area, inline_image_preview_row, keymap_help_popup_lines,
-    member_display_label, member_name_style, message_action_menu_lines,
+    focus_pane_at, folder_settings_input_line_for_test, format_message_sent_time,
+    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_tag_rows_for_test,
+    forum_post_viewport_lines, highlight_style, inline_image_preview_area,
+    inline_image_preview_row, keymap_help_popup_lines, member_display_label, member_name_style,
+    mention_picker_lines_for_test, message_action_menu_lines,
     message_action_menu_lines_with_keymap_options, message_author_style,
     message_body_custom_emoji_rows, message_delete_confirmation_lines, message_item_lines,
     message_pin_confirmation_lines, message_remove_embeds_confirmation_lines,
     message_url_picker_lines_for_width, message_viewport_layout, message_viewport_lines,
-    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
+    new_messages_notice_line, options_popup_lines, panel_block, poll_vote_picker_lines,
     primary_activity_summary, quit_confirmation_lines, reaction_list_lines_with_ready_urls,
-    reaction_users_popup_lines, reaction_users_visible_line_count, render_channels, render_guilds,
-    render_header, render_members, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
-    user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+    reaction_users_popup_lines, reaction_users_visible_line_count, render, render_channels,
+    render_composer, render_guilds, render_header, render_members, selected_avatar_x_offset,
+    selected_message_card_width, selected_message_content_x_offset, selection_marker,
+    sync_view_heights, theme, toast_area, toast_line, user_profile_popup_has_avatar,
+    user_profile_popup_lines, user_profile_popup_lines_with_activities,
+    user_profile_popup_text_geometry,
 };
 use crate::tui::message::time::{
     discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
@@ -73,8 +75,9 @@ use crate::{
         state::{
             AppliedForumTag, AttachmentDownloadProgressView, AttachmentViewerZoom,
             ChannelSwitcherItem, ChannelThreadItem, ComposerLock, DashboardState,
-            DisplayOptionItem, EmojiPickerEntry, EmojiReactionItem, FocusPane, MessageActionItem,
-            MessageActionKind, PollVotePickerItem,
+            DisplayOptionItem, EmojiPickerEntry, EmojiReactionItem, FocusPane, MentionPickerEntry,
+            MentionPickerTarget, MessageActionItem, MessageActionKind, PollVotePickerItem,
+            presence_style,
         },
         text::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
         ui::{MouseTarget, PopupListTarget, mouse_target_at},
@@ -125,8 +128,8 @@ fn find_cell(buffer: &Buffer, text: &str) -> Option<(u16, u16)> {
         let line = (0..buffer.area.width)
             .map(|col| buffer[(col, row)].symbol().to_owned())
             .collect::<String>();
-        if let Some(col) = line.find(text) {
-            return Some((col as u16, row));
+        if let Some(byte) = line.find(text) {
+            return Some((line[..byte].width() as u16, row));
         }
     }
     None
@@ -526,10 +529,11 @@ fn state_with_member(user_id: u64, display_name: &str) -> DashboardState {
     state
 }
 
-fn state_with_role(role_id: u64, name: &str) -> DashboardState {
+fn state_with_role(role_id: u64, name: &str, color: Option<u32>) -> DashboardState {
     let mut state = DashboardState::new();
     state.push_event(guild_create_event(GuildCreateFixture {
         roles: vec![RoleInfo {
+            color,
             position: 1,
             ..RoleInfo::test(Id::new(role_id), name)
         }],

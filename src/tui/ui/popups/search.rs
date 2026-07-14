@@ -83,9 +83,14 @@ pub(in crate::tui::ui) fn search_popup_lines(
     };
     lines.push(Line::from(Span::styled(
         "─".repeat(width.max(1)),
-        Style::default().fg(DIM),
+        theme::current().style(theme::HighlightGroup::Decoration),
     )));
-    push_wrapped_styled_popup_text(&mut lines, &status, width, Style::default().fg(DIM));
+    push_wrapped_styled_popup_text(
+        &mut lines,
+        &status,
+        width,
+        theme::current().style(theme::HighlightGroup::Hint),
+    );
 
     if !view.suggestions.is_empty() {
         let start = view
@@ -110,7 +115,7 @@ pub(in crate::tui::ui) fn search_popup_lines(
     if view.results.is_empty() && !view.loading {
         lines.push(Line::from(Span::styled(
             "No results",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
         return lines;
     }
@@ -132,7 +137,7 @@ pub(in crate::tui::ui) fn search_popup_lines(
             &mut lines,
             "More results: [Down/PageDown] load more at the end",
             width,
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Hint),
         );
     }
     lines
@@ -144,16 +149,20 @@ fn search_field_line(field: &SearchFieldView, width: usize) -> Line<'static> {
     let value = if field.value.is_empty() {
         Span::styled(
             truncate_display_width(&field.placeholder, available),
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
+        )
+    } else if field.active {
+        Span::styled(
+            truncate_display_width(&field.value, available),
+            editable_field_value_style(true, false),
         )
     } else {
-        Span::raw(truncate_display_width(&field.value, available))
+        Span::styled(
+            truncate_display_width(&field.value, available),
+            editable_field_value_style(false, false),
+        )
     };
-    let label_style = if field.active {
-        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(DIM)
-    };
+    let label_style = editable_field_label_style(field.active, false);
     Line::from(vec![Span::styled(label, label_style), value])
 }
 
@@ -168,25 +177,25 @@ fn search_result_line(result: &SearchResultItem, selected: bool, width: usize) -
         SearchResultItem::Message(item) => {
             spans.push(Span::styled(
                 format!("#{} ", item.channel_label),
-                Style::default().fg(ACCENT),
+                Style::default(),
             ));
             spans.push(Span::styled(
                 format!("{} ", item.author),
-                Style::default().add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::MessageAuthor),
             ));
             spans.push(Span::styled(
                 format!("{}: ", format_message_sent_time(item.message_id)),
-                Style::default().fg(DIM),
+                theme::current().style(theme::HighlightGroup::MessageTimestamp),
             ));
             spans.push(Span::raw(item.content.clone()));
         }
         SearchResultItem::Member(item) => {
-            push_member_search_spans(&mut spans, item, true);
+            push_member_search_spans(&mut spans, item, selected, true);
         }
     }
     let mut line = truncate_line_to_display_width(Line::from(spans), width);
     line.style = style;
-    line
+    selected_row_line(line, selected)
 }
 
 fn search_suggestion_line(
@@ -202,47 +211,48 @@ fn search_suggestion_line(
     let mut spans = vec![selectable_popup_marker(selected)];
     match suggestion {
         SearchSuggestionItem::Member(item) => {
-            push_member_search_spans(&mut spans, item, false);
+            push_member_search_spans(&mut spans, item, selected, false);
         }
         SearchSuggestionItem::Channel(item) => {
             spans.push(Span::styled(
                 format!("#{}", item.channel_label),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::Heading),
             ));
             if let Some(guild_label) = &item.guild_label {
                 spans.push(Span::styled(
                     format!(" in {guild_label}"),
-                    Style::default().fg(DIM),
+                    theme::current().style(theme::HighlightGroup::SearchContext),
                 ));
             }
         }
     }
     let mut line = truncate_line_to_display_width(Line::from(spans), width);
     line.style = style;
-    line
+    selected_row_line(line, selected)
 }
 
 fn push_member_search_spans(
     spans: &mut Vec<Span<'static>>,
     item: &MemberSearchResultItem,
+    selected: bool,
     show_bot_marker: bool,
 ) {
     spans.push(Span::styled(
         format!("{} ", presence_marker(item.status)),
-        Style::default().fg(presence_color(item.status)),
+        selected_presence_style(selected, item.status),
     ));
     spans.push(Span::styled(
         item.display_name.clone(),
-        Style::default().add_modifier(Modifier::BOLD),
+        theme::current().style(theme::HighlightGroup::Strong),
     ));
     if let Some(username) = &item.username {
         spans.push(Span::styled(
             format!(" @{username}"),
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::SearchContext),
         ));
     }
     if show_bot_marker && item.is_bot {
-        spans.push(Span::styled(" [bot]", Style::default().fg(DIM)));
+        spans.push(Span::raw(" [bot]"));
     }
 }
 

@@ -349,7 +349,7 @@ fn reaction_list_lines(
     if entries.is_empty() {
         return vec![Line::from(Span::styled(
             "No reactions found",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         ))];
     }
 
@@ -360,18 +360,18 @@ fn reaction_list_lines(
         .map(|(offset, entry)| {
             let index = range.start + offset;
             let is_selected = index == selected;
-            let marker = if is_selected { "› " } else { "  " };
             let cell = reaction_emoji_cell(entry.emoji(), show_custom_emoji, ready_urls);
-            let mut style = Style::default();
-            if is_selected {
-                style = style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
-            }
-            let line = Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(format!("{cell} {}", entry.count()), style),
-            ]);
+            let style = selected_text_style(
+                is_selected,
+                theme::current().style(theme::HighlightGroup::Reaction),
+            );
+            let line = selected_row_line(
+                Line::from(vec![
+                    selectable_popup_marker(is_selected),
+                    Span::styled(format!("{cell} {}", entry.count()), style),
+                ]),
+                is_selected,
+            );
             truncate_line_to_display_width(line, inner_width)
         })
         .collect()
@@ -436,7 +436,7 @@ fn reaction_user_data_lines(popup: &ReactionUsersPopupState) -> Vec<Line<'static
     let Some(entry) = popup.viewed_entry() else {
         return vec![Line::from(Span::styled(
             "No users found",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         ))];
     };
     if entry.users().is_empty() {
@@ -445,7 +445,10 @@ fn reaction_user_data_lines(popup: &ReactionUsersPopupState) -> Vec<Line<'static
         } else {
             "  no users found"
         };
-        return vec![Line::from(Span::styled(text, Style::default().fg(DIM)))];
+        return vec![Line::from(Span::styled(
+            text,
+            theme::current().style(theme::HighlightGroup::Placeholder),
+        ))];
     }
     entry
         .users()
@@ -584,56 +587,63 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
         .enumerate()
         .map(|(offset, reaction)| {
             let index = visible_range.start + offset;
-            let marker = if index == selected { "› " } else { "  " };
+            let is_selected = index == selected;
             let shortcut = shortcut_prefix(
                 options
                     .key_bindings
                     .emoji_reaction_shortcut(reactions, index),
             );
-            let mut style = Style::default();
-            if options.own_reactions.contains(&reaction.emoji) {
-                style = style.fg(Color::Yellow);
-            }
-            if index == selected {
-                style = style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
-            }
+            let own_reaction = options.own_reactions.contains(&reaction.emoji);
+            let style = theme::current().style(if own_reaction {
+                theme::HighlightGroup::SelfReaction
+            } else {
+                theme::HighlightGroup::Reaction
+            });
+            let style = selected_text_style(is_selected, style);
             let thumbnail_ready = options.show_custom_emoji
                 && reaction
                     .custom_image_url()
                     .is_some_and(|url| options.thumbnail_urls.iter().any(|ready| ready == &url));
-            Line::from(vec![
-                Span::styled(marker, Style::default().fg(ACCENT)),
-                Span::styled(shortcut, Style::default().fg(DIM)),
-                Span::styled(
-                    format_emoji_reaction_item(
-                        reaction,
-                        thumbnail_ready,
-                        options.show_custom_emoji,
+            selected_row_line(
+                Line::from(vec![
+                    selectable_popup_marker(is_selected),
+                    Span::styled(
+                        shortcut,
+                        theme::current().style(theme::HighlightGroup::Shortcut),
                     ),
-                    style,
-                ),
-            ])
+                    Span::styled(
+                        format_emoji_reaction_item(
+                            reaction,
+                            thumbnail_ready,
+                            options.show_custom_emoji,
+                        ),
+                        style,
+                    ),
+                ]),
+                is_selected,
+            )
         })
         .collect();
 
     if reactions.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no matching reactions",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     }
 
     if let Some(filter) = options.filter {
         lines.push(Line::from(vec![
-            Span::styled("Filter ", Style::default().fg(DIM)),
+            Span::styled(
+                "Filter ",
+                theme::current().style(theme::HighlightGroup::FieldLabel),
+            ),
             Span::styled(
                 format!(
                     "{}{filter}",
                     options.key_bindings.emoji_reaction_filter_prefix()
                 ),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::ActiveField),
             ),
         ]));
     }

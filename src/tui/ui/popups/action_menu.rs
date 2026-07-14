@@ -58,11 +58,14 @@ fn action_menu_lines(rows: &[ActionMenuRow], selected: usize) -> Vec<Line<'stati
                 format!("{} (unavailable)", row.label)
             };
             let style = selectable_popup_label_style(is_selected, row.enabled);
-            Line::from(vec![
-                selectable_popup_marker(is_selected),
-                selectable_popup_shortcut_span(shortcut),
-                Span::styled(label, style),
-            ])
+            selected_row_line(
+                Line::from(vec![
+                    selectable_popup_marker(is_selected),
+                    selectable_popup_shortcut_span(shortcut),
+                    Span::styled(label, style),
+                ]),
+                is_selected,
+            )
         })
         .collect()
 }
@@ -344,10 +347,13 @@ fn leader_shortcut_text_line(key: &str, label: &str, enabled: bool) -> Line<'sta
     let style = if enabled {
         Style::default()
     } else {
-        Style::default().fg(DIM)
+        theme::current().style(theme::HighlightGroup::Disabled)
     };
     Line::from(vec![
-        Span::styled(format!("[{key}] "), Style::default().fg(DIM)),
+        Span::styled(
+            format!("[{key}] "),
+            theme::current().style(theme::HighlightGroup::Shortcut),
+        ),
         Span::raw(" "),
         Span::styled(label.to_owned(), style),
     ])

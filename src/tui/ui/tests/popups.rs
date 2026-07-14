@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::FriendStatus;
 use crate::discord::test_builders::{
     GuildCreateFixture, ReactionUsersLoadedFixture, guild_create_event, reaction_users_loaded_event,
 };
@@ -31,15 +32,26 @@ fn options_popup_lines_show_selected_toggle_state() {
         },
     ];
 
-    let lines = options_popup_lines(&items, 1, items.len(), 0, 120);
+    let description_background = Color::Red;
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Description,
+        Style::default()
+            .bg(description_background)
+            .add_modifier(Modifier::DIM),
+    );
+    theme::with_test_theme(custom, || {
+        let lines = options_popup_lines(&items, 1, items.len(), 0, 120);
 
-    assert_eq!(lines[0].spans[1].content, "[ ] ");
-    assert_eq!(lines[1].spans[0].content, "› ");
-    assert_eq!(lines[1].spans[1].content, "[x] ");
-    assert_eq!(lines[2].spans[1].content, "[balanced] ");
-    assert!(lines[3].spans[1].content.contains("-100 dB"));
-    assert!(lines[3].spans[3].content.contains("0 dB"));
-    assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].spans[1].content, "[ ] ");
+        assert_eq!(lines[0].spans[4].style.bg, Some(description_background));
+        assert_eq!(lines[1].spans[0].content, "› ");
+        assert_eq!(lines[1].spans[1].content, "[x] ");
+        assert_eq!(lines[1].spans[4].style.bg, Some(description_background));
+        assert_eq!(lines[2].spans[1].content, "[balanced] ");
+        assert!(lines[3].spans[1].content.contains("-100 dB"));
+        assert!(lines[3].spans[3].content.contains("0 dB"));
+        assert_eq!(lines.len(), 4);
+    });
 }
 
 #[test]
@@ -112,15 +124,32 @@ fn toast_line_truncates_to_available_width() {
 
 #[test]
 fn dashboard_renders_toast_at_bottom_left() {
-    let mut state = DashboardState::new();
-    state.show_success_toast("Message copied", std::time::Instant::now());
+    let background = Color::Rgb(12, 34, 56);
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().fg(Color::Reset).bg(background),
+    );
 
-    let dump = render_dashboard_dump(40, 10, &mut state);
-    let rendered = dump.join("\n");
+    theme::with_test_theme(custom, || {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        let mut state = DashboardState::new();
+        state.show_success_toast("Message copied", std::time::Instant::now());
 
-    assert!(dump[7].starts_with("┌"), "{rendered}");
-    assert!(dump[8].starts_with("│Message copied│"), "{rendered}");
-    assert!(dump[9].starts_with("└"), "{rendered}");
+        terminal
+            .draw(|frame| {
+                sync_view_heights(frame.area(), &mut state);
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
+            })
+            .expect("toast render should succeed");
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 7)].symbol(), "┌");
+        assert_eq!(buffer[(0, 7)].fg, Color::Green);
+        assert_eq!(buffer[(1, 8)].symbol(), "M");
+        assert_eq!(buffer[(1, 8)].fg, Color::Green);
+        assert_eq!(buffer[(1, 8)].bg, background);
+    });
 }
 
 #[test]
@@ -288,13 +317,13 @@ fn attachment_viewer_popup_fullscreen_uses_full_frame_area() {
 }
 
 #[test]
-fn user_profile_popup_styles_name_by_status() {
+fn user_profile_popup_keeps_name_on_terminal_foreground() {
     let profile = user_profile_info(10, "neo");
     let state = DashboardState::new();
 
     let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Idle);
 
-    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Rgb(180, 140, 0)));
+    assert_eq!(lines[0].spans[0].style.fg, None);
     assert!(
         lines[0].spans[0]
             .style
@@ -352,11 +381,24 @@ fn current_user_profile_settings_render_contract() {
         .and_then(|index| lines.get(index + 1))
         .expect("status value should follow label");
 
-    assert_eq!(display_label.spans[1].style.fg, Some(ACCENT));
+    assert_eq!(
+        display_label.spans[1].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ActiveField)
+            .fg
+    );
     assert_eq!(display_value.spans[0].content, "  Neo Global");
-    assert_eq!(display_value.spans[0].style, Style::default());
+    assert_eq!(
+        display_value.spans[0].style,
+        theme::current().style(theme::HighlightGroup::ActiveField)
+    );
     assert_eq!(pronouns_value.spans[0].content, "  (empty)");
-    assert_eq!(pronouns_value.spans[0].style.fg, Some(DIM));
+    assert!(
+        pronouns_value.spans[0]
+            .style
+            .add_modifier
+            .contains(Modifier::DIM)
+    );
     assert_eq!(status_value.spans[0].content, "  Do Not Disturb");
     assert_eq!(status_value.spans[0].style.fg, Some(Color::Red));
 
@@ -370,7 +412,10 @@ fn current_user_profile_settings_render_contract() {
         .and_then(|index| editing_lines.get(index))
         .expect("editing label should exist");
     assert_eq!(editing_label.spans[1].content, "Display name");
-    assert_eq!(editing_label.spans[1].style.fg, Some(Color::Yellow));
+    assert_eq!(
+        editing_label.spans[1].style.fg,
+        theme::current().style(theme::HighlightGroup::Editing).fg
+    );
     for value in "Neo Dirty".chars() {
         state.push_user_profile_edit_char(value);
     }
@@ -414,6 +459,20 @@ fn current_user_profile_settings_render_contract() {
     assert!(picker_texts.iter().any(|line| line.contains("Status")));
     assert!(picker_texts.iter().any(|line| line == "Choose status"));
     assert!(picker_texts.iter().any(|line| line == "› Idle"));
+    let selected_status = picker_lines
+        .iter()
+        .find(|line| line.to_string() == "› Idle")
+        .expect("selected status row");
+    assert_eq!(
+        selected_status.spans[1].style.fg,
+        presence_style(PresenceStatus::Idle).fg
+    );
+    assert_eq!(
+        selected_status.spans[1].style.bg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .bg
+    );
 }
 
 #[test]
@@ -438,11 +497,9 @@ fn current_user_profile_settings_show_sign_out_action() {
         .expect("sign-out action should render");
 
     assert_eq!(lines[sign_out_index].spans[2].style.fg, Some(Color::Red));
-    assert!(
-        lines[sign_out_index].spans[1]
-            .style
-            .add_modifier
-            .contains(Modifier::BOLD)
+    assert_eq!(
+        lines[sign_out_index].spans[1].style,
+        theme::current().style(theme::HighlightGroup::Shortcut)
     );
     let rendered = texts.join(" ");
     assert!(rendered.contains("[o] sign out"));
@@ -523,6 +580,52 @@ fn user_profile_popup_lists_mutual_servers() {
 
     assert!(texts.iter().any(|line| line == "  • guild-1"));
     assert!(texts.iter().any(|line| line == "  • guild-3"));
+
+    let custom = theme::Theme::default()
+        .with_style(
+            theme::HighlightGroup::RelationshipFriend,
+            Style::default().fg(Color::Green),
+        )
+        .with_style(
+            theme::HighlightGroup::RelationshipIncoming,
+            Style::default().fg(Color::Yellow),
+        )
+        .with_style(
+            theme::HighlightGroup::RelationshipOutgoing,
+            Style::default().fg(Color::LightYellow),
+        )
+        .with_style(
+            theme::HighlightGroup::RelationshipBlocked,
+            Style::default().fg(Color::Red),
+        )
+        .with_style(
+            theme::HighlightGroup::RelationshipNone,
+            Style::default().fg(Color::Blue).add_modifier(Modifier::DIM),
+        );
+    theme::with_test_theme(custom, || {
+        let cases = [
+            (FriendStatus::Friend, Color::Green, false),
+            (FriendStatus::IncomingRequest, Color::Yellow, false),
+            (FriendStatus::OutgoingRequest, Color::LightYellow, false),
+            (FriendStatus::Blocked, Color::Red, false),
+            (FriendStatus::None, Color::Blue, true),
+        ];
+        for (relationship, expected, expect_dim) in cases {
+            let mut profile = user_profile_info(10, "neo");
+            profile.friend_status = relationship;
+            let lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::Online);
+            let relationship = lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .find(|span| span.content.starts_with('●'))
+                .expect("relationship badge should render");
+            assert_eq!(relationship.style.fg, Some(expected));
+            assert_eq!(
+                relationship.style.add_modifier.contains(Modifier::DIM),
+                expect_dim
+            );
+        }
+    });
 }
 
 #[test]
@@ -652,7 +755,7 @@ fn emoji_reaction_picker_assigns_digit_shortcuts_by_position() {
 }
 
 #[test]
-fn emoji_reaction_picker_marks_own_reactions_yellow() {
+fn emoji_reaction_picker_uses_reaction_colors_and_selected_background() {
     let reactions = vec![
         EmojiReactionItem {
             label: "Thumbs up".to_owned(),
@@ -666,11 +769,27 @@ fn emoji_reaction_picker_marks_own_reactions_yellow() {
     let own_reactions = vec![ReactionEmoji::Unicode("❤️".to_owned())];
 
     let lines =
-        emoji_reaction_picker_lines_with_own_reactions(&reactions, &own_reactions, 1, 10, &[]);
+        emoji_reaction_picker_lines_with_own_reactions(&reactions, &own_reactions, 0, 10, &[]);
 
-    assert_eq!(lines[0].spans[2].style.fg, None);
-    assert_eq!(lines[1].spans[2].style.fg, Some(Color::Yellow));
-    assert_eq!(lines[1].spans[2].style.bg, Some(Color::Rgb(40, 45, 90)));
+    assert_eq!(
+        lines[0].spans[2].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .fg
+    );
+    assert_eq!(
+        lines[1].spans[2].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::SelfReaction)
+            .fg
+    );
+    assert_eq!(
+        lines[0].spans[2].style.bg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .bg
+    );
+    assert_eq!(lines[1].spans[2].style.bg, None);
 }
 
 #[test]
@@ -692,6 +811,16 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec!["  [1] [x] Soup", "› [2] [ ] Noodles"]
+    );
+    assert_eq!(
+        lines[0].spans[2].style.fg,
+        theme::current().style(theme::HighlightGroup::Selection).fg
+    );
+    assert_eq!(
+        lines[1].spans[2].style.bg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .bg
     );
 }
 
@@ -722,6 +851,12 @@ fn reaction_users_popup_lists_reactions() {
         .map(|line| line.trim_end().to_owned())
         .collect::<Vec<_>>();
     assert_eq!(trimmed, vec!["› 👍 55", "  :party: 23"]);
+    assert_eq!(
+        lines[0].spans[1].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .fg
+    );
 }
 
 #[test]
@@ -1244,7 +1379,7 @@ fn leader_action_popup_renders_modified_action_shortcut_labels() {
 }
 
 #[test]
-fn leader_action_popup_dims_disabled_channel_actions() {
+fn leader_action_popup_selection_overrides_disabled_dim() {
     let mut state = state_with_message();
     state.focus_pane(FocusPane::Channels);
     state.open_leader();
@@ -1252,7 +1387,7 @@ fn leader_action_popup_dims_disabled_channel_actions() {
     let lines = channel_action_menu_lines_for_test(&state);
 
     assert_eq!(lines[0].spans[2].content, "Join voice (unavailable)");
-    assert_eq!(lines[0].spans[2].style.fg, Some(DIM));
+    assert!(!lines[0].spans[2].style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]
@@ -1298,6 +1433,10 @@ fn folder_settings_popup_renders_name_and_color_inputs() {
     assert!(rendered.contains("[c] cancel"), "{rendered}");
     assert!(!rendered.contains("[Enter] select"), "{rendered}");
     assert!(!rendered.contains("[Esc] close/cancel"), "{rendered}");
+
+    let inactive = folder_settings_input_line_for_test(false);
+    assert!(inactive.spans[1].style.add_modifier.contains(Modifier::DIM));
+    assert!(inactive.spans[2].style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]
@@ -1385,7 +1524,7 @@ fn debug_log_popup_wraps_long_detail_lines() {
 
 #[test]
 fn keymap_popup_lines_show_help_content() {
-    let help_lines = keymap_help_popup_lines(vec![
+    let summaries = vec![
         KeymapBindingSummary {
             scope: "keymap",
             action: "ReplyMessage".to_owned(),
@@ -1396,7 +1535,8 @@ fn keymap_popup_lines_show_help_content() {
             action: "Submit".to_owned(),
             keys: vec!["<Enter>".to_owned()],
         },
-    ]);
+    ];
+    let help_lines = keymap_help_popup_lines(summaries.clone());
 
     assert_eq!(help_lines[0].spans[0].content, "[keymap]");
     assert_eq!(help_lines[1].spans[0].content, "[n] ");
@@ -1404,4 +1544,20 @@ fn keymap_popup_lines_show_help_content() {
     assert_eq!(help_lines[3].spans[0].content, "[keymap.composer]");
     assert_eq!(help_lines[4].spans[0].content, "[<Enter>] ");
     assert!(help_lines[4].spans[1].content.contains("Submit"));
+
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Shortcut,
+        Style::default().fg(Color::LightMagenta),
+    );
+    theme::with_test_theme(custom, || {
+        let help_lines = keymap_help_popup_lines(summaries);
+        assert_eq!(help_lines[1].spans[0].style.fg, Some(Color::LightMagenta));
+        assert_eq!(help_lines[4].spans[0].style.fg, Some(Color::LightMagenta));
+
+        let confirmation_lines = quit_confirmation_lines();
+        assert_eq!(
+            confirmation_lines[3].spans[1].style.fg,
+            Some(Color::LightMagenta)
+        );
+    });
 }

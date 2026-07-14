@@ -1,21 +1,20 @@
 //! Block and inline Discord-flavored markdown: headings, quotes, bullets,
 //! fenced code boxes with syntax highlight, and inline marker styling.
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::state::DashboardState;
 use crate::tui::text::{InlineEmojiSlot, RenderedText, TextHighlight, truncate_display_width};
+use crate::tui::theme;
 
 use super::wrap::wrap_text_line_with_styles;
 use super::{
-    ACCENT, DIM, MessageContentLine, StyledPrefix, prefix_message_content_line_with_style,
-    rendered_text_slice, rendered_text_with_loaded_custom_emoji_placeholders,
-    rendered_text_without_prefix, wrap_rendered_text_lines,
-    wrap_rendered_text_lines_with_styled_ranges,
+    MessageContentLine, StyledPrefix, prefix_message_content_line_with_style, rendered_text_slice,
+    rendered_text_with_loaded_custom_emoji_placeholders, rendered_text_without_prefix,
+    wrap_rendered_text_lines, wrap_rendered_text_lines_with_styled_ranges,
 };
 
-const INLINE_CODE: Color = Color::Rgb(255, 165, 0);
 const MARKDOWN_QUOTE_PREFIX: &str = "▎ ";
 const MARKDOWN_BULLET_PREFIX: &str = "• ";
 
@@ -110,7 +109,7 @@ fn wrap_markdown_message_line(
         )];
     }
 
-    if let Some((prefix_len, heading_style)) = markdown_heading(&rendered.text) {
+    if let Some((prefix_len, heading_style)) = markdown_heading(&rendered.text, style) {
         let prefix = rendered.text[..prefix_len].to_owned();
         let content = rendered_text_without_prefix(rendered, prefix_len);
         return wrap_prefixed_markdown_line(
@@ -118,7 +117,7 @@ fn wrap_markdown_message_line(
             width,
             heading_style,
             &prefix,
-            Style::default().fg(DIM),
+            markdown_marker_style(),
         );
     }
 
@@ -127,9 +126,9 @@ fn wrap_markdown_message_line(
         return wrap_prefixed_markdown_line(
             content,
             width,
-            style.fg(DIM),
+            theme::current().apply(theme::HighlightGroup::MarkdownQuote, style),
             MARKDOWN_QUOTE_PREFIX,
-            Style::default().fg(DIM),
+            markdown_marker_style(),
         );
     }
 
@@ -140,7 +139,7 @@ fn wrap_markdown_message_line(
             width,
             style,
             MARKDOWN_BULLET_PREFIX,
-            Style::default().fg(DIM),
+            markdown_marker_style(),
         );
     }
 
@@ -257,12 +256,16 @@ fn code_box_border_line(
             }
         })
         .unwrap_or_else(|| "─".repeat(inner_width));
-    MessageContentLine::dim(format!("{left}{inner}{right}"))
+    MessageContentLine::styled_text(
+        format!("{left}{inner}{right}"),
+        code_box_border_style(),
+        Vec::new(),
+    )
 }
 
 fn code_box_body_line(regions: Vec<(Style, String)>, content_width: usize) -> MessageContentLine {
     let mut line =
-        MessageContentLine::styled_text("│ ".to_owned(), Style::default().fg(DIM), Vec::new());
+        MessageContentLine::styled_text("│ ".to_owned(), code_box_border_style(), Vec::new());
     let content_start = line.text.len();
     let mut width = 0usize;
     let mut current_pos = content_start;
@@ -279,7 +282,7 @@ fn code_box_body_line(regions: Vec<(Style, String)>, content_width: usize) -> Me
     }
     let padding = content_width.saturating_sub(width);
     line.text.push_str(&" ".repeat(padding));
-    line.append_styled_suffix(" │", Style::default().fg(DIM));
+    line.append_styled_suffix(" │", code_box_border_style());
     line
 }
 
@@ -297,22 +300,21 @@ fn wrap_prefixed_markdown_line(
         .collect()
 }
 
-fn markdown_heading(value: &str) -> Option<(usize, Style)> {
-    if value.starts_with("# ") {
-        Some((
-            "# ".len(),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ))
+fn markdown_heading(value: &str, base: Style) -> Option<(usize, Style)> {
+    let (prefix_len, group) = if value.starts_with("# ") {
+        ("# ".len(), theme::HighlightGroup::MarkdownHeading1)
     } else if value.starts_with("## ") {
-        Some((
-            "## ".len(),
-            Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        ))
+        ("## ".len(), theme::HighlightGroup::MarkdownHeading2)
     } else if value.starts_with("### ") {
-        Some(("### ".len(), Style::default().add_modifier(Modifier::BOLD)))
+        ("### ".len(), theme::HighlightGroup::MarkdownHeading3)
     } else {
-        None
-    }
+        return None;
+    };
+    Some((prefix_len, theme::current().apply(group, base)))
+}
+
+fn markdown_marker_style() -> Style {
+    theme::current().style(theme::HighlightGroup::MarkdownMarker)
 }
 
 fn markdown_quote_prefix_len(value: &str) -> Option<usize> {
@@ -347,11 +349,15 @@ fn markdown_code_fence_closing_content_end(value: &str) -> Option<usize> {
 }
 
 fn markdown_code_style() -> Style {
-    Style::default().fg(Color::White)
+    Style::default()
 }
 
 fn inline_code_style() -> Style {
-    Style::default().fg(INLINE_CODE)
+    theme::current().style(theme::HighlightGroup::InlineCode)
+}
+
+fn code_box_border_style() -> Style {
+    theme::current().style(theme::HighlightGroup::CodeBlockBorder)
 }
 
 fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {

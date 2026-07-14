@@ -42,9 +42,18 @@ fn cli_command_from_args(args: impl IntoIterator<Item = OsString>) -> CliCommand
 }
 
 fn check_config() -> Result<()> {
-    let _options = concord::config::load_options()?;
-    let keymap = concord::config::load_keymap_options()?;
+    let (_options, app_warnings) = concord::config::load_options_with_warnings()?;
+    let (keymap, keymap_warnings) = concord::config::load_keymap_options_with_warnings()?;
     concord::tui::validate_keymap_options(&keymap)?;
+    let (theme, theme_parser_warnings) = concord::config::load_theme_options_with_warnings()?;
+    for warning in app_warnings
+        .into_iter()
+        .chain(keymap_warnings)
+        .chain(theme_parser_warnings)
+        .chain(concord::tui::theme_options_warnings(&theme))
+    {
+        println!("warning: {warning}");
+    }
     println!("concord config OK");
     Ok(())
 }

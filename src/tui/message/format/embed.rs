@@ -1,14 +1,17 @@
 use chrono::{DateTime, Local};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     discord::EmbedInfo,
-    tui::text::{RenderedText, replace_custom_emoji_markup_in_rendered_with_images},
+    tui::{
+        text::{RenderedText, replace_custom_emoji_markup_in_rendered_with_images},
+        theme,
+    },
 };
 
 use super::{
-    DIM, MessageContentLine, prefix_message_content_line_with_style,
+    MessageContentLine, prefix_message_content_line_with_style,
     wrap_rendered_text_lines_with_loaded_custom_emoji_urls,
 };
 
@@ -261,41 +264,34 @@ fn push_embed_text(
 }
 
 fn embed_provider_style() -> Style {
-    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedFooter)
 }
 
 fn embed_author_style() -> Style {
-    Style::default().add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedAuthor)
 }
 
 fn embed_title_style() -> Style {
-    Style::default()
-        .fg(Color::Blue)
-        .add_modifier(Modifier::BOLD)
+    theme::current().style(theme::HighlightGroup::EmbedTitle)
 }
 
 fn embed_field_name_style() -> Style {
-    Style::default()
-        .add_modifier(Modifier::BOLD)
-        .add_modifier(Modifier::UNDERLINED)
+    theme::current().style(theme::HighlightGroup::EmbedFieldName)
 }
 
 fn embed_footer_style() -> Style {
-    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedFooter)
 }
 
 fn embed_url_style() -> Style {
-    Style::default()
-        .fg(Color::Blue)
-        .add_modifier(Modifier::UNDERLINED)
+    theme::current().style(theme::HighlightGroup::EmbedLink)
 }
 
 fn embed_line_style(embed: &EmbedInfo) -> Style {
-    Style::default().fg(embed_line_color(embed))
-}
-
-fn embed_line_color(embed: &EmbedInfo) -> Color {
-    embed.color.map(embed_color).unwrap_or(Color::Red)
+    let style = theme::current().style(theme::HighlightGroup::EmbedGutter);
+    embed
+        .color
+        .map_or(style, |color| style.fg(embed_color(color)))
 }
 
 pub(in crate::tui) fn embed_color(color: u32) -> Color {

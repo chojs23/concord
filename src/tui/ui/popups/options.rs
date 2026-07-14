@@ -79,13 +79,22 @@ pub(in crate::tui::ui) fn options_popup_lines(
                 |value| format!("[{value}]"),
             );
             let style = selectable_popup_label_style(selected, item.effective || index == 0);
-            let row = Line::from(vec![
-                selectable_popup_marker(selected),
-                Span::styled(format!("{control} "), style),
-                Span::styled(item.label, style),
-                Span::styled(" - ", Style::default().fg(DIM)),
-                Span::styled(item.description, Style::default().fg(DIM)),
-            ]);
+            let row = selected_row_line(
+                Line::from(vec![
+                    selectable_popup_marker(selected),
+                    Span::styled(format!("{control} "), style),
+                    Span::styled(item.label, style),
+                    Span::styled(
+                        " - ",
+                        theme::current().style(theme::HighlightGroup::Description),
+                    ),
+                    Span::styled(
+                        item.description,
+                        theme::current().style(theme::HighlightGroup::Description),
+                    ),
+                ]),
+                selected,
+            );
             let gauge_line = item.gauge_percent.map(|_| {
                 let (min_label, max_label) = if item
                     .value
@@ -97,10 +106,16 @@ pub(in crate::tui::ui) fn options_popup_lines(
                     ("-100 dB", "0 dB")
                 };
                 Line::from(vec![
-                    Span::styled("  ", Style::default().fg(ACCENT)),
-                    Span::styled(format!("  {min_label} "), Style::default().fg(DIM)),
+                    Span::raw("  "),
+                    Span::styled(
+                        format!("  {min_label} "),
+                        theme::current().style(theme::HighlightGroup::Description),
+                    ),
                     Span::styled(" ".repeat(28), Style::default()),
-                    Span::styled(format!(" {max_label}"), Style::default().fg(DIM)),
+                    Span::styled(
+                        format!(" {max_label}"),
+                        theme::current().style(theme::HighlightGroup::Description),
+                    ),
                 ])
             });
             std::iter::once(row).chain(gauge_line)
@@ -138,7 +153,10 @@ fn render_option_gauges(
             Gauge::default()
                 .ratio((f64::from(percent) / 100.0).clamp(0.0, 1.0))
                 .label("")
-                .gauge_style(Style::default().fg(ACCENT)),
+                .gauge_style(theme::current().apply(
+                    theme::HighlightGroup::GaugeFill,
+                    theme::current().style(theme::HighlightGroup::Normal),
+                )),
             gauge_area,
         );
         y = y.saturating_add(1);

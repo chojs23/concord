@@ -473,6 +473,10 @@ fn member_navigation_skips_over_activity_subrows() {
     assert_eq!(state.selected_member(), 2);
     assert_eq!(state.selected_member_line(), 4);
 
+    state.move_up();
+    assert_eq!(state.selected_member(), 1);
+    assert_eq!(state.selected_member_line(), 2);
+
     assert_eq!(state.member_line_count(), 5);
 }
 

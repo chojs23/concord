@@ -7,16 +7,32 @@ use syntect::{
     parsing::SyntaxSet,
 };
 
-use crate::logging;
+use crate::{logging, tui::theme};
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_nonewlines);
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
-fn compute_key(lines: &[String], language: &str) -> u64 {
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum SyntaxPalette {
+    Dark,
+    Light,
+}
+
+impl SyntaxPalette {
+    const fn theme_name(self) -> &'static str {
+        match self {
+            Self::Dark => "base16-ocean.dark",
+            Self::Light => "base16-ocean.light",
+        }
+    }
+}
+
+fn compute_key(lines: &[String], language: &str, palette: SyntaxPalette) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     lines.hash(&mut hasher);
     language.hash(&mut hasher);
+    palette.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -41,7 +57,8 @@ const MAX_CACHE_ENTRIES: usize = 32;
 
 impl SyntaxHighlightCache {
     pub(super) fn highlight(&self, lines: &[String], language: &str) -> Vec<Vec<(Style, String)>> {
-        let key = compute_key(lines, language);
+        let palette = current_syntax_palette();
+        let key = compute_key(lines, language, palette);
         let mut state = self.state.borrow_mut();
         state.tick = state.tick.wrapping_add(1);
         let next_tick = state.tick;
@@ -51,7 +68,7 @@ impl SyntaxHighlightCache {
             return entry.lines.clone();
         }
 
-        let highlighted_lines = do_highlight(lines, language);
+        let highlighted_lines = do_highlight_with_palette(lines, language, palette);
 
         if state.entries.len() >= MAX_CACHE_ENTRIES
             && let Some(oldest) = state
@@ -89,6 +106,44 @@ fn syntect_style_to_ratatui(s: syntect::highlighting::Style) -> Style {
     style
 }
 
+fn current_syntax_palette() -> SyntaxPalette {
+    let background = theme::current().style(theme::HighlightGroup::Normal).bg;
+    if background.is_some_and(background_is_light) {
+        SyntaxPalette::Light
+    } else {
+        SyntaxPalette::Dark
+    }
+}
+
+fn background_is_light(color: Color) -> bool {
+    // ANSI palettes vary by terminal, but their standard RGB values give a
+    // stable fallback when the user selects a named background. Reset and
+    // indexed colors remain on the existing dark palette because their actual
+    // terminal colors cannot be inferred here.
+    let rgb = match color {
+        Color::Black => (0, 0, 0),
+        Color::Red => (128, 0, 0),
+        Color::Green => (0, 128, 0),
+        Color::Yellow => (128, 128, 0),
+        Color::Blue => (0, 0, 128),
+        Color::Magenta => (128, 0, 128),
+        Color::Cyan => (0, 128, 128),
+        Color::Gray => (192, 192, 192),
+        Color::DarkGray => (128, 128, 128),
+        Color::LightRed => (255, 0, 0),
+        Color::LightGreen => (0, 255, 0),
+        Color::LightYellow => (255, 255, 0),
+        Color::LightBlue => (0, 0, 255),
+        Color::LightMagenta => (255, 0, 255),
+        Color::LightCyan => (0, 255, 255),
+        Color::White => (255, 255, 255),
+        Color::Rgb(red, green, blue) => (red, green, blue),
+        Color::Reset | Color::Indexed(_) => return false,
+    };
+    let (red, green, blue) = rgb;
+    u32::from(red) * 299 + u32::from(green) * 587 + u32::from(blue) * 114 >= 128_000
+}
+
 fn syntax_lookup_token(language: &str) -> &str {
     let token = language.split_whitespace().next().unwrap_or(language);
     if is_typescript_alias(token) {
@@ -104,14 +159,23 @@ fn is_typescript_alias(token: &str) -> bool {
         .any(|alias| token.eq_ignore_ascii_case(alias))
 }
 
+#[cfg(test)]
 fn do_highlight(lines: &[String], language: &str) -> Vec<Vec<(Style, String)>> {
+    do_highlight_with_palette(lines, language, current_syntax_palette())
+}
+
+fn do_highlight_with_palette(
+    lines: &[String],
+    language: &str,
+    palette: SyntaxPalette,
+) -> Vec<Vec<(Style, String)>> {
     let language = syntax_lookup_token(language);
     let syntax = SYNTAX_SET
         .find_syntax_by_token(language)
         .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
     let theme = THEME_SET
         .themes
-        .get("base16-ocean.dark")
+        .get(palette.theme_name())
         .expect("should be included default theme");
 
     let mut h = HighlightLines::new(syntax, theme);
@@ -147,7 +211,7 @@ fn syntax_highlight_cache_stores_cached_elements() {
     let cache = SyntaxHighlightCache::default();
     let code = ["let works = true;".to_string()];
     let language = "rust";
-    let key = compute_key(&code, language);
+    let key = compute_key(&code, language, current_syntax_palette());
     cache.highlight(&code, language);
     assert_eq!(cache.state.borrow().tick, 1);
     assert_eq!(cache.state.borrow().entries.len(), 1);
@@ -186,14 +250,35 @@ fn syntax_highlight_uses_javascript_for_typescript_aliases() {
 }
 
 #[test]
+fn syntax_highlight_cache_keeps_light_and_dark_app_backgrounds_separate() {
+    let cache = SyntaxHighlightCache::default();
+    let code = ["let value = Some(42);".to_owned()];
+    let dark_theme = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().bg(Color::Rgb(0x10, 0x10, 0x10)),
+    );
+    let light_theme = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().bg(Color::Rgb(0xF7, 0xF7, 0xF7)),
+    );
+
+    let dark = theme::with_test_theme(dark_theme, || cache.highlight(&code, "rust"));
+    let light = theme::with_test_theme(light_theme, || cache.highlight(&code, "rust"));
+
+    assert_ne!(dark, light);
+    assert_eq!(cache.state.borrow().entries.len(), 2);
+}
+
+#[test]
 fn syntax_highlight_cache_no_over_limit() {
     let cache = SyntaxHighlightCache::default();
     for i in 0..(MAX_CACHE_ENTRIES + 5) {
         cache.highlight(&[i.to_string()], "rust");
     }
     assert_eq!(cache.state.borrow().entries.len(), MAX_CACHE_ENTRIES);
-    let key_too_old = compute_key(&[4.to_string()], "rust");
-    let key_not_old = compute_key(&[5.to_string()], "rust");
+    let palette = current_syntax_palette();
+    let key_too_old = compute_key(&[4.to_string()], "rust", palette);
+    let key_not_old = compute_key(&[5.to_string()], "rust", palette);
     assert!(!cache.state.borrow().entries.contains_key(&key_too_old));
     assert!(cache.state.borrow().entries.contains_key(&key_not_old));
 }

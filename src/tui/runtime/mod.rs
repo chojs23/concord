@@ -54,8 +54,8 @@ pub(super) async fn run_dashboard(
     snapshots: &mut watch::Receiver<SnapshotRevision>,
     commands: mpsc::Sender<AppCommand>,
     client: DiscordClient,
+    mut config_warnings: Vec<String>,
 ) -> Result<DashboardExit> {
-    let mut config_warnings = Vec::new();
     let options = match config::load_options_with_warnings() {
         Ok((options, warnings)) => {
             config_warnings.extend(warnings);

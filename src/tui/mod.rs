@@ -13,13 +13,14 @@ mod terminal;
 mod text;
 mod text_cursor;
 mod text_input;
+mod theme;
 mod ui;
 
 use tokio::sync::{mpsc, watch};
 
 use crate::{
     AppError, Result,
-    config::KeymapOptions,
+    config::{KeymapOptions, ThemeOptions},
     discord::{
         AppCommand, DiscordAuthSession, DiscordClient, SequencedAppEvent, SnapshotRevision,
         load_client_fingerprint_and_http,
@@ -32,6 +33,23 @@ pub fn validate_keymap_options(keymap_options: &KeymapOptions) -> Result<()> {
     keybindings::KeyBindings::try_from_options(keymap_options)
         .map(|_| ())
         .map_err(AppError::InvalidKeymapConfig)
+}
+
+/// Resolves `theme_options` against the built-in defaults and returns any
+/// per-field warnings, without applying the result. Theme values never fail
+/// startup outright (an unparseable color just falls back), so this is a
+/// report, not a pass/fail check like [`validate_keymap_options`].
+pub fn theme_options_warnings(theme_options: &ThemeOptions) -> Vec<String> {
+    let mut warnings = Vec::new();
+    theme::Theme::from_options(theme_options, &mut warnings);
+    warnings
+}
+
+pub fn initialize_theme(theme_options: &ThemeOptions) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let resolved = theme::Theme::from_options(theme_options, &mut warnings);
+    theme::init(resolved);
+    warnings
 }
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
@@ -52,6 +70,7 @@ pub async fn run(
     mut snapshots: watch::Receiver<SnapshotRevision>,
     commands: mpsc::Sender<AppCommand>,
     client: DiscordClient,
+    config_warnings: Vec<String>,
 ) -> Result<DashboardExit> {
     let mut terminal = ratatui::init();
     let _restore_guard = match terminal::TerminalRestoreGuard::new() {
@@ -68,6 +87,7 @@ pub async fn run(
         &mut snapshots,
         commands,
         client,
+        config_warnings,
     )
     .await
 }

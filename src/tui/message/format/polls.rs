@@ -5,6 +5,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::discord::PollInfo;
 use crate::tui::text::{RenderedText, truncate_display_width, truncate_text};
+use crate::tui::theme;
 
 use super::{MessageContentLine, wrap_rendered_text_lines_with_loaded_custom_emoji_urls};
 
@@ -20,7 +21,11 @@ pub(super) fn format_poll_lines(
     } else {
         "Select one answer"
     };
-    let mut lines = vec![MessageContentLine::accent(poll_box_border('╭', '╮', width))];
+    let mut lines = vec![MessageContentLine::styled_text(
+        poll_box_border('╭', '╮', width),
+        theme::current().style(theme::HighlightGroup::Border),
+        Vec::new(),
+    )];
     lines.push(poll_box_line(
         MessageContentLine::plain(truncate_display_width(&poll.question, inner_width)),
         inner_width,
@@ -48,11 +53,20 @@ pub(super) fn format_poll_lines(
         .sum::<u64>();
     let total_votes = poll.total_votes.unwrap_or(counted_votes);
     lines.extend(poll.answers.iter().enumerate().map(|(index, answer)| {
+        let style = if answer.me_voted {
+            theme::current().style(theme::HighlightGroup::PollAnswerSelected)
+        } else {
+            Style::default()
+        };
         poll_box_line(
-            MessageContentLine::plain(truncate_display_width(
-                &format_poll_answer(index, answer, total_votes),
-                inner_width,
-            )),
+            MessageContentLine::styled_text(
+                truncate_display_width(
+                    &format_poll_answer(index, answer, total_votes),
+                    inner_width,
+                ),
+                style,
+                Vec::new(),
+            ),
             inner_width,
         )
     }));
@@ -63,7 +77,11 @@ pub(super) fn format_poll_lines(
         )),
         inner_width,
     ));
-    lines.push(MessageContentLine::accent(poll_box_border('╰', '╯', width)));
+    lines.push(MessageContentLine::styled_text(
+        poll_box_border('╰', '╯', width),
+        theme::current().style(theme::HighlightGroup::Border),
+        Vec::new(),
+    ));
     lines
 }
 
@@ -89,7 +107,21 @@ fn poll_box_line(mut line: MessageContentLine, inner_width: usize) -> MessageCon
         highlight.start = highlight.start.saturating_add(shift);
         highlight.end = highlight.end.saturating_add(shift);
     }
+    for styled_prefix in &mut line.styled_prefixes {
+        styled_prefix.start = styled_prefix.start.saturating_add(shift);
+    }
+    for slot in &mut line.image_slots {
+        slot.byte_start = slot.byte_start.saturating_add(shift);
+        slot.col = slot.col.saturating_add(prefix.width() as u16);
+    }
     line.text = format!("{prefix}{}{}{suffix}", line.text, " ".repeat(padding));
+    let border_style = theme::current().style(theme::HighlightGroup::Border);
+    line.styled_range(0, prefix.len(), border_style);
+    line.styled_range(
+        line.text.len().saturating_sub(suffix.len()),
+        suffix.len(),
+        border_style,
+    );
     line
 }
 
@@ -99,12 +131,12 @@ pub(super) fn format_poll_result_lines(
 ) -> Vec<MessageContentLine> {
     let Some(poll) = poll else {
         return vec![
-            MessageContentLine::accent(truncate_text("Poll results", width)),
+            MessageContentLine::plain(truncate_text("Poll results", width)),
             MessageContentLine::dim(truncate_text("Result details unavailable", width)),
         ];
     };
     let mut lines = vec![
-        MessageContentLine::accent(truncate_text("Poll results", width)),
+        MessageContentLine::plain(truncate_text("Poll results", width)),
         MessageContentLine::plain(truncate_text(&poll.question, width)),
     ];
     if let Some(winner) = poll.answers.first() {
@@ -112,10 +144,11 @@ pub(super) fn format_poll_result_lines(
             .vote_count
             .map(|count| format!(" with {count} votes"))
             .unwrap_or_default();
-        lines.push(MessageContentLine::plain(truncate_text(
-            &format!("Winner: {}{votes}", winner.text),
-            width,
-        )));
+        lines.push(MessageContentLine::styled_text(
+            truncate_text(&format!("Winner: {}{votes}", winner.text), width),
+            theme::current().style(theme::HighlightGroup::PollWinner),
+            Vec::new(),
+        ));
     } else {
         lines.push(MessageContentLine::dim(truncate_text(
             "No winning answer recorded",

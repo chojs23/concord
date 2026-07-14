@@ -1,14 +1,17 @@
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 
 use crate::discord::{
     ChannelRecipientState, ChannelState, GuildMemberState, PresenceStatus, RoleState,
 };
+use crate::tui::theme;
 
-/// Convert a Discord folder color (24-bit RGB integer) to a ratatui color.
-/// Falls back to a neutral cyan when the color is missing or zero so
-/// uncolored folders still read as folder headers.
-pub fn folder_color(color: Option<u32>) -> Color {
-    discord_color(color, Color::Cyan)
+/// Keep the configured folder style while allowing Discord to supply its
+/// foreground when a folder has a nonzero source color.
+pub fn folder_style(color: Option<u32>) -> Style {
+    apply_discord_foreground(
+        theme::current().style(theme::HighlightGroup::FolderFallback),
+        color,
+    )
 }
 
 pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
@@ -23,13 +26,48 @@ pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
     }
 }
 
-pub fn presence_color(status: PresenceStatus) -> Color {
+pub fn apply_discord_foreground(style: Style, color: Option<u32>) -> Style {
+    match color {
+        Some(value) if value != 0 => style.fg(discord_color(Some(value), Color::Reset)),
+        _ => style,
+    }
+}
+
+pub fn normal_text_style() -> Style {
+    let mut style = theme::current().style(theme::HighlightGroup::Normal);
+    style.bg = None;
+    style
+}
+
+pub fn discord_role_mention_background(color: u32) -> Color {
+    const ROLE_PERCENT: u32 = 40;
+    const BACKGROUND_PERCENT: u32 = 100 - ROLE_PERCENT;
+    let (background_red, background_green, background_blue) = match theme::current()
+        .style(theme::HighlightGroup::Normal)
+        .bg
+    {
+        Some(Color::Rgb(red, green, blue)) => (u32::from(red), u32::from(green), u32::from(blue)),
+        _ => (0, 0, 0),
+    };
+    let blend = |role: u32, background: u32| {
+        ((role * ROLE_PERCENT + background * BACKGROUND_PERCENT) / 100) as u8
+    };
+    Color::Rgb(
+        blend((color >> 16) & 0xFF, background_red),
+        blend((color >> 8) & 0xFF, background_green),
+        blend(color & 0xFF, background_blue),
+    )
+}
+
+pub fn presence_style(status: PresenceStatus) -> Style {
+    let theme = theme::current();
     match status {
-        PresenceStatus::Online => Color::Green,
-        PresenceStatus::Idle => Color::Rgb(180, 140, 0),
-        PresenceStatus::DoNotDisturb => Color::Red,
-        PresenceStatus::Offline => Color::DarkGray,
-        PresenceStatus::Unknown => Color::DarkGray,
+        PresenceStatus::Online => theme.style(theme::HighlightGroup::PresenceOnline),
+        PresenceStatus::Idle => theme.style(theme::HighlightGroup::PresenceIdle),
+        PresenceStatus::DoNotDisturb => theme.style(theme::HighlightGroup::PresenceDnd),
+        PresenceStatus::Offline | PresenceStatus::Unknown => {
+            theme.style(theme::HighlightGroup::PresenceOffline)
+        }
     }
 }
 

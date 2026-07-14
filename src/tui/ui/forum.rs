@@ -28,7 +28,12 @@ pub(super) fn forum_post_viewport_lines_with_custom_emoji_images(
         } else {
             "No threads yet."
         };
-        return vec![Line::from(Span::styled(message, Style::default().fg(DIM)))];
+        let style = theme::current().style(if is_loading {
+            theme::HighlightGroup::Loading
+        } else {
+            theme::HighlightGroup::Placeholder
+        });
+        return vec![Line::from(Span::styled(message, style))];
     }
 
     let mut lines = Vec::new();
@@ -60,12 +65,25 @@ pub(in crate::tui) fn forum_post_card_lines(
     let card_width = width.saturating_sub(marker.width()).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
     let border_style = forum_post_accent_style(selected);
+    let border = theme::current().border_set(theme::BorderSurface::Forum);
 
     let mut lines = vec![
         Line::from(vec![
-            Span::styled(marker, forum_post_accent_style(selected)),
             Span::styled(
-                format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
+                marker,
+                if selected {
+                    theme::current().style(theme::HighlightGroup::ForumSelectedBorder)
+                } else {
+                    Style::default()
+                },
+            ),
+            Span::styled(
+                format!(
+                    "{}{}{}",
+                    border.top_left,
+                    border.horizontal_top.repeat(card_width.saturating_sub(2)),
+                    border.top_right
+                ),
                 border_style,
             ),
         ]),
@@ -100,7 +118,14 @@ pub(in crate::tui) fn forum_post_card_lines(
     lines.push(Line::from(vec![
         Span::raw("  "),
         Span::styled(
-            format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
+            format!(
+                "{}{}{}",
+                border.bottom_left,
+                border
+                    .horizontal_bottom
+                    .repeat(card_width.saturating_sub(2)),
+                border.bottom_right
+            ),
             border_style,
         ),
     ]));
@@ -112,14 +137,12 @@ fn forum_post_section_header_line(label: &str, width: usize) -> Line<'static> {
     let padding = width.saturating_sub(label.width());
     Line::from(Span::styled(
         format!("{label}{}", " ".repeat(padding)),
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
+        theme::current().style(theme::HighlightGroup::Heading),
     ))
 }
 
 fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
-    let title_style = Style::default().fg(Color::White).bold();
+    let title_style = theme::current().style(theme::HighlightGroup::Heading);
     if !post.pinned {
         return vec![Span::styled(
             truncate_display_width(&post.label, inner_width),
@@ -135,7 +158,10 @@ fn forum_post_title_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<S
             truncate_display_width(&post.label, title_width),
             title_style,
         ),
-        Span::styled(badge, Style::default().fg(Color::Yellow).bold()),
+        Span::styled(
+            badge,
+            theme::current().style(theme::HighlightGroup::ForumPinnedBadge),
+        ),
     ]
 }
 
@@ -150,7 +176,7 @@ fn forum_post_tag_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Spa
             &mut used_width,
             inner_width,
             forum_post_tag_text(tag),
-            Style::default().fg(ACCENT),
+            theme::current().style(theme::HighlightGroup::Tag),
         );
     }
     spans
@@ -170,17 +196,17 @@ fn forum_post_tag_text(tag: &AppliedForumTag) -> String {
 }
 
 fn forum_post_preview_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Span<'static>> {
-    let preview_style = Style::default().fg(Color::White);
+    let preview_style = Style::default();
     let Some(author) = post.preview_author.as_deref() else {
         return vec![Span::styled(
             "Preview unavailable",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )];
     };
     let Some(content) = post.preview_content.as_deref() else {
         return vec![Span::styled(
             "Preview unavailable",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )];
     };
 
@@ -205,9 +231,10 @@ fn forum_post_metadata_spans(
     width: usize,
     show_custom_emoji: bool,
 ) -> Vec<Span<'static>> {
-    let primary_style = Style::default().fg(Color::White);
-    let reaction_style = Style::default().fg(ACCENT);
-    let muted_style = Style::default().fg(DIM);
+    let theme = theme::current();
+    let primary_style = Style::default();
+    let reaction_style = theme.style(theme::HighlightGroup::Reaction);
+    let muted_style = theme.style(theme::HighlightGroup::ForumSecondary);
     let mut spans = Vec::new();
     let mut used_width = 0usize;
 
@@ -232,7 +259,7 @@ fn forum_post_metadata_spans(
             &mut used_width,
             width,
             format!("{} {label}", post.new_message_count),
-            Style::default().fg(Color::Yellow).bold(),
+            theme.style(theme::HighlightGroup::UnreadNotice),
         );
     }
     if let Some(layout) =
@@ -252,7 +279,7 @@ fn forum_post_metadata_spans(
             &mut used_width,
             width,
             format_message_relative_age(message_id),
-            primary_style,
+            muted_style,
         );
     }
     if post.archived {
@@ -299,7 +326,10 @@ fn push_forum_metadata_part(
         }
         let separator = truncate_display_width(separator, remaining);
         *used_width = used_width.saturating_add(separator.width());
-        spans.push(Span::styled(separator, Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            separator,
+            theme::current().style(theme::HighlightGroup::Decoration),
+        ));
     }
 
     let remaining = max_width.saturating_sub(*used_width);
@@ -333,7 +363,10 @@ fn push_forum_metadata_reaction_part(
         }
         let separator = truncate_display_width(separator, remaining);
         *used_width = used_width.saturating_add(separator.width());
-        spans.push(Span::styled(separator, Style::default().fg(DIM)));
+        spans.push(Span::styled(
+            separator,
+            theme::current().style(theme::HighlightGroup::Decoration),
+        ));
     }
 
     let remaining = max_width.saturating_sub(*used_width);
@@ -611,23 +644,26 @@ fn forum_post_inner_line(
         .sum::<usize>();
     let padding = inner_width.saturating_sub(content_width);
     let border_style = forum_post_accent_style(selected);
-    let fill_style = Style::default();
+    let border = theme::current().border_set(theme::BorderSurface::Forum);
+    let fill_style = theme::current().style(theme::HighlightGroup::Normal);
     let mut spans = vec![
         Span::raw(marker.to_owned()),
-        Span::styled("│ ", border_style),
+        Span::styled(format!("{} ", border.vertical_left), border_style),
     ];
     spans.append(&mut content);
     spans.push(Span::styled(" ".repeat(padding), fill_style));
-    spans.push(Span::styled(" │", border_style));
+    spans.push(Span::styled(
+        format!(" {}", border.vertical_right),
+        border_style,
+    ));
     Line::from(spans)
 }
 
 fn forum_post_accent_style(selected: bool) -> Style {
+    let theme = theme::current();
     if selected {
-        Style::default()
-            .fg(SELECTED_FORUM_POST_BORDER)
-            .add_modifier(Modifier::BOLD)
+        theme.style(theme::HighlightGroup::ForumSelectedBorder)
     } else {
-        Style::default().fg(ACCENT)
+        theme.style(theme::HighlightGroup::ForumBorder)
     }
 }
