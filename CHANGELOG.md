@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-07-14
+
+### Bug Fixes
+
+- Fix invalid token warning when fresh login by @chojs23
+
+### Features
+
+- Configurable themes (#248) in [#248](https://github.com/chojs23/concord/pull/248) by @neurosysgg
+
+### New Contributors
+
+- @neurosysgg made their first contribution in [#248](https://github.com/chojs23/concord/pull/248)
+
 ## [2.3.5] - 2026-07-12
 
 ### Bug Fixes
@@ -1029,17 +1043,8 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-- Keep original image width:height ratio (#6) in [#6](https://github.com/chojs23/concord/pull/6) by @chojs23
-
-### Cd
-
-- Chain crates publish after release by @chojs23
-
-## [1.1.0] - 2026-05-09
-
-### Bug Fixes
-
 - _(flake)_ Use crane (#4) in [#4](https://github.com/chojs23/concord/pull/4) by @M4jor-Tom
+- Keep original image width:height ratio (#6) in [#6](https://github.com/chojs23/concord/pull/6) by @chojs23
 
 ### Documentation
 
@@ -1054,6 +1059,10 @@ All notable changes to this project will be documented in this file.
 ### Miscellaneous Tasks
 
 - Enable generated github release notes by @chojs23
+
+### Cd
+
+- Chain crates publish after release by @chojs23
 
 ### New Contributors
 
