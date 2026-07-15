@@ -497,6 +497,21 @@ fn other_user_delete_requires_manage_messages() {
 }
 
 #[test]
+fn reply_requires_read_message_history() {
+    let mut state = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES,
+        Vec::new(),
+    );
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+    assert!(!message_action(&actions, MessageActionKind::Reply).enabled);
+
+    state.direct_reply_to_selected_message();
+    assert!(!state.is_composing());
+}
+
+#[test]
 fn direct_edit_message_prefills_composer_and_submits_edit_command() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::Ready {

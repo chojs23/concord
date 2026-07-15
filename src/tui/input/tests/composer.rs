@@ -559,6 +559,32 @@ fn paste_file_path_adds_pending_attachment() {
 }
 
 #[test]
+fn paste_file_path_without_attach_permission_shows_error() {
+    let path = temp_upload_file("denied attachment.txt", b"blocked");
+    let mut state = state_with_channel_permissions(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES);
+    assert!(
+        state.can_send_in_selected_channel(),
+        "fixture should be writable: {:?}",
+        state.composer_lock()
+    );
+    state.start_composer();
+    assert!(state.is_composing());
+
+    assert!(handle_paste(
+        &mut state,
+        path.to_str().expect("temp path is valid unicode")
+    ));
+
+    assert!(state.pending_composer_attachments().is_empty());
+    assert_eq!(state.composer_input(), "");
+    assert_eq!(
+        state.toast_message().map(|toast| toast.text),
+        Some("Attach Files permission is required in this channel")
+    );
+    remove_temp_upload_file(&path);
+}
+
+#[test]
 fn paste_single_quoted_file_path_adds_pending_attachment() {
     let path = temp_upload_file("quoted path.txt", b"quoted");
     let mut state = state_with_channel_tree();

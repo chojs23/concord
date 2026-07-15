@@ -11,7 +11,8 @@ use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
-    ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, PresenceStatus,
+    ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, MessageVerificationRestriction,
+    PresenceStatus,
 };
 
 use super::super::{
@@ -56,7 +57,7 @@ pub(super) use composer::{
 #[cfg(test)]
 pub(super) use composer::{
     composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
-    emoji_picker_lines, mention_picker_lines_for_test,
+    emoji_picker_lines, mention_picker_lines_for_test, verification_composer_text,
 };
 pub(super) use guilds::render_guilds;
 pub(super) use header::render_header;

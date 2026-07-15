@@ -77,7 +77,8 @@ impl DashboardState {
         let poll_voting_enabled = message
             .poll
             .as_ref()
-            .is_some_and(|poll| !poll.results_finalized.unwrap_or(false));
+            .is_some_and(|poll| !poll.results_finalized.unwrap_or(false))
+            && self.can_vote_in_message_poll(message);
         vec![
             MessageActionItem {
                 kind: MessageActionKind::CopyContent,
@@ -92,7 +93,7 @@ impl DashboardState {
             MessageActionItem {
                 kind: MessageActionKind::Reply,
                 label: "reply".to_owned(),
-                enabled: self.can_send_in_selected_channel(),
+                enabled: self.can_reply_to_selected_message(),
             },
             MessageActionItem {
                 kind: MessageActionKind::OpenDeleteConfirmation,
@@ -236,11 +237,19 @@ impl DashboardState {
         {
             return false;
         }
-        message
+        if channel.is_thread() && channel.thread_archived().unwrap_or(false) {
+            return false;
+        }
+        let can_add_reaction = message
             .reactions
             .iter()
             .any(|reaction| &reaction.emoji == emoji)
-            || self.discord.cache.can_add_reactions_in_channel(channel)
+            || self.discord.cache.can_add_reactions_in_channel(channel);
+        can_add_reaction
+            && self
+                .discord
+                .cache
+                .can_use_reaction_emoji_in_channel(channel, emoji)
     }
 
     pub(super) fn can_open_reaction_picker(&self, message: &MessageState) -> bool {
@@ -258,10 +267,22 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
+        if channel.is_thread() && channel.thread_archived().unwrap_or(false) {
+            return false;
+        }
         self.discord.cache.can_add_reactions_in_channel(channel)
     }
 
     fn can_show_reaction_users_for_message(&self, message: &MessageState) -> bool {
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord
+            .cache
+            .can_read_message_history_in_channel(channel)
+    }
+
+    fn can_vote_in_message_poll(&self, message: &MessageState) -> bool {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };

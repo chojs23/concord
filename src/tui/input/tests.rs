@@ -251,6 +251,59 @@ fn state_with_messages(count: u64) -> DashboardState {
     state_with_messages_from_state(DashboardState::new(), count)
 }
 
+fn state_with_channel_permissions(permissions: u64) -> DashboardState {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let current_user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(current_user_id),
+    });
+    state.push_event(guild_create_event(GuildCreateFixture {
+        member_count: Some(1),
+        owner_id: Some(Id::new(99)),
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            name: "general".to_owned(),
+            ..ChannelInfo::test(channel_id, "GuildText")
+        }],
+        members: vec![MemberInfo::test(current_user_id, "me")],
+        roles: vec![RoleInfo {
+            permissions,
+            ..RoleInfo::test(Id::new(guild_id.get()), "@everyone")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    let guild_row = state
+        .guild_pane_entries()
+        .iter()
+        .position(
+            |entry| matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == guild_id),
+        )
+        .expect("fixture guild is visible");
+    assert!(state.select_visible_pane_row(FocusPane::Guilds, guild_row));
+    assert!(state.confirm_selected_guild());
+
+    let channel_row = state
+        .channel_pane_entries()
+        .iter()
+        .position(|entry| entry.channel_id() == Some(channel_id))
+        .expect("fixture channel is visible");
+    assert!(state.select_visible_pane_row(FocusPane::Channels, channel_row));
+    state.confirm_selected_channel();
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
+        channel_id,
+        messages: vec![MessageInfo {
+            guild_id: Some(guild_id),
+            content: Some("message".to_owned()),
+            ..MessageInfo::test(channel_id, Id::new(1))
+        }],
+        ..MessageHistoryLoadedFixture::new()
+    }));
+    state
+}
+
 fn push_guild_message(state: &mut DashboardState, message_id: u64, content: impl Into<String>) {
     state.push_event(message_create_event(guild_text_message(
         message_id, content,

@@ -106,6 +106,7 @@ impl DashboardState {
                 should_scroll,
             );
         }
+        self.close_composer_for_safety_lock();
         self.refresh_search_popup_after_member_cache_update();
     }
 

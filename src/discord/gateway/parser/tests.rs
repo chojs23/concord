@@ -8,9 +8,114 @@ use super::{
 };
 use crate::discord::{
     ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
-    MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo, PremiumTier,
-    PresenceStatus, ReactionEmoji, ReplyInfo,
+    GuildVerificationLevel, MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo,
+    PremiumTier, PresenceStatus, ReactionEmoji, ReplyInfo,
 };
+
+#[test]
+fn guild_parser_keeps_message_verification_inputs() {
+    let event = parse_guild_create(&json!({
+        "id": "10",
+        "name": "guild",
+        "verification_level": 3,
+        "mfa_level": 1,
+        "channels": [],
+        "roles": [],
+        "emojis": [],
+        "members": [{
+            "user": { "id": "20", "username": "neo" },
+            "roles": [],
+            "joined_at": "2026-07-14T23:51:00+00:00",
+            "flags": 4,
+            "pending": true,
+            "communication_disabled_until": "2026-07-15T01:00:00+00:00"
+        }]
+    }))
+    .expect("guild should parse");
+
+    let AppEvent::GuildCreate {
+        verification_level,
+        mfa_level,
+        members,
+        ..
+    } = event
+    else {
+        panic!("expected GuildCreate event");
+    };
+    assert_eq!(verification_level, GuildVerificationLevel::High);
+    assert_eq!(mfa_level, 1);
+    assert_eq!(members[0].flags, Some(4));
+    assert_eq!(members[0].pending, Some(true));
+    assert!(members[0].communication_disabled_until_present);
+    assert_eq!(
+        members[0]
+            .communication_disabled_until
+            .expect("communication_disabled_until should parse")
+            .to_rfc3339(),
+        "2026-07-15T01:00:00+00:00"
+    );
+    assert_eq!(
+        members[0]
+            .joined_at
+            .expect("joined_at should parse")
+            .to_rfc3339(),
+        "2026-07-14T23:51:00+00:00"
+    );
+}
+
+#[test]
+fn ready_parser_keeps_current_user_verification_status() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "READY",
+            "d": {
+                "user": {
+                    "id": "20",
+                    "username": "neo",
+                    "verified": true,
+                    "phone": "+10000000000",
+                    "mfa_enabled": true
+                },
+                "guilds": []
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::CurrentUserVerification {
+            email_verified: Some(true),
+            phone_verified: Some(true),
+            mfa_enabled: Some(true),
+        }
+    )));
+}
+
+#[test]
+fn user_update_refreshes_current_user_verification_status() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "USER_UPDATE",
+            "d": {
+                "id": "20",
+                "username": "neo",
+                "verified": true,
+                "phone": null
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::CurrentUserVerification {
+            email_verified: Some(true),
+            phone_verified: Some(false),
+            mfa_enabled: _,
+        }
+    )));
+}
 
 #[test]
 fn raw_dispatch_parser_keeps_original_payload_for_future_fields() {

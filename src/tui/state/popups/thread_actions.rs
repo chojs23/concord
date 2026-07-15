@@ -167,10 +167,8 @@ impl DashboardState {
             }
         );
 
-        // Closing is allowed for the author or a moderator; lock and pin are
-        // moderator-only.
         let can_moderate = self.can_moderate_thread(channel_id);
-        let can_manage = self.can_manage_thread(channel_id);
+        let can_change_archive_state = self.can_change_thread_archive_state(channel_id);
         let close_label = format!(
             "{} {noun}",
             if self.is_thread_archived(channel_id) {
@@ -194,10 +192,18 @@ impl DashboardState {
                 "Mark as read",
                 mark_as_read_enabled,
             ),
-            ThreadActionItem::new(ThreadActionKind::ToggleFollow, follow_label, true),
-            ThreadActionItem::new(ThreadActionKind::Close, close_label, can_manage),
+            ThreadActionItem::new(
+                ThreadActionKind::ToggleFollow,
+                follow_label,
+                !self.is_thread_archived(channel_id),
+            ),
+            ThreadActionItem::new(
+                ThreadActionKind::Close,
+                close_label,
+                can_change_archive_state,
+            ),
             ThreadActionItem::new(ThreadActionKind::Lock, lock_label, can_moderate),
-            ThreadActionItem::new(ThreadActionKind::Edit, format!("Edit {noun}"), can_manage),
+            ThreadActionItem::new(ThreadActionKind::Edit, format!("Edit {noun}"), can_moderate),
             ThreadActionItem::new(ThreadActionKind::CopyLink, "Copy link", true),
             ThreadActionItem::new(ThreadActionKind::ToggleMute, mute_label, followed),
             ThreadActionItem::new(
@@ -536,24 +542,20 @@ impl DashboardState {
         self.discord
             .cache
             .channel(channel_id)
-            .is_some_and(|channel| {
-                self.discord
-                    .cache
-                    .can_manage_channel_structure_in_channel(channel)
-            })
+            .is_some_and(|channel| self.discord.cache.can_manage_threads_in_channel(channel))
     }
 
-    /// Whether the user can close or edit the post: the author always can,
-    /// otherwise it requires the moderator permission.
-    fn can_manage_thread(&self, channel_id: Id<ChannelMarker>) -> bool {
-        let is_owner = self
-            .discord
+    fn can_change_thread_archive_state(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.discord
             .cache
             .channel(channel_id)
             .is_some_and(|channel| {
-                channel.owner_id.is_some() && channel.owner_id == self.current_user_id()
-            });
-        is_owner || self.can_moderate_thread(channel_id)
+                if channel.thread_archived().unwrap_or(false) {
+                    self.discord.cache.can_reopen_thread(channel)
+                } else {
+                    self.discord.cache.can_manage_threads_in_channel(channel)
+                }
+            })
     }
 
     fn toggle_thread_archived(&self, channel_id: Id<ChannelMarker>) -> Option<AppCommand> {

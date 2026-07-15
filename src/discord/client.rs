@@ -360,12 +360,13 @@ impl DiscordClient {
                     .is_some();
                 // Permission gates apply only to guild voice channels. DM and
                 // group-DM calls have no guild permission model to check.
-                if !current_same_channel
-                    && scope.guild_id().is_some()
-                    && let Some(channel) = state.channel(channel_id)
-                    && !state.can_connect_voice_channel(channel)
-                {
-                    return Err("cannot connect to voice channel".to_owned());
+                if !current_same_channel && scope.guild_id().is_some() {
+                    let Some(channel) = state.channel(channel_id) else {
+                        return Err("cannot verify voice channel permissions".to_owned());
+                    };
+                    if !state.can_connect_voice_channel(channel) {
+                        return Err("cannot connect to voice channel".to_owned());
+                    }
                 }
             }
         }
@@ -425,23 +426,41 @@ impl DiscordClient {
         microphone_sensitivity: MicrophoneSensitivityDb,
         microphone_volume: VoiceVolumePercent,
         voice_output_volume: VoiceVolumePercent,
-    ) {
+    ) -> std::result::Result<(), String> {
+        if allow_microphone_transmit && scope.guild_id().is_some() {
+            let state = self
+                .state
+                .read()
+                .expect("discord state lock is not poisoned");
+            let Some(channel) = state.channel(channel_id) else {
+                return Err("cannot verify voice channel permissions".to_owned());
+            };
+            if !state.can_speak_in_voice_channel(channel) {
+                return Err("Speak permission is required to transmit microphone audio".to_owned());
+            }
+            if !state.can_use_voice_activity_in_channel(channel) {
+                return Err(
+                    "Use Voice Activity permission is required to transmit microphone audio"
+                        .to_owned(),
+                );
+            }
+        }
         let mut requested = self
             .requested_voice
             .write()
             .expect("requested voice lock is not poisoned");
         let Some(mut voice) = *requested else {
-            return;
+            return Ok(());
         };
         if voice.scope != scope || voice.channel_id != channel_id {
-            return;
+            return Ok(());
         }
         if voice.allow_microphone_transmit == allow_microphone_transmit
             && voice.microphone_sensitivity == microphone_sensitivity
             && voice.microphone_volume == microphone_volume
             && voice.voice_output_volume == voice_output_volume
         {
-            return;
+            return Ok(());
         }
 
         voice.allow_microphone_transmit = allow_microphone_transmit;
@@ -452,6 +471,7 @@ impl DiscordClient {
         let _ = self
             .voice_events_tx
             .send(VoiceRuntimeEvent::Requested(Some(voice)));
+        Ok(())
     }
 
     pub async fn update_presence_status(
@@ -676,6 +696,7 @@ impl DiscordClient {
         &self,
         invocation: &ApplicationCommandInvocation,
     ) -> Result<()> {
+        self.ensure_can_run_application_command(invocation)?;
         let session_id = self
             .gateway_session_id
             .read()

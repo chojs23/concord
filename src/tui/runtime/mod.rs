@@ -191,6 +191,7 @@ pub(super) async fn run_dashboard(
         let pending_toast_deadline = state.next_toast_deadline();
         let pending_mention_member_search_deadline = client.mention_member_search_deadline();
         let pending_member_list_subscription_deadline = client.member_list_subscription_deadline();
+        let pending_composer_lock_refresh_deadline = state.next_composer_lock_refresh_deadline();
 
         tokio::select! {
             maybe_event = terminal_events.next() => {
@@ -418,6 +419,17 @@ pub(super) async fn run_dashboard(
                 dirty = true;
             }
             _ = async {
+                match pending_composer_lock_refresh_deadline {
+                    Some(deadline) => tokio::time::sleep_until(
+                        tokio::time::Instant::from_std(deadline),
+                    )
+                    .await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                dirty = true;
+            }
+            _ = async {
                 match pending_read_ack_deadline {
                     Some(deadline) => tokio::time::sleep_until(
                         tokio::time::Instant::from_std(deadline),
@@ -528,7 +540,7 @@ fn apply_clipboard_paste_data(state: &mut DashboardState, data: ClipboardPasteDa
     if !state.is_composing() {
         if state.is_forum_post_composer_active() {
             if state.is_forum_post_composer_editing() {
-                if state.forum_post_composer_accepts_attachment_paste() {
+                if state.forum_post_composer_is_editing_body() {
                     if let Some(attachments) = data.file_attachments {
                         state.add_pending_forum_post_attachments(attachments);
                         return true;
@@ -558,20 +570,18 @@ fn apply_clipboard_paste_data(state: &mut DashboardState, data: ClipboardPasteDa
         }
         return false;
     }
-    if state.composer_accepts_attachments() {
-        if let Some(attachments) = data.file_attachments {
-            state.add_pending_composer_attachments(attachments);
-            return true;
-        }
-        if let Some(text) = data.text.as_deref()
-            && input::handle_pasted_file_attachments(state, text)
-        {
-            return true;
-        }
-        if let Some(attachment) = data.image_attachment {
-            state.add_pending_composer_attachments(vec![attachment]);
-            return true;
-        }
+    if let Some(attachments) = data.file_attachments {
+        state.add_pending_composer_attachments(attachments);
+        return true;
+    }
+    if let Some(text) = data.text.as_deref()
+        && input::handle_pasted_file_attachments(state, text)
+    {
+        return true;
+    }
+    if let Some(attachment) = data.image_attachment {
+        state.add_pending_composer_attachments(vec![attachment]);
+        return true;
     }
     data.text
         .as_deref()

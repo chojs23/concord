@@ -1,5 +1,6 @@
 use reqwest::multipart::{Form, Part};
 use serde_json::{Value, json};
+use std::time::Duration;
 
 use crate::discord::ids::{
     Id,
@@ -28,11 +29,12 @@ impl DiscordRest {
         reply_to: Option<ReplyReference>,
         attachments: &[MessageAttachmentUpload],
         upload_limit: u64,
+        slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
         validate_message_payload(content, attachments, upload_limit)?;
         let body = message_request_body(content, reply_to, attachments);
 
-        self.send_message_body(channel_id, body, attachments, upload_limit)
+        self.send_message_body(channel_id, body, attachments, upload_limit, slow_mode)
             .await
     }
 
@@ -60,12 +62,19 @@ impl DiscordRest {
         &self,
         channel_id: Id<ChannelMarker>,
         content: &str,
+        slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
         validate_message_content(content)?;
         let body = message_request_body_with_tts(content, None, &[], true);
 
-        self.send_message_body(channel_id, body, &[], BASE_ATTACHMENT_LIMIT_BYTES)
-            .await
+        self.send_message_body(
+            channel_id,
+            body,
+            &[],
+            BASE_ATTACHMENT_LIMIT_BYTES,
+            slow_mode,
+        )
+        .await
     }
 
     async fn send_message_body(
@@ -74,7 +83,11 @@ impl DiscordRest {
         body: Value,
         attachments: &[MessageAttachmentUpload],
         upload_limit: u64,
+        slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
+        let _channel_guard = self.message_sends.acquire(channel_id).await;
+        self.message_sends.ensure_cooldown_elapsed(channel_id)?;
+
         let request = self.raw_http.post(format!(
             "https://discord.com/api/v9/channels/{}/messages",
             channel_id.get()
@@ -86,8 +99,27 @@ impl DiscordRest {
             request.multipart(message_multipart_form(body, attachments, upload_limit).await?)
         };
 
-        let raw: Value = self.send_json(request, "send message").await?;
-        parse_message_response(raw, "send message response").map(|response| response.message)
+        let result = self
+            .send_json(request, "send message")
+            .await
+            .and_then(|raw| {
+                parse_message_response(raw, "send message response")
+                    .map(|response| response.message)
+            });
+        match &result {
+            Ok(_) => {
+                if let Some(slow_mode) = slow_mode {
+                    self.message_sends.record_cooldown(channel_id, slow_mode);
+                }
+            }
+            Err(AppError::DiscordRateLimited {
+                retry_after_millis, ..
+            }) => self
+                .message_sends
+                .record_cooldown(channel_id, Duration::from_millis(*retry_after_millis)),
+            Err(_) => {}
+        }
+        result
     }
 
     pub async fn edit_message(

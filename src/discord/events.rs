@@ -14,10 +14,10 @@ use super::commands::{
 };
 use super::{
     ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildBoostTier,
-    GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, PollInfo, PremiumTier,
-    PresenceStatus, ReactionUserInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas,
-    UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceScope, VoiceServerInfo,
-    VoiceSoundKind, VoiceStateInfo, is_thread_kind,
+    GuildNotificationSettingsInfo, GuildVerificationLevel, MemberInfo, MentionInfo, MessageInfo,
+    PollInfo, PremiumTier, PresenceStatus, ReactionUserInfo, ReadStateInfo, RelationshipInfo,
+    RoleInfo, SnapshotAreas, UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceScope,
+    VoiceServerInfo, VoiceSoundKind, VoiceStateInfo, is_thread_kind,
 };
 
 #[cfg(test)]
@@ -146,6 +146,11 @@ pub enum AppEvent {
     CurrentUserCapabilities {
         premium_tier: PremiumTier,
     },
+    CurrentUserVerification {
+        email_verified: Option<bool>,
+        phone_verified: Option<bool>,
+        mfa_enabled: Option<bool>,
+    },
     UserIdentityUpdate {
         user_id: Id<UserMarker>,
         username: String,
@@ -166,6 +171,8 @@ pub enum AppEvent {
         owner_id: Option<Id<UserMarker>>,
         boost_tier: GuildBoostTier,
         boost_count: u32,
+        verification_level: GuildVerificationLevel,
+        mfa_level: u64,
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
         presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -180,6 +187,8 @@ pub enum AppEvent {
         // so a rename does not reset a guild's boost state to unboosted.
         boost_tier: Option<GuildBoostTier>,
         boost_count: Option<u32>,
+        verification_level: Option<GuildVerificationLevel>,
+        mfa_level: Option<u64>,
         roles: Option<Vec<RoleInfo>>,
         emojis: Option<Vec<CustomEmojiInfo>>,
     },
@@ -221,6 +230,14 @@ pub enum AppEvent {
     },
     MessageCreate {
         message: MessageInfo,
+    },
+    MessageSendRateLimited {
+        channel_id: Id<ChannelMarker>,
+        retry_after_millis: u64,
+    },
+    MessageSendCooldownStarted {
+        channel_id: Id<ChannelMarker>,
+        duration_millis: u64,
     },
     MessageHistoryLoaded {
         channel_id: Id<ChannelMarker>,
@@ -573,6 +590,7 @@ define_app_event_kinds! {
     Ready: AppEvent::Ready { .. },
     SignedOut: AppEvent::SignedOut,
     CurrentUserCapabilities: AppEvent::CurrentUserCapabilities { .. },
+    CurrentUserVerification: AppEvent::CurrentUserVerification { .. },
     UserIdentityUpdate: AppEvent::UserIdentityUpdate { .. },
     ApplicationCommandsLoaded: AppEvent::ApplicationCommandsLoaded { .. },
     GuildCreate: AppEvent::GuildCreate { .. },
@@ -589,6 +607,8 @@ define_app_event_kinds! {
     ThreadListSync: AppEvent::ThreadListSync { .. },
     ThreadMembersUpdateDispatch: AppEvent::ThreadMembersUpdateDispatch { .. },
     MessageCreate: AppEvent::MessageCreate { .. },
+    MessageSendRateLimited: AppEvent::MessageSendRateLimited { .. },
+    MessageSendCooldownStarted: AppEvent::MessageSendCooldownStarted { .. },
     MessageHistoryLoaded: AppEvent::MessageHistoryLoaded { .. },
     MessageHistoryRefreshed: AppEvent::MessageHistoryRefreshed { .. },
     MessageHistoryAfterLoaded: AppEvent::MessageHistoryAfterLoaded { .. },
@@ -777,6 +797,8 @@ pub(crate) mod test_builders {
         pub(crate) owner_id: Option<Id<UserMarker>>,
         pub(crate) boost_tier: GuildBoostTier,
         pub(crate) boost_count: u32,
+        pub(crate) verification_level: GuildVerificationLevel,
+        pub(crate) mfa_level: u64,
         pub(crate) channels: Vec<ChannelInfo>,
         pub(crate) members: Vec<MemberInfo>,
         pub(crate) presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -793,6 +815,8 @@ pub(crate) mod test_builders {
                 owner_id: None,
                 boost_tier: GuildBoostTier::None,
                 boost_count: 0,
+                verification_level: GuildVerificationLevel::None,
+                mfa_level: 0,
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
@@ -810,6 +834,8 @@ pub(crate) mod test_builders {
             owner_id: event.owner_id,
             boost_tier: event.boost_tier,
             boost_count: event.boost_count,
+            verification_level: event.verification_level,
+            mfa_level: event.mfa_level,
             channels: event.channels,
             members: event.members,
             presences: event.presences,
@@ -1237,6 +1263,8 @@ pub(crate) mod test_builders {
         pub(crate) owner_id: Option<Id<UserMarker>>,
         pub(crate) boost_tier: Option<GuildBoostTier>,
         pub(crate) boost_count: Option<u32>,
+        pub(crate) verification_level: Option<GuildVerificationLevel>,
+        pub(crate) mfa_level: Option<u64>,
         pub(crate) roles: Option<Vec<RoleInfo>>,
         pub(crate) emojis: Option<Vec<CustomEmojiInfo>>,
     }
@@ -1249,6 +1277,8 @@ pub(crate) mod test_builders {
                 owner_id: None,
                 boost_tier: None,
                 boost_count: None,
+                verification_level: None,
+                mfa_level: None,
                 roles: None,
                 emojis: None,
             }
@@ -1262,6 +1292,8 @@ pub(crate) mod test_builders {
             owner_id: f.owner_id,
             boost_tier: f.boost_tier,
             boost_count: f.boost_count,
+            verification_level: f.verification_level,
+            mfa_level: f.mfa_level,
             roles: f.roles,
             emojis: f.emojis,
         }
@@ -1605,6 +1637,7 @@ impl AppEventKind {
             | AppEventKind::TypingStart
             | AppEventKind::UserSettingsUpdate
             | AppEventKind::UserNoteLoaded
+            | AppEventKind::CurrentUserVerification
             | AppEventKind::UserGuildSettingsInit
             | AppEventKind::UserGuildSettingsUpdate => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation())
@@ -1616,6 +1649,8 @@ impl AppEventKind {
 
             AppEventKind::GatewayError
             | AppEventKind::CaptchaRequired
+            | AppEventKind::MessageSendRateLimited
+            | AppEventKind::MessageSendCooldownStarted
             | AppEventKind::GatewayDispatchReceived
             | AppEventKind::SignedOut
             | AppEventKind::MediaPlaybackWindowReady

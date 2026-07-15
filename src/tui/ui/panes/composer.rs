@@ -1004,6 +1004,12 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
                         "read-only · {label} has no messages. start it in the official app first"
                     )
                 }
+                ComposerLock::SlowMode { remaining_seconds } => {
+                    format!("slowmode · wait {remaining_seconds}s before writing in {label}")
+                }
+                ComposerLock::Verification(restriction) => {
+                    verification_composer_text(&label, restriction)
+                }
             };
         }
         // Tell the user up-front if the shortcut won't open the composer here,
@@ -1026,6 +1032,35 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
     }
 
     "select a channel to write a message".to_owned()
+}
+
+pub(in crate::tui::ui) fn verification_composer_text(
+    label: &str,
+    restriction: MessageVerificationRestriction,
+) -> String {
+    match restriction {
+        MessageVerificationRestriction::MembershipScreening => {
+            format!("read-only · complete {label}'s membership screening in the official app")
+        }
+        MessageVerificationRestriction::EmailVerificationRequired => {
+            format!("read-only · verify your Discord account email before writing in {label}")
+        }
+        MessageVerificationRestriction::AccountTooNew { remaining_seconds } => format!(
+            "read-only · account verification wait: {remaining_seconds}s remaining for {label}"
+        ),
+        MessageVerificationRestriction::MemberTooNew { remaining_seconds } => format!(
+            "read-only · server verification wait: {remaining_seconds}s remaining for {label}"
+        ),
+        MessageVerificationRestriction::PhoneVerificationRequired => {
+            format!("read-only · verify your Discord account phone before writing in {label}")
+        }
+        MessageVerificationRestriction::VerificationDataUnavailable => {
+            format!("read-only · Discord verification status is not available for {label}")
+        }
+        MessageVerificationRestriction::UnsupportedLevel { value } => {
+            format!("read-only · {label} uses unsupported verification level {value}")
+        }
+    }
 }
 
 const REPLY_PING_SEPARATOR: &str = "  ";

@@ -72,12 +72,9 @@ impl super::super::DashboardState {
             .and_then(|metadata| metadata.auto_archive_duration)
             .unwrap_or(AUTO_ARCHIVE_OPTIONS[1].0);
         let auto_archive_index = nearest_option_index(&AUTO_ARCHIVE_OPTIONS, auto_archive_minutes);
-        // Slow mode is only editable with the manage-channel permission, the
-        // same gate the action menu uses for moderator-only post actions.
-        let can_set_slow_mode = self
-            .discord
-            .cache
-            .can_manage_channel_structure_in_channel(channel);
+        // Discord applies MANAGE_THREADS to thread settings, including the
+        // per-thread slow-mode value.
+        let can_set_slow_mode = self.discord.cache.can_manage_threads_in_channel(channel);
 
         let mut edit_title = crate::tui::text_input::TextInputState::default();
         edit_title.set_value(title.clone());

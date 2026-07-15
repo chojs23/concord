@@ -22,8 +22,8 @@ use guilds::{
     parse_guild_role_upsert, parse_guild_update, parse_user_guild_settings_update,
 };
 use members::{
-    parse_member_add, parse_member_chunk, parse_member_list_update, parse_member_remove,
-    parse_member_upsert, parse_user_update,
+    parse_current_user_verification, parse_member_add, parse_member_chunk,
+    parse_member_list_update, parse_member_remove, parse_member_upsert, parse_user_update,
 };
 pub(crate) use messages::parse_message_info;
 use messages::{
@@ -75,7 +75,10 @@ fn parse_user_account_event_data(event_type: &str, data: &Value) -> Vec<AppEvent
     match event_type {
         "READY" => parse_ready(data),
         "READY_SUPPLEMENTAL" => parse_ready_supplemental(data),
-        "USER_UPDATE" => parse_user_update(data).into_iter().collect(),
+        "USER_UPDATE" => parse_user_update(data)
+            .into_iter()
+            .chain(parse_current_user_verification(data))
+            .collect(),
         "GUILD_CREATE" => {
             let mut result: Vec<AppEvent> = parse_guild_create(data).into_iter().collect();
             result.extend(parse_guild_voice_states(data));

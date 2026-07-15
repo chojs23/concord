@@ -1,5 +1,10 @@
-use std::ops::Range;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    time::{Duration, Instant},
+};
+
+use chrono::Utc;
 
 use crate::discord::ids::{
     Id,
@@ -10,8 +15,8 @@ use crate::discord::{
     APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND, ApplicationCommandIdentity,
     ApplicationCommandInfo, ApplicationCommandInvocation, BuiltinSlashCommandParse,
     BuiltinSlashCommandSubmit, GlobalUserProfileUpdate, GuildUserProfileUpdate,
-    MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload, UserProfileUpdate,
-    application_command_content_is_complete, application_command_option_scope,
+    MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload, MessageVerificationRestriction,
+    UserProfileUpdate, application_command_content_is_complete, application_command_option_scope,
     parse_builtin_slash_command, parsed_application_command_option_names,
 };
 
@@ -47,11 +52,14 @@ pub enum ComposerLock {
     MessageRequest,
     NewConversation,
     EmptyChannel,
+    SlowMode { remaining_seconds: u64 },
+    Verification(MessageVerificationRestriction),
 }
 
 /// Discord keeps a typing indicator alive for about ten seconds, so resend a
 /// little sooner while the user keeps typing.
 const COMPOSER_TYPING_INTERVAL: Duration = Duration::from_secs(8);
+const DISCORD_EPOCH_MILLIS: i64 = 1_420_070_400_000;
 
 #[derive(Debug, Default)]
 pub(in crate::tui::state) struct ComposerUiState {
@@ -81,6 +89,7 @@ pub(in crate::tui::state) struct ComposerUiState {
     /// Channel and time of the last typing indicator sent while composing, used
     /// to throttle resends.
     pub(in crate::tui::state) last_typing_sent: Option<(Id<ChannelMarker>, Instant)>,
+    pub(in crate::tui::state) slow_mode_deadlines: HashMap<Id<ChannelMarker>, Instant>,
 }
 
 #[derive(Debug, Default)]
@@ -154,9 +163,7 @@ impl DashboardState {
         let Some(message_id) = self.selected_message_state().map(|message| message.id) else {
             return;
         };
-        // Replies are sends, so the channel must allow SEND_MESSAGES for the
-        // action to be useful.
-        if !self.can_send_in_selected_channel() {
+        if !self.can_reply_to_selected_message() {
             return;
         }
         self.composer.composer_input.clear();
@@ -168,6 +175,21 @@ impl DashboardState {
         self.reset_mention_picker_state();
         self.composer.composer_active = true;
         self.navigation.focus = FocusPane::Messages;
+    }
+
+    pub(in crate::tui::state) fn can_reply_to_selected_message(&self) -> bool {
+        if !self.can_send_in_selected_channel() {
+            return false;
+        }
+        let Some(message) = self.selected_message_state() else {
+            return false;
+        };
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord
+            .cache
+            .can_read_message_history_in_channel(channel)
     }
 
     pub(in crate::tui::state) fn start_edit_composer(&mut self) {
@@ -230,7 +252,21 @@ impl DashboardState {
     }
 
     pub fn add_pending_composer_attachments(&mut self, attachments: Vec<MessageAttachmentUpload>) {
-        if attachments.is_empty() || !self.composer_accepts_attachments() {
+        if attachments.is_empty() {
+            return;
+        }
+        if self.composer.edit_target_message.is_some() {
+            self.show_error_toast(
+                "Attachments cannot be added while editing a message",
+                std::time::Instant::now(),
+            );
+            return;
+        }
+        if !self.can_attach_in_selected_channel() {
+            self.show_error_toast(
+                "Attach Files permission is required in this channel",
+                std::time::Instant::now(),
+            );
             return;
         }
         let available = MAX_UPLOAD_ATTACHMENT_COUNT
@@ -329,8 +365,8 @@ impl DashboardState {
         };
     }
 
-    pub fn composer_accepts_attachments(&self) -> bool {
-        self.composer.edit_target_message.is_none() && self.can_attach_in_selected_channel()
+    pub fn composer_is_editing_message(&self) -> bool {
+        self.composer.edit_target_message.is_some()
     }
 
     /// Whether the user can post messages in the currently selected channel.
@@ -348,6 +384,13 @@ impl DashboardState {
     pub fn composer_lock(&self) -> Option<ComposerLock> {
         let channel = self.selected_channel_state()?;
         if channel.is_forum() {
+            if let Some(restriction) = self.discord.cache.message_verification_restriction(channel)
+            {
+                return Some(ComposerLock::Verification(restriction));
+            }
+            if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
+                return Some(ComposerLock::SlowMode { remaining_seconds });
+            }
             return None;
         }
         match self.latest_message_history_state(channel.id) {
@@ -392,6 +435,12 @@ impl DashboardState {
         if channel.guild_id.is_none() || !self.discord.cache.can_send_in_channel(channel) {
             return None;
         }
+        if let Some(restriction) = self.discord.cache.message_verification_restriction(channel) {
+            return Some(ComposerLock::Verification(restriction));
+        }
+        if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
+            return Some(ComposerLock::SlowMode { remaining_seconds });
+        }
         // Threads can report counts even when no last message is cached. Those
         // fields prove that a server conversation already exists.
         if channel.message_count.is_some_and(|count| count > 0)
@@ -402,6 +451,101 @@ impl DashboardState {
         }
 
         Some(ComposerLock::EmptyChannel)
+    }
+
+    pub(in crate::tui::state) fn record_slow_mode_deadline(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        duration: Duration,
+    ) {
+        if duration.is_zero() {
+            return;
+        }
+        let deadline = Instant::now() + duration;
+        self.composer
+            .slow_mode_deadlines
+            .entry(channel_id)
+            .and_modify(|existing| *existing = (*existing).max(deadline))
+            .or_insert(deadline);
+        self.close_composer();
+    }
+
+    pub(in crate::tui::state) fn slow_mode_remaining_seconds(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> Option<u64> {
+        let deadline_remaining_millis = self
+            .composer
+            .slow_mode_deadlines
+            .get(&channel_id)
+            .and_then(|deadline| deadline.checked_duration_since(Instant::now()))
+            .map(|remaining| {
+                u64::try_from(remaining.as_millis())
+                    .unwrap_or(u64::MAX)
+                    .max(1)
+            });
+        let cached_remaining_millis = self.cached_slow_mode_remaining_millis(channel_id);
+        deadline_remaining_millis
+            .into_iter()
+            .chain(cached_remaining_millis)
+            .max()
+            .map(|remaining_millis| remaining_millis.div_ceil(1_000).max(1))
+    }
+
+    fn cached_slow_mode_remaining_millis(&self, channel_id: Id<ChannelMarker>) -> Option<u64> {
+        let channel = self.discord.cache.channel(channel_id)?;
+        if self.discord.cache.bypasses_slow_mode(channel) {
+            return None;
+        }
+        let slow_mode_millis = channel.rate_limit_per_user?.checked_mul(1_000)?;
+        if slow_mode_millis == 0 {
+            return None;
+        }
+        let current_user_id = self.current_user_id()?;
+        let latest_message_id = self
+            .discord
+            .cache
+            .messages_for_channel(channel_id)
+            .into_iter()
+            .filter(|message| message.author_id == current_user_id)
+            .map(|message| message.id.get())
+            .max()?;
+        let sent_at_millis = i64::try_from(latest_message_id >> 22)
+            .unwrap_or(i64::MAX)
+            .saturating_add(DISCORD_EPOCH_MILLIS);
+        let expires_at_millis =
+            sent_at_millis.saturating_add(i64::try_from(slow_mode_millis).unwrap_or(i64::MAX));
+        let remaining_millis = expires_at_millis.saturating_sub(Utc::now().timestamp_millis());
+        (remaining_millis > 0).then(|| u64::try_from(remaining_millis).unwrap_or(u64::MAX).max(1))
+    }
+
+    pub(in crate::tui) fn next_composer_lock_refresh_deadline(&self) -> Option<Instant> {
+        match self.composer_lock()? {
+            ComposerLock::SlowMode {
+                remaining_seconds: _,
+            }
+            | ComposerLock::Verification(
+                MessageVerificationRestriction::AccountTooNew { .. }
+                | MessageVerificationRestriction::MemberTooNew { .. },
+            ) => Some(Instant::now() + Duration::from_secs(1)),
+            _ => None,
+        }
+    }
+
+    pub(in crate::tui::state) fn close_composer_for_safety_lock(&mut self) {
+        let permission_was_revoked = self.is_composing()
+            && !self.composer_is_editing_message()
+            && self
+                .selected_channel_state()
+                .is_some_and(|channel| !self.discord.cache.can_send_in_channel(channel));
+        if permission_was_revoked
+            || matches!(
+                self.composer_lock(),
+                Some(ComposerLock::SlowMode { .. } | ComposerLock::Verification(_))
+            )
+        {
+            self.close_composer();
+        }
     }
 
     pub(in crate::tui::state) fn record_dm_established(&mut self, channel_id: Id<ChannelMarker>) {
@@ -437,7 +581,15 @@ impl DashboardState {
 
     pub fn can_create_post_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
-            Some(channel) if channel.is_forum() => self.discord.cache.can_send_in_channel(channel),
+            Some(channel) if channel.is_forum() => {
+                self.discord.cache.can_send_in_channel(channel)
+                    && self
+                        .discord
+                        .cache
+                        .message_verification_restriction(channel)
+                        .is_none()
+                    && self.slow_mode_remaining_seconds(channel.id).is_none()
+            }
             _ => false,
         }
     }
@@ -446,10 +598,12 @@ impl DashboardState {
         if self.selected_channel_id().is_none() {
             return;
         }
-        if let Some(channel_id) = self.selected_channel_state().and_then(|channel| {
-            (channel.is_forum() && self.discord.cache.can_send_in_channel(channel))
-                .then_some(channel.id)
-        }) {
+        if let Some(channel_id) = self
+            .selected_channel_state()
+            .filter(|channel| channel.is_forum())
+            .map(|channel| channel.id)
+            .filter(|_| self.can_create_post_in_selected_channel())
+        {
             self.open_forum_post_composer(channel_id);
             return;
         }
@@ -685,11 +839,17 @@ impl DashboardState {
         // the composer was open (role change, channel overwrite update). Drop
         // the message rather than fire a request that would 403.
         if !self.can_send_in_selected_channel() {
-            self.cancel_composer();
+            self.show_error_toast(
+                "Send Messages permission is required in this channel",
+                std::time::Instant::now(),
+            );
             return None;
         }
         if has_attachments && !self.can_attach_in_selected_channel() {
-            self.cancel_composer();
+            self.show_error_toast(
+                "Attach Files permission is required in this channel",
+                std::time::Instant::now(),
+            );
             return None;
         }
 
@@ -1295,9 +1455,16 @@ impl DashboardState {
     }
 
     fn queue_application_commands_for_selected_channel(&mut self) {
-        let guild_id = self
-            .selected_channel_state()
-            .and_then(|channel| channel.guild_id);
+        let selected_channel = self.selected_channel_state();
+        if selected_channel.is_some_and(|channel| {
+            !self
+                .discord
+                .cache
+                .can_use_application_commands_in_channel(channel)
+        }) {
+            return;
+        }
+        let guild_id = selected_channel.and_then(|channel| channel.guild_id);
         if self.discord.application_commands.contains_key(&guild_id) {
             return;
         }
@@ -1422,6 +1589,14 @@ impl DashboardState {
     }
 
     fn application_commands_for_selected_channel(&self) -> &[ApplicationCommandInfo] {
+        if self.selected_channel_state().is_some_and(|channel| {
+            !self
+                .discord
+                .cache
+                .can_use_application_commands_in_channel(channel)
+        }) {
+            return &[];
+        }
         let guild_id = self
             .selected_channel_state()
             .and_then(|channel| channel.guild_id);
@@ -1606,14 +1781,19 @@ impl DashboardState {
     }
 
     fn emoji_candidates_for_query(&self, query: &str) -> Vec<EmojiPickerEntry> {
-        let selected_guild_channle = self.selected_channel_guild_id();
+        let selected_guild_channel = self.selected_channel_guild_id();
+        let can_use_external_emojis = self.selected_channel_state().is_none_or(|channel| {
+            self.discord
+                .cache
+                .can_use_external_emojis_in_channel(channel)
+        });
 
         let foreign_emojis = self
             .discord
             .cache
             .all_custom_emojis()
             .filter(|(id, _)| {
-                selected_guild_channle.is_none_or(|guild_channel| **id != guild_channel)
+                selected_guild_channel.is_none_or(|guild_channel| **id != guild_channel)
             })
             .flat_map(|(_, emojis)| emojis);
 
@@ -1628,6 +1808,7 @@ impl DashboardState {
             foreign_emojis,
             guild_emojis,
             self.current_user_has_nitro(),
+            can_use_external_emojis,
             self.options.composer_options.emojis_as_links,
         )
     }

@@ -1,5 +1,7 @@
 mod state;
 
+use chrono::{DateTime, Utc};
+
 pub use state::{GuildMemberState, RoleState, TypingUserState};
 pub(in crate::discord) use state::{
     role_map, role_state, selected_member_role_color, selected_role_ids_color,
@@ -20,6 +22,19 @@ pub struct MemberInfo {
     pub is_bot: bool,
     pub avatar_url: Option<String>,
     pub role_ids: Vec<Id<RoleMarker>>,
+    /// When this member joined the server. Required for HIGH verification.
+    pub joined_at: Option<DateTime<Utc>>,
+    /// Discord guild member flags, including BYPASSES_VERIFICATION.
+    pub flags: Option<u64>,
+    /// Whether the member still needs to complete membership screening.
+    pub pending: Option<bool>,
+    /// When Discord's member timeout expires. A future value temporarily
+    /// restricts the member to viewing channels and reading message history.
+    pub communication_disabled_until: Option<DateTime<Utc>>,
+    /// Whether the source payload included `communication_disabled_until`.
+    /// Discord uses an explicit null to clear a timeout, so update merging
+    /// must distinguish null from an omitted field.
+    pub communication_disabled_until_present: bool,
 }
 
 #[cfg(test)]
@@ -33,6 +48,11 @@ impl MemberInfo {
             is_bot: false,
             avatar_url: None,
             role_ids: Vec::new(),
+            joined_at: None,
+            flags: None,
+            pending: None,
+            communication_disabled_until: None,
+            communication_disabled_until_present: false,
         }
     }
 }

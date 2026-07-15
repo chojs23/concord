@@ -11,7 +11,7 @@ use crate::discord::ids::{
 use crate::{
     AppError, Result,
     discord::{
-        ChannelInfo, ForumPostArchiveState, MessageAttachmentUpload, MessageInfo,
+        ChannelInfo, ForumPostArchiveState, ForumPostCreate, MessageAttachmentUpload, MessageInfo,
         gateway::{parse_channel_info, parse_message_info},
     },
 };
@@ -159,32 +159,49 @@ impl DiscordRest {
 
     pub async fn create_forum_post(
         &self,
-        channel_id: Id<ChannelMarker>,
-        title: &str,
-        content: &str,
-        applied_tags: &[Id<ForumTagMarker>],
-        attachments: &[MessageAttachmentUpload],
+        post: &ForumPostCreate,
         upload_limit: u64,
+        slow_mode: Option<Duration>,
     ) -> Result<CreatedForumPost> {
+        let _channel_guard = self.message_sends.acquire(post.channel_id).await;
+        self.message_sends
+            .ensure_cooldown_elapsed(post.channel_id)?;
         let body = create_forum_post_request_body(
-            title,
-            content,
-            applied_tags,
-            attachments,
+            &post.title,
+            &post.content,
+            &post.applied_tags,
+            &post.attachments,
             upload_limit,
         )?;
         let request = self.raw_http.post(format!(
             "https://discord.com/api/v9/channels/{}/threads",
-            channel_id.get()
+            post.channel_id.get()
         ));
-        let request = if attachments.is_empty() {
+        let request = if post.attachments.is_empty() {
             request.json(&body)
         } else {
-            request.multipart(message_multipart_form(body, attachments, upload_limit).await?)
+            request.multipart(message_multipart_form(body, &post.attachments, upload_limit).await?)
         };
 
-        let raw: Value = self.send_json(request, "create forum post").await?;
-        parse_create_forum_post_response(&raw, Some(channel_id))
+        let result = self
+            .send_json(request, "create forum post")
+            .await
+            .and_then(|raw: Value| parse_create_forum_post_response(&raw, Some(post.channel_id)));
+        match &result {
+            Ok(_) => {
+                if let Some(slow_mode) = slow_mode {
+                    self.message_sends
+                        .record_cooldown(post.channel_id, slow_mode);
+                }
+            }
+            Err(AppError::DiscordRateLimited {
+                retry_after_millis, ..
+            }) => self
+                .message_sends
+                .record_cooldown(post.channel_id, Duration::from_millis(*retry_after_millis)),
+            Err(_) => {}
+        }
+        result
     }
 
     pub async fn load_forum_posts(
@@ -302,11 +319,12 @@ impl DiscordRest {
         offset: usize,
         sort_by: ForumSearchSort,
     ) -> Result<ForumPostPage> {
-        let response = self
-            .authenticated(self.raw_http.get(format!(
+        let request = self
+            .raw_http
+            .get(format!(
                 "https://discord.com/api/v9/channels/{}/threads/search",
                 channel_id.get()
-            )))
+            ))
             .query(&[
                 ("archived", archive_state.as_query_value().to_owned()),
                 ("sort_by", sort_by.as_str().to_owned()),
@@ -314,27 +332,21 @@ impl DiscordRest {
                 ("limit", FORUM_POST_SEARCH_PAGE_LIMIT.to_string()),
                 ("tag_setting", "match_some".to_owned()),
                 ("offset", offset.to_string()),
-            ])
-            .send()
-            .await
-            .map_err(|error| {
-                AppError::DiscordRequest(format!("forum post search request failed: {error}"))
-            })?;
+            ]);
+        let response = self
+            .execute_authenticated(request, "forum post search")
+            .await?;
         if response.status() == StatusCode::ACCEPTED {
             return Err(AppError::DiscordRequest(
                 "forum post search index is not ready".to_owned(),
             ));
         }
-        let raw: Value = response
-            .error_for_status()
-            .map_err(|error| {
-                AppError::DiscordRequest(format!("forum post search failed: {error}"))
-            })?
-            .json()
-            .await
-            .map_err(|error| {
-                AppError::DiscordRequest(format!("forum post search decode failed: {error}"))
-            })?;
+        if let Err(error) = response.error_for_status_ref() {
+            return Err(super::request_error(error, response, "forum post search").await);
+        }
+        let raw: Value = response.json().await.map_err(|error| {
+            AppError::DiscordRequest(format!("forum post search decode failed: {error}"))
+        })?;
 
         let response = parse_forum_thread_search_response(&raw, Some(guild_id), channel_id, true);
 

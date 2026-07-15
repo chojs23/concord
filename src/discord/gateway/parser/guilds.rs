@@ -2,7 +2,8 @@ use serde_json::Value;
 
 use crate::discord::{
     ChannelInfo, ChannelNotificationOverrideInfo, CustomEmojiInfo, GuildBoostTier,
-    GuildNotificationSettingsInfo, NotificationLevel, PremiumTier, RoleInfo, UserGuildSettingsInfo,
+    GuildNotificationSettingsInfo, GuildVerificationLevel, NotificationLevel, PremiumTier,
+    RoleInfo, UserGuildSettingsInfo,
     events::AppEvent,
     ids::{
         Id,
@@ -84,6 +85,8 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     let owner_id = guild_field(data, "owner_id").and_then(parse_id::<UserMarker>);
     let boost_tier = parse_guild_boost_tier(data);
     let boost_count = parse_guild_boost_count(data).unwrap_or(0);
+    let verification_level = parse_guild_verification_level(data).unwrap_or_default();
+    let mfa_level = parse_guild_mfa_level(data).unwrap_or(0);
 
     Some(AppEvent::GuildCreate {
         guild_id,
@@ -92,6 +95,8 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         owner_id,
         boost_tier,
         boost_count,
+        verification_level,
+        mfa_level,
         channels,
         members,
         presences,
@@ -110,6 +115,16 @@ fn parse_guild_boost_count(data: &Value) -> Option<u32> {
     guild_field(data, "premium_subscription_count")
         .and_then(Value::as_u64)
         .and_then(|count| u32::try_from(count).ok())
+}
+
+fn parse_guild_verification_level(data: &Value) -> Option<GuildVerificationLevel> {
+    guild_field(data, "verification_level")
+        .and_then(Value::as_u64)
+        .map(GuildVerificationLevel::from_value)
+}
+
+fn parse_guild_mfa_level(data: &Value) -> Option<u64> {
+    guild_field(data, "mfa_level").and_then(Value::as_u64)
 }
 
 pub(super) fn parse_role_info(value: &Value) -> Option<RoleInfo> {
@@ -229,12 +244,16 @@ pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_u64)
         .map(GuildBoostTier::from_premium_tier);
     let boost_count = parse_guild_boost_count(data);
+    let verification_level = parse_guild_verification_level(data);
+    let mfa_level = parse_guild_mfa_level(data);
     Some(AppEvent::GuildUpdate {
         guild_id,
         name,
         owner_id,
         boost_tier,
         boost_count,
+        verification_level,
+        mfa_level,
         roles,
         emojis,
     })

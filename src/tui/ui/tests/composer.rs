@@ -1,4 +1,39 @@
 use super::*;
+use crate::discord::MessageVerificationRestriction;
+
+#[test]
+fn verification_composer_text_explains_each_restriction() {
+    let cases = [
+        (
+            MessageVerificationRestriction::MembershipScreening,
+            "membership screening",
+        ),
+        (
+            MessageVerificationRestriction::EmailVerificationRequired,
+            "account email",
+        ),
+        (
+            MessageVerificationRestriction::AccountTooNew {
+                remaining_seconds: 30,
+            },
+            "account verification wait: 30s",
+        ),
+        (
+            MessageVerificationRestriction::MemberTooNew {
+                remaining_seconds: 60,
+            },
+            "server verification wait: 60s",
+        ),
+        (
+            MessageVerificationRestriction::PhoneVerificationRequired,
+            "account phone",
+        ),
+    ];
+
+    for (restriction, expected) in cases {
+        assert!(verification_composer_text("#general", restriction).contains(expected));
+    }
+}
 
 #[test]
 fn sync_view_heights_reserves_space_for_composer_height() {

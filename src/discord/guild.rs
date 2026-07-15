@@ -27,6 +27,32 @@ pub struct CustomEmojiInfo {
     pub available: bool,
 }
 
+/// Server-wide checks Discord applies before a member may participate.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum GuildVerificationLevel {
+    #[default]
+    None,
+    Low,
+    Medium,
+    High,
+    VeryHigh,
+    Unknown(u64),
+}
+
+impl GuildVerificationLevel {
+    /// Preserve unknown values so a newer Discord level fails closed.
+    pub fn from_value(value: u64) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::Low,
+            2 => Self::Medium,
+            3 => Self::High,
+            4 => Self::VeryHigh,
+            value => Self::Unknown(value),
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 impl CustomEmojiInfo {

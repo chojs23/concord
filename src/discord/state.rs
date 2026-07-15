@@ -225,6 +225,8 @@ impl DiscordState {
                 owner_id,
                 boost_tier,
                 boost_count,
+                verification_level,
+                mfa_level,
                 roles,
                 emojis,
             } => {
@@ -238,6 +240,12 @@ impl DiscordState {
                     }
                     if let Some(boost_count) = boost_count {
                         guild.boost_count = *boost_count;
+                    }
+                    if let Some(verification_level) = verification_level {
+                        guild.verification_level = *verification_level;
+                    }
+                    if let Some(mfa_level) = mfa_level {
+                        guild.mfa_level = *mfa_level;
                     }
                 }
                 if let Some(roles) = roles {
@@ -637,6 +645,21 @@ impl DiscordState {
             AppEvent::CurrentUserCapabilities { premium_tier } => {
                 self.session.current_user_premium_tier = Some(*premium_tier);
             }
+            AppEvent::CurrentUserVerification {
+                email_verified,
+                phone_verified,
+                mfa_enabled,
+            } => {
+                if let Some(email_verified) = email_verified {
+                    self.session.current_user_email_verified = Some(*email_verified);
+                }
+                if let Some(phone_verified) = phone_verified {
+                    self.session.current_user_phone_verified = Some(*phone_verified);
+                }
+                if let Some(mfa_enabled) = mfa_enabled {
+                    self.session.current_user_mfa_enabled = Some(*mfa_enabled);
+                }
+            }
             AppEvent::ReadStateInit { .. } => self.apply_read_state_init_event(event),
             AppEvent::MessageAck { .. } => self.apply_message_ack_event(event),
             AppEvent::UserGuildSettingsInit { settings } => {
@@ -655,6 +678,8 @@ impl DiscordState {
             AppEvent::GatewayDispatchReceived { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::CaptchaRequired { .. }
+            | AppEvent::MessageSendRateLimited { .. }
+            | AppEvent::MessageSendCooldownStarted { .. }
             | AppEvent::SignedOut
             | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
@@ -689,6 +714,8 @@ impl DiscordState {
             owner_id,
             boost_tier,
             boost_count,
+            verification_level,
+            mfa_level,
             channels,
             members,
             presences,
@@ -710,6 +737,8 @@ impl DiscordState {
                 owner_id: *owner_id,
                 boost_tier: *boost_tier,
                 boost_count: *boost_count,
+                verification_level: *verification_level,
+                mfa_level: *mfa_level,
             },
         );
 
@@ -1217,6 +1246,11 @@ impl DiscordState {
                     is_bot: member.is_bot,
                     avatar_url: member.avatar_url.clone(),
                     role_ids: member.role_ids.clone(),
+                    joined_at: member.joined_at,
+                    flags: member.flags,
+                    pending: member.pending,
+                    communication_disabled_until: member.communication_disabled_until,
+                    communication_disabled_until_present: false,
                 },
             ));
         }

@@ -135,6 +135,7 @@ impl DashboardState {
         if apply_discord {
             self.apply_event_to_discord_cache(&event);
         }
+        self.close_composer_for_safety_lock();
         self.refresh_event_derived_ui(&event);
         viewport.repair_after_event(self, &event);
     }
@@ -163,12 +164,35 @@ impl DashboardState {
                     Instant::now(),
                 );
             }
+            AppEvent::MessageSendRateLimited {
+                channel_id,
+                retry_after_millis,
+            } => {
+                self.record_slow_mode_deadline(
+                    *channel_id,
+                    std::time::Duration::from_millis(*retry_after_millis),
+                );
+                self.show_error_toast(
+                    "Discord rate limited this channel. Wait for the composer timer.",
+                    Instant::now(),
+                );
+            }
+            AppEvent::MessageSendCooldownStarted {
+                channel_id,
+                duration_millis,
+            } => {
+                self.record_slow_mode_deadline(
+                    *channel_id,
+                    std::time::Duration::from_millis(*duration_millis),
+                );
+            }
             AppEvent::MediaPlaybackWindowReady { request_id, .. } => {
                 self.clear_media_playback_preparing(*request_id);
             }
             AppEvent::CurrentUserCapabilities { premium_tier } => {
                 self.discord.current_user_premium_tier = Some(*premium_tier);
             }
+            AppEvent::CurrentUserVerification { .. } => {}
             AppEvent::ApplicationCommandsLoaded { guild_id, commands } => {
                 self.discord
                     .application_commands
@@ -358,8 +382,26 @@ impl DashboardState {
                     message.channel_id,
                     std::slice::from_ref(message),
                 );
+                self.record_slow_mode_after_self_message(message);
             }
             _ => {}
+        }
+    }
+
+    fn record_slow_mode_after_self_message(&mut self, message: &MessageInfo) {
+        if self.current_user_id() != Some(message.author_id) {
+            return;
+        }
+        let slow_mode = self
+            .discord
+            .cache
+            .channel(message.channel_id)
+            .filter(|channel| !self.discord.cache.bypasses_slow_mode(channel))
+            .and_then(|channel| channel.rate_limit_per_user)
+            .filter(|seconds| *seconds > 0)
+            .map(std::time::Duration::from_secs);
+        if let Some(slow_mode) = slow_mode {
+            self.record_slow_mode_deadline(message.channel_id, slow_mode);
         }
     }
 

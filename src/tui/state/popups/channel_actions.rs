@@ -65,7 +65,14 @@ impl DashboardState {
         // threads, so the action is offered everywhere else. The list itself is
         // filled by the `/threads/search` fetch once the view opens, so this no
         // longer depends on threads already sitting in the gateway cache.
-        let can_show_threads = !channel.is_category() && !channel.is_forum() && !channel.is_voice();
+        let can_read_history = self
+            .discord
+            .cache
+            .can_read_message_history_in_channel(channel);
+        let can_show_threads = !channel.is_category()
+            && !channel.is_forum()
+            && !channel.is_voice()
+            && can_read_history;
         let active_channel_has_unread_snapshot = self.navigation.channels.active_channel_id
             == Some(channel_id)
             && (self.messages.unread_divider_last_acked_id.is_some()
@@ -88,6 +95,16 @@ impl DashboardState {
             && !joined_here
             && (channel.guild_id.is_none()
                 || self.discord.cache.can_connect_voice_channel(channel));
+        let can_transmit_microphone = channel.guild_id.is_none()
+            || self
+                .discord
+                .cache
+                .can_transmit_microphone_in_voice_channel(channel);
+        let join_voice_label = if can_join_voice && !can_transmit_microphone {
+            "Join voice (listen only)"
+        } else {
+            "Join voice"
+        };
         let mute_label = match (
             self.discord.cache.channel_notification_muted(channel_id),
             channel.is_category(),
@@ -99,12 +116,16 @@ impl DashboardState {
         };
 
         vec![
-            ChannelActionItem::new(ChannelActionKind::JoinVoice, "Join voice", can_join_voice),
+            ChannelActionItem::new(
+                ChannelActionKind::JoinVoice,
+                join_voice_label,
+                can_join_voice,
+            ),
             ChannelActionItem::new(ChannelActionKind::LeaveVoice, "Leave voice", joined_here),
             ChannelActionItem::new(
                 ChannelActionKind::ShowPinnedMessages,
                 "Show pinned messages",
-                !channel.is_category() && !channel.is_forum(),
+                !channel.is_category() && !channel.is_forum() && can_read_history,
             ),
             ChannelActionItem::new(
                 ChannelActionKind::ShowThreads,
@@ -213,7 +234,12 @@ impl DashboardState {
                                 allow_microphone_transmit: self
                                     .options
                                     .voice_options
-                                    .allow_microphone_transmit,
+                                    .allow_microphone_transmit
+                                    && (channel.guild_id.is_none()
+                                        || self
+                                            .discord
+                                            .cache
+                                            .can_transmit_microphone_in_voice_channel(channel)),
                                 microphone_sensitivity: self
                                     .options
                                     .voice_options

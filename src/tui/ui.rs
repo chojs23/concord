@@ -67,6 +67,7 @@ use self::panes::{
     composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
     composer_text, emoji_picker_lines, member_display_label, member_name_style,
     mention_picker_lines_for_test, primary_activity_summary, render_composer,
+    verification_composer_text,
 };
 use self::popups::{
     channel_switcher_visible_items, emoji_reaction_picker_visible_items_for_area,

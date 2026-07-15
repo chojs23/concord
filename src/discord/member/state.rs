@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
+
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
@@ -27,6 +29,10 @@ pub struct GuildMemberState {
     pub is_bot: bool,
     pub avatar_url: Option<String>,
     pub role_ids: Vec<Id<RoleMarker>>,
+    pub joined_at: Option<DateTime<Utc>>,
+    pub flags: Option<u64>,
+    pub pending: Option<bool>,
+    pub communication_disabled_until: Option<DateTime<Utc>>,
     pub status: PresenceStatus,
 }
 
@@ -41,6 +47,10 @@ impl GuildMemberState {
             is_bot: false,
             avatar_url: None,
             role_ids: Vec::new(),
+            joined_at: None,
+            flags: None,
+            pending: None,
+            communication_disabled_until: None,
             status: PresenceStatus::Offline,
         }
     }
@@ -463,6 +473,21 @@ pub(in crate::discord) fn upsert_member(
             member.avatar_url.clone(),
         ),
     };
+    let existing = map.get(&member.user_id);
+    let joined_at = member
+        .joined_at
+        .or_else(|| existing.and_then(|member| member.joined_at));
+    let flags = member
+        .flags
+        .or_else(|| existing.and_then(|member| member.flags));
+    let pending = member
+        .pending
+        .or_else(|| existing.and_then(|member| member.pending));
+    let communication_disabled_until = if member.communication_disabled_until_present {
+        member.communication_disabled_until
+    } else {
+        existing.and_then(|member| member.communication_disabled_until)
+    };
 
     map.insert(
         member.user_id,
@@ -473,6 +498,10 @@ pub(in crate::discord) fn upsert_member(
             is_bot: member.is_bot,
             avatar_url,
             role_ids: member.role_ids.clone(),
+            joined_at,
+            flags,
+            pending,
+            communication_disabled_until,
             status,
         },
     );

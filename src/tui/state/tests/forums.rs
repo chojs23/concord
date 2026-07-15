@@ -1522,9 +1522,8 @@ fn forum_post_delete_requires_manage_permission_not_authorship() {
             .map(|item| item.enabled)
             .unwrap_or(false)
     };
-    // The author can close their own post...
-    assert!(enabled(ThreadActionKind::Close));
-    // ...but cannot delete it, nor use the moderator-only actions.
+    // Authorship does not replace MANAGE_THREADS for channel mutations.
+    assert!(!enabled(ThreadActionKind::Close));
     assert!(!enabled(ThreadActionKind::Delete));
     assert!(!enabled(ThreadActionKind::Lock));
 }

@@ -22,6 +22,7 @@ pub(super) const PERM_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 pub(super) const PERM_SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;
 pub(super) const PERM_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 pub(super) const PERM_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
+pub(super) const PERM_USE_APPLICATION_COMMANDS: u64 = 0x0000_0000_8000_0000;
 pub(super) const PERM_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
 
 pub(super) fn channel_info(
@@ -353,7 +354,11 @@ pub(super) fn guild_state_with_overwrites(
             roles: vec![role_info(
                 Id::new(guild.get()),
                 "@everyone",
-                PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_SEND_TTS_MESSAGES,
+                PERM_VIEW_CHANNEL
+                    | PERM_SEND_MESSAGES
+                    | PERM_SEND_TTS_MESSAGES
+                    | PERM_READ_MESSAGE_HISTORY
+                    | PERM_USE_APPLICATION_COMMANDS,
             )],
             ..GuildCreateFixture::new(guild)
         },

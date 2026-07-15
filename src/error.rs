@@ -31,6 +31,23 @@ pub enum AppError {
     TooManyAttachments { count: usize },
     #[error("Discord request failed: {0}")]
     DiscordRequest(String),
+    #[error("Discord stopped authenticated requests after rejecting the session")]
+    DiscordAuthenticationStopped,
+    #[error("Discord rate limited {action}; try again in {retry_after_millis} ms")]
+    DiscordRateLimited {
+        action: String,
+        retry_after_millis: u64,
+    },
+    #[error("message slowmode is active; try again in {retry_after_millis} ms")]
+    MessageSlowModeActive { retry_after_millis: u64 },
+    #[error(
+        "Discord request circuit is open for {method} {path}; try again in {retry_after_millis} ms"
+    )]
+    DiscordRequestCircuitOpen {
+        method: String,
+        path: String,
+        retry_after_millis: u64,
+    },
     #[error("Discord requires a CAPTCHA to {action}")]
     CaptchaRequired { action: String },
     #[error("terminal I/O failed")]

@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    DiscordClient,
+    AppError, DiscordClient,
     discord::{
         AppCommand, AppEvent, AttachmentUpdate, MessageInfo, MessageUpdateDispatchInfo,
         MessageUpdateEventFields,
+        ids::{Id, marker::ChannelMarker},
     },
 };
 
@@ -22,26 +23,53 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             .await
         {
             Ok(message) => client.publish_event(message_create_event(message)).await,
-            Err(error) => publish_app_error(&client, "send message failed", &error).await,
+            Err(error) => {
+                publish_message_send_error(&client, channel_id, "send message failed", &error).await
+            }
         },
-        AppCommand::TriggerTyping { channel_id } => client.trigger_typing(channel_id),
+        AppCommand::TriggerTyping { channel_id } => {
+            if let Err(error) = client.trigger_typing(channel_id) {
+                publish_app_error(&client, "show typing indicator failed", &error).await;
+            }
+        }
         AppCommand::SendTtsMessage {
             channel_id,
             content,
         } => match client.send_tts_message(channel_id, &content).await {
             Ok(message) => client.publish_event(message_create_event(message)).await,
-            Err(error) => publish_app_error(&client, "send tts message failed", &error).await,
+            Err(error) => {
+                publish_message_send_error(&client, channel_id, "send tts message failed", &error)
+                    .await
+            }
         },
         AppCommand::CreateForumPost { post } => match client.create_forum_post(&post).await {
             Ok(created) => {
+                let slow_mode = client.message_slow_mode(post.channel_id);
                 client
                     .publish_event(AppEvent::ChannelUpsert(created.thread))
                     .await;
                 if let Some(message) = created.first_message {
                     client.publish_event(message_create_event(message)).await;
                 }
+                if let Some(slow_mode) = slow_mode {
+                    client
+                        .publish_event(AppEvent::MessageSendCooldownStarted {
+                            channel_id: post.channel_id,
+                            duration_millis: u64::try_from(slow_mode.as_millis())
+                                .unwrap_or(u64::MAX),
+                        })
+                        .await;
+                }
             }
-            Err(error) => publish_app_error(&client, "create forum post failed", &error).await,
+            Err(error) => {
+                publish_message_send_error(
+                    &client,
+                    post.channel_id,
+                    "create forum post failed",
+                    &error,
+                )
+                .await
+            }
         },
         // The archive/lock/pin/delete results arrive over the gateway
         // (THREAD_UPDATE / THREAD_DELETE), which updates the cached thread, so
@@ -316,6 +344,32 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
 
 fn message_create_event(message: MessageInfo) -> AppEvent {
     AppEvent::MessageCreate { message }
+}
+
+async fn publish_message_send_error(
+    client: &DiscordClient,
+    channel_id: Id<ChannelMarker>,
+    context: &str,
+    error: &AppError,
+) {
+    let retry_after_millis = match error {
+        AppError::DiscordRateLimited {
+            retry_after_millis, ..
+        }
+        | AppError::MessageSlowModeActive { retry_after_millis } => Some(*retry_after_millis),
+        _ => None,
+    };
+    if let Some(retry_after_millis) = retry_after_millis {
+        log_app_error(context, error);
+        client
+            .publish_event(AppEvent::MessageSendRateLimited {
+                channel_id,
+                retry_after_millis,
+            })
+            .await;
+        return;
+    }
+    publish_app_error(client, context, error).await;
 }
 
 fn message_update_event(message: MessageInfo) -> AppEvent {

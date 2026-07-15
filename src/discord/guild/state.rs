@@ -3,7 +3,8 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
 use crate::discord::{
-    CustomEmojiInfo, GuildBoostTier, GuildFolder, capabilities::effective_attachment_limit_bytes,
+    CustomEmojiInfo, GuildBoostTier, GuildFolder, GuildVerificationLevel,
+    capabilities::effective_attachment_limit_bytes,
 };
 
 use crate::discord::state::DiscordState;
@@ -20,6 +21,10 @@ pub struct GuildState {
     pub owner_id: Option<Id<UserMarker>>,
     pub boost_tier: GuildBoostTier,
     pub boost_count: u32,
+    /// Server-wide message verification level from the guild payload.
+    pub verification_level: GuildVerificationLevel,
+    /// Whether moderation permissions require two-factor authentication.
+    pub mfa_level: u64,
 }
 
 impl DiscordState {

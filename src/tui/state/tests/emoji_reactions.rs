@@ -117,6 +117,33 @@ fn emoji_picker_items_include_foreign_custom_emojis_for_nitro_users() {
 }
 
 #[test]
+fn emoji_picker_hides_foreign_custom_emojis_without_channel_permission() {
+    let mut state = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY | PERM_ADD_REACTIONS,
+        Vec::new(),
+    );
+    state.push_event(AppEvent::GuildEmojisUpdate {
+        guild_id: Id::new(1),
+        emojis: vec![CustomEmojiInfo::test(Id::new(50), "local")],
+    });
+    push_foreign_reaction_emojis(&mut state);
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
+
+    let items = state.emoji_reaction_items();
+
+    assert!(items.iter().any(|item| matches!(
+        item.emoji,
+        ReactionEmoji::Custom { id, .. } if id == Id::new(50)
+    )));
+    assert!(!items.iter().any(|item| matches!(
+        item.emoji,
+        ReactionEmoji::Custom { id, .. } if id == Id::new(60) || id == Id::new(61)
+    )));
+}
+
+#[test]
 fn emoji_picker_selection_returns_foreign_custom_reaction_command_for_nitro_users() {
     let mut state = state_with_custom_emojis();
     push_foreign_reaction_emojis(&mut state);

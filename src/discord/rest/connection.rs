@@ -24,12 +24,11 @@ impl DiscordRest {
 
     async fn validate_token_authentication_with_label(&self, label: &str) -> Result<()> {
         let response = self
-            .authenticated(self.raw_http.get("https://discord.com/api/v9/users/@me"))
-            .send()
-            .await
-            .map_err(|error| {
-                AppError::DiscordRequest(format!("{label} request failed: {error}"))
-            })?;
+            .execute_authenticated(
+                self.raw_http.get("https://discord.com/api/v9/users/@me"),
+                label,
+            )
+            .await?;
         if matches!(
             response.status(),
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN

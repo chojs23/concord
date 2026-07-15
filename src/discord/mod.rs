@@ -29,6 +29,7 @@ mod rpc;
 mod state;
 mod upload;
 mod user_settings;
+mod verification;
 mod voice;
 
 pub use application_commands::{
@@ -75,7 +76,7 @@ pub use events::{
     ThreadMembersUpdateInfo, UserGuildSettingsInfo,
 };
 pub(crate) use fingerprint::load_client_fingerprint_and_http;
-pub use guild::{CustomEmojiInfo, GuildFolder};
+pub use guild::{CustomEmojiInfo, GuildFolder, GuildVerificationLevel};
 pub use ids::{Id, marker};
 pub use member::{MemberInfo, RoleInfo};
 pub use message::{
@@ -102,6 +103,7 @@ pub use state::{
 };
 pub(crate) use upload::read_profile_avatar_image;
 pub use user_settings::{UserCustomStatusInfo, UserFriendSourceFlagsInfo, UserSettingsInfo};
+pub use verification::MessageVerificationRestriction;
 pub use voice::{MicrophoneSensitivityDb, VoiceVolumePercent};
 pub use voice::{
     VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,

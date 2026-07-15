@@ -1,4 +1,13 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    io::{BufRead, BufReader, Write},
+    net::{TcpListener, TcpStream},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{TimeZone, Utc};
@@ -19,6 +28,7 @@ use crate::{
 };
 
 use super::{
+    DiscordRest, MessageSendCoordinator,
     application_commands::{
         application_command_interaction_body, application_command_option_body,
         parse_application_command_index,
@@ -40,6 +50,174 @@ use super::{
     search::{message_search_date_snowflake_bounds, message_search_query_params},
     user_settings::settings_proto_request_body,
 };
+
+#[tokio::test]
+async fn authenticated_requests_stop_after_unauthorized_response() {
+    let (base_url, server) = status_server(vec![
+        "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+    ]);
+    let rest = test_rest();
+
+    let first = rest
+        .send_unit(rest.raw_http.get(format!("{base_url}/users/@me")), "first")
+        .await
+        .expect_err("401 must stop authenticated requests");
+    assert!(matches!(first, AppError::DiscordAuthenticationStopped));
+
+    let second = rest
+        .send_unit(
+            rest.raw_http.get(format!("{base_url}/channels/1")),
+            "second",
+        )
+        .await
+        .expect_err("later request must stop before network I/O");
+    assert!(matches!(second, AppError::DiscordAuthenticationStopped));
+    server.join().expect("test server should finish");
+}
+
+#[tokio::test]
+async fn repeated_forbidden_route_opens_circuit_without_query_bypass() {
+    let forbidden = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    let (base_url, server) = status_server(vec![forbidden, forbidden, forbidden]);
+    let rest = test_rest();
+
+    for attempt in 0..3 {
+        let error = rest
+            .send_unit(
+                rest.raw_http
+                    .get(format!("{base_url}/channels/1/messages?attempt={attempt}")),
+                "forbidden",
+            )
+            .await
+            .expect_err("server should return 403");
+        assert!(matches!(error, AppError::DiscordRequest(_)));
+    }
+
+    let blocked = rest
+        .send_unit(
+            rest.raw_http
+                .get(format!("{base_url}/channels/1/messages?attempt=4")),
+            "forbidden",
+        )
+        .await
+        .expect_err("fourth matching route should be blocked locally");
+    assert!(matches!(
+        blocked,
+        AppError::DiscordRequestCircuitOpen { ref path, .. }
+            if path == "/channels/1/messages"
+    ));
+    server.join().expect("test server should finish");
+}
+
+#[tokio::test]
+async fn rate_limit_returns_retry_delay_without_retrying() {
+    let (base_url, server) = status_server(vec![
+        "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1.5\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 19\r\n\r\n{\"retry_after\":1.5}",
+    ]);
+    let rest = test_rest();
+
+    let error = rest
+        .send_unit(rest.raw_http.get(format!("{base_url}/messages")), "send")
+        .await
+        .expect_err("429 should be returned to the caller");
+    assert!(matches!(
+        error,
+        AppError::DiscordRateLimited {
+            retry_after_millis: 1_500,
+            ..
+        }
+    ));
+    server
+        .join()
+        .expect("test server should receive only one request");
+}
+
+#[tokio::test]
+async fn message_send_coordinator_serializes_only_matching_channels() {
+    let coordinator = Arc::new(MessageSendCoordinator::default());
+    let first_guard = coordinator.acquire(Id::new(10)).await;
+    let same_channel_acquired = Arc::new(AtomicBool::new(false));
+    let waiter = {
+        let coordinator = Arc::clone(&coordinator);
+        let same_channel_acquired = Arc::clone(&same_channel_acquired);
+        tokio::spawn(async move {
+            let _guard = coordinator.acquire(Id::new(10)).await;
+            same_channel_acquired.store(true, Ordering::Release);
+        })
+    };
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!same_channel_acquired.load(Ordering::Acquire));
+    let other_channel =
+        tokio::time::timeout(Duration::from_millis(50), coordinator.acquire(Id::new(11)))
+            .await
+            .expect("different channel should not wait");
+    drop(other_channel);
+
+    drop(first_guard);
+    waiter.await.expect("same-channel waiter should finish");
+    assert!(same_channel_acquired.load(Ordering::Acquire));
+}
+
+#[test]
+fn message_send_coordinator_tracks_cooldowns_per_channel() {
+    let coordinator = MessageSendCoordinator::default();
+    coordinator.record_cooldown(Id::new(10), Duration::from_secs(1));
+
+    assert!(matches!(
+        coordinator.ensure_cooldown_elapsed(Id::new(10)),
+        Err(AppError::MessageSlowModeActive {
+            retry_after_millis: 1..=1_000
+        })
+    ));
+    coordinator
+        .ensure_cooldown_elapsed(Id::new(11))
+        .expect("another channel has no cooldown");
+}
+
+fn test_rest() -> DiscordRest {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    DiscordRest::new(
+        "test-token".to_owned(),
+        reqwest::Client::new(),
+        reqwest::header::HeaderMap::new(),
+    )
+}
+
+fn status_server(responses: Vec<&str>) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+    let address = listener
+        .local_addr()
+        .expect("test server should have an address");
+    let responses: Vec<String> = responses.into_iter().map(str::to_owned).collect();
+    let server = thread::spawn(move || {
+        for response in responses {
+            let stream = listener
+                .accept()
+                .expect("test server should accept a request")
+                .0;
+            let mut stream = read_request_headers(stream);
+            stream
+                .write_all(response.as_bytes())
+                .expect("test server should write a response");
+        }
+    });
+    (format!("http://{address}"), server)
+}
+
+fn read_request_headers(stream: TcpStream) -> TcpStream {
+    let mut reader = BufReader::new(stream);
+    loop {
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .expect("test server should read request headers");
+        if line == "\r\n" || line.is_empty() {
+            break;
+        }
+    }
+    reader.into_inner()
+}
 
 #[test]
 fn rejects_invalid_message_content() {
