@@ -1,4 +1,13 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    io::{BufRead, BufReader, Write},
+    net::{TcpListener, TcpStream},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{TimeZone, Utc};
@@ -19,6 +28,9 @@ use crate::{
 };
 
 use super::{
+    DiscordRest, FORBIDDEN_FAILURE_WINDOW, MAX_FORBIDDEN_CIRCUITS, MessageSendCoordinator,
+    RequestRoute, RequestSafety, RestRateLimitDecision, RestRateLimitResponse, RestRateLimitRoute,
+    RestRateLimiter,
     application_commands::{
         application_command_interaction_body, application_command_option_body,
         parse_application_command_index,
@@ -40,6 +52,409 @@ use super::{
     search::{message_search_date_snowflake_bounds, message_search_query_params},
     user_settings::settings_proto_request_body,
 };
+
+#[test]
+fn rest_rate_limit_routes_normalize_ids_but_keep_major_scope() {
+    let first = test_request(
+        "https://discord.com/api/v9/channels/123/messages/456/reactions/%F0%9F%91%8D/@me",
+    );
+    let second = test_request(
+        "https://discord.com/api/v9/channels/999/messages/777/reactions/%F0%9F%8E%89/@me",
+    );
+
+    let first = RestRateLimitRoute::from_request(&first);
+    let second = RestRateLimitRoute::from_request(&second);
+
+    assert_eq!(first.family, second.family);
+    assert_eq!(
+        first.family.template,
+        "/api/v9/channels/:major/messages/:id/reactions/:reaction/@me"
+    );
+    assert_eq!(first.major_parameter, "123");
+    assert_eq!(second.major_parameter, "999");
+}
+
+#[tokio::test]
+async fn rest_rate_limiter_serializes_a_route_until_headers_are_learned() {
+    let limiter = Arc::new(RestRateLimiter::default());
+    let request = test_request("https://discord.com/api/v9/channels/123/messages");
+    let route = RestRateLimitRoute::from_request(&request);
+    let first = limiter.acquire(route.clone()).await;
+    let second_acquired = Arc::new(AtomicBool::new(false));
+    let waiter = {
+        let limiter = Arc::clone(&limiter);
+        let second_acquired = Arc::clone(&second_acquired);
+        tokio::spawn(async move {
+            let _permit = limiter.acquire(route).await;
+            second_acquired.store(true, Ordering::Release);
+        })
+    };
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!second_acquired.load(Ordering::Acquire));
+    drop(first);
+    tokio::time::timeout(Duration::from_millis(50), waiter)
+        .await
+        .expect("the next request should continue when the probe ends")
+        .expect("the probe waiter should finish");
+    assert!(second_acquired.load(Ordering::Acquire));
+}
+
+#[test]
+fn rest_rate_limiter_applies_learned_bucket_per_major_scope() {
+    let limiter = RestRateLimiter::default();
+    let first_request = test_request("https://discord.com/api/v9/channels/123/messages");
+    let other_channel_request = test_request("https://discord.com/api/v9/channels/999/messages");
+    let first_route = RestRateLimitRoute::from_request(&first_request);
+    let other_channel_route = RestRateLimitRoute::from_request(&other_channel_request);
+    let now = std::time::Instant::now();
+    let (admitted_key, probe) = match limiter.reserve_at(&first_route, now) {
+        RestRateLimitDecision::Admit { key, probe } => (key, probe),
+        _ => panic!("the first request should be admitted"),
+    };
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "x-ratelimit-bucket",
+        "messages".parse().expect("valid header"),
+    );
+    headers.insert("x-ratelimit-remaining", "0".parse().expect("valid header"));
+    headers.insert(
+        "x-ratelimit-reset-after",
+        "2".parse().expect("valid header"),
+    );
+
+    limiter.finish(
+        &first_route,
+        &admitted_key,
+        probe,
+        RestRateLimitResponse {
+            headers: &headers,
+            status: reqwest::StatusCode::OK,
+            now,
+            wall_clock: SystemTime::now(),
+        },
+    );
+
+    assert!(matches!(
+        limiter.reserve_at(&first_route, now + Duration::from_secs(1)),
+        RestRateLimitDecision::Delay(delay) if delay == Duration::from_secs(1)
+    ));
+    assert!(matches!(
+        limiter.reserve_at(&other_channel_route, now + Duration::from_secs(1)),
+        RestRateLimitDecision::Admit { probe: true, .. }
+    ));
+}
+
+#[test]
+fn rest_rate_limiter_applies_global_retry_after_to_other_routes() {
+    let limiter = RestRateLimiter::default();
+    let first_request = test_request("https://discord.com/api/v9/users/@me");
+    let other_request = test_request("https://discord.com/api/v9/guilds/123/channels");
+    let first_route = RestRateLimitRoute::from_request(&first_request);
+    let other_route = RestRateLimitRoute::from_request(&other_request);
+    let now = std::time::Instant::now();
+    let (admitted_key, probe) = match limiter.reserve_at(&first_route, now) {
+        RestRateLimitDecision::Admit { key, probe } => (key, probe),
+        _ => panic!("the first request should be admitted"),
+    };
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("x-ratelimit-global", "true".parse().expect("valid header"));
+    headers.insert("retry-after", "3".parse().expect("valid header"));
+
+    limiter.finish(
+        &first_route,
+        &admitted_key,
+        probe,
+        RestRateLimitResponse {
+            headers: &headers,
+            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            now,
+            wall_clock: SystemTime::now(),
+        },
+    );
+
+    assert!(matches!(
+        limiter.reserve_at(&other_route, now + Duration::from_secs(1)),
+        RestRateLimitDecision::Delay(delay) if delay == Duration::from_secs(2)
+    ));
+}
+
+#[test]
+fn forbidden_circuit_resets_stale_failures_and_bounds_storage() {
+    let safety = RequestSafety::default();
+    let route = RequestRoute {
+        method: "POST".to_owned(),
+        path: "/channels/1/messages".to_owned(),
+    };
+    let start = std::time::Instant::now();
+    safety.record_response_at(&route, reqwest::StatusCode::FORBIDDEN, start);
+    safety.record_response_at(
+        &route,
+        reqwest::StatusCode::FORBIDDEN,
+        start + Duration::from_secs(1),
+    );
+    let outside_window = start + FORBIDDEN_FAILURE_WINDOW + Duration::from_secs(1);
+
+    safety.record_response_at(&route, reqwest::StatusCode::FORBIDDEN, outside_window);
+
+    safety
+        .preflight_at(&route, outside_window)
+        .expect("old forbidden failures should not open the circuit");
+    let circuits = safety
+        .forbidden_circuits
+        .lock()
+        .expect("request circuit mutex is not poisoned");
+    assert_eq!(
+        circuits
+            .get(&route)
+            .expect("the recent failure should remain")
+            .consecutive_forbidden,
+        1
+    );
+    drop(circuits);
+
+    let safety = RequestSafety::default();
+    for index in 0..(MAX_FORBIDDEN_CIRCUITS + 10) {
+        safety.record_response_at(
+            &RequestRoute {
+                method: "GET".to_owned(),
+                path: format!("/messages/{index}"),
+            },
+            reqwest::StatusCode::FORBIDDEN,
+            start + Duration::from_millis(index as u64),
+        );
+    }
+    assert_eq!(
+        safety
+            .forbidden_circuits
+            .lock()
+            .expect("request circuit mutex is not poisoned")
+            .len(),
+        MAX_FORBIDDEN_CIRCUITS
+    );
+
+    let cleanup_time = start
+        + FORBIDDEN_FAILURE_WINDOW
+        + Duration::from_millis((MAX_FORBIDDEN_CIRCUITS + 10) as u64)
+        + Duration::from_secs(1);
+    safety
+        .preflight_at(
+            &RequestRoute {
+                method: "GET".to_owned(),
+                path: "/untracked".to_owned(),
+            },
+            cleanup_time,
+        )
+        .expect("stale route cleanup should not block a new route");
+    assert!(
+        safety
+            .forbidden_circuits
+            .lock()
+            .expect("request circuit mutex is not poisoned")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn authenticated_requests_stop_after_unauthorized_response() {
+    let (base_url, server) = status_server(vec![
+        "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+    ]);
+    let rest = test_rest();
+
+    let first = rest
+        .send_unit(rest.raw_http.get(format!("{base_url}/users/@me")), "first")
+        .await
+        .expect_err("401 must stop authenticated requests");
+    assert!(matches!(first, AppError::DiscordAuthenticationStopped));
+
+    let second = rest
+        .send_unit(
+            rest.raw_http.get(format!("{base_url}/channels/1")),
+            "second",
+        )
+        .await
+        .expect_err("later request must stop before network I/O");
+    assert!(matches!(second, AppError::DiscordAuthenticationStopped));
+    server.join().expect("test server should finish");
+}
+
+#[tokio::test]
+async fn repeated_forbidden_route_opens_circuit_without_query_bypass() {
+    let forbidden = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    let (base_url, server) = status_server(vec![forbidden, forbidden, forbidden]);
+    let rest = test_rest();
+
+    for attempt in 0..3 {
+        let error = rest
+            .send_unit(
+                rest.raw_http
+                    .get(format!("{base_url}/channels/1/messages?attempt={attempt}")),
+                "forbidden",
+            )
+            .await
+            .expect_err("server should return 403");
+        assert!(matches!(error, AppError::DiscordRequest(_)));
+    }
+
+    let blocked = rest
+        .send_unit(
+            rest.raw_http
+                .get(format!("{base_url}/channels/1/messages?attempt=4")),
+            "forbidden",
+        )
+        .await
+        .expect_err("fourth matching route should be blocked locally");
+    assert!(matches!(
+        blocked,
+        AppError::DiscordRequestCircuitOpen { ref path, .. }
+            if path == "/channels/1/messages"
+    ));
+    server.join().expect("test server should finish");
+}
+
+#[tokio::test]
+async fn rate_limit_returns_retry_delay_without_retrying() {
+    let (base_url, server) = status_server(vec![
+        "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1.5\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 19\r\n\r\n{\"retry_after\":1.5}",
+    ]);
+    let rest = test_rest();
+
+    let error = rest
+        .send_unit(rest.raw_http.get(format!("{base_url}/messages")), "send")
+        .await
+        .expect_err("429 should be returned to the caller");
+    assert!(matches!(
+        error,
+        AppError::DiscordRateLimited {
+            retry_after_millis: 1_500,
+            ..
+        }
+    ));
+    server
+        .join()
+        .expect("test server should receive only one request");
+}
+
+#[tokio::test]
+async fn discord_json_error_decodes_message_and_code() {
+    let body = r#"{"message":"\uad8c\ud55c \uc5c6\uc74c","code":50013}"#;
+    let response = format!(
+        "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let (base_url, server) = status_server(vec![&response]);
+    let rest = test_rest();
+
+    let error = rest
+        .send_unit(rest.raw_http.get(format!("{base_url}/messages")), "send")
+        .await
+        .expect_err("Discord should return the decoded API error");
+
+    assert!(matches!(
+        error,
+        AppError::DiscordRequest(message)
+            if message.contains("권한 없음")
+                && message.contains("Discord code 50013")
+                && !message.contains(r"\uad8c")
+    ));
+    server.join().expect("test server should finish");
+}
+
+#[tokio::test]
+async fn message_send_coordinator_serializes_only_matching_channels() {
+    let coordinator = Arc::new(MessageSendCoordinator::default());
+    let first_guard = coordinator.acquire(Id::new(10)).await;
+    let same_channel_acquired = Arc::new(AtomicBool::new(false));
+    let waiter = {
+        let coordinator = Arc::clone(&coordinator);
+        let same_channel_acquired = Arc::clone(&same_channel_acquired);
+        tokio::spawn(async move {
+            let _guard = coordinator.acquire(Id::new(10)).await;
+            same_channel_acquired.store(true, Ordering::Release);
+        })
+    };
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!same_channel_acquired.load(Ordering::Acquire));
+    let other_channel =
+        tokio::time::timeout(Duration::from_millis(50), coordinator.acquire(Id::new(11)))
+            .await
+            .expect("different channel should not wait");
+    drop(other_channel);
+
+    drop(first_guard);
+    waiter.await.expect("same-channel waiter should finish");
+    assert!(same_channel_acquired.load(Ordering::Acquire));
+}
+
+#[test]
+fn message_send_coordinator_tracks_cooldowns_per_channel() {
+    let coordinator = MessageSendCoordinator::default();
+    coordinator.record_cooldown(Id::new(10), Duration::from_secs(1));
+
+    assert!(matches!(
+        coordinator.ensure_cooldown_elapsed(Id::new(10)),
+        Err(AppError::MessageSlowModeActive {
+            retry_after_millis: 1..=1_000
+        })
+    ));
+    coordinator
+        .ensure_cooldown_elapsed(Id::new(11))
+        .expect("another channel has no cooldown");
+}
+
+fn test_rest() -> DiscordRest {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    DiscordRest::new(
+        "test-token".to_owned(),
+        reqwest::Client::new(),
+        reqwest::header::HeaderMap::new(),
+    )
+}
+
+fn test_request(url: &str) -> reqwest::Request {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    reqwest::Client::new()
+        .get(url)
+        .build()
+        .expect("test request should build")
+}
+
+fn status_server(responses: Vec<&str>) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
+    let address = listener
+        .local_addr()
+        .expect("test server should have an address");
+    let responses: Vec<String> = responses.into_iter().map(str::to_owned).collect();
+    let server = thread::spawn(move || {
+        for response in responses {
+            let stream = listener
+                .accept()
+                .expect("test server should accept a request")
+                .0;
+            let mut stream = read_request_headers(stream);
+            stream
+                .write_all(response.as_bytes())
+                .expect("test server should write a response");
+        }
+    });
+    (format!("http://{address}"), server)
+}
+
+fn read_request_headers(stream: TcpStream) -> TcpStream {
+    let mut reader = BufReader::new(stream);
+    loop {
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .expect("test server should read request headers");
+        if line == "\r\n" || line.is_empty() {
+            break;
+        }
+    }
+    reader.into_inner()
+}
 
 #[test]
 fn rejects_invalid_message_content() {

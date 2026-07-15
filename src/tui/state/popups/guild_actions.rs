@@ -6,7 +6,8 @@ use crate::discord::ids::{
 use crate::tui::keybindings::KeyChord;
 
 use super::super::model::{
-    FocusPane, GuildActionItem, GuildActionKind, GuildPaneEntry, MUTE_ACTION_DURATIONS,
+    ActionAvailability, FocusPane, GuildActionItem, GuildActionKind, GuildPaneEntry,
+    MUTE_ACTION_DURATIONS,
 };
 use super::super::{DashboardState, MuteActionDurationItem};
 use super::{
@@ -70,7 +71,10 @@ impl DashboardState {
                 GuildActionItem::new(
                     GuildActionKind::MarkAsRead,
                     "Mark server as read",
-                    self.guild_ack_targets(state.id).next().is_some(),
+                    self.guild_ack_targets(state.id)
+                        .next()
+                        .is_none()
+                        .then(|| "no unread messages".to_owned()),
                 ),
                 GuildActionItem::new(
                     GuildActionKind::ToggleMute,
@@ -79,20 +83,26 @@ impl DashboardState {
                     } else {
                         "Mute server"
                     },
-                    true,
+                    ActionAvailability::Enabled,
                 ),
-                GuildActionItem::new(GuildActionKind::LeaveServer, "Leave server", true),
+                GuildActionItem::new(
+                    GuildActionKind::LeaveServer,
+                    "Leave server",
+                    ActionAvailability::Enabled,
+                ),
             ],
             Some(GuildPaneEntry::DirectMessages) => vec![GuildActionItem::new(
                 GuildActionKind::NoActionsYet,
                 "No server actions yet",
-                false,
+                ActionAvailability::Disabled("select a server".to_owned()),
             )],
-            Some(GuildPaneEntry::FolderHeader { folder, .. }) => vec![GuildActionItem::new(
-                GuildActionKind::FolderSettings,
-                "Folder settings",
-                folder.id.is_some(),
-            )],
+            Some(GuildPaneEntry::FolderHeader { folder, .. }) => {
+                vec![GuildActionItem::new(
+                    GuildActionKind::FolderSettings,
+                    "Folder settings",
+                    folder.id.is_none().then(|| "folder ID missing".to_owned()),
+                )]
+            }
             None => Vec::new(),
         }
     }
@@ -159,7 +169,7 @@ impl DashboardState {
             GuildActionMenuState::Actions { selection } => {
                 let items = self.selected_guild_action_items();
                 let item = items.get(selection.selected_for_len(items.len()))?;
-                if !item.enabled {
+                if !item.is_enabled() {
                     return None;
                 }
                 match item.kind {
@@ -211,7 +221,7 @@ impl DashboardState {
                     |key_bindings, actions, index| {
                         key_bindings.guild_action_shortcuts(actions, index)
                     },
-                    |action| action.enabled,
+                    |action| action.is_enabled(),
                 )?;
                 self.select_guild_action_row(index);
                 self.activate_selected_guild_action()

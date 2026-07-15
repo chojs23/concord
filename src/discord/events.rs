@@ -14,10 +14,11 @@ use super::commands::{
 };
 use super::{
     ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildBoostTier,
-    GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, PollInfo, PremiumTier,
-    PresenceStatus, ReactionUserInfo, ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas,
-    UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceScope, VoiceServerInfo,
-    VoiceSoundKind, VoiceStateInfo, is_thread_kind,
+    GuildNotificationSettingsInfo, GuildOnboardingInfo, GuildVerificationLevel, MemberInfo,
+    MentionInfo, MessageInfo, PollInfo, PremiumTier, PresenceStatus, ReactionUserInfo,
+    ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas, UserProfileInfo, UserSettingsInfo,
+    VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,
+    is_thread_kind,
 };
 
 #[cfg(test)]
@@ -146,6 +147,11 @@ pub enum AppEvent {
     CurrentUserCapabilities {
         premium_tier: PremiumTier,
     },
+    CurrentUserVerification {
+        email_verified: Option<bool>,
+        phone_verified: Option<bool>,
+        mfa_enabled: Option<bool>,
+    },
     UserIdentityUpdate {
         user_id: Id<UserMarker>,
         username: String,
@@ -166,10 +172,14 @@ pub enum AppEvent {
         owner_id: Option<Id<UserMarker>>,
         boost_tier: GuildBoostTier,
         boost_count: u32,
+        verification_level: Option<GuildVerificationLevel>,
+        mfa_level: Option<u64>,
+        features: Option<Vec<String>>,
+        onboarding: Option<GuildOnboardingInfo>,
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
         presences: Vec<(Id<UserMarker>, PresenceStatus)>,
-        roles: Vec<RoleInfo>,
+        roles: Option<Vec<RoleInfo>>,
         emojis: Vec<CustomEmojiInfo>,
     },
     GuildUpdate {
@@ -180,8 +190,16 @@ pub enum AppEvent {
         // so a rename does not reset a guild's boost state to unboosted.
         boost_tier: Option<GuildBoostTier>,
         boost_count: Option<u32>,
+        verification_level: Option<GuildVerificationLevel>,
+        mfa_level: Option<u64>,
+        features: Option<Vec<String>>,
+        onboarding: Option<GuildOnboardingInfo>,
         roles: Option<Vec<RoleInfo>>,
         emojis: Option<Vec<CustomEmojiInfo>>,
+    },
+    GuildOnboardingUpdate {
+        guild_id: Id<GuildMarker>,
+        onboarding: GuildOnboardingInfo,
     },
     GuildRolesUpdate {
         guild_id: Id<GuildMarker>,
@@ -221,6 +239,14 @@ pub enum AppEvent {
     },
     MessageCreate {
         message: MessageInfo,
+    },
+    MessageSendRateLimited {
+        channel_id: Id<ChannelMarker>,
+        retry_after_millis: u64,
+    },
+    MessageSendCooldownStarted {
+        channel_id: Id<ChannelMarker>,
+        duration_millis: u64,
     },
     MessageHistoryLoaded {
         channel_id: Id<ChannelMarker>,
@@ -573,10 +599,12 @@ define_app_event_kinds! {
     Ready: AppEvent::Ready { .. },
     SignedOut: AppEvent::SignedOut,
     CurrentUserCapabilities: AppEvent::CurrentUserCapabilities { .. },
+    CurrentUserVerification: AppEvent::CurrentUserVerification { .. },
     UserIdentityUpdate: AppEvent::UserIdentityUpdate { .. },
     ApplicationCommandsLoaded: AppEvent::ApplicationCommandsLoaded { .. },
     GuildCreate: AppEvent::GuildCreate { .. },
     GuildUpdate: AppEvent::GuildUpdate { .. },
+    GuildOnboardingUpdate: AppEvent::GuildOnboardingUpdate { .. },
     GuildRolesUpdate: AppEvent::GuildRolesUpdate { .. },
     GuildRoleUpsert: AppEvent::GuildRoleUpsert { .. },
     GuildRoleDelete: AppEvent::GuildRoleDelete { .. },
@@ -589,6 +617,8 @@ define_app_event_kinds! {
     ThreadListSync: AppEvent::ThreadListSync { .. },
     ThreadMembersUpdateDispatch: AppEvent::ThreadMembersUpdateDispatch { .. },
     MessageCreate: AppEvent::MessageCreate { .. },
+    MessageSendRateLimited: AppEvent::MessageSendRateLimited { .. },
+    MessageSendCooldownStarted: AppEvent::MessageSendCooldownStarted { .. },
     MessageHistoryLoaded: AppEvent::MessageHistoryLoaded { .. },
     MessageHistoryRefreshed: AppEvent::MessageHistoryRefreshed { .. },
     MessageHistoryAfterLoaded: AppEvent::MessageHistoryAfterLoaded { .. },
@@ -765,7 +795,8 @@ pub(crate) mod test_builders {
     }
 
     use crate::discord::{
-        ChannelInfo, CustomEmojiInfo, GuildBoostTier, MemberInfo, PresenceStatus, RoleInfo,
+        ChannelInfo, CustomEmojiInfo, GuildBoostTier, GuildOnboardingInfo, MemberInfo,
+        PresenceStatus, RoleInfo,
     };
 
     // Single construction seam for `AppEvent::GuildCreate` so a new field on the
@@ -777,6 +808,10 @@ pub(crate) mod test_builders {
         pub(crate) owner_id: Option<Id<UserMarker>>,
         pub(crate) boost_tier: GuildBoostTier,
         pub(crate) boost_count: u32,
+        pub(crate) verification_level: GuildVerificationLevel,
+        pub(crate) mfa_level: u64,
+        pub(crate) features: Vec<String>,
+        pub(crate) onboarding: Option<GuildOnboardingInfo>,
         pub(crate) channels: Vec<ChannelInfo>,
         pub(crate) members: Vec<MemberInfo>,
         pub(crate) presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -793,6 +828,10 @@ pub(crate) mod test_builders {
                 owner_id: None,
                 boost_tier: GuildBoostTier::None,
                 boost_count: 0,
+                verification_level: GuildVerificationLevel::None,
+                mfa_level: 0,
+                features: Vec::new(),
+                onboarding: None,
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
@@ -810,10 +849,14 @@ pub(crate) mod test_builders {
             owner_id: event.owner_id,
             boost_tier: event.boost_tier,
             boost_count: event.boost_count,
+            verification_level: Some(event.verification_level),
+            mfa_level: Some(event.mfa_level),
+            features: Some(event.features),
+            onboarding: event.onboarding,
             channels: event.channels,
             members: event.members,
             presences: event.presences,
-            roles: event.roles,
+            roles: Some(event.roles),
             emojis: event.emojis,
         }
     }
@@ -1237,6 +1280,10 @@ pub(crate) mod test_builders {
         pub(crate) owner_id: Option<Id<UserMarker>>,
         pub(crate) boost_tier: Option<GuildBoostTier>,
         pub(crate) boost_count: Option<u32>,
+        pub(crate) verification_level: Option<GuildVerificationLevel>,
+        pub(crate) mfa_level: Option<u64>,
+        pub(crate) features: Option<Vec<String>>,
+        pub(crate) onboarding: Option<GuildOnboardingInfo>,
         pub(crate) roles: Option<Vec<RoleInfo>>,
         pub(crate) emojis: Option<Vec<CustomEmojiInfo>>,
     }
@@ -1249,6 +1296,10 @@ pub(crate) mod test_builders {
                 owner_id: None,
                 boost_tier: None,
                 boost_count: None,
+                verification_level: None,
+                mfa_level: None,
+                features: None,
+                onboarding: None,
                 roles: None,
                 emojis: None,
             }
@@ -1262,6 +1313,10 @@ pub(crate) mod test_builders {
             owner_id: f.owner_id,
             boost_tier: f.boost_tier,
             boost_count: f.boost_count,
+            verification_level: f.verification_level,
+            mfa_level: f.mfa_level,
+            features: f.features,
+            onboarding: f.onboarding,
             roles: f.roles,
             emojis: f.emojis,
         }
@@ -1533,6 +1588,7 @@ impl AppEventKind {
         match self {
             AppEventKind::GuildCreate
             | AppEventKind::GuildUpdate
+            | AppEventKind::GuildOnboardingUpdate
             | AppEventKind::GuildDelete
             | AppEventKind::ThreadListSync
             | AppEventKind::ThreadMembersUpdateDispatch
@@ -1605,6 +1661,7 @@ impl AppEventKind {
             | AppEventKind::TypingStart
             | AppEventKind::UserSettingsUpdate
             | AppEventKind::UserNoteLoaded
+            | AppEventKind::CurrentUserVerification
             | AppEventKind::UserGuildSettingsInit
             | AppEventKind::UserGuildSettingsUpdate => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation())
@@ -1616,6 +1673,8 @@ impl AppEventKind {
 
             AppEventKind::GatewayError
             | AppEventKind::CaptchaRequired
+            | AppEventKind::MessageSendRateLimited
+            | AppEventKind::MessageSendCooldownStarted
             | AppEventKind::GatewayDispatchReceived
             | AppEventKind::SignedOut
             | AppEventKind::MediaPlaybackWindowReady

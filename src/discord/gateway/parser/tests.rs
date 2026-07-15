@@ -8,9 +8,280 @@ use super::{
 };
 use crate::discord::{
     ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
-    MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo, PremiumTier,
-    PresenceStatus, ReactionEmoji, ReplyInfo,
+    GuildOnboardingMode, GuildVerificationLevel, MentionInfo, MessageKind, NotificationLevel,
+    PollAnswerInfo, PollInfo, PremiumTier, PresenceStatus, ReactionEmoji, ReplyInfo,
 };
+
+#[test]
+fn guild_parsers_preserve_feature_names_from_lazy_properties() {
+    let create = parse_guild_create(&json!({
+        "id": "10",
+        "properties": {
+            "name": "guild",
+            "features": ["COMMUNITY", "FUTURE_FEATURE"]
+        },
+        "channels": [],
+        "members": [],
+        "roles": [],
+        "emojis": []
+    }))
+    .expect("guild should parse");
+
+    let AppEvent::GuildCreate { features, .. } = create else {
+        panic!("expected guild create event");
+    };
+    assert_eq!(
+        features,
+        Some(vec!["COMMUNITY".to_owned(), "FUTURE_FEATURE".to_owned()])
+    );
+
+    let update = parse_guild_update(&json!({
+        "id": "10",
+        "properties": {
+            "name": "guild",
+            "features": ["MEMBER_VERIFICATION_GATE_ENABLED"]
+        }
+    }))
+    .expect("guild update should parse");
+
+    let AppEvent::GuildUpdate { features, .. } = update else {
+        panic!("expected guild update event");
+    };
+    assert_eq!(
+        features,
+        Some(vec!["MEMBER_VERIFICATION_GATE_ENABLED".to_owned()])
+    );
+}
+
+#[test]
+fn guild_create_parser_preserves_complete_onboarding_payload() {
+    let raw_onboarding = json!({
+        "guild_id": "10",
+        "enabled": false,
+        "mode": 1,
+        "default_channel_ids": ["30", "40"],
+        "prompts": [{
+            "id": "50",
+            "title": "Choose topics",
+            "future_prompt_field": { "kept": true }
+        }],
+        "future_top_level_field": [1, 2, 3]
+    });
+    let event = parse_guild_create(&json!({
+        "id": "10",
+        "name": "guild",
+        "guild_onboarding": raw_onboarding,
+        "channels": [],
+        "members": [],
+        "roles": [],
+        "emojis": []
+    }))
+    .expect("guild should parse");
+
+    let AppEvent::GuildCreate {
+        onboarding: Some(onboarding),
+        ..
+    } = event
+    else {
+        panic!("expected guild onboarding");
+    };
+    assert_eq!(onboarding.guild_id, Id::new(10));
+    assert_eq!(onboarding.enabled, Some(false));
+    assert_eq!(onboarding.mode, Some(GuildOnboardingMode::Advanced));
+    assert_eq!(
+        onboarding.default_channel_ids,
+        vec![Id::new(30), Id::new(40)]
+    );
+    assert_eq!(onboarding.prompts().len(), 1);
+    assert_eq!(onboarding.raw["future_top_level_field"], json!([1, 2, 3]));
+    assert_eq!(
+        onboarding.raw["prompts"][0]["future_prompt_field"],
+        json!({ "kept": true })
+    );
+}
+
+#[test]
+fn onboarding_dispatches_preserve_payload() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "GUILD_ONBOARDING_UPDATE",
+            "d": {
+                "guild_id": "10",
+                "enabled": true,
+                "mode": 99,
+                "default_channel_ids": [],
+                "prompts": [],
+                "future_field": "kept"
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(matches!(
+        events.as_slice(),
+        [AppEvent::GuildOnboardingUpdate { guild_id, onboarding }]
+            if *guild_id == Id::new(10)
+                && onboarding.enabled == Some(true)
+                && onboarding.mode == Some(GuildOnboardingMode::Unknown(99))
+                && onboarding.raw["future_field"] == json!("kept")
+    ));
+
+    let events = parse_user_account_event(
+        &json!({
+            "t": "READY_SUPPLEMENTAL",
+            "d": {
+                "guilds": [{
+                    "id": "10",
+                    "guild_onboarding": {
+                        "enabled": true,
+                        "mode": 0,
+                        "default_channel_ids": [],
+                        "prompts": [],
+                        "supplemental_field": "kept"
+                    }
+                }]
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::GuildOnboardingUpdate { guild_id, onboarding }
+            if *guild_id == Id::new(10)
+                && onboarding.enabled == Some(true)
+                && onboarding.raw["supplemental_field"] == json!("kept")
+    )));
+}
+
+#[test]
+fn guild_parser_keeps_message_verification_inputs() {
+    let event = parse_guild_create(&json!({
+        "id": "10",
+        "name": "guild",
+        "verification_level": 3,
+        "mfa_level": 1,
+        "channels": [],
+        "roles": [],
+        "emojis": [],
+        "members": [{
+            "user": { "id": "20", "username": "neo" },
+            "roles": [],
+            "joined_at": "2026-07-14T23:51:00+00:00",
+            "flags": 4,
+            "pending": true,
+            "communication_disabled_until": "2026-07-15T01:00:00+00:00"
+        }]
+    }))
+    .expect("guild should parse");
+
+    let AppEvent::GuildCreate {
+        verification_level,
+        mfa_level,
+        members,
+        ..
+    } = event
+    else {
+        panic!("expected GuildCreate event");
+    };
+    assert_eq!(verification_level, Some(GuildVerificationLevel::High));
+    assert_eq!(mfa_level, Some(1));
+    assert_eq!(members[0].flags, Some(4));
+    assert_eq!(members[0].pending, Some(true));
+    assert!(members[0].communication_disabled_until_present);
+    assert_eq!(
+        members[0]
+            .communication_disabled_until
+            .expect("communication_disabled_until should parse")
+            .to_rfc3339(),
+        "2026-07-15T01:00:00+00:00"
+    );
+    assert_eq!(
+        members[0]
+            .joined_at
+            .expect("joined_at should parse")
+            .to_rfc3339(),
+        "2026-07-14T23:51:00+00:00"
+    );
+}
+
+#[test]
+fn guild_parser_preserves_missing_authorization_inputs() {
+    let event = parse_guild_create(&json!({
+        "id": "10",
+        "name": "guild",
+        "channels": [],
+        "members": [],
+        "emojis": []
+    }))
+    .expect("partial lazy guild should parse");
+
+    let AppEvent::GuildCreate {
+        verification_level,
+        mfa_level,
+        features,
+        roles,
+        ..
+    } = event
+    else {
+        panic!("expected GuildCreate event");
+    };
+    assert_eq!(verification_level, None);
+    assert_eq!(mfa_level, None);
+    assert_eq!(features, None);
+    assert_eq!(roles, None);
+}
+
+#[test]
+fn current_user_verification_status_is_loaded_and_refreshed() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "READY",
+            "d": {
+                "user": {
+                    "id": "20",
+                    "username": "neo",
+                    "verified": true,
+                    "phone": "+10000000000",
+                    "mfa_enabled": true
+                },
+                "guilds": []
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::CurrentUserVerification {
+            email_verified: Some(true),
+            phone_verified: Some(true),
+            mfa_enabled: Some(true),
+        }
+    )));
+
+    let events = parse_user_account_event(
+        &json!({
+            "t": "USER_UPDATE",
+            "d": {
+                "id": "20",
+                "username": "neo",
+                "verified": true,
+                "phone": null
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::CurrentUserVerification {
+            email_verified: Some(true),
+            phone_verified: Some(false),
+            mfa_enabled: _,
+        }
+    )));
+}
 
 #[test]
 fn raw_dispatch_parser_keeps_original_payload_for_future_fields() {
@@ -1507,6 +1778,7 @@ fn guild_create_parser_keeps_roles() {
         panic!("expected guild create event");
     };
 
+    let roles = roles.expect("guild roles should be present");
     assert_eq!(roles.len(), 1);
     assert_eq!(roles[0].id, Id::new(90));
     assert_eq!(roles[0].name, "Admin");
@@ -1538,7 +1810,10 @@ fn guild_create_parser_keeps_string_permission_bitfields() {
         panic!("expected guild create event");
     };
 
-    assert_eq!(roles[0].permissions, 0x400);
+    assert_eq!(
+        roles.expect("guild roles should be present")[0].permissions,
+        0x400
+    );
 }
 
 #[test]

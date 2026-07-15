@@ -21,8 +21,8 @@ use tokio::{
 use crate::{AppError, Result};
 
 use super::{
-    ActivityInfo, ApplicationCommandInfo, ApplicationCommandInvocation, DiscordAuthSession,
-    PresenceStatus,
+    ActivityInfo, ApplicationCommandInfo, ApplicationCommandInvocation, DiscordAction,
+    DiscordAuthSession, DiscordPermission, PresenceStatus,
     application_commands::application_command_interaction_from_invocation,
     events::{AppEvent, SequencedAppEvent},
     fingerprint::{
@@ -360,12 +360,16 @@ impl DiscordClient {
                     .is_some();
                 // Permission gates apply only to guild voice channels. DM and
                 // group-DM calls have no guild permission model to check.
-                if !current_same_channel
-                    && scope.guild_id().is_some()
-                    && let Some(channel) = state.channel(channel_id)
-                    && !state.can_connect_voice_channel(channel)
-                {
-                    return Err("cannot connect to voice channel".to_owned());
+                if !current_same_channel && scope.guild_id().is_some() {
+                    let Some(channel) = state.channel(channel_id) else {
+                        return Err("cannot verify voice channel permissions".to_owned());
+                    };
+                    rest_actions::ensure_channel_action_policy(
+                        &state,
+                        channel,
+                        DiscordAction::JoinVoiceChannel,
+                    )
+                    .map_err(|error| error.to_string())?;
                 }
             }
         }
@@ -425,23 +429,52 @@ impl DiscordClient {
         microphone_sensitivity: MicrophoneSensitivityDb,
         microphone_volume: VoiceVolumePercent,
         voice_output_volume: VoiceVolumePercent,
-    ) {
+    ) -> std::result::Result<(), String> {
+        if allow_microphone_transmit && scope.guild_id().is_some() {
+            let state = self
+                .state
+                .read()
+                .expect("discord state lock is not poisoned");
+            let Some(channel) = state.channel(channel_id) else {
+                return Err("cannot verify voice channel permissions".to_owned());
+            };
+            rest_actions::ensure_channel_action_policy(
+                &state,
+                channel,
+                DiscordAction::TransmitMicrophone,
+            )
+            .map_err(|error| error.to_string())?;
+            rest_actions::ensure_permission(
+                &state,
+                channel,
+                DiscordAction::TransmitMicrophone,
+                DiscordPermission::Speak,
+            )
+            .map_err(|error| error.to_string())?;
+            rest_actions::ensure_permission(
+                &state,
+                channel,
+                DiscordAction::TransmitMicrophone,
+                DiscordPermission::UseVoiceActivity,
+            )
+            .map_err(|error| error.to_string())?;
+        }
         let mut requested = self
             .requested_voice
             .write()
             .expect("requested voice lock is not poisoned");
         let Some(mut voice) = *requested else {
-            return;
+            return Ok(());
         };
         if voice.scope != scope || voice.channel_id != channel_id {
-            return;
+            return Ok(());
         }
         if voice.allow_microphone_transmit == allow_microphone_transmit
             && voice.microphone_sensitivity == microphone_sensitivity
             && voice.microphone_volume == microphone_volume
             && voice.voice_output_volume == voice_output_volume
         {
-            return;
+            return Ok(());
         }
 
         voice.allow_microphone_transmit = allow_microphone_transmit;
@@ -452,6 +485,7 @@ impl DiscordClient {
         let _ = self
             .voice_events_tx
             .send(VoiceRuntimeEvent::Requested(Some(voice)));
+        Ok(())
     }
 
     pub async fn update_presence_status(
@@ -676,6 +710,7 @@ impl DiscordClient {
         &self,
         invocation: &ApplicationCommandInvocation,
     ) -> Result<()> {
+        self.ensure_can_run_application_command(invocation)?;
         let session_id = self
             .gateway_session_id
             .read()

@@ -19,9 +19,7 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
 
     if state.is_forum_post_composer_active() {
         if state.is_forum_post_composer_editing() {
-            if state.forum_post_composer_accepts_attachment_paste()
-                && handle_pasted_file_attachments(state, text)
-            {
+            if handle_pasted_file_attachments(state, text) {
                 return true;
             }
             return state.insert_forum_post_text(text);
@@ -34,9 +32,21 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
     }
 
     if !state.is_composing() {
-        if state.composer_accepts_attachments() && pasted_file_attachments(text).is_some() {
+        if let Some(attachments) = pasted_file_attachments(text) {
             state.start_composer();
-            return handle_pasted_file_attachments(state, text);
+            if state.is_forum_post_composer_active() {
+                state.add_pending_forum_post_attachments(attachments);
+                return true;
+            }
+            if state.is_composing() {
+                state.add_pending_composer_attachments(attachments);
+                return true;
+            }
+            state.show_error_toast(
+                "Send Messages permission is required in this channel",
+                std::time::Instant::now(),
+            );
+            return true;
         }
         return false;
     }
@@ -68,7 +78,7 @@ pub fn handle_pasted_user_profile_avatar(state: &mut DashboardState, text: &str)
 }
 
 pub fn handle_pasted_file_attachments(state: &mut DashboardState, text: &str) -> bool {
-    if state.forum_post_composer_accepts_attachment_paste() {
+    if state.forum_post_composer_is_editing_body() {
         let Some(attachments) = pasted_file_attachments(text) else {
             return false;
         };
@@ -76,7 +86,7 @@ pub fn handle_pasted_file_attachments(state: &mut DashboardState, text: &str) ->
         return true;
     }
 
-    if !state.is_composing() || !state.composer_accepts_attachments() {
+    if !state.is_composing() || state.composer_is_editing_message() {
         return false;
     }
     let Some(attachments) = pasted_file_attachments(text) else {

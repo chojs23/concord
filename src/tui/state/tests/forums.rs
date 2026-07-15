@@ -1127,7 +1127,7 @@ fn poll_vote_actions_are_available_by_default() {
         .expect("poll action should exist");
 
     assert_eq!(poll_action.label, "choose poll votes");
-    assert!(poll_action.enabled);
+    assert!(poll_action.is_enabled());
 }
 
 fn thread_action_menu_state() -> DashboardState {
@@ -1153,7 +1153,7 @@ fn follow_selected_forum_post(state: &mut DashboardState) {
 }
 
 #[test]
-fn thread_action_menu_opens_with_permission_dimmed_items() {
+fn thread_action_menu_reflects_permissions_and_participation() {
     let mut state = thread_action_menu_state();
 
     assert!(state.open_selected_thread_actions());
@@ -1161,12 +1161,17 @@ fn thread_action_menu_opens_with_permission_dimmed_items() {
 
     let items = state.selected_thread_action_items();
     assert_eq!(items.len(), 11);
+    assert!(
+        items
+            .iter()
+            .all(|item| item.is_enabled() || item.disabled_reason().is_some())
+    );
 
     let enabled = |kind: ThreadActionKind| {
         items
             .iter()
             .find(|item| item.kind == kind)
-            .map(|item| item.enabled)
+            .map(|item| item.is_enabled())
             .unwrap_or(false)
     };
     // Wired-up actions are selectable.
@@ -1181,6 +1186,30 @@ fn thread_action_menu_opens_with_permission_dimmed_items() {
     assert!(!enabled(ThreadActionKind::Lock));
     assert!(!enabled(ThreadActionKind::Edit));
     assert!(!enabled(ThreadActionKind::Delete));
+
+    apply_incomplete_community_onboarding(&mut state, Id::new(1), Id::new(99));
+
+    let items = state.selected_thread_action_items();
+    let item = |kind: ThreadActionKind| {
+        items
+            .iter()
+            .find(|item| item.kind == kind)
+            .expect("thread action should exist")
+    };
+    let enabled = |kind: ThreadActionKind| item(kind).is_enabled();
+    for kind in [
+        ThreadActionKind::ToggleFollow,
+        ThreadActionKind::Close,
+        ThreadActionKind::Lock,
+        ThreadActionKind::Edit,
+        ThreadActionKind::Pin,
+        ThreadActionKind::Delete,
+    ] {
+        assert!(!enabled(kind));
+        assert_eq!(item(kind).disabled_reason(), Some("onboarding incomplete"));
+    }
+    assert!(enabled(ThreadActionKind::CopyLink));
+    assert!(enabled(ThreadActionKind::CopyId));
 }
 
 #[test]
@@ -1240,7 +1269,7 @@ fn channel_pane_forum_post_thread_opens_thread_actions() {
         items
             .iter()
             .find(|item| item.kind == ThreadActionKind::ToggleMute)
-            .is_some_and(|item| item.enabled)
+            .is_some_and(|item| item.is_enabled())
     );
 }
 
@@ -1409,12 +1438,12 @@ fn forum_post_management_actions_emit_commands_for_manager() {
     // A manager sees all four wired-up management actions enabled, labelled for
     // the post's current (not archived/locked/pinned) state.
     let close = item(ThreadActionKind::Close);
-    assert!(close.enabled && close.label == "Close post");
+    assert!(close.is_enabled() && close.label == "Close post");
     let lock = item(ThreadActionKind::Lock);
-    assert!(lock.enabled && lock.label == "Lock post");
+    assert!(lock.is_enabled() && lock.label == "Lock post");
     let pin = item(ThreadActionKind::Pin);
-    assert!(pin.enabled && pin.label == "Pin post");
-    assert!(item(ThreadActionKind::Delete).enabled);
+    assert!(pin.is_enabled() && pin.label == "Pin post");
+    assert!(item(ThreadActionKind::Delete).is_enabled());
 
     // Close -> archive command (second-row offset 2).
     for _ in 0..2 {
@@ -1519,12 +1548,13 @@ fn forum_post_delete_requires_manage_permission_not_authorship() {
         items
             .iter()
             .find(|item| item.kind == kind)
-            .map(|item| item.enabled)
+            .map(|item| item.is_enabled())
             .unwrap_or(false)
     };
-    // The author can close their own post...
+    // The creator can close and edit the post, while moderation-only actions
+    // remain disabled.
     assert!(enabled(ThreadActionKind::Close));
-    // ...but cannot delete it, nor use the moderator-only actions.
+    assert!(enabled(ThreadActionKind::Edit));
     assert!(!enabled(ThreadActionKind::Delete));
     assert!(!enabled(ThreadActionKind::Lock));
 }
@@ -1786,7 +1816,7 @@ fn thread_notification_settings_disabled_when_not_followed() {
         .iter()
         .find(|item| item.kind == ThreadActionKind::NotificationSettings)
         .expect("notification settings action should exist");
-    assert!(!notif.enabled);
+    assert!(!notif.is_enabled());
 
     // After following, the item becomes enabled.
     state.close_thread_action_menu();
@@ -1798,7 +1828,7 @@ fn thread_notification_settings_disabled_when_not_followed() {
         .iter()
         .find(|item| item.kind == ThreadActionKind::NotificationSettings)
         .expect("notification settings action should exist");
-    assert!(notif.enabled);
+    assert!(notif.is_enabled());
 }
 
 #[test]

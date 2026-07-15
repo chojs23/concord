@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -11,8 +11,8 @@ use crate::discord::ids::{
 use futures::{SinkExt, StreamExt};
 use rand::Rng;
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, mpsc, watch};
-use tokio::time::sleep;
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
+use tokio::time::{Instant, sleep};
 use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::{
@@ -123,6 +123,10 @@ const GATEWAY_WEBSOCKET_LIMIT: usize = 64 << 20;
 
 const RECONNECT_BASE_DELAY: Duration = Duration::from_millis(500);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
+// Discord applies this budget to every JSON event on one Gateway connection.
+// WebSocket control frames such as Pong and Close are not Gateway events.
+const GATEWAY_SEND_LIMIT: usize = 120;
+const GATEWAY_SEND_WINDOW: Duration = Duration::from_secs(60);
 
 type GatewayStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -131,6 +135,24 @@ type GatewayStream =
 /// dispatch loop need to send over the same connection, so the sink lives
 /// behind a `Mutex<Arc<…>>` instead of being moved into either side.
 type WriterHandle = Arc<Mutex<futures::stream::SplitSink<GatewayStream, WsMessage>>>;
+
+#[derive(Clone)]
+struct GatewaySender {
+    // Heartbeats and session setup use the urgent queue so a backlog of UI
+    // commands cannot delay connection health traffic once a slot is free.
+    urgent_tx: mpsc::UnboundedSender<GatewaySendRequest>,
+    normal_tx: mpsc::UnboundedSender<GatewaySendRequest>,
+}
+
+struct GatewaySendRequest {
+    payload: String,
+    completion: Option<oneshot::Sender<Result<(), String>>>,
+}
+
+#[derive(Default)]
+struct GatewaySendWindow {
+    sent_at: VecDeque<Instant>,
+}
 
 #[derive(Default)]
 struct SubscriptionDeduper {
@@ -200,7 +222,7 @@ struct GatewayPublishContext<'a> {
 struct FrameContext<'a> {
     sequence_cell: &'a Arc<Mutex<Option<u64>>>,
     heartbeat_ack: &'a Arc<Mutex<HeartbeatAckState>>,
-    writer: &'a WriterHandle,
+    sender: &'a GatewaySender,
     publish: GatewayPublishContext<'a>,
 }
 
@@ -385,6 +407,8 @@ async fn connect_and_run(
             .map_err(|error| format!("websocket connect failed: {error}"))?;
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
+    let (sender, mut gateway_send_error_rx, gateway_writer_task) =
+        spawn_gateway_sender(Arc::clone(&writer));
     let mut subscription_deduper = SubscriptionDeduper::default();
 
     // Discord must speak first with op-10 HELLO carrying heartbeat_interval.
@@ -421,18 +445,18 @@ async fn connect_and_run(
     // IDENTIFY rebuilds the world from scratch.
     if session.can_resume() {
         let payload = build_resume_payload(token, session);
-        send_text(&writer, payload).await?;
+        send_text(&sender, payload).await?;
         logging::debug("gateway", "RESUME sent");
     } else {
         let payload = build_identify_payload(token, fingerprint);
-        send_text(&writer, payload).await?;
+        send_text(&sender, payload).await?;
         logging::debug("gateway", "IDENTIFY sent");
     }
 
     // Background heartbeat task driven by Discord's interval. We jitter the
     // first beat per the API recommendation. The task reads the latest seq
     // from a shared atomic via the sequence cell.
-    let writer_for_heartbeat = Arc::clone(&writer);
+    let sender_for_heartbeat = sender.clone();
     let sequence_cell: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(session.last_sequence));
     let sequence_for_heartbeat = Arc::clone(&sequence_cell);
     let heartbeat_ack: Arc<Mutex<HeartbeatAckState>> = Arc::default();
@@ -456,7 +480,7 @@ async fn connect_and_run(
             }
             let seq = *sequence_for_heartbeat.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
-            if let Err(error) = send_text(&writer_for_heartbeat, payload).await {
+            if let Err(error) = send_text(&sender_for_heartbeat, payload).await {
                 logging::error("gateway", format!("heartbeat send failed: {error}"));
                 let _ = heartbeat_timeout_tx.send(());
                 break;
@@ -481,7 +505,7 @@ async fn connect_and_run(
                             }
                             break ConnectionOutcome::Stop;
                         } else if let Err(error) =
-                            dispatch_command(&writer, command, &mut subscription_deduper).await
+                            dispatch_command(&sender, command, &mut subscription_deduper)
                         {
                             let message = format!("command send failed: {error}");
                             log_and_publish_gateway_error(publish, message).await;
@@ -507,7 +531,7 @@ async fn connect_and_run(
                         let frame_context = FrameContext {
                             sequence_cell: &sequence_cell,
                             heartbeat_ack: &heartbeat_ack,
-                            writer: &writer,
+                            sender: &sender,
                             publish,
                         };
                         match handle_frame(
@@ -556,10 +580,15 @@ async fn connect_and_run(
             _ = heartbeat_timeout_rx.recv() => {
                 break ConnectionOutcome::Resume;
             }
+            Some(error) = gateway_send_error_rx.recv() => {
+                log_and_publish_gateway_error(publish, error).await;
+                break ConnectionOutcome::Resume;
+            }
         }
     };
 
     heartbeat_task.abort();
+    gateway_writer_task.abort();
     Ok(outcome)
 }
 
@@ -651,7 +680,7 @@ async fn handle_frame(
             let seq = *context.sequence_cell.lock().await;
             let payload = json!({"op": 1, "d": seq}).to_string();
             context.heartbeat_ack.lock().await.mark_heartbeat_sent();
-            if let Err(error) = send_text(context.writer, payload).await {
+            if let Err(error) = send_text(context.sender, payload).await {
                 let message = format!("heartbeat response send failed: {error}");
                 log_and_publish_gateway_error(context.publish, message).await;
             }
@@ -734,8 +763,8 @@ fn websocket_close_message(context: &str, frame: Option<&CloseFrame>) -> String 
     }
 }
 
-async fn dispatch_command(
-    writer: &WriterHandle,
+fn dispatch_command(
+    sender: &GatewaySender,
     command: GatewayCommand,
     subscription_deduper: &mut SubscriptionDeduper,
 ) -> Result<(), String> {
@@ -848,7 +877,7 @@ async fn dispatch_command(
         }
         GatewayCommand::Shutdown => return Ok(()),
     };
-    send_text(writer, payload).await
+    sender.enqueue_text(payload)
 }
 
 async fn close_websocket(writer: &WriterHandle) -> Result<(), String> {
@@ -859,12 +888,166 @@ async fn close_websocket(writer: &WriterHandle) -> Result<(), String> {
         .map_err(|error| format!("websocket close failed: {error}"))
 }
 
-async fn send_text(writer: &WriterHandle, payload: String) -> Result<(), String> {
-    let mut writer = writer.lock().await;
-    writer
-        .send(WsMessage::Text(payload.into()))
-        .await
-        .map_err(|error| format!("websocket send failed: {error}"))
+async fn send_text(sender: &GatewaySender, payload: String) -> Result<(), String> {
+    sender.send_urgent(payload).await
+}
+
+impl GatewaySender {
+    async fn send_urgent(&self, payload: String) -> Result<(), String> {
+        let (completion_tx, completion_rx) = oneshot::channel();
+        self.urgent_tx
+            .send(GatewaySendRequest {
+                payload,
+                completion: Some(completion_tx),
+            })
+            .map_err(|_| "gateway writer task stopped".to_owned())?;
+        completion_rx
+            .await
+            .map_err(|_| "gateway writer task stopped before send completed".to_owned())?
+    }
+
+    fn enqueue_text(&self, payload: String) -> Result<(), String> {
+        self.normal_tx
+            .send(GatewaySendRequest {
+                payload,
+                completion: None,
+            })
+            .map_err(|_| "gateway writer task stopped".to_owned())
+    }
+}
+
+impl GatewaySendWindow {
+    fn delay_at(&mut self, now: Instant) -> Option<Duration> {
+        while self
+            .sent_at
+            .front()
+            .is_some_and(|sent_at| now.duration_since(*sent_at) >= GATEWAY_SEND_WINDOW)
+        {
+            self.sent_at.pop_front();
+        }
+        if self.sent_at.len() < GATEWAY_SEND_LIMIT {
+            return None;
+        }
+        self.sent_at
+            .front()
+            .map(|sent_at| (*sent_at + GATEWAY_SEND_WINDOW).duration_since(now))
+    }
+
+    fn record(&mut self, now: Instant) {
+        self.sent_at.push_back(now);
+    }
+}
+
+fn spawn_gateway_sender(
+    writer: WriterHandle,
+) -> (
+    GatewaySender,
+    mpsc::UnboundedReceiver<String>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (urgent_tx, urgent_rx) = mpsc::unbounded_channel();
+    let (normal_tx, normal_rx) = mpsc::unbounded_channel();
+    let (error_tx, error_rx) = mpsc::unbounded_channel();
+    let task = tokio::spawn(run_gateway_sender(writer, urgent_rx, normal_rx, error_tx));
+    (
+        GatewaySender {
+            urgent_tx,
+            normal_tx,
+        },
+        error_rx,
+        task,
+    )
+}
+
+async fn run_gateway_sender(
+    writer: WriterHandle,
+    mut urgent_rx: mpsc::UnboundedReceiver<GatewaySendRequest>,
+    mut normal_rx: mpsc::UnboundedReceiver<GatewaySendRequest>,
+    error_tx: mpsc::UnboundedSender<String>,
+) {
+    let mut urgent = VecDeque::new();
+    let mut normal = VecDeque::new();
+    let mut urgent_open = true;
+    let mut normal_open = true;
+    let mut window = GatewaySendWindow::default();
+
+    loop {
+        drain_gateway_requests(&mut urgent_rx, &mut urgent, &mut urgent_open);
+        drain_gateway_requests(&mut normal_rx, &mut normal, &mut normal_open);
+
+        if urgent.is_empty() && normal.is_empty() {
+            if !urgent_open && !normal_open {
+                return;
+            }
+            tokio::select! {
+                biased;
+                request = urgent_rx.recv(), if urgent_open => {
+                    match request {
+                        Some(request) => urgent.push_back(request),
+                        None => urgent_open = false,
+                    }
+                }
+                request = normal_rx.recv(), if normal_open => {
+                    match request {
+                        Some(request) => normal.push_back(request),
+                        None => normal_open = false,
+                    }
+                }
+            }
+            continue;
+        }
+
+        if let Some(delay) = window.delay_at(Instant::now()) {
+            tokio::select! {
+                biased;
+                request = urgent_rx.recv(), if urgent_open => {
+                    match request {
+                        Some(request) => urgent.push_back(request),
+                        None => urgent_open = false,
+                    }
+                }
+                _ = sleep(delay) => {}
+            }
+            continue;
+        }
+
+        let request = urgent
+            .pop_front()
+            .or_else(|| normal.pop_front())
+            .expect("gateway send queue is not empty");
+        window.record(Instant::now());
+        let result = {
+            let mut writer = writer.lock().await;
+            writer
+                .send(WsMessage::Text(request.payload.into()))
+                .await
+                .map_err(|error| format!("websocket send failed: {error}"))
+        };
+        if let Some(completion) = request.completion {
+            let _ = completion.send(result.clone());
+        }
+        if let Err(error) = result {
+            let _ = error_tx.send(error);
+            return;
+        }
+    }
+}
+
+fn drain_gateway_requests(
+    receiver: &mut mpsc::UnboundedReceiver<GatewaySendRequest>,
+    queue: &mut VecDeque<GatewaySendRequest>,
+    open: &mut bool,
+) {
+    while *open {
+        match receiver.try_recv() {
+            Ok(request) => queue.push_back(request),
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                *open = false;
+                return;
+            }
+        }
+    }
 }
 
 fn build_identify_payload(token: &str, fingerprint: &ClientFingerprint) -> String {

@@ -154,9 +154,9 @@ fn voice_channel_action_emits_join_then_leave_command() {
     state.open_selected_channel_actions();
     let actions = state.selected_channel_action_items();
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
     assert_eq!(actions[1].kind, ChannelActionKind::LeaveVoice);
-    assert!(actions[1].enabled);
+    assert!(actions[1].is_enabled());
 
     state.select_channel_action_row(1);
     let command = state.activate_selected_channel_action();
@@ -258,7 +258,7 @@ fn other_client_voice_state_shows_header_only() {
 }
 
 #[test]
-fn voice_channel_join_action_requires_connect_permission() {
+fn voice_channel_join_action_reflects_permission_and_participation() {
     let me = Id::new(10);
     let owner = Id::new(11);
     let guild_id = Id::new(1);
@@ -287,6 +287,43 @@ fn voice_channel_join_action_requires_connect_permission() {
 
     let actions = state.selected_channel_action_items();
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
+    assert_eq!(actions[0].disabled_reason(), Some("Connect required"));
     assert_eq!(state.activate_selected_channel_action(), None);
+
+    let me = Id::new(10);
+    let guild_id = Id::new(1);
+    let voice_id = Id::new(11);
+    let mut state = DashboardState::new();
+
+    state.push_event(guild_create_event(GuildCreateFixture {
+        member_count: Some(1),
+        owner_id: Some(Id::new(99)),
+        channels: vec![voice_channel_info(guild_id, voice_id, "Lobby")],
+        members: vec![member_with_username(me, "me", "me")],
+        roles: vec![role_info(
+            Id::new(guild_id.get()),
+            "@everyone",
+            PERM_VIEW_CHANNEL | PERM_CONNECT,
+        )],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    apply_incomplete_community_onboarding(&mut state, guild_id, me);
+    state.activate_guild(super::ActiveGuildScope::Guild(guild_id));
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+
+    let actions = state.selected_channel_action_items();
+    let action = |kind| {
+        actions
+            .iter()
+            .find(|action| action.kind == kind)
+            .expect("channel action should exist")
+    };
+    assert!(!action(ChannelActionKind::JoinVoice).is_enabled());
+    assert_eq!(
+        action(ChannelActionKind::JoinVoice).disabled_reason(),
+        Some("onboarding incomplete")
+    );
+    assert!(action(ChannelActionKind::ToggleMute).is_enabled());
 }

@@ -1624,7 +1624,7 @@ impl DashboardState {
             &actions,
             shortcut,
             |key_bindings, actions, index| key_bindings.message_action_shortcuts(actions, index),
-            |action| action.enabled,
+            |action| action.is_enabled(),
         )
     }
 
@@ -1639,7 +1639,7 @@ impl DashboardState {
                     |key_bindings, actions, index| {
                         key_bindings.thread_action_shortcuts(actions, index)
                     },
-                    |action| action.enabled,
+                    |action| action.is_enabled(),
                 )
             }
             Some(ThreadActionMenuState::MuteDuration { .. }) => indexed_shortcut_matches(
@@ -1673,7 +1673,7 @@ impl DashboardState {
             &actions,
             shortcut,
             |key_bindings, actions, index| key_bindings.channel_action_shortcuts(actions, index),
-            |action| action.enabled,
+            |action| action.is_enabled(),
         )
     }
 
@@ -1694,7 +1694,7 @@ impl DashboardState {
             &actions,
             shortcut,
             |key_bindings, actions, index| key_bindings.guild_action_shortcuts(actions, index),
-            |action| action.enabled,
+            |action| action.is_enabled(),
         )
     }
 
@@ -1708,7 +1708,7 @@ impl DashboardState {
             &actions,
             shortcut,
             |key_bindings, actions, index| key_bindings.member_action_shortcuts(actions, index),
-            |action| action.enabled,
+            |action| action.is_enabled(),
         )
     }
 }

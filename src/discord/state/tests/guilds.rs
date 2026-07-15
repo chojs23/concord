@@ -1,4 +1,81 @@
 use super::*;
+use crate::discord::{GuildOnboardingInfo, GuildOnboardingMode};
+use serde_json::json;
+use std::sync::Arc;
+
+fn onboarding(guild_id: Id<GuildMarker>, enabled: bool) -> GuildOnboardingInfo {
+    let raw = json!({
+        "guild_id": guild_id.to_string(),
+        "enabled": enabled,
+        "mode": 0,
+        "default_channel_ids": [],
+        "prompts": [],
+        "future_field": "kept"
+    });
+    GuildOnboardingInfo {
+        guild_id,
+        enabled: Some(enabled),
+        mode: Some(GuildOnboardingMode::Default),
+        default_channel_ids: Vec::new(),
+        raw: Arc::new(raw),
+    }
+}
+
+#[test]
+fn guild_partial_updates_preserve_and_replace_optional_metadata() {
+    let guild_id = Id::new(1);
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        guild_id,
+        onboarding: Some(onboarding(guild_id, false)),
+        features: vec!["COMMUNITY".to_owned(), "FUTURE_FEATURE".to_owned()],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+
+    let cached = state
+        .guild(guild_id)
+        .and_then(|guild| guild.onboarding.as_ref())
+        .expect("onboarding should be cached");
+    assert_eq!(cached.enabled, Some(false));
+    assert_eq!(cached.raw["future_field"], json!("kept"));
+    assert!(state.guild_has_feature(guild_id, "COMMUNITY"));
+    assert!(state.guild_has_feature(guild_id, "FUTURE_FEATURE"));
+
+    state.apply_event(&guild_update_event(GuildUpdateFixture {
+        guild_id,
+        name: "renamed".to_owned(),
+        ..GuildUpdateFixture::new()
+    }));
+    assert_eq!(
+        state
+            .guild(guild_id)
+            .and_then(|guild| guild.onboarding.as_ref())
+            .and_then(|onboarding| onboarding.enabled),
+        Some(false)
+    );
+    assert!(state.guild_has_feature(guild_id, "COMMUNITY"));
+
+    state.apply_event(&AppEvent::GuildOnboardingUpdate {
+        guild_id,
+        onboarding: onboarding(guild_id, true),
+    });
+    assert_eq!(
+        state
+            .guild(guild_id)
+            .and_then(|guild| guild.onboarding.as_ref())
+            .and_then(|onboarding| onboarding.enabled),
+        Some(true)
+    );
+
+    state.apply_event(&guild_update_event(GuildUpdateFixture {
+        guild_id,
+        name: "renamed again".to_owned(),
+        features: Some(vec!["MEMBER_VERIFICATION_GATE_ENABLED".to_owned()]),
+        ..GuildUpdateFixture::new()
+    }));
+    assert!(!state.guild_has_feature(guild_id, "COMMUNITY"));
+    assert!(state.guild_has_feature(guild_id, "MEMBER_VERIFICATION_GATE_ENABLED"));
+}
 
 #[test]
 fn stores_and_clears_custom_guild_emojis() {

@@ -111,6 +111,9 @@ pub(in crate::discord) struct SessionState {
     pub(in crate::discord) current_user_id: Option<Id<UserMarker>>,
     pub(in crate::discord) current_user: Option<String>,
     pub(in crate::discord) current_user_premium_tier: Option<PremiumTier>,
+    pub(in crate::discord) current_user_email_verified: Option<bool>,
+    pub(in crate::discord) current_user_phone_verified: Option<bool>,
+    pub(in crate::discord) current_user_mfa_enabled: Option<bool>,
     pub(in crate::discord) selected_message_channel_known: bool,
     pub(in crate::discord) selected_message_channel_id: Option<Id<ChannelMarker>>,
 }

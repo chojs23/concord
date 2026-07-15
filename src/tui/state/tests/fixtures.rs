@@ -5,14 +5,16 @@ use crate::discord::ids::{
 
 use super::super::{ActiveGuildScope, DashboardState};
 pub(super) use crate::discord::test_builders::{
-    GuildCreateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
-    guild_message_create_fixture, message_create_event, message_history_loaded_event,
+    GuildCreateFixture, GuildUpdateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
+    guild_message_create_fixture, guild_update_event, message_create_event,
+    message_history_loaded_event,
 };
 use crate::discord::{
-    AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder, MemberInfo,
-    MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState,
-    PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
-    ReactionEmoji, ReactionInfo, ReadStateInfo, RoleInfo, ThreadMetadataInfo, VoiceStateInfo,
+    AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder,
+    GuildOnboardingInfo, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+    MessageSnapshotInfo, MessageState, PermissionOverwriteInfo, PermissionOverwriteKind,
+    PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, RoleInfo,
+    ThreadMetadataInfo, VoiceStateInfo,
 };
 
 pub(super) const PERM_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
@@ -22,7 +24,40 @@ pub(super) const PERM_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 pub(super) const PERM_SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;
 pub(super) const PERM_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 pub(super) const PERM_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
+pub(super) const PERM_USE_APPLICATION_COMMANDS: u64 = 0x0000_0000_8000_0000;
 pub(super) const PERM_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
+pub(super) const PERM_CONNECT: u64 = 0x0000_0000_0010_0000;
+
+pub(super) fn apply_incomplete_community_onboarding(
+    state: &mut DashboardState,
+    guild_id: Id<GuildMarker>,
+    user_id: Id<UserMarker>,
+) {
+    const MEMBER_FLAG_STARTED_ONBOARDING: u64 = 1 << 3;
+
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(user_id),
+    });
+    let mut member = member_with_username(user_id, "me", "me");
+    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
+    member.pending = Some(false);
+    state.push_event(AppEvent::GuildMemberUpsert { guild_id, member });
+    state.push_event(guild_update_event(GuildUpdateFixture {
+        guild_id,
+        name: "guild".to_owned(),
+        owner_id: Some(Id::new(u64::MAX - 1)),
+        features: Some(vec!["COMMUNITY".to_owned()]),
+        onboarding: Some(GuildOnboardingInfo {
+            guild_id,
+            enabled: Some(true),
+            mode: None,
+            default_channel_ids: Vec::new(),
+            raw: std::sync::Arc::new(serde_json::Value::Null),
+        }),
+        ..GuildUpdateFixture::new()
+    }));
+}
 
 pub(super) fn channel_info(
     channel_id: Id<ChannelMarker>,
@@ -353,7 +388,11 @@ pub(super) fn guild_state_with_overwrites(
             roles: vec![role_info(
                 Id::new(guild.get()),
                 "@everyone",
-                PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_SEND_TTS_MESSAGES,
+                PERM_VIEW_CHANNEL
+                    | PERM_SEND_MESSAGES
+                    | PERM_SEND_TTS_MESSAGES
+                    | PERM_READ_MESSAGE_HISTORY
+                    | PERM_USE_APPLICATION_COMMANDS,
             )],
             ..GuildCreateFixture::new(guild)
         },
@@ -537,6 +576,7 @@ pub(super) fn state_with_channel_tree() -> DashboardState {
                 child_text_channel_info(guild_id, general_id, category_id, "general", 0),
                 child_text_channel_info(guild_id, random_id, category_id, "random", 1),
             ],
+            roles: vec![role_info(Id::new(guild_id.get()), "@everyone", 0)],
             ..GuildCreateFixture::new(guild_id)
         },
     ));

@@ -10,7 +10,7 @@ use crate::discord::{
 use crate::tui::keybindings::KeyChord;
 use crate::tui::text_input::TextEditAction;
 
-use super::super::model::{FocusPane, MemberActionItem, MemberActionKind};
+use super::super::model::{ActionAvailability, FocusPane, MemberActionItem, MemberActionKind};
 use super::super::{ActiveGuildScope, DashboardState};
 use super::{
     ActiveModalPopupKind, MemberActionMenuState, ModalPopup, SelectablePopupState,
@@ -88,7 +88,7 @@ impl DashboardState {
         vec![MemberActionItem::new(
             MemberActionKind::ShowProfile,
             "Show profile",
-            true,
+            ActionAvailability::Enabled,
         )]
     }
 
@@ -130,7 +130,7 @@ impl DashboardState {
         let item = items
             .get(action.selection.selected_for_len(items.len()))?
             .clone();
-        if !item.enabled {
+        if !item.is_enabled() {
             return None;
         }
         match item.kind {
@@ -147,7 +147,7 @@ impl DashboardState {
             &actions,
             shortcut,
             |key_bindings, actions, index| key_bindings.member_action_shortcuts(actions, index),
-            |action| action.enabled,
+            |action| action.is_enabled(),
         )?;
         self.select_member_action_row(index);
         self.activate_selected_member_action()

@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use super::*;
+use crate::tui::state::ActionAvailability;
 
 fn char_chords(values: &[char]) -> Vec<KeyChord> {
     values.iter().copied().map(char_chord).collect()
@@ -281,11 +282,11 @@ fn scoped_action_keymaps_override_pane_action_shortcuts_and_labels() {
     let key_bindings =
         KeyBindings::try_from_options(&keymap).expect("scoped action keymaps should parse");
 
-    let guild_actions = [GuildActionItem {
-        kind: GuildActionKind::ToggleMute,
-        label: "Mute server".to_owned(),
-        enabled: true,
-    }];
+    let guild_actions = [GuildActionItem::new(
+        GuildActionKind::ToggleMute,
+        "Mute server",
+        ActionAvailability::Enabled,
+    )];
     assert_eq!(
         key_bindings.guild_action_shortcuts(&guild_actions, 0),
         char_chords(&['x'])
@@ -295,41 +296,41 @@ fn scoped_action_keymaps_override_pane_action_shortcuts_and_labels() {
         "mute server"
     );
 
-    let channel_actions = [ChannelActionItem {
-        kind: ChannelActionKind::ToggleMute,
-        label: "Mute channel".to_owned(),
-        enabled: true,
-    }];
+    let channel_actions = [ChannelActionItem::new(
+        ChannelActionKind::ToggleMute,
+        "Mute channel",
+        ActionAvailability::Enabled,
+    )];
     assert_eq!(
         key_bindings.channel_action_shortcuts(&channel_actions, 0),
         char_chords(&['x'])
     );
 
-    let message_actions = [MessageActionItem {
-        kind: MessageActionKind::GoToReferencedMessage,
-        label: "Go to referenced message".to_owned(),
-        enabled: true,
-    }];
+    let message_actions = [MessageActionItem::new(
+        MessageActionKind::GoToReferencedMessage,
+        "Go to referenced message",
+        ActionAvailability::Enabled,
+    )];
     assert_eq!(
         key_bindings.message_action_shortcuts(&message_actions, 0),
         char_chords(&['g'])
     );
 
-    let member_actions = [MemberActionItem {
-        kind: MemberActionKind::ShowProfile,
-        label: "Show profile".to_owned(),
-        enabled: true,
-    }];
+    let member_actions = [MemberActionItem::new(
+        MemberActionKind::ShowProfile,
+        "Show profile",
+        ActionAvailability::Enabled,
+    )];
     assert_eq!(
         key_bindings.member_action_shortcuts(&member_actions, 0),
         char_chords(&['s'])
     );
 
-    let thread_actions = [ThreadActionItem {
-        kind: ThreadActionKind::Close,
-        label: "Close post".to_owned(),
-        enabled: true,
-    }];
+    let thread_actions = [ThreadActionItem::new(
+        ThreadActionKind::Close,
+        "Close post",
+        ActionAvailability::Enabled,
+    )];
     assert_eq!(
         key_bindings.thread_action_shortcuts(&thread_actions, 0),
         char_chords(&['x'])
@@ -344,16 +345,16 @@ fn scoped_action_keymaps_override_pane_action_shortcuts_and_labels() {
 fn thread_action_shortcuts_default_to_mnemonic_keys() {
     let key_bindings = KeyBindings::default();
     let actions = [
-        ThreadActionItem {
-            kind: ThreadActionKind::MarkAsRead,
-            label: "Mark as read".to_owned(),
-            enabled: true,
-        },
-        ThreadActionItem {
-            kind: ThreadActionKind::Delete,
-            label: "Delete post".to_owned(),
-            enabled: true,
-        },
+        ThreadActionItem::new(
+            ThreadActionKind::MarkAsRead,
+            "Mark as read",
+            ActionAvailability::Enabled,
+        ),
+        ThreadActionItem::new(
+            ThreadActionKind::Delete,
+            "Delete post",
+            ActionAvailability::Enabled,
+        ),
     ];
 
     assert_eq!(key_bindings.thread_action_shortcut_label(&actions, 0), "m");
@@ -384,11 +385,11 @@ fn message_action_menu_shortcuts_follow_message_action_scope() {
         ..Default::default()
     };
     let key_bindings = KeyBindings::try_from_options(&keymap).expect("message keymap should parse");
-    let actions = [MessageActionItem {
-        kind: MessageActionKind::Reply,
-        label: "reply".to_owned(),
-        enabled: true,
-    }];
+    let actions = [MessageActionItem::new(
+        MessageActionKind::Reply,
+        "reply",
+        ActionAvailability::Enabled,
+    )];
 
     assert_eq!(key_bindings.message_action_shortcut_label(&actions, 0), "m");
     assert_eq!(
@@ -400,11 +401,11 @@ fn message_action_menu_shortcuts_follow_message_action_scope() {
             .keymap_lookup_direct_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
         Some(UiAction::ReplyMessage)
     );
-    let thread_actions = [MessageActionItem {
-        kind: MessageActionKind::OpenThread,
-        label: "open thread".to_owned(),
-        enabled: true,
-    }];
+    let thread_actions = [MessageActionItem::new(
+        MessageActionKind::OpenThread,
+        "open thread",
+        ActionAvailability::Enabled,
+    )];
     assert_eq!(
         key_bindings.message_action_shortcuts(&thread_actions, 0),
         char_chords(&['T'])
@@ -457,11 +458,11 @@ fn disabled_message_action_binding_removes_default_action_shortcut() {
     };
     let key_bindings =
         KeyBindings::try_from_options(&keymap).expect("disabled action keymap should parse");
-    let actions = [MessageActionItem {
-        kind: MessageActionKind::PlayMedia,
-        label: "play media".to_owned(),
-        enabled: true,
-    }];
+    let actions = [MessageActionItem::new(
+        MessageActionKind::PlayMedia,
+        "play media",
+        ActionAvailability::Enabled,
+    )];
 
     assert!(
         key_bindings
@@ -503,16 +504,16 @@ fn scoped_action_keymaps_try_later_keys_when_first_key_conflicts() {
     let key_bindings =
         KeyBindings::try_from_options(&keymap).expect("scoped action keymaps should parse");
     let actions = [
-        ChannelActionItem {
-            kind: ChannelActionKind::ShowPinnedMessages,
-            label: "Show pinned messages".to_owned(),
-            enabled: true,
-        },
-        ChannelActionItem {
-            kind: ChannelActionKind::ToggleMute,
-            label: "Mute channel".to_owned(),
-            enabled: true,
-        },
+        ChannelActionItem::new(
+            ChannelActionKind::ShowPinnedMessages,
+            "Show pinned messages",
+            ActionAvailability::Enabled,
+        ),
+        ChannelActionItem::new(
+            ChannelActionKind::ToggleMute,
+            "Mute channel",
+            ActionAvailability::Enabled,
+        ),
     ];
 
     assert_eq!(
@@ -541,11 +542,11 @@ fn scoped_action_keymaps_keep_multiple_unique_aliases() {
     };
     let key_bindings =
         KeyBindings::try_from_options(&keymap).expect("scoped action keymaps should parse");
-    let actions = [ChannelActionItem {
-        kind: ChannelActionKind::ToggleMute,
-        label: "Mute channel".to_owned(),
-        enabled: true,
-    }];
+    let actions = [ChannelActionItem::new(
+        ChannelActionKind::ToggleMute,
+        "Mute channel",
+        ActionAvailability::Enabled,
+    )];
 
     assert_eq!(
         key_bindings.channel_action_shortcuts(&actions, 0),
@@ -569,11 +570,11 @@ fn scoped_action_keymaps_keep_modified_shortcuts_distinct() {
     };
     let key_bindings =
         KeyBindings::try_from_options(&keymap).expect("scoped action keymaps should parse");
-    let actions = [ChannelActionItem {
-        kind: ChannelActionKind::ToggleMute,
-        label: "Mute channel".to_owned(),
-        enabled: true,
-    }];
+    let actions = [ChannelActionItem::new(
+        ChannelActionKind::ToggleMute,
+        "Mute channel",
+        ActionAvailability::Enabled,
+    )];
 
     assert_eq!(
         key_bindings.channel_action_shortcuts(&actions, 0),
@@ -598,16 +599,16 @@ fn scoped_action_keymaps_do_not_reuse_conflicting_numeric_keys_as_fallbacks() {
     let key_bindings =
         KeyBindings::try_from_options(&keymap).expect("scoped action keymaps should parse");
     let actions = [
-        ChannelActionItem {
-            kind: ChannelActionKind::ShowPinnedMessages,
-            label: "Show pinned messages".to_owned(),
-            enabled: true,
-        },
-        ChannelActionItem {
-            kind: ChannelActionKind::ToggleMute,
-            label: "Mute channel".to_owned(),
-            enabled: true,
-        },
+        ChannelActionItem::new(
+            ChannelActionKind::ShowPinnedMessages,
+            "Show pinned messages",
+            ActionAvailability::Enabled,
+        ),
+        ChannelActionItem::new(
+            ChannelActionKind::ToggleMute,
+            "Mute channel",
+            ActionAvailability::Enabled,
+        ),
     ];
 
     assert_eq!(

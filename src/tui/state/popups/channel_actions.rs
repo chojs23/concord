@@ -1,9 +1,10 @@
-use crate::discord::AppCommand;
 use crate::discord::ids::{Id, marker::ChannelMarker};
+use crate::discord::{AppCommand, DiscordAction};
 use crate::tui::keybindings::KeyChord;
 
 use super::super::model::{
-    ChannelActionItem, ChannelActionKind, ChannelPaneEntry, FocusPane, MUTE_ACTION_DURATIONS,
+    ActionAvailability, ChannelActionItem, ChannelActionKind, ChannelPaneEntry, FocusPane,
+    MUTE_ACTION_DURATIONS,
 };
 use super::super::{DashboardState, MuteActionDurationItem};
 #[cfg(test)]
@@ -65,7 +66,12 @@ impl DashboardState {
         // threads, so the action is offered everywhere else. The list itself is
         // filled by the `/threads/search` fetch once the view opens, so this no
         // longer depends on threads already sitting in the gateway cache.
-        let can_show_threads = !channel.is_category() && !channel.is_forum() && !channel.is_voice();
+        let can_read_history =
+            self.discord_action_allowed_in_channel(channel_id, DiscordAction::ReadMessageHistory);
+        let can_show_threads = !channel.is_category()
+            && !channel.is_forum()
+            && !channel.is_voice()
+            && can_read_history;
         let active_channel_has_unread_snapshot = self.navigation.channels.active_channel_id
             == Some(channel_id)
             && (self.messages.unread_divider_last_acked_id.is_some()
@@ -84,10 +90,23 @@ impl DashboardState {
             });
         // Guild voice needs the connect permission. DM and group-DM calls have
         // no guild permission model, so they are always joinable.
-        let can_join_voice = channel.supports_voice_call()
-            && !joined_here
-            && (channel.guild_id.is_none()
-                || self.discord.cache.can_connect_voice_channel(channel));
+        let join_voice_disabled_reason = if !channel.supports_voice_call() {
+            Some("not a voice channel".to_owned())
+        } else if joined_here {
+            Some("already joined".to_owned())
+        } else {
+            self.discord_action_block_reason_in_channel(channel_id, DiscordAction::JoinVoiceChannel)
+        };
+        let can_transmit_microphone = channel.guild_id.is_none()
+            || self
+                .discord
+                .cache
+                .can_transmit_microphone_in_voice_channel(channel);
+        let join_voice_label = if join_voice_disabled_reason.is_none() && !can_transmit_microphone {
+            "Join voice (listen only)"
+        } else {
+            "Join voice"
+        };
         let mute_label = match (
             self.discord.cache.channel_notification_muted(channel_id),
             channel.is_category(),
@@ -99,24 +118,50 @@ impl DashboardState {
         };
 
         vec![
-            ChannelActionItem::new(ChannelActionKind::JoinVoice, "Join voice", can_join_voice),
-            ChannelActionItem::new(ChannelActionKind::LeaveVoice, "Leave voice", joined_here),
+            ChannelActionItem::new(
+                ChannelActionKind::JoinVoice,
+                join_voice_label,
+                join_voice_disabled_reason,
+            ),
+            ChannelActionItem::new(
+                ChannelActionKind::LeaveVoice,
+                "Leave voice",
+                (!joined_here).then(|| "not connected here".to_owned()),
+            ),
             ChannelActionItem::new(
                 ChannelActionKind::ShowPinnedMessages,
                 "Show pinned messages",
-                !channel.is_category() && !channel.is_forum(),
+                if channel.is_category() {
+                    Some("not supported for categories".to_owned())
+                } else if channel.is_forum() {
+                    Some("not supported for forums".to_owned())
+                } else if !can_read_history {
+                    Some("Read Message History required".to_owned())
+                } else {
+                    None
+                },
             ),
             ChannelActionItem::new(
                 ChannelActionKind::ShowThreads,
                 "Show threads",
-                can_show_threads,
+                if can_show_threads {
+                    None
+                } else if !can_read_history {
+                    Some("Read Message History required".to_owned())
+                } else {
+                    Some("threads not supported here".to_owned())
+                },
             ),
             ChannelActionItem::new(
                 ChannelActionKind::MarkAsRead,
                 "Mark as read",
-                mark_as_read_enabled,
+                (!mark_as_read_enabled).then(|| "no unread messages".to_owned()),
             ),
-            ChannelActionItem::new(ChannelActionKind::ToggleMute, mute_label, true),
+            ChannelActionItem::new(
+                ChannelActionKind::ToggleMute,
+                mute_label,
+                ActionAvailability::Enabled,
+            ),
         ]
     }
 
@@ -198,7 +243,7 @@ impl DashboardState {
             } => {
                 let items = self.selected_channel_action_items();
                 let item = items.get(selection.selected_for_len(items.len()))?.clone();
-                if !item.enabled {
+                if !item.is_enabled() {
                     return None;
                 }
                 match item.kind {
@@ -213,7 +258,12 @@ impl DashboardState {
                                 allow_microphone_transmit: self
                                     .options
                                     .voice_options
-                                    .allow_microphone_transmit,
+                                    .allow_microphone_transmit
+                                    && (channel.guild_id.is_none()
+                                        || self
+                                            .discord
+                                            .cache
+                                            .can_transmit_microphone_in_voice_channel(channel)),
                                 microphone_sensitivity: self
                                     .options
                                     .voice_options
@@ -294,7 +344,7 @@ impl DashboardState {
                     |key_bindings, actions, index| {
                         key_bindings.channel_action_shortcuts(actions, index)
                     },
-                    |action| action.enabled,
+                    |action| action.is_enabled(),
                 )?;
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()

@@ -45,7 +45,7 @@ use super::{
     selected_message_card_width, selected_message_content_x_offset, selection_marker,
     sync_view_heights, theme, toast_area, toast_line, user_profile_popup_has_avatar,
     user_profile_popup_lines, user_profile_popup_lines_with_activities,
-    user_profile_popup_text_geometry,
+    user_profile_popup_text_geometry, verification_composer_text,
 };
 use crate::tui::message::time::{
     discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,

@@ -1004,6 +1004,12 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
                         "read-only · {label} has no messages. start it in the official app first"
                     )
                 }
+                ComposerLock::SlowMode { remaining_seconds } => {
+                    format!("slowmode · wait {remaining_seconds}s before writing in {label}")
+                }
+                ComposerLock::Verification(restriction) => {
+                    verification_composer_text(&label, restriction)
+                }
             };
         }
         // Tell the user up-front if the shortcut won't open the composer here,
@@ -1026,6 +1032,38 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
     }
 
     "select a channel to write a message".to_owned()
+}
+
+pub(in crate::tui::ui) fn verification_composer_text(
+    label: &str,
+    block: GuildParticipationBlock,
+) -> String {
+    let GuildParticipationBlock::Restricted(restriction) = block else {
+        return format!("read-only · Discord verification status is not available for {label}");
+    };
+    match restriction {
+        GuildParticipationRestriction::MembershipScreening => {
+            format!("read-only · complete {label}'s membership screening in the official app")
+        }
+        GuildParticipationRestriction::OnboardingIncomplete => {
+            format!("read-only · complete {label}'s server onboarding in the official app")
+        }
+        GuildParticipationRestriction::EmailVerificationRequired => {
+            format!("read-only · verify your Discord account email before writing in {label}")
+        }
+        GuildParticipationRestriction::AccountTooNew { remaining_seconds } => format!(
+            "read-only · account verification wait: {remaining_seconds}s remaining for {label}"
+        ),
+        GuildParticipationRestriction::MemberTooNew { remaining_seconds } => format!(
+            "read-only · server verification wait: {remaining_seconds}s remaining for {label}"
+        ),
+        GuildParticipationRestriction::PhoneVerificationRequired => {
+            format!("read-only · verify your Discord account phone before writing in {label}")
+        }
+        GuildParticipationRestriction::UnsupportedLevel { value } => {
+            format!("read-only · {label} uses unsupported verification level {value}")
+        }
+    }
 }
 
 const REPLY_PING_SEPARATOR: &str = "  ";

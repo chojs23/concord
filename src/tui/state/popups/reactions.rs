@@ -52,7 +52,16 @@ impl DashboardState {
             );
         }
 
-        if self.current_user_has_nitro() {
+        let can_use_external_emojis = self
+            .selected_message_state()
+            .and_then(|message| self.discord.cache.channel(message.channel_id))
+            .or_else(|| self.selected_channel_state())
+            .is_none_or(|channel| {
+                self.discord
+                    .cache
+                    .can_use_external_emojis_in_channel(channel)
+            });
+        if self.current_user_has_nitro() && can_use_external_emojis {
             items.extend(
                 self.discord
                     .cache
@@ -264,12 +273,6 @@ impl DashboardState {
         let selected_message = self.selected_message_state().filter(|message| {
             message.channel_id == picker.channel_id && message.id == picker.message_id
         });
-        if let Some(message) = selected_message
-            && !self.can_add_reaction_to_message(message, &reaction.emoji)
-        {
-            self.close_emoji_reaction_picker();
-            return None;
-        }
         let already_reacted = selected_message.is_some_and(|message| {
             message.channel_id == picker.channel_id
                 && message.id == picker.message_id
@@ -278,6 +281,13 @@ impl DashboardState {
                     .iter()
                     .any(|existing| existing.me && existing.emoji == reaction.emoji)
         });
+        if !already_reacted
+            && selected_message
+                .is_some_and(|message| !self.can_add_reaction_to_message(message, &reaction.emoji))
+        {
+            self.close_emoji_reaction_picker();
+            return None;
+        }
         let command = if already_reacted {
             AppCommand::RemoveReaction {
                 channel_id: picker.channel_id,

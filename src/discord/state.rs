@@ -225,6 +225,10 @@ impl DiscordState {
                 owner_id,
                 boost_tier,
                 boost_count,
+                verification_level,
+                mfa_level,
+                features,
+                onboarding,
                 roles,
                 emojis,
             } => {
@@ -239,6 +243,18 @@ impl DiscordState {
                     if let Some(boost_count) = boost_count {
                         guild.boost_count = *boost_count;
                     }
+                    if let Some(verification_level) = verification_level {
+                        guild.verification_level = Some(*verification_level);
+                    }
+                    if let Some(mfa_level) = mfa_level {
+                        guild.mfa_level = Some(*mfa_level);
+                    }
+                    if let Some(features) = features {
+                        guild.features = Some(features.clone());
+                    }
+                    if let Some(onboarding) = onboarding {
+                        guild.onboarding = Some(onboarding.clone());
+                    }
                 }
                 if let Some(roles) = roles {
                     self.guild_details.roles.insert(*guild_id, role_map(roles));
@@ -249,15 +265,21 @@ impl DiscordState {
                         .insert(*guild_id, emojis.clone());
                 }
             }
+            AppEvent::GuildOnboardingUpdate {
+                guild_id,
+                onboarding,
+            } => {
+                if let Some(guild) = self.navigation.guilds.get_mut(guild_id) {
+                    guild.onboarding = Some(onboarding.clone());
+                }
+            }
             AppEvent::GuildRolesUpdate { guild_id, roles } => {
                 self.guild_details.roles.insert(*guild_id, role_map(roles));
             }
             AppEvent::GuildRoleUpsert { guild_id, role } => {
-                self.guild_details
-                    .roles
-                    .entry(*guild_id)
-                    .or_default()
-                    .insert(role.id, role_state(role));
+                if let Some(roles) = self.guild_details.roles.get_mut(guild_id) {
+                    roles.insert(role.id, role_state(role));
+                }
             }
             AppEvent::GuildRoleDelete { guild_id, role_id } => {
                 if let Some(roles) = self.guild_details.roles.get_mut(guild_id) {
@@ -637,6 +659,21 @@ impl DiscordState {
             AppEvent::CurrentUserCapabilities { premium_tier } => {
                 self.session.current_user_premium_tier = Some(*premium_tier);
             }
+            AppEvent::CurrentUserVerification {
+                email_verified,
+                phone_verified,
+                mfa_enabled,
+            } => {
+                if let Some(email_verified) = email_verified {
+                    self.session.current_user_email_verified = Some(*email_verified);
+                }
+                if let Some(phone_verified) = phone_verified {
+                    self.session.current_user_phone_verified = Some(*phone_verified);
+                }
+                if let Some(mfa_enabled) = mfa_enabled {
+                    self.session.current_user_mfa_enabled = Some(*mfa_enabled);
+                }
+            }
             AppEvent::ReadStateInit { .. } => self.apply_read_state_init_event(event),
             AppEvent::MessageAck { .. } => self.apply_message_ack_event(event),
             AppEvent::UserGuildSettingsInit { settings } => {
@@ -655,6 +692,8 @@ impl DiscordState {
             AppEvent::GatewayDispatchReceived { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::CaptchaRequired { .. }
+            | AppEvent::MessageSendRateLimited { .. }
+            | AppEvent::MessageSendCooldownStarted { .. }
             | AppEvent::SignedOut
             | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
@@ -689,6 +728,10 @@ impl DiscordState {
             owner_id,
             boost_tier,
             boost_count,
+            verification_level,
+            mfa_level,
+            features,
+            onboarding,
             channels,
             members,
             presences,
@@ -710,6 +753,10 @@ impl DiscordState {
                 owner_id: *owner_id,
                 boost_tier: *boost_tier,
                 boost_count: *boost_count,
+                verification_level: *verification_level,
+                mfa_level: *mfa_level,
+                features: features.clone(),
+                onboarding: onboarding.clone(),
             },
         );
 
@@ -730,7 +777,11 @@ impl DiscordState {
                 member.status = *status;
             }
         }
-        self.guild_details.roles.insert(*guild_id, role_map(roles));
+        if let Some(roles) = roles {
+            self.guild_details.roles.insert(*guild_id, role_map(roles));
+        } else {
+            self.guild_details.roles.remove(guild_id);
+        }
         self.navigation
             .custom_emojis
             .insert(*guild_id, emojis.clone());
@@ -1217,6 +1268,11 @@ impl DiscordState {
                     is_bot: member.is_bot,
                     avatar_url: member.avatar_url.clone(),
                     role_ids: member.role_ids.clone(),
+                    joined_at: member.joined_at,
+                    flags: member.flags,
+                    pending: member.pending,
+                    communication_disabled_until: member.communication_disabled_until,
+                    communication_disabled_until_present: false,
                 },
             ));
         }

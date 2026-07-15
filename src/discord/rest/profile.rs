@@ -51,18 +51,14 @@ impl DiscordRest {
             user_id.get()
         );
         let response = self
-            .authenticated(self.raw_http.get(url))
-            .send()
-            .await
-            .map_err(|error| {
-                AppError::DiscordRequest(format!("user note request failed: {error}"))
-            })?;
+            .execute_authenticated(self.raw_http.get(url), "user note")
+            .await?;
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let response = response
-            .error_for_status()
-            .map_err(|error| AppError::DiscordRequest(format!("user note failed: {error}")))?;
+        if let Err(error) = response.error_for_status_ref() {
+            return Err(super::request_error(error, response, "user note").await);
+        }
         let body: Value = response.json().await.map_err(|error| {
             AppError::DiscordRequest(format!("user note decode failed: {error}"))
         })?;

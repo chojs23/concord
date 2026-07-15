@@ -366,6 +366,7 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
     foreign_emojis: impl Iterator<Item = &'a CustomEmojiInfo>,
     guild_emojis: impl Iterator<Item = &'a CustomEmojiInfo>,
     has_nitro: bool,
+    can_use_external_emojis: bool,
     emojis_as_links: bool,
 ) -> Vec<EmojiPickerEntry> {
     let needle = query.to_ascii_lowercase();
@@ -375,7 +376,8 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
 
     let make_entry = |is_foreign: bool| {
         move |emoji: &CustomEmojiInfo| {
-            let can_send_directly = custom_emoji_can_be_used_directly(emoji, is_foreign, has_nitro);
+            let can_send_directly = custom_emoji_can_be_used_directly(emoji, is_foreign, has_nitro)
+                && (!is_foreign || can_use_external_emojis);
             let as_link = emojis_as_links && !can_send_directly;
             let shortcode = emoji.name.clone();
             let marker = if emoji.animated { "◇" } else { "◆" };
@@ -409,7 +411,7 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
         .map(|emoji| make_entry(false)(emoji))
         .collect();
 
-    if has_nitro || emojis_as_links {
+    if (has_nitro && can_use_external_emojis) || emojis_as_links {
         scored.extend(
             foreign_emojis
                 .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))

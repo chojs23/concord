@@ -17,6 +17,7 @@ struct ActionMenuRow {
     shortcut: String,
     label: String,
     enabled: bool,
+    disabled_reason: Option<String>,
 }
 
 /// Builds the menu rows for one scope from its action items and the
@@ -32,7 +33,8 @@ fn action_menu_rows<K>(
         .map(|(index, action)| ActionMenuRow {
             shortcut: shortcut(actions, index),
             label: label(action),
-            enabled: action.enabled,
+            enabled: action.is_enabled(),
+            disabled_reason: action.disabled_reason().map(str::to_owned),
         })
         .collect()
 }
@@ -52,10 +54,9 @@ fn action_menu_lines(rows: &[ActionMenuRow], selected: usize) -> Vec<Line<'stati
         .map(|(index, row)| {
             let is_selected = index == selected;
             let shortcut = padded_shortcut_prefix(&prefixes[index], prefix_width);
-            let label = if row.enabled {
-                row.label.clone()
-            } else {
-                format!("{} (unavailable)", row.label)
+            let label = match (row.enabled, row.disabled_reason.as_deref()) {
+                (false, Some(reason)) => format!("{} ({reason})", row.label),
+                _ => row.label.clone(),
             };
             let style = selectable_popup_label_style(is_selected, row.enabled);
             selected_row_line(
@@ -82,6 +83,7 @@ fn indexed_action_menu_rows(labels: impl IntoIterator<Item = String>) -> Vec<Act
                 .unwrap_or_default(),
             label,
             enabled: true,
+            disabled_reason: None,
         })
         .collect()
 }

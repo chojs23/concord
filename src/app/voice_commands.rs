@@ -29,14 +29,29 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                     })
                     .await;
             } else {
-                client.update_voice_capture_permission(
+                if let Err(message) = client.update_voice_capture_permission(
                     scope,
                     channel_id,
                     allow_microphone_transmit,
                     microphone_sensitivity,
                     microphone_volume,
                     voice_output_volume,
-                );
+                ) {
+                    logging::error("app", &message);
+                    let _ = client.update_voice_capture_permission(
+                        scope,
+                        channel_id,
+                        false,
+                        microphone_sensitivity,
+                        microphone_volume,
+                        voice_output_volume,
+                    );
+                    client
+                        .publish_event(AppEvent::GatewayError {
+                            message: format!("Joined voice listen-only: {message}"),
+                        })
+                        .await;
+                }
                 client
                     .publish_event(AppEvent::VoiceConnectionStatusChanged {
                         scope,
@@ -70,14 +85,19 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             microphone_volume,
             voice_output_volume,
         } => {
-            client.update_voice_capture_permission(
+            if let Err(message) = client.update_voice_capture_permission(
                 scope,
                 channel_id,
                 allow_microphone_transmit,
                 microphone_sensitivity,
                 microphone_volume,
                 voice_output_volume,
-            );
+            ) {
+                logging::error("app", &message);
+                client
+                    .publish_event(AppEvent::GatewayError { message })
+                    .await;
+            }
         }
         AppCommand::LeaveVoiceChannel {
             scope,

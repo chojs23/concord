@@ -1,4 +1,59 @@
 use super::*;
+use crate::discord::{
+    GuildParticipationBlock, GuildParticipationDataGap, GuildParticipationRestriction,
+};
+
+#[test]
+fn verification_composer_text_explains_each_restriction() {
+    let cases = [
+        (
+            GuildParticipationRestriction::MembershipScreening,
+            "membership screening",
+        ),
+        (
+            GuildParticipationRestriction::OnboardingIncomplete,
+            "server onboarding",
+        ),
+        (
+            GuildParticipationRestriction::EmailVerificationRequired,
+            "account email",
+        ),
+        (
+            GuildParticipationRestriction::AccountTooNew {
+                remaining_seconds: 30,
+            },
+            "account verification wait: 30s",
+        ),
+        (
+            GuildParticipationRestriction::MemberTooNew {
+                remaining_seconds: 60,
+            },
+            "server verification wait: 60s",
+        ),
+        (
+            GuildParticipationRestriction::PhoneVerificationRequired,
+            "account phone",
+        ),
+    ];
+
+    for (restriction, expected) in cases {
+        assert!(
+            verification_composer_text(
+                "#general",
+                GuildParticipationBlock::Restricted(restriction)
+            )
+            .contains(expected)
+        );
+    }
+
+    assert!(
+        verification_composer_text(
+            "#general",
+            GuildParticipationBlock::DataUnavailable(GuildParticipationDataGap::Guild)
+        )
+        .contains("verification status is not available")
+    );
+}
 
 #[test]
 fn sync_view_heights_reserves_space_for_composer_height() {

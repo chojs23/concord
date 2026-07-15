@@ -41,13 +41,15 @@ impl DiscordRest {
         };
         let params = message_search_query_params(&query);
         let response = self
-            .authenticated(self.raw_http.get(endpoint))
-            .query(&params)
-            .send()
-            .await
-            .map_err(|_| AppError::DiscordRequest("message search request failed".to_owned()))?;
+            .execute_authenticated(self.raw_http.get(endpoint).query(&params), "message search")
+            .await?;
 
         let status = response.status();
+        if status != StatusCode::ACCEPTED
+            && let Err(error) = response.error_for_status_ref()
+        {
+            return Err(super::request_error(error, response, "message search").await);
+        }
         let raw: Value = response.json().await.map_err(|error| {
             AppError::DiscordRequest(format!("message search decode failed: {error}"))
         })?;
@@ -56,12 +58,6 @@ impl DiscordRest {
                 &raw,
             )));
         }
-        if !status.is_success() {
-            return Err(AppError::DiscordRequest(format!(
-                "message search failed: HTTP {status}"
-            )));
-        }
-
         let response = parse_message_search_response(&raw)?;
         let next_offset = query
             .offset

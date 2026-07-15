@@ -4,7 +4,7 @@ use crate::discord::test_builders::{
     GuildCreateFixture, ReactionUsersLoadedFixture, guild_create_event, reaction_users_loaded_event,
 };
 use crate::tui::keybindings::{KeymapBindingSummary, OptionsCategoryShortcut};
-use crate::tui::state::ReactionUsersPopupState;
+use crate::tui::state::{ActionAvailability, ReactionUsersPopupState};
 use crate::tui::ui::{downloads_popup_area, downloads_popup_lines};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::BTreeMap;
@@ -631,19 +631,21 @@ fn user_profile_popup_lists_mutual_servers() {
 #[test]
 fn message_action_menu_marks_selected_and_disabled_actions() {
     let actions = vec![
-        MessageActionItem {
-            label: "copy message".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::CopyContent)
-        },
-        MessageActionItem {
-            label: "Show reacted users".to_owned(),
-            enabled: false,
-            ..MessageActionItem::test(MessageActionKind::ShowReactionUsers)
-        },
-        MessageActionItem {
-            label: "Choose poll votes".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::OpenPollVotePicker)
-        },
+        MessageActionItem::new(
+            MessageActionKind::CopyContent,
+            "copy message",
+            ActionAvailability::Enabled,
+        ),
+        MessageActionItem::new(
+            MessageActionKind::ShowReactionUsers,
+            "Show reacted users",
+            ActionAvailability::Disabled("no reactions".to_owned()),
+        ),
+        MessageActionItem::new(
+            MessageActionKind::OpenPollVotePicker,
+            "Choose poll votes",
+            ActionAvailability::Enabled,
+        ),
     ];
 
     let lines = message_action_menu_lines(&actions, 1);
@@ -652,7 +654,7 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
         line_texts_from_ratatui(&lines),
         vec![
             "  [y] copy message",
-            "› [u] Show reacted users (unavailable)",
+            "› [u] Show reacted users (no reactions)",
             "  [c] Choose poll votes",
         ]
     );
@@ -671,14 +673,16 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
 #[test]
 fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
     let actions = vec![
-        MessageActionItem {
-            label: "Show cat users".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::ShowReactionUsers)
-        },
-        MessageActionItem {
-            label: "Show dog users".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::ShowReactionUsers)
-        },
+        MessageActionItem::new(
+            MessageActionKind::ShowReactionUsers,
+            "Show cat users",
+            ActionAvailability::Enabled,
+        ),
+        MessageActionItem::new(
+            MessageActionKind::ShowReactionUsers,
+            "Show dog users",
+            ActionAvailability::Enabled,
+        ),
     ];
 
     let lines = message_action_menu_lines(&actions, 0);
@@ -1386,7 +1390,10 @@ fn leader_action_popup_selection_overrides_disabled_dim() {
     state.open_focused_pane_actions();
     let lines = channel_action_menu_lines_for_test(&state);
 
-    assert_eq!(lines[0].spans[2].content, "Join voice (unavailable)");
+    assert_eq!(
+        lines[0].spans[2].content,
+        "Join voice (not a voice channel)"
+    );
     assert!(!lines[0].spans[2].style.add_modifier.contains(Modifier::DIM));
 }
 

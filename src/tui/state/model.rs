@@ -3,8 +3,9 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 use crate::discord::{
-    AttachmentDownloadId, AttachmentMediaType, ChannelState, ChannelUnreadState, GuildFolder,
-    GuildState, MuteDuration, PresenceStatus, ReactionEmoji, ReactionInfo, VoiceParticipantState,
+    AttachmentDownloadId, AttachmentMediaType, ChannelState, ChannelUnreadState, DiscordAction,
+    GuildFolder, GuildState, MuteDuration, PresenceStatus, ReactionEmoji, ReactionInfo,
+    VoiceParticipantState,
 };
 use ratatui_image::protocol::Protocol;
 
@@ -80,32 +81,76 @@ pub enum MessageActionKind {
     GoToReferencedMessage,
 }
 
+impl MessageActionKind {
+    pub(crate) const fn discord_action(self) -> Option<DiscordAction> {
+        match self {
+            Self::OpenReactionPicker => Some(DiscordAction::AddReaction),
+            Self::Reply => Some(DiscordAction::SendMessage),
+            Self::OpenDeleteConfirmation => Some(DiscordAction::DeleteMessage),
+            Self::Edit => Some(DiscordAction::EditMessage),
+            Self::RemoveEmbeds => Some(DiscordAction::RemoveMessageEmbeds),
+            Self::OpenPinConfirmation => Some(DiscordAction::PinMessage),
+            Self::OpenPollVotePicker => Some(DiscordAction::VotePoll),
+            Self::CopyContent
+            | Self::OpenUrl
+            | Self::PlayMedia
+            | Self::ViewAttachment
+            | Self::ShowProfile
+            | Self::OpenThread
+            | Self::ShowReactionUsers
+            | Self::GoToReferencedMessage => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ActionAvailability {
+    Enabled,
+    Disabled(String),
+}
+
+impl From<Option<String>> for ActionAvailability {
+    fn from(disabled_reason: Option<String>) -> Self {
+        match disabled_reason {
+            Some(reason) => Self::Disabled(reason),
+            None => Self::Enabled,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActionItem<K> {
     pub kind: K,
     pub label: String,
-    pub enabled: bool,
+    availability: ActionAvailability,
 }
 
 impl<K> ActionItem<K> {
-    pub(crate) fn new(kind: K, label: impl Into<String>, enabled: bool) -> Self {
+    pub(crate) fn new(
+        kind: K,
+        label: impl Into<String>,
+        availability: impl Into<ActionAvailability>,
+    ) -> Self {
         Self {
             kind,
             label: label.into(),
-            enabled,
+            availability: availability.into(),
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self.availability, ActionAvailability::Enabled)
+    }
+
+    pub fn disabled_reason(&self) -> Option<&str> {
+        match &self.availability {
+            ActionAvailability::Enabled => None,
+            ActionAvailability::Disabled(reason) => Some(reason),
         }
     }
 }
 
 pub type MessageActionItem = ActionItem<MessageActionKind>;
-
-#[cfg(test)]
-#[allow(dead_code)]
-impl ActionItem<MessageActionKind> {
-    pub(crate) fn test(kind: MessageActionKind) -> Self {
-        Self::new(kind, String::new(), true)
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageUrlItem {
@@ -352,6 +397,24 @@ pub enum ThreadActionKind {
     Pin,
     Delete,
     CopyId,
+}
+
+impl ThreadActionKind {
+    pub(crate) const fn discord_action(self) -> Option<DiscordAction> {
+        match self {
+            Self::ToggleFollow => Some(DiscordAction::ChangeThreadMembership),
+            Self::Lock => Some(DiscordAction::ChangeThreadLock),
+            Self::Edit => Some(DiscordAction::EditThread),
+            Self::Pin => Some(DiscordAction::PinForumPost),
+            Self::Delete => Some(DiscordAction::DeleteThread),
+            Self::MarkAsRead
+            | Self::Close
+            | Self::CopyLink
+            | Self::ToggleMute
+            | Self::NotificationSettings
+            | Self::CopyId => None,
+        }
+    }
 }
 
 pub type ThreadActionItem = ActionItem<ThreadActionKind>;

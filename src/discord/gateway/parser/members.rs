@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::discord::{
@@ -41,6 +42,21 @@ pub(super) fn parse_user_update(data: &Value) -> Option<AppEvent> {
         avatar_url: user_avatar_url(user_id, data),
         is_bot: data.get("bot").and_then(Value::as_bool).unwrap_or(false),
     })
+}
+
+pub(super) fn parse_current_user_verification(data: &Value) -> Option<AppEvent> {
+    let email_verified = data.get("verified").and_then(Value::as_bool);
+    let phone_verified = data
+        .get("phone")
+        .map(|phone| phone.as_str().is_some_and(|phone| !phone.is_empty()));
+    let mfa_enabled = data.get("mfa_enabled").and_then(Value::as_bool);
+    (email_verified.is_some() || phone_verified.is_some() || mfa_enabled.is_some()).then_some(
+        AppEvent::CurrentUserVerification {
+            email_verified,
+            phone_verified,
+            mfa_enabled,
+        },
+    )
 }
 
 pub(super) fn parse_member_chunk(data: &Value) -> Vec<AppEvent> {
@@ -224,6 +240,7 @@ pub(super) fn parse_member_info(
     value: &Value,
     guild_id: Option<Id<GuildMarker>>,
 ) -> Option<MemberInfo> {
+    let communication_disabled_until_present = value.get("communication_disabled_until").is_some();
     let user = value.get("user");
     let user_id = user
         .and_then(|user| user.get("id"))
@@ -253,5 +270,22 @@ pub(super) fn parse_member_info(
             .and_then(Value::as_array)
             .map(|roles| roles.iter().filter_map(parse_id::<RoleMarker>).collect())
             .unwrap_or_default(),
+        joined_at: value
+            .get("joined_at")
+            .and_then(Value::as_str)
+            .and_then(|joined_at| DateTime::parse_from_rfc3339(joined_at).ok())
+            .map(|joined_at| joined_at.with_timezone(&Utc)),
+        flags: value.get("flags").and_then(|flags| {
+            flags
+                .as_u64()
+                .or_else(|| flags.as_str().and_then(|flags| flags.parse().ok()))
+        }),
+        pending: value.get("pending").and_then(Value::as_bool),
+        communication_disabled_until: value
+            .get("communication_disabled_until")
+            .and_then(Value::as_str)
+            .and_then(|until| DateTime::parse_from_rfc3339(until).ok())
+            .map(|until| until.with_timezone(&Utc)),
+        communication_disabled_until_present,
     })
 }

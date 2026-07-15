@@ -1,10 +1,10 @@
 use super::{
-    ConnectionOutcome, GATEWAY_WEBSOCKET_LIMIT, GatewayCommand, HeartbeatAckState, SessionState,
-    SubscriptionDeduper, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
-    close_code_outcome, direct_message_subscribe_payload, gateway_request,
-    gateway_websocket_config, guild_channel_subscribe_payload, presence_update_payload,
-    request_guild_members_by_ids_payload, request_guild_members_payload,
-    voice_state_update_payload,
+    ConnectionOutcome, GATEWAY_SEND_LIMIT, GATEWAY_SEND_WINDOW, GATEWAY_WEBSOCKET_LIMIT,
+    GatewayCommand, GatewaySendWindow, HeartbeatAckState, SessionState, SubscriptionDeduper,
+    USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload, close_code_outcome,
+    direct_message_subscribe_payload, gateway_request, gateway_websocket_config,
+    guild_channel_subscribe_payload, presence_update_payload, request_guild_members_by_ids_payload,
+    request_guild_members_payload, voice_state_update_payload,
 };
 use crate::discord::fingerprint::{
     CLIENT_BROWSER, CLIENT_BROWSER_VERSION, CLIENT_BUILD_NUMBER, ClientFingerprint, accept_language,
@@ -15,6 +15,8 @@ use crate::discord::ids::{
 };
 use crate::discord::{ActivityEmoji, ActivityInfo, ActivityKind, PresenceStatus};
 use serde_json::json;
+use std::time::Duration;
+use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::http::header::{
     ACCEPT_LANGUAGE, CACHE_CONTROL, ORIGIN, PRAGMA, USER_AGENT,
 };
@@ -25,6 +27,24 @@ fn gateway_websocket_config_allows_large_ready_payloads() {
 
     assert_eq!(config.max_message_size, Some(GATEWAY_WEBSOCKET_LIMIT));
     assert_eq!(config.max_frame_size, Some(GATEWAY_WEBSOCKET_LIMIT));
+}
+
+#[test]
+fn gateway_send_window_limits_all_events_to_120_per_minute() {
+    let mut window = GatewaySendWindow::default();
+    let started_at = Instant::now();
+
+    for _ in 0..GATEWAY_SEND_LIMIT {
+        assert_eq!(window.delay_at(started_at), None);
+        window.record(started_at);
+    }
+
+    assert_eq!(window.delay_at(started_at), Some(GATEWAY_SEND_WINDOW));
+    assert_eq!(
+        window.delay_at(started_at + Duration::from_secs(59)),
+        Some(Duration::from_secs(1))
+    );
+    assert_eq!(window.delay_at(started_at + GATEWAY_SEND_WINDOW), None);
 }
 
 #[test]

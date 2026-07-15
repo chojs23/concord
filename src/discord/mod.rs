@@ -1,3 +1,4 @@
+mod action_policy;
 mod application_commands;
 mod auth_http;
 mod avatar;
@@ -29,8 +30,11 @@ mod rpc;
 mod state;
 mod upload;
 mod user_settings;
+mod verification;
 mod voice;
 
+pub(crate) use action_policy::ActionDecision;
+pub use action_policy::{ActionBlockReason, DiscordAction};
 pub use application_commands::{
     APPLICATION_COMMAND_CHANNEL_KIND, APPLICATION_COMMAND_MENTIONABLE_KIND,
     APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_STRING_KIND, APPLICATION_COMMAND_USER_KIND,
@@ -75,9 +79,11 @@ pub use events::{
     ThreadMembersUpdateInfo, UserGuildSettingsInfo,
 };
 pub(crate) use fingerprint::load_client_fingerprint_and_http;
-pub use guild::{CustomEmojiInfo, GuildFolder};
+pub use guild::{
+    CustomEmojiInfo, GuildFolder, GuildOnboardingInfo, GuildOnboardingMode, GuildVerificationLevel,
+};
 pub use ids::{Id, marker};
-pub use member::{MemberInfo, RoleInfo};
+pub use member::{MemberInfo, MemberOnboardingStatus, RoleInfo};
 pub use message::{
     AttachmentInfo, AttachmentMediaType, AttachmentUpdate, EmbedFieldInfo, EmbedInfo,
     InlinePreviewInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MentionInfo, MessageInfo,
@@ -87,6 +93,8 @@ pub use message::{
 pub use notification::{
     ChannelNotificationOverrideInfo, GuildNotificationSettingsInfo, NotificationLevel,
 };
+pub(crate) use permission::PermissionDecision;
+pub use permission::{DiscordPermission, PermissionDataGap};
 pub use presence::{
     ActivityAssets, ActivityButton, ActivityEmoji, ActivityInfo, ActivityKind, ActivityParty,
     ActivityTimestamps, PresenceStatus,
@@ -102,6 +110,10 @@ pub use state::{
 };
 pub(crate) use upload::read_profile_avatar_image;
 pub use user_settings::{UserCustomStatusInfo, UserFriendSourceFlagsInfo, UserSettingsInfo};
+pub(crate) use verification::GuildParticipationDecision;
+pub use verification::{
+    GuildParticipationBlock, GuildParticipationDataGap, GuildParticipationRestriction,
+};
 pub use voice::{MicrophoneSensitivityDb, VoiceVolumePercent};
 pub use voice::{
     VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,

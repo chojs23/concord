@@ -33,7 +33,14 @@ impl DashboardState {
             .cache
             .channel(channel_id)
             .is_some_and(|channel| {
-                channel.is_forum() && self.discord.cache.can_send_in_channel(channel)
+                channel.is_forum()
+                    && self.discord.cache.can_send_in_channel(channel)
+                    && self
+                        .discord
+                        .cache
+                        .guild_participation_block(channel)
+                        .is_none()
+                    && self.slow_mode_remaining_seconds(channel.id).is_none()
             });
         if !can_create {
             return;
@@ -166,6 +173,7 @@ impl DashboardState {
         // Once the cap is hit only the already-selected tags stay toggleable.
         // The rest are reported as not selectable so the picker can dim them.
         let cap_reached = popup.selected_tag_ids.len() >= MAX_FORUM_POST_TAGS;
+        let can_use_moderated_tags = self.discord.cache.can_manage_threads_in_channel(channel);
         let guild_id = channel.guild_id;
         let tags = display_ids
             .iter()
@@ -181,7 +189,8 @@ impl DashboardState {
                     custom_emoji_label: emoji.custom_emoji_label,
                     selected,
                     active: editing_tags && index == popup.selected_tag_index,
-                    selectable: selected || !cap_reached,
+                    selectable: (selected || !cap_reached)
+                        && (!tag.moderated || can_use_moderated_tags),
                 })
             })
             .collect();
@@ -360,13 +369,33 @@ impl DashboardState {
     }
 
     pub fn toggle_selected_forum_post_tag(&mut self) {
-        let Some(tag_id) = self
-            .popups
-            .forum_post_composer()
-            .and_then(|popup| popup.tag_order.get(popup.selected_tag_index).copied())
-        else {
+        let Some((channel_id, tag_id)) = self.popups.forum_post_composer().and_then(|popup| {
+            popup
+                .tag_order
+                .get(popup.selected_tag_index)
+                .copied()
+                .map(|tag_id| (popup.channel_id, tag_id))
+        }) else {
             return;
         };
+        let moderated_tag_denied = self
+            .discord
+            .cache
+            .channel(channel_id)
+            .is_some_and(|channel| {
+                channel
+                    .available_tags
+                    .iter()
+                    .any(|tag| tag.id == tag_id && tag.moderated)
+                    && !self.discord.cache.can_manage_threads_in_channel(channel)
+            });
+        if moderated_tag_denied {
+            if let Some(popup) = self.popups.forum_post_composer_mut() {
+                popup.status =
+                    Some("Manage Threads permission is required for moderated tags".to_owned());
+            }
+            return;
+        }
         if let Some(popup) = self.popups.forum_post_composer_mut() {
             if let Some(position) = popup.selected_tag_ids.iter().position(|id| *id == tag_id) {
                 popup.selected_tag_ids.remove(position);
@@ -391,19 +420,24 @@ impl DashboardState {
             })
     }
 
-    pub fn forum_post_composer_accepts_attachment_paste(&self) -> bool {
-        let Some(popup) = self.popups.forum_post_composer() else {
-            return false;
-        };
-        popup.editing == Some(ForumPostComposerFieldState::Body)
-            && self.forum_post_composer_accepts_attachments()
+    pub fn forum_post_composer_is_editing_body(&self) -> bool {
+        self.popups
+            .forum_post_composer()
+            .is_some_and(|popup| popup.editing == Some(ForumPostComposerFieldState::Body))
     }
 
     pub fn add_pending_forum_post_attachments(
         &mut self,
         attachments: Vec<MessageAttachmentUpload>,
     ) {
-        if attachments.is_empty() || !self.forum_post_composer_accepts_attachments() {
+        if attachments.is_empty() {
+            return;
+        }
+        if !self.forum_post_composer_accepts_attachments() {
+            self.show_error_toast(
+                "Attach Files permission is required in this channel",
+                std::time::Instant::now(),
+            );
             return;
         }
         if let Some(popup) = self.popups.forum_post_composer_mut() {
@@ -760,11 +794,25 @@ impl DashboardState {
         if !channel.is_forum() || !self.discord.cache.can_send_in_channel(channel) {
             return Err("cannot create posts in this channel".to_owned());
         }
+        if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
+            return Err(format!(
+                "Slow mode is active. Try again in {remaining_seconds}s"
+            ));
+        }
         if channel.requires_forum_tag() && applied_tags.is_empty() {
             return Err("at least one tag is required".to_owned());
         }
+        if applied_tags.iter().any(|tag_id| {
+            channel
+                .available_tags
+                .iter()
+                .any(|tag| tag.id == *tag_id && tag.moderated)
+        }) && !self.discord.cache.can_manage_threads_in_channel(channel)
+        {
+            return Err("Manage Threads permission is required for moderated tags".to_owned());
+        }
         if !popup.attachments.is_empty() && !self.discord.cache.can_attach_in_channel(channel) {
-            return Err("attachments are not allowed in this channel".to_owned());
+            return Err("Attach Files permission is required in this channel".to_owned());
         }
 
         let attachments = self
