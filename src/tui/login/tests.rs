@@ -117,6 +117,30 @@ fn password_input_accepts_paste_and_renders_field_states() {
         .expect("password form should render");
 
     let buffer = terminal.backend().buffer();
+    for expected in [
+        "Warning: Email/password login may cause a temporary account restriction.",
+        "Use it with caution. Token login is recommended.",
+    ] {
+        let characters: Vec<_> = expected.chars().collect();
+        let (start, row) = (0..buffer.area.height)
+            .find_map(|row| {
+                (0..=buffer.area.width.saturating_sub(characters.len() as u16)).find_map(|column| {
+                    characters
+                        .iter()
+                        .enumerate()
+                        .all(|(offset, character)| {
+                            buffer[(column.saturating_add(offset as u16), row)].symbol()
+                                == character.to_string()
+                        })
+                        .then_some((column, row))
+                })
+            })
+            .expect("password risk warning should render");
+        for column in start..start.saturating_add(characters.len() as u16) {
+            assert_eq!(buffer[(column, row)].fg, Color::Red);
+        }
+    }
+
     let email_start = (0..buffer.area.height)
         .flat_map(|row| (0..buffer.area.width).map(move |column| (column, row)))
         .find(|position| buffer[*position].symbol() == "테")

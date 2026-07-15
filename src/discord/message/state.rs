@@ -267,18 +267,19 @@ impl DiscordState {
             .is_some_and(|messages| !messages.is_empty())
     }
 
-    pub(crate) fn channel_has_cached_message_from(
+    pub(crate) fn channel_cached_message_count_from(
         &self,
         channel_id: Id<ChannelMarker>,
         author_id: Id<UserMarker>,
-    ) -> bool {
+    ) -> usize {
         self.message_cache
             .messages
             .get(&channel_id)
-            .is_some_and(|messages| {
+            .map_or(0, |messages| {
                 messages
                     .iter()
-                    .any(|message| message.author_id == author_id)
+                    .filter(|message| message.author_id == author_id)
+                    .count()
             })
     }
 

@@ -146,7 +146,7 @@ fn group_dm_unlocks_after_message_history_loads() {
 }
 
 #[test]
-fn existing_dm_waits_for_history_before_applying_the_conversation_lock() {
+fn existing_dm_requires_five_current_user_messages_before_unlocking() {
     let state_before_history = || selected_dm_state(Some(Id::new(200)), UiStateOptions::default());
 
     let mut established = state_before_history();
@@ -156,7 +156,9 @@ fn existing_dm_waits_for_history_before_applying_the_conversation_lock() {
     );
     established.push_event(latest_history_loaded(
         Id::new(20),
-        vec![dm_history_message(200, 1)],
+        (196..=200)
+            .map(|message_id| dm_history_message(message_id, 1))
+            .collect(),
     ));
     assert_eq!(established.composer_lock(), None);
     assert_eq!(
@@ -170,7 +172,13 @@ fn existing_dm_waits_for_history_before_applying_the_conversation_lock() {
     let mut new_conversation = state_before_history();
     new_conversation.push_event(latest_history_loaded(
         Id::new(20),
-        vec![dm_history_message(200, 99)],
+        vec![
+            dm_history_message(196, 1),
+            dm_history_message(197, 1),
+            dm_history_message(198, 1),
+            dm_history_message(199, 1),
+            dm_history_message(200, 99),
+        ],
     ));
     assert_eq!(
         new_conversation.composer_lock(),

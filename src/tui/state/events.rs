@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
 use crate::discord::ids::{
     Id,
@@ -9,7 +9,9 @@ use crate::discord::{
 };
 use crate::logging;
 
-use super::{ActiveGuildScope, DashboardState, VoiceConnectionUiState};
+use super::{
+    ActiveGuildScope, DashboardState, MINIMUM_ESTABLISHED_DM_MESSAGES, VoiceConnectionUiState,
+};
 
 struct EventViewportContext {
     was_at_latest: bool,
@@ -410,13 +412,37 @@ impl DashboardState {
         channel_id: Id<ChannelMarker>,
         messages: &[MessageInfo],
     ) {
+        if self
+            .navigation
+            .channels
+            .established_dms
+            .contains(&channel_id)
+            || !self
+                .discord
+                .cache
+                .channel(channel_id)
+                .is_some_and(|channel| channel.is_dm())
+        {
+            return;
+        }
         let Some(current_user_id) = self.current_user_id() else {
             return;
         };
-        if messages
-            .iter()
-            .any(|message| message.author_id == current_user_id)
-        {
+        let mut current_user_message_ids: HashSet<_> = self
+            .discord
+            .cache
+            .messages_for_channel(channel_id)
+            .into_iter()
+            .filter(|message| message.author_id == current_user_id)
+            .map(|message| message.id)
+            .collect();
+        current_user_message_ids.extend(
+            messages
+                .iter()
+                .filter(|message| message.author_id == current_user_id)
+                .map(|message| message.message_id),
+        );
+        if current_user_message_ids.len() >= MINIMUM_ESTABLISHED_DM_MESSAGES {
             self.record_dm_established(channel_id);
         }
     }

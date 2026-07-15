@@ -21,6 +21,7 @@ use crate::discord::{
     parsed_application_command_option_names,
 };
 
+use super::super::MINIMUM_ESTABLISHED_DM_MESSAGES;
 use super::super::local_upload_preview::{
     LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
     local_upload_preview_view,
@@ -428,7 +429,8 @@ impl DashboardState {
             if self
                 .discord
                 .cache
-                .channel_has_cached_message_from(channel.id, current_user_id)
+                .channel_cached_message_count_from(channel.id, current_user_id)
+                >= MINIMUM_ESTABLISHED_DM_MESSAGES
             {
                 return None;
             }

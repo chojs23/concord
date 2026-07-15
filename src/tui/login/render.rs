@@ -157,6 +157,9 @@ fn render_password_input(frame: &mut Frame, state: &LoginState) {
     let mut lines = vec![
         Line::from(Span::styled("Email/password login", accent_style())),
         Line::from(""),
+        error_line("Warning: Email/password login may cause a temporary account restriction."),
+        error_line("Use it with caution. Token login is recommended."),
+        Line::from(""),
         Line::from("Credentials are used only to request a Discord token."),
         Line::from("They are not saved. Captcha is not supported here."),
         Line::from(""),

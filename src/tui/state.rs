@@ -52,6 +52,8 @@ use runtime_state::{
 };
 use scroll::clamp_selected_index;
 
+pub(in crate::tui) const MINIMUM_ESTABLISHED_DM_MESSAGES: usize = 5;
+
 pub use composer::{
     CommandPickerEntry, ComposerLock, EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE,
     MentionPickerEntry, MentionPickerTarget,
