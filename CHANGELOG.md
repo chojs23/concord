@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.1] - 2026-07-16
+
+### Features
+
+- Handle channel permission (#259) in [#259](https://github.com/chojs23/concord/pull/259) by @chojs23
+- Adjust dm min message count and add warning message on password signin by @chojs23
+
 ## [2.4.0] - 2026-07-14
 
 ### Bug Fixes
