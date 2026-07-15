@@ -8,9 +8,151 @@ use super::{
 };
 use crate::discord::{
     ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
-    GuildVerificationLevel, MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo,
-    PremiumTier, PresenceStatus, ReactionEmoji, ReplyInfo,
+    GuildOnboardingMode, GuildVerificationLevel, MentionInfo, MessageKind, NotificationLevel,
+    PollAnswerInfo, PollInfo, PremiumTier, PresenceStatus, ReactionEmoji, ReplyInfo,
 };
+
+#[test]
+fn guild_parsers_preserve_feature_names_from_lazy_properties() {
+    let create = parse_guild_create(&json!({
+        "id": "10",
+        "properties": {
+            "name": "guild",
+            "features": ["COMMUNITY", "FUTURE_FEATURE"]
+        },
+        "channels": [],
+        "members": [],
+        "roles": [],
+        "emojis": []
+    }))
+    .expect("guild should parse");
+
+    let AppEvent::GuildCreate { features, .. } = create else {
+        panic!("expected guild create event");
+    };
+    assert_eq!(features, vec!["COMMUNITY", "FUTURE_FEATURE"]);
+
+    let update = parse_guild_update(&json!({
+        "id": "10",
+        "properties": {
+            "name": "guild",
+            "features": ["MEMBER_VERIFICATION_GATE_ENABLED"]
+        }
+    }))
+    .expect("guild update should parse");
+
+    let AppEvent::GuildUpdate { features, .. } = update else {
+        panic!("expected guild update event");
+    };
+    assert_eq!(
+        features,
+        Some(vec!["MEMBER_VERIFICATION_GATE_ENABLED".to_owned()])
+    );
+}
+
+#[test]
+fn guild_create_parser_preserves_complete_onboarding_payload() {
+    let raw_onboarding = json!({
+        "guild_id": "10",
+        "enabled": false,
+        "mode": 1,
+        "default_channel_ids": ["30", "40"],
+        "prompts": [{
+            "id": "50",
+            "title": "Choose topics",
+            "future_prompt_field": { "kept": true }
+        }],
+        "future_top_level_field": [1, 2, 3]
+    });
+    let event = parse_guild_create(&json!({
+        "id": "10",
+        "name": "guild",
+        "guild_onboarding": raw_onboarding,
+        "channels": [],
+        "members": [],
+        "roles": [],
+        "emojis": []
+    }))
+    .expect("guild should parse");
+
+    let AppEvent::GuildCreate {
+        onboarding: Some(onboarding),
+        ..
+    } = event
+    else {
+        panic!("expected guild onboarding");
+    };
+    assert_eq!(onboarding.guild_id, Id::new(10));
+    assert_eq!(onboarding.enabled, Some(false));
+    assert_eq!(onboarding.mode, Some(GuildOnboardingMode::Advanced));
+    assert_eq!(
+        onboarding.default_channel_ids,
+        vec![Id::new(30), Id::new(40)]
+    );
+    assert_eq!(onboarding.prompts().len(), 1);
+    assert_eq!(onboarding.raw["future_top_level_field"], json!([1, 2, 3]));
+    assert_eq!(
+        onboarding.raw["prompts"][0]["future_prompt_field"],
+        json!({ "kept": true })
+    );
+}
+
+#[test]
+fn guild_onboarding_update_dispatch_preserves_payload() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "GUILD_ONBOARDING_UPDATE",
+            "d": {
+                "guild_id": "10",
+                "enabled": true,
+                "mode": 99,
+                "default_channel_ids": [],
+                "prompts": [],
+                "future_field": "kept"
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(matches!(
+        events.as_slice(),
+        [AppEvent::GuildOnboardingUpdate { guild_id, onboarding }]
+            if *guild_id == Id::new(10)
+                && onboarding.enabled == Some(true)
+                && onboarding.mode == Some(GuildOnboardingMode::Unknown(99))
+                && onboarding.raw["future_field"] == json!("kept")
+    ));
+}
+
+#[test]
+fn ready_supplemental_refreshes_guild_onboarding() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "READY_SUPPLEMENTAL",
+            "d": {
+                "guilds": [{
+                    "id": "10",
+                    "guild_onboarding": {
+                        "enabled": true,
+                        "mode": 0,
+                        "default_channel_ids": [],
+                        "prompts": [],
+                        "supplemental_field": "kept"
+                    }
+                }]
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::GuildOnboardingUpdate { guild_id, onboarding }
+            if *guild_id == Id::new(10)
+                && onboarding.enabled == Some(true)
+                && onboarding.raw["supplemental_field"] == json!("kept")
+    )));
+}
 
 #[test]
 fn guild_parser_keeps_message_verification_inputs() {

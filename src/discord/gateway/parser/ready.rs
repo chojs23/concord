@@ -14,8 +14,8 @@ use crate::discord::{
 use super::{
     channels::{parse_channel_info, parse_channel_recipient_info},
     guilds::{
-        parse_guild_create, parse_role_info, parse_user_guild_settings_entries,
-        parse_user_premium_tier,
+        parse_guild_create, parse_guild_onboarding_from_guild, parse_role_info,
+        parse_user_guild_settings_entries, parse_user_premium_tier,
     },
     members::{parse_current_user_verification, parse_member_info},
     presence::parse_presence_entry,
@@ -213,6 +213,12 @@ fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
         let Some(guild_id) = guild.get("id").and_then(parse_id::<GuildMarker>) else {
             continue;
         };
+        if let Some(onboarding) = parse_guild_onboarding_from_guild(guild, guild_id) {
+            events.push(AppEvent::GuildOnboardingUpdate {
+                guild_id,
+                onboarding,
+            });
+        }
         if let Some(roles) = guild.get("roles").and_then(Value::as_array) {
             let roles: Vec<RoleInfo> = roles.iter().filter_map(parse_role_info).collect();
             if !roles.is_empty() {

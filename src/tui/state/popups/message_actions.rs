@@ -79,7 +79,7 @@ impl DashboardState {
             .as_ref()
             .is_some_and(|poll| !poll.results_finalized.unwrap_or(false))
             && self.can_vote_in_message_poll(message);
-        vec![
+        let mut items = vec![
             MessageActionItem {
                 kind: MessageActionKind::CopyContent,
                 label: "copy message".to_owned(),
@@ -157,7 +157,15 @@ impl DashboardState {
                 label: "choose poll votes".to_owned(),
                 enabled: poll_voting_enabled,
             },
-        ]
+        ];
+        if !self.guild_participation_allowed_in_channel(message.channel_id) {
+            for item in &mut items {
+                if item.kind.requires_guild_participation() {
+                    item.enabled = false;
+                }
+            }
+        }
+        items
     }
 
     pub fn selected_message_action_index(&self) -> Option<usize> {
@@ -230,6 +238,9 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
+        if !self.guild_participation_allowed_in_channel(message.channel_id) {
+            return false;
+        }
         if !self
             .discord
             .cache
@@ -256,6 +267,9 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
+        if !self.guild_participation_allowed_in_channel(message.channel_id) {
+            return false;
+        }
         self.discord
             .cache
             .can_read_message_history_in_channel(channel)
@@ -267,6 +281,9 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
+        if !self.guild_participation_allowed_in_channel(message.channel_id) {
+            return false;
+        }
         if channel.is_thread() && channel.thread_archived().unwrap_or(false) {
             return false;
         }
@@ -286,12 +303,18 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
+        if !self.guild_participation_allowed_in_channel(message.channel_id) {
+            return false;
+        }
         self.discord
             .cache
             .can_read_message_history_in_channel(channel)
     }
 
     fn can_delete_message(&self, message: &MessageState) -> bool {
+        if !self.guild_participation_allowed_in_channel(message.channel_id) {
+            return false;
+        }
         if Some(message.author_id) == self.discord.current_user_id {
             return true;
         }
@@ -301,13 +324,17 @@ impl DashboardState {
         self.discord.cache.can_manage_messages_in_channel(channel)
     }
 
-    fn can_edit_message(&self, message: &MessageState) -> bool {
-        Some(message.author_id) == self.discord.current_user_id
+    pub(in crate::tui::state) fn can_edit_message(&self, message: &MessageState) -> bool {
+        self.guild_participation_allowed_in_channel(message.channel_id)
+            && Some(message.author_id) == self.discord.current_user_id
             && message.message_kind.is_regular_or_reply()
             && message.content.is_some()
     }
 
     fn can_remove_message_embeds(&self, message: &MessageState) -> bool {
+        if !self.guild_participation_allowed_in_channel(message.channel_id) {
+            return false;
+        }
         if message.embeds.is_empty() || message.flags & MESSAGE_FLAG_SUPPRESS_EMBEDS != 0 {
             return false;
         }
@@ -321,6 +348,9 @@ impl DashboardState {
     }
 
     fn can_pin_messages_for_message(&self, message: &MessageState) -> bool {
+        if !self.guild_participation_allowed_in_channel(message.channel_id) {
+            return false;
+        }
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };

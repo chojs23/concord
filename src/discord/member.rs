@@ -12,6 +12,28 @@ use crate::discord::ids::{
     marker::{RoleMarker, UserMarker},
 };
 
+pub(crate) const MEMBER_FLAG_COMPLETED_ONBOARDING: u64 = 1 << 1;
+pub(crate) const MEMBER_FLAG_BYPASSES_VERIFICATION: u64 = 1 << 2;
+pub(crate) const MEMBER_FLAG_STARTED_ONBOARDING: u64 = 1 << 3;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MemberOnboardingStatus {
+    NotStarted,
+    InProgress,
+    Completed,
+}
+
+pub(crate) fn onboarding_status_from_flags(flags: Option<u64>) -> Option<MemberOnboardingStatus> {
+    let flags = flags?;
+    if flags & MEMBER_FLAG_COMPLETED_ONBOARDING != 0 {
+        Some(MemberOnboardingStatus::Completed)
+    } else if flags & MEMBER_FLAG_STARTED_ONBOARDING != 0 {
+        Some(MemberOnboardingStatus::InProgress)
+    } else {
+        Some(MemberOnboardingStatus::NotStarted)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MemberInfo {
     pub user_id: Id<UserMarker>,

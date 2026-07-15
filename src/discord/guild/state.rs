@@ -1,10 +1,11 @@
+use crate::discord::guild::GUILD_FEATURE_COMMUNITY;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
 use crate::discord::{
-    CustomEmojiInfo, GuildBoostTier, GuildFolder, GuildVerificationLevel,
-    capabilities::effective_attachment_limit_bytes,
+    CustomEmojiInfo, GuildBoostTier, GuildFolder, GuildOnboardingInfo, GuildVerificationLevel,
+    MemberOnboardingStatus, capabilities::effective_attachment_limit_bytes,
 };
 
 use crate::discord::state::DiscordState;
@@ -25,6 +26,32 @@ pub struct GuildState {
     pub verification_level: GuildVerificationLevel,
     /// Whether moderation permissions require two-factor authentication.
     pub mfa_level: u64,
+    /// Discord guild feature names. Unknown values are preserved so feature
+    /// based safety checks do not require a parser update for every new flag.
+    pub features: Vec<String>,
+    /// Full onboarding configuration when Discord has supplied it.
+    pub onboarding: Option<GuildOnboardingInfo>,
+}
+
+impl GuildState {
+    pub(crate) fn has_feature(&self, feature: &str) -> bool {
+        self.features.iter().any(|value| value == feature)
+    }
+
+    /// Discord does not include the full onboarding object in every user
+    /// gateway payload. An explicit disabled value is authoritative. When the
+    /// value is absent, Community status is the safe signal that onboarding
+    /// completion may still be required.
+    pub(crate) fn onboarding_may_require_completion(&self) -> bool {
+        match self
+            .onboarding
+            .as_ref()
+            .and_then(|onboarding| onboarding.enabled)
+        {
+            Some(enabled) => enabled,
+            None => self.onboarding.is_some() || self.has_feature(GUILD_FEATURE_COMMUNITY),
+        }
+    }
 }
 
 impl DiscordState {
@@ -38,6 +65,33 @@ impl DiscordState {
 
     pub fn guilds(&self) -> Vec<&GuildState> {
         self.navigation.guilds.values().collect()
+    }
+
+    pub fn guild_has_feature(&self, guild_id: Id<GuildMarker>, feature: &str) -> bool {
+        self.guild(guild_id)
+            .is_some_and(|guild| guild.has_feature(feature))
+    }
+
+    pub fn current_user_onboarding_status(
+        &self,
+        guild_id: Id<GuildMarker>,
+    ) -> Option<MemberOnboardingStatus> {
+        let current_user_id = self.current_user_id()?;
+        self.guild_details
+            .members
+            .get(&guild_id)?
+            .get(&current_user_id)?
+            .onboarding_status()
+    }
+
+    /// Whether the current user is actively between starting and completing
+    /// onboarding in a guild where cached state says it may be required.
+    pub fn current_user_is_onboarding(&self, guild_id: Id<GuildMarker>) -> Option<bool> {
+        if !self.guild(guild_id)?.onboarding_may_require_completion() {
+            return Some(false);
+        }
+        self.current_user_onboarding_status(guild_id)
+            .map(|status| status == MemberOnboardingStatus::InProgress)
     }
 
     /// Per-file upload limit for the current user posting in `channel_id`:

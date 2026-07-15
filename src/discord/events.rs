@@ -14,10 +14,11 @@ use super::commands::{
 };
 use super::{
     ActivityInfo, AttachmentUpdate, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildBoostTier,
-    GuildNotificationSettingsInfo, GuildVerificationLevel, MemberInfo, MentionInfo, MessageInfo,
-    PollInfo, PremiumTier, PresenceStatus, ReactionUserInfo, ReadStateInfo, RelationshipInfo,
-    RoleInfo, SnapshotAreas, UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceScope,
-    VoiceServerInfo, VoiceSoundKind, VoiceStateInfo, is_thread_kind,
+    GuildNotificationSettingsInfo, GuildOnboardingInfo, GuildVerificationLevel, MemberInfo,
+    MentionInfo, MessageInfo, PollInfo, PremiumTier, PresenceStatus, ReactionUserInfo,
+    ReadStateInfo, RelationshipInfo, RoleInfo, SnapshotAreas, UserProfileInfo, UserSettingsInfo,
+    VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,
+    is_thread_kind,
 };
 
 #[cfg(test)]
@@ -173,6 +174,8 @@ pub enum AppEvent {
         boost_count: u32,
         verification_level: GuildVerificationLevel,
         mfa_level: u64,
+        features: Vec<String>,
+        onboarding: Option<GuildOnboardingInfo>,
         channels: Vec<ChannelInfo>,
         members: Vec<MemberInfo>,
         presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -189,8 +192,14 @@ pub enum AppEvent {
         boost_count: Option<u32>,
         verification_level: Option<GuildVerificationLevel>,
         mfa_level: Option<u64>,
+        features: Option<Vec<String>>,
+        onboarding: Option<GuildOnboardingInfo>,
         roles: Option<Vec<RoleInfo>>,
         emojis: Option<Vec<CustomEmojiInfo>>,
+    },
+    GuildOnboardingUpdate {
+        guild_id: Id<GuildMarker>,
+        onboarding: GuildOnboardingInfo,
     },
     GuildRolesUpdate {
         guild_id: Id<GuildMarker>,
@@ -595,6 +604,7 @@ define_app_event_kinds! {
     ApplicationCommandsLoaded: AppEvent::ApplicationCommandsLoaded { .. },
     GuildCreate: AppEvent::GuildCreate { .. },
     GuildUpdate: AppEvent::GuildUpdate { .. },
+    GuildOnboardingUpdate: AppEvent::GuildOnboardingUpdate { .. },
     GuildRolesUpdate: AppEvent::GuildRolesUpdate { .. },
     GuildRoleUpsert: AppEvent::GuildRoleUpsert { .. },
     GuildRoleDelete: AppEvent::GuildRoleDelete { .. },
@@ -785,7 +795,8 @@ pub(crate) mod test_builders {
     }
 
     use crate::discord::{
-        ChannelInfo, CustomEmojiInfo, GuildBoostTier, MemberInfo, PresenceStatus, RoleInfo,
+        ChannelInfo, CustomEmojiInfo, GuildBoostTier, GuildOnboardingInfo, MemberInfo,
+        PresenceStatus, RoleInfo,
     };
 
     // Single construction seam for `AppEvent::GuildCreate` so a new field on the
@@ -799,6 +810,8 @@ pub(crate) mod test_builders {
         pub(crate) boost_count: u32,
         pub(crate) verification_level: GuildVerificationLevel,
         pub(crate) mfa_level: u64,
+        pub(crate) features: Vec<String>,
+        pub(crate) onboarding: Option<GuildOnboardingInfo>,
         pub(crate) channels: Vec<ChannelInfo>,
         pub(crate) members: Vec<MemberInfo>,
         pub(crate) presences: Vec<(Id<UserMarker>, PresenceStatus)>,
@@ -817,6 +830,8 @@ pub(crate) mod test_builders {
                 boost_count: 0,
                 verification_level: GuildVerificationLevel::None,
                 mfa_level: 0,
+                features: Vec::new(),
+                onboarding: None,
                 channels: Vec::new(),
                 members: Vec::new(),
                 presences: Vec::new(),
@@ -836,6 +851,8 @@ pub(crate) mod test_builders {
             boost_count: event.boost_count,
             verification_level: event.verification_level,
             mfa_level: event.mfa_level,
+            features: event.features,
+            onboarding: event.onboarding,
             channels: event.channels,
             members: event.members,
             presences: event.presences,
@@ -1265,6 +1282,8 @@ pub(crate) mod test_builders {
         pub(crate) boost_count: Option<u32>,
         pub(crate) verification_level: Option<GuildVerificationLevel>,
         pub(crate) mfa_level: Option<u64>,
+        pub(crate) features: Option<Vec<String>>,
+        pub(crate) onboarding: Option<GuildOnboardingInfo>,
         pub(crate) roles: Option<Vec<RoleInfo>>,
         pub(crate) emojis: Option<Vec<CustomEmojiInfo>>,
     }
@@ -1279,6 +1298,8 @@ pub(crate) mod test_builders {
                 boost_count: None,
                 verification_level: None,
                 mfa_level: None,
+                features: None,
+                onboarding: None,
                 roles: None,
                 emojis: None,
             }
@@ -1294,6 +1315,8 @@ pub(crate) mod test_builders {
             boost_count: f.boost_count,
             verification_level: f.verification_level,
             mfa_level: f.mfa_level,
+            features: f.features,
+            onboarding: f.onboarding,
             roles: f.roles,
             emojis: f.emojis,
         }
@@ -1565,6 +1588,7 @@ impl AppEventKind {
         match self {
             AppEventKind::GuildCreate
             | AppEventKind::GuildUpdate
+            | AppEventKind::GuildOnboardingUpdate
             | AppEventKind::GuildDelete
             | AppEventKind::ThreadListSync
             | AppEventKind::ThreadMembersUpdateDispatch

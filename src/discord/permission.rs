@@ -31,8 +31,9 @@ const PERMISSION_BYPASS_SLOWMODE: u64 = 0x0010_0000_0000_0000;
 /// Sentinel returned by `effective_permissions_for_channel` when the data
 /// needed to compute the user's permissions is missing (no READY yet, no
 /// guild cached, no role cache, no membership entry, etc.). Callers that
-/// translate this into a boolean should default to "permissive" so the UI is
-/// not silently disabled while we are still hydrating state.
+/// translate this into a boolean may stay permissive for UI rendering while
+/// state hydrates. Request-boundary checks must reject this sentinel before
+/// sending a mutation to Discord.
 ///
 /// This must stay distinct from `PERMISSIONS_ALL`, because guild owners and
 /// ADMINISTRATOR holders have real full permissions.
@@ -48,8 +49,8 @@ impl DiscordState {
     }
 
     /// Whether the user can post messages in `channel`. Returns `true` for
-    /// DMs (no guild-style perms apply) and when the underlying permission
-    /// computation is "unknown" (state still hydrating).
+    /// DMs and while guild permission state is still hydrating. Request code
+    /// must pair this with `channel_permissions_are_known`.
     pub fn can_send_in_channel(&self, channel: &ChannelState) -> bool {
         let permissions = self.effective_permissions_for_channel(channel);
         can_access_channel_messages(channel, permissions)
@@ -74,6 +75,10 @@ impl DiscordState {
     pub fn bypasses_slow_mode(&self, channel: &ChannelState) -> bool {
         let permissions = self.effective_permissions_for_channel(channel);
         permissions == PERMISSIONS_ALL || permission_set(permissions, PERMISSION_BYPASS_SLOWMODE)
+    }
+
+    pub(crate) fn channel_permissions_are_known(&self, channel: &ChannelState) -> bool {
+        self.effective_permissions_for_channel(channel) != PERMISSIONS_UNKNOWN
     }
 
     pub(crate) fn has_full_channel_permissions(&self, channel: &ChannelState) -> bool {
@@ -155,8 +160,7 @@ impl DiscordState {
 
     /// Whether the user can connect to a guild voice channel. Unknown
     /// permissions stay optimistic while state hydrates, but an explicit
-    /// missing `CONNECT` bit disables the join affordance to avoid predictable
-    /// Discord-side denials.
+    /// missing `CONNECT` bit disables the join affordance.
     pub fn can_connect_voice_channel(&self, channel: &ChannelState) -> bool {
         if !channel.is_voice() {
             return false;

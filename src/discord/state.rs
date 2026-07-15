@@ -227,6 +227,8 @@ impl DiscordState {
                 boost_count,
                 verification_level,
                 mfa_level,
+                features,
+                onboarding,
                 roles,
                 emojis,
             } => {
@@ -247,6 +249,12 @@ impl DiscordState {
                     if let Some(mfa_level) = mfa_level {
                         guild.mfa_level = *mfa_level;
                     }
+                    if let Some(features) = features {
+                        guild.features = features.clone();
+                    }
+                    if let Some(onboarding) = onboarding {
+                        guild.onboarding = Some(onboarding.clone());
+                    }
                 }
                 if let Some(roles) = roles {
                     self.guild_details.roles.insert(*guild_id, role_map(roles));
@@ -255,6 +263,14 @@ impl DiscordState {
                     self.navigation
                         .custom_emojis
                         .insert(*guild_id, emojis.clone());
+                }
+            }
+            AppEvent::GuildOnboardingUpdate {
+                guild_id,
+                onboarding,
+            } => {
+                if let Some(guild) = self.navigation.guilds.get_mut(guild_id) {
+                    guild.onboarding = Some(onboarding.clone());
                 }
             }
             AppEvent::GuildRolesUpdate { guild_id, roles } => {
@@ -716,6 +732,8 @@ impl DiscordState {
             boost_count,
             verification_level,
             mfa_level,
+            features,
+            onboarding,
             channels,
             members,
             presences,
@@ -739,6 +757,8 @@ impl DiscordState {
                 boost_count: *boost_count,
                 verification_level: *verification_level,
                 mfa_level: *mfa_level,
+                features: features.clone(),
+                onboarding: onboarding.clone(),
             },
         );
 

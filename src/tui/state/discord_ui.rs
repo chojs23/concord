@@ -39,6 +39,21 @@ impl DerefMut for DiscordUiState {
 }
 
 impl DashboardState {
+    pub(super) fn guild_participation_allowed_in_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> bool {
+        self.discord
+            .cache
+            .channel(channel_id)
+            .is_some_and(|channel| {
+                self.discord
+                    .cache
+                    .guild_participation_restriction(channel)
+                    .is_none()
+            })
+    }
+
     pub(super) fn current_user_has_nitro(&self) -> bool {
         self.discord
             .current_user_premium_tier

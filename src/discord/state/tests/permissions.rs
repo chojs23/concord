@@ -783,6 +783,40 @@ fn manage_messages_defaults_permissive_while_guild_member_roles_hydrate() {
 }
 
 #[test]
+fn message_permission_state_stays_unknown_while_current_member_hydrates() {
+    let me = Id::new(10);
+    let owner = Id::new(11);
+    let guild = Id::new(1);
+    let channel = Id::new(2);
+    let mut state = DiscordState::default();
+    state.apply_event(&AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        member_count: Some(1),
+        owner_id: Some(owner),
+        channels: vec![ChannelInfo {
+            position: Some(0),
+            guild_id: Some(guild),
+            name: "general".to_owned(),
+            ..channel_info(channel, "GuildText", Vec::new())
+        }],
+        members: Vec::new(),
+        roles: vec![role_info(
+            Id::new(guild.get()),
+            "@everyone",
+            VIEW_CHANNEL | SEND_MESSAGES | SEND_TTS_MESSAGES | ATTACH_FILES | READ_MESSAGE_HISTORY,
+        )],
+        ..GuildCreateFixture::new(guild)
+    }));
+
+    let channel = state.channel(channel).expect("channel should exist");
+    assert!(!state.channel_permissions_are_known(channel));
+    assert!(state.can_send_in_channel(channel));
+}
+
+#[test]
 fn manage_messages_is_never_granted_for_dm_channels() {
     let mut state = DiscordState::default();
     state.apply_event(&AppEvent::ChannelUpsert(dm_channel(Id::new(99), "alice")));

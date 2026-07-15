@@ -277,12 +277,32 @@ async fn request_error(
         };
     }
     let detail = body
-        .map(truncate_error_body)
+        .map(discord_error_detail)
         .filter(|detail| !detail.trim().is_empty());
     match detail {
         Some(detail) => AppError::DiscordRequest(format!("{label} failed: {error}: {detail}")),
         None => AppError::DiscordRequest(format!("{label} failed: {error}")),
     }
+}
+
+fn discord_error_detail(body: String) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(&body)
+        && let Some(message) = value.get("message").and_then(Value::as_str)
+        && !message.trim().is_empty()
+    {
+        let message = truncate_error_body(message.to_owned());
+        let code = value.get("code").and_then(|code| {
+            code.as_u64()
+                .map(|code| code.to_string())
+                .or_else(|| code.as_str().map(str::to_owned))
+        });
+        return match code {
+            Some(code) => format!("{message} (Discord code {code})"),
+            None => message,
+        };
+    }
+
+    truncate_error_body(body)
 }
 
 fn seconds_to_millis_ceil(seconds: f64) -> u64 {

@@ -1184,6 +1184,73 @@ fn thread_action_menu_opens_with_permission_dimmed_items() {
 }
 
 #[test]
+fn incomplete_onboarding_disables_thread_mutations_but_keeps_local_actions() {
+    const MEMBER_FLAG_STARTED_ONBOARDING: u64 = 1 << 3;
+    let guild_id = Id::new(1);
+    let forum_id = Id::new(20);
+    let thread_id: Id<ChannelMarker> = Id::new(30);
+    let user_id = Id::new(99);
+    let mut member = member_with_username(user_id, "me", "me");
+    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
+    member.pending = Some(false);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(guild_create_event(GuildCreateFixture {
+        owner_id: Some(Id::new(100)),
+        features: vec!["COMMUNITY".to_owned()],
+        channels: vec![forum_channel_info(guild_id, forum_id)],
+        members: vec![member],
+        roles: vec![role_info(
+            Id::new(guild_id.get()),
+            "@everyone",
+            PERM_VIEW_CHANNEL,
+        )],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.activate_guild(ActiveGuildScope::Guild(guild_id));
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        current_user_joined_thread: Some(true),
+        ..forum_thread_info(
+            guild_id,
+            forum_id,
+            thread_id.get(),
+            "my post",
+            Some(301),
+            false,
+        )
+    }));
+    state.focus_pane(FocusPane::Channels);
+    state.move_down();
+    assert_eq!(
+        state
+            .channel_pane_entries()
+            .get(state.selected_channel())
+            .and_then(|entry| entry.channel_id()),
+        Some(thread_id)
+    );
+    assert!(state.open_selected_thread_actions());
+
+    let items = state.selected_thread_action_items();
+    let enabled = |kind: ThreadActionKind| {
+        items
+            .iter()
+            .find(|item| item.kind == kind)
+            .is_some_and(|item| item.enabled)
+    };
+    assert!(!enabled(ThreadActionKind::ToggleFollow));
+    assert!(!enabled(ThreadActionKind::Close));
+    assert!(!enabled(ThreadActionKind::Lock));
+    assert!(!enabled(ThreadActionKind::Edit));
+    assert!(!enabled(ThreadActionKind::Pin));
+    assert!(!enabled(ThreadActionKind::Delete));
+    assert!(enabled(ThreadActionKind::CopyLink));
+    assert!(enabled(ThreadActionKind::CopyId));
+}
+
+#[test]
 fn thread_actions_skipped_outside_forum_posts() {
     // A regular message channel has no forum post focused, so the trigger falls
     // through to the normal action contexts.

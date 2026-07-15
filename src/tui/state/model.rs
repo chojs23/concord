@@ -80,6 +80,21 @@ pub enum MessageActionKind {
     GoToReferencedMessage,
 }
 
+impl MessageActionKind {
+    pub(crate) const fn requires_guild_participation(self) -> bool {
+        matches!(
+            self,
+            Self::OpenReactionPicker
+                | Self::Reply
+                | Self::OpenDeleteConfirmation
+                | Self::Edit
+                | Self::RemoveEmbeds
+                | Self::OpenPinConfirmation
+                | Self::OpenPollVotePicker
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActionItem<K> {
     pub kind: K,
@@ -334,6 +349,12 @@ pub enum ChannelActionKind {
     ToggleMute,
 }
 
+impl ChannelActionKind {
+    pub(crate) const fn requires_guild_participation(self) -> bool {
+        matches!(self, Self::JoinVoice)
+    }
+}
+
 pub type ChannelActionItem = ActionItem<ChannelActionKind>;
 
 /// Actions on a thread (a regular thread or a forum post). Mirrors Discord's
@@ -352,6 +373,15 @@ pub enum ThreadActionKind {
     Pin,
     Delete,
     CopyId,
+}
+
+impl ThreadActionKind {
+    pub(crate) const fn requires_guild_participation(self) -> bool {
+        matches!(
+            self,
+            Self::ToggleFollow | Self::Close | Self::Lock | Self::Edit | Self::Pin | Self::Delete
+        )
+    }
 }
 
 pub type ThreadActionItem = ActionItem<ThreadActionKind>;

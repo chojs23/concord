@@ -67,6 +67,37 @@ fn message_action_items_reflect_selected_message_capabilities() {
 }
 
 #[test]
+fn incomplete_onboarding_disables_message_mutations_but_keeps_local_actions() {
+    let mut state = state_with_messages(1);
+    apply_incomplete_community_onboarding(&mut state, Id::new(1), Id::new(99));
+    state.activate_guild(ActiveGuildScope::Guild(Id::new(1)));
+    state.activate_channel(Id::new(2));
+    state.focus_pane(FocusPane::Messages);
+    state.jump_bottom();
+
+    let actions = state.selected_message_action_items();
+    for kind in [
+        MessageActionKind::OpenReactionPicker,
+        MessageActionKind::Reply,
+        MessageActionKind::OpenDeleteConfirmation,
+        MessageActionKind::Edit,
+        MessageActionKind::RemoveEmbeds,
+        MessageActionKind::OpenPinConfirmation,
+        MessageActionKind::OpenPollVotePicker,
+    ] {
+        assert!(
+            !message_action(&actions, kind).enabled,
+            "{kind:?} should require completed onboarding"
+        );
+    }
+    assert!(message_action(&actions, MessageActionKind::CopyContent).enabled);
+    assert!(message_action(&actions, MessageActionKind::ShowProfile).enabled);
+
+    state.direct_edit_selected_message();
+    assert!(!state.is_composing());
+}
+
+#[test]
 fn remove_embeds_message_action_emits_command_for_unsuppressed_embeds() {
     let mut state = state_with_messages(1);
     state.push_event(AppEvent::Ready {

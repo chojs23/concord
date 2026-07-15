@@ -10,6 +10,7 @@ use crate::{
             Id,
             marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
         },
+        member::MEMBER_FLAG_STARTED_ONBOARDING,
         test_builders::{
             GuildCreateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
             UserProfileLoadFailedFixture, guild_create_event, guild_message_create_fixture,
@@ -402,6 +403,145 @@ async fn send_message_rejects_explicit_missing_send_permission() {
 }
 
 #[tokio::test]
+async fn send_message_rejects_incomplete_onboarding_before_rest() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL | SEND_MESSAGES).await;
+    let mut member = permission_fixture_member(Id::new(10));
+    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
+    client
+        .publish_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member,
+        })
+        .await;
+    client
+        .publish_event(AppEvent::GuildUpdate {
+            guild_id: Id::new(1),
+            name: "guild".to_owned(),
+            owner_id: None,
+            boost_tier: None,
+            boost_count: None,
+            verification_level: None,
+            mfa_level: None,
+            features: Some(vec!["COMMUNITY".to_owned()]),
+            onboarding: None,
+            roles: None,
+            emojis: None,
+        })
+        .await;
+
+    let error = client
+        .ensure_can_send_message(Id::new(2), None, &[])
+        .expect_err("incomplete onboarding should stop before REST");
+
+    assert!(matches!(
+        error,
+        AppError::DiscordRequest(message) if message.contains("server's onboarding")
+    ));
+}
+
+#[tokio::test]
+async fn message_mutation_validators_reject_incomplete_onboarding() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(
+        &client,
+        "GuildText",
+        VIEW_CHANNEL
+            | SEND_MESSAGES
+            | READ_MESSAGE_HISTORY
+            | ADD_REACTIONS
+            | PIN_MESSAGES
+            | USE_APPLICATION_COMMANDS,
+    )
+    .await;
+    client
+        .publish_event(build_message_create_event(MessageCreateFixture {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            message_id: Id::new(20),
+            author_id: Id::new(10),
+            ..guild_message_create_fixture()
+        }))
+        .await;
+    publish_incomplete_community_onboarding(&client).await;
+    let invocation = ApplicationCommandInvocation {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        command_identity: None,
+        command_name: "test".to_owned(),
+        content: "/test".to_owned(),
+    };
+
+    let errors = [
+        client.ensure_can_edit_message(Id::new(2), Id::new(20)),
+        client.ensure_can_delete_message(Id::new(2), Id::new(20)),
+        client.ensure_can_add_reaction(
+            Id::new(2),
+            Id::new(20),
+            &ReactionEmoji::Unicode("👍".to_owned()),
+        ),
+        client.ensure_can_remove_current_user_reaction(Id::new(2)),
+        client.ensure_can_pin_message(Id::new(2)),
+        client.ensure_can_vote_poll(Id::new(2)),
+        client.ensure_can_run_application_command(&invocation),
+    ];
+    for result in errors {
+        assert!(matches!(
+            result,
+            Err(AppError::DiscordRequest(message)) if message.contains("server's onboarding")
+        ));
+    }
+}
+
+#[tokio::test]
+async fn voice_join_rejects_incomplete_onboarding_before_gateway_command() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL | CONNECT).await;
+    publish_incomplete_community_onboarding(&client).await;
+
+    let error = client
+        .update_voice_state(
+            VoiceScope::Guild(Id::new(1)),
+            Some(Id::new(2)),
+            false,
+            false,
+        )
+        .expect_err("incomplete onboarding should stop a voice join");
+
+    assert!(error.contains("server's onboarding"));
+}
+
+#[tokio::test]
+async fn thread_mutation_validator_rejects_incomplete_onboarding() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL | MANAGE_THREADS).await;
+    client
+        .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            parent_id: Some(Id::new(2)),
+            name: "thread".to_owned(),
+            current_user_joined_thread: Some(true),
+            thread_metadata: Some(ThreadMetadataInfo::test(false, false)),
+            ..ChannelInfo::test(Id::new(3), "GuildPublicThread")
+        }))
+        .await;
+    publish_incomplete_community_onboarding(&client).await;
+
+    let error = client
+        .ensure_can_manage_thread(Id::new(3), "edit this thread")
+        .expect_err("incomplete onboarding should stop a thread mutation");
+
+    assert!(matches!(
+        error,
+        AppError::DiscordRequest(message) if message.contains("server's onboarding")
+    ));
+}
+
+#[tokio::test]
 async fn send_message_rejects_explicit_missing_attach_permission() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
@@ -465,6 +605,8 @@ async fn forum_post_rejects_unmet_guild_verification() {
             boost_count: None,
             verification_level: Some(GuildVerificationLevel::Low),
             mfa_level: None,
+            features: None,
+            onboarding: None,
             roles: None,
             emojis: None,
         })
@@ -483,7 +625,7 @@ async fn forum_post_rejects_unmet_guild_verification() {
 
     assert!(matches!(
         error,
-        AppError::DiscordRequest(message) if message.contains("guild verification")
+        AppError::DiscordRequest(message) if message.contains("verify the Discord account email")
     ));
 }
 
@@ -1179,6 +1321,9 @@ const READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
 const CONNECT: u64 = 0x0000_0000_0010_0000;
 const SPEAK: u64 = 0x0000_0000_0020_0000;
 const MANAGE_CHANNELS: u64 = 0x0000_0000_0000_0010;
+const USE_APPLICATION_COMMANDS: u64 = 0x0000_0000_8000_0000;
+const MANAGE_THREADS: u64 = 0x0000_0004_0000_0000;
+const PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
 const SEND_MESSAGES_IN_THREADS: u64 = 0x0000_0040_0000_0000;
 
 async fn publish_permission_fixture(
@@ -1209,6 +1354,33 @@ async fn publish_permission_fixture(
             )],
             ..GuildCreateFixture::new(Id::new(1))
         }))
+        .await;
+}
+
+async fn publish_incomplete_community_onboarding(client: &DiscordClient) {
+    let mut member = permission_fixture_member(Id::new(10));
+    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
+    member.pending = Some(false);
+    client
+        .publish_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member,
+        })
+        .await;
+    client
+        .publish_event(AppEvent::GuildUpdate {
+            guild_id: Id::new(1),
+            name: "guild".to_owned(),
+            owner_id: None,
+            boost_tier: None,
+            boost_count: None,
+            verification_level: None,
+            mfa_level: None,
+            features: Some(vec!["COMMUNITY".to_owned()]),
+            onboarding: None,
+            roles: None,
+            emojis: None,
+        })
         .await;
 }
 

@@ -9,6 +9,10 @@ fn verification_composer_text_explains_each_restriction() {
             "membership screening",
         ),
         (
+            MessageVerificationRestriction::OnboardingIncomplete,
+            "server onboarding",
+        ),
+        (
             MessageVerificationRestriction::EmailVerificationRequired,
             "account email",
         ),

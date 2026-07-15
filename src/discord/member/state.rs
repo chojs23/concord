@@ -7,7 +7,8 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
 };
-use crate::discord::{ActivityInfo, MemberInfo, PresenceStatus, RoleInfo};
+use crate::discord::member::onboarding_status_from_flags;
+use crate::discord::{ActivityInfo, MemberInfo, MemberOnboardingStatus, PresenceStatus, RoleInfo};
 
 use crate::discord::state::{
     DiscordState, MAX_RECENT_MEMBER_GUILDS, TYPING_INDICATOR_TTL, is_fallback_identity,
@@ -34,6 +35,14 @@ pub struct GuildMemberState {
     pub pending: Option<bool>,
     pub communication_disabled_until: Option<DateTime<Utc>>,
     pub status: PresenceStatus,
+}
+
+impl GuildMemberState {
+    /// Returns the progress Discord reports through guild member flags.
+    /// `None` means the source payload has not supplied flags yet.
+    pub fn onboarding_status(&self) -> Option<MemberOnboardingStatus> {
+        onboarding_status_from_flags(self.flags)
+    }
 }
 
 #[cfg(test)]

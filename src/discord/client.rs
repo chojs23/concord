@@ -364,6 +364,12 @@ impl DiscordClient {
                     let Some(channel) = state.channel(channel_id) else {
                         return Err("cannot verify voice channel permissions".to_owned());
                     };
+                    rest_actions::ensure_guild_participation(
+                        &state,
+                        channel,
+                        "join this voice channel",
+                    )
+                    .map_err(|error| error.to_string())?;
                     if !state.can_connect_voice_channel(channel) {
                         return Err("cannot connect to voice channel".to_owned());
                     }
@@ -435,6 +441,8 @@ impl DiscordClient {
             let Some(channel) = state.channel(channel_id) else {
                 return Err("cannot verify voice channel permissions".to_owned());
             };
+            rest_actions::ensure_guild_participation(&state, channel, "transmit microphone audio")
+                .map_err(|error| error.to_string())?;
             if !state.can_speak_in_voice_channel(channel) {
                 return Err("Speak permission is required to transmit microphone audio".to_owned());
             }

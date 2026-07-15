@@ -133,6 +133,31 @@ async fn rate_limit_returns_retry_delay_without_retrying() {
 }
 
 #[tokio::test]
+async fn discord_json_error_decodes_message_and_code() {
+    let body = r#"{"message":"\uad8c\ud55c \uc5c6\uc74c","code":50013}"#;
+    let response = format!(
+        "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let (base_url, server) = status_server(vec![&response]);
+    let rest = test_rest();
+
+    let error = rest
+        .send_unit(rest.raw_http.get(format!("{base_url}/messages")), "send")
+        .await
+        .expect_err("Discord should return the decoded API error");
+
+    assert!(matches!(
+        error,
+        AppError::DiscordRequest(message)
+            if message.contains("권한 없음")
+                && message.contains("Discord code 50013")
+                && !message.contains(r"\uad8c")
+    ));
+    server.join().expect("test server should finish");
+}
+
+#[tokio::test]
 async fn message_send_coordinator_serializes_only_matching_channels() {
     let coordinator = Arc::new(MessageSendCoordinator::default());
     let first_guard = coordinator.acquire(Id::new(10)).await;

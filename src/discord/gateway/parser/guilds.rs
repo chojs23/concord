@@ -1,9 +1,10 @@
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::discord::{
     ChannelInfo, ChannelNotificationOverrideInfo, CustomEmojiInfo, GuildBoostTier,
-    GuildNotificationSettingsInfo, GuildVerificationLevel, NotificationLevel, PremiumTier,
-    RoleInfo, UserGuildSettingsInfo,
+    GuildNotificationSettingsInfo, GuildOnboardingInfo, GuildOnboardingMode,
+    GuildVerificationLevel, NotificationLevel, PremiumTier, RoleInfo, UserGuildSettingsInfo,
     events::AppEvent,
     ids::{
         Id,
@@ -87,6 +88,8 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     let boost_count = parse_guild_boost_count(data).unwrap_or(0);
     let verification_level = parse_guild_verification_level(data).unwrap_or_default();
     let mfa_level = parse_guild_mfa_level(data).unwrap_or(0);
+    let features = parse_guild_features(data).unwrap_or_default();
+    let onboarding = parse_guild_onboarding_from_guild(data, guild_id);
 
     Some(AppEvent::GuildCreate {
         guild_id,
@@ -97,6 +100,8 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         boost_count,
         verification_level,
         mfa_level,
+        features,
+        onboarding,
         channels,
         members,
         presences,
@@ -125,6 +130,72 @@ fn parse_guild_verification_level(data: &Value) -> Option<GuildVerificationLevel
 
 fn parse_guild_mfa_level(data: &Value) -> Option<u64> {
     guild_field(data, "mfa_level").and_then(Value::as_u64)
+}
+
+fn parse_guild_features(data: &Value) -> Option<Vec<String>> {
+    guild_field(data, "features")
+        .and_then(Value::as_array)
+        .map(|features| {
+            features
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+}
+
+pub(super) fn parse_guild_onboarding_from_guild(
+    data: &Value,
+    guild_id: Id<GuildMarker>,
+) -> Option<GuildOnboardingInfo> {
+    guild_field(data, "guild_onboarding")
+        .or_else(|| guild_field(data, "onboarding"))
+        .and_then(|onboarding| parse_guild_onboarding(onboarding, Some(guild_id)))
+}
+
+fn parse_guild_onboarding(
+    value: &Value,
+    fallback_guild_id: Option<Id<GuildMarker>>,
+) -> Option<GuildOnboardingInfo> {
+    let guild_id = value
+        .get("guild_id")
+        .and_then(parse_id::<GuildMarker>)
+        .or(fallback_guild_id)?;
+    let enabled = value.get("enabled").and_then(Value::as_bool);
+    let mode = value
+        .get("mode")
+        .and_then(Value::as_u64)
+        .map(GuildOnboardingMode::from_value);
+    let default_channel_ids = value
+        .get("default_channel_ids")
+        .and_then(Value::as_array)
+        .map(|channel_ids| {
+            channel_ids
+                .iter()
+                .filter_map(parse_id::<ChannelMarker>)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(GuildOnboardingInfo {
+        guild_id,
+        enabled,
+        mode,
+        default_channel_ids,
+        raw: Arc::new(value.clone()),
+    })
+}
+
+pub(super) fn parse_guild_onboarding_update(data: &Value) -> Option<AppEvent> {
+    let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>)?;
+    let value = data
+        .get("guild_onboarding")
+        .or_else(|| data.get("onboarding"))
+        .unwrap_or(data);
+    let onboarding = parse_guild_onboarding(value, Some(guild_id))?;
+    Some(AppEvent::GuildOnboardingUpdate {
+        guild_id,
+        onboarding,
+    })
 }
 
 pub(super) fn parse_role_info(value: &Value) -> Option<RoleInfo> {
@@ -246,6 +317,8 @@ pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
     let boost_count = parse_guild_boost_count(data);
     let verification_level = parse_guild_verification_level(data);
     let mfa_level = parse_guild_mfa_level(data);
+    let features = parse_guild_features(data);
+    let onboarding = parse_guild_onboarding_from_guild(data, guild_id);
     Some(AppEvent::GuildUpdate {
         guild_id,
         name,
@@ -254,6 +327,8 @@ pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         boost_count,
         verification_level,
         mfa_level,
+        features,
+        onboarding,
         roles,
         emojis,
     })

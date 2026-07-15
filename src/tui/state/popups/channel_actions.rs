@@ -93,6 +93,7 @@ impl DashboardState {
         // no guild permission model, so they are always joinable.
         let can_join_voice = channel.supports_voice_call()
             && !joined_here
+            && self.guild_participation_allowed_in_channel(channel_id)
             && (channel.guild_id.is_none()
                 || self.discord.cache.can_connect_voice_channel(channel));
         let can_transmit_microphone = channel.guild_id.is_none()
@@ -115,7 +116,7 @@ impl DashboardState {
             (false, false) => "Mute channel",
         };
 
-        vec![
+        let mut items = vec![
             ChannelActionItem::new(
                 ChannelActionKind::JoinVoice,
                 join_voice_label,
@@ -138,7 +139,15 @@ impl DashboardState {
                 mark_as_read_enabled,
             ),
             ChannelActionItem::new(ChannelActionKind::ToggleMute, mute_label, true),
-        ]
+        ];
+        if !self.guild_participation_allowed_in_channel(channel_id) {
+            for item in &mut items {
+                if item.kind.requires_guild_participation() {
+                    item.enabled = false;
+                }
+            }
+        }
+        items
     }
 
     pub fn selected_channel_mute_duration_items(&self) -> &'static [MuteActionDurationItem] {

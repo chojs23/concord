@@ -5,7 +5,7 @@ use crate::discord::test_builders::{
     typing_start_event,
 };
 use crate::discord::{
-    ApplicationCommandInfo, ApplicationCommandOptionInfo, GuildVerificationLevel,
+    ApplicationCommandInfo, ApplicationCommandOptionInfo, GuildVerificationLevel, MemberInfo,
     MessageAttachmentUpload, MessageVerificationRestriction,
 };
 use crate::tui::keybindings::ScrollAction;
@@ -14,6 +14,7 @@ use crate::tui::text_input::TextEditAction;
 use serde_json::json;
 
 const PERM_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
+const MEMBER_FLAG_STARTED_ONBOARDING: u64 = 1 << 3;
 
 #[test]
 fn slow_mode_closes_and_locks_the_composer_with_a_countdown() {
@@ -106,6 +107,36 @@ fn verification_requirement_prevents_composer_activation() {
         state.composer_lock(),
         Some(ComposerLock::Verification(
             MessageVerificationRestriction::EmailVerificationRequired
+        ))
+    );
+    assert!(!state.is_composing());
+    state.start_composer();
+    assert!(!state.is_composing());
+}
+
+#[test]
+fn community_onboarding_requirement_prevents_composer_activation_without_config_object() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    assert!(state.is_composing());
+
+    let mut member = MemberInfo::test(Id::new(10), "me");
+    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(1),
+        member,
+    });
+    state.push_event(guild_update_event(GuildUpdateFixture {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        features: Some(vec!["COMMUNITY".to_owned()]),
+        ..GuildUpdateFixture::new()
+    }));
+
+    assert_eq!(
+        state.composer_lock(),
+        Some(ComposerLock::Verification(
+            MessageVerificationRestriction::OnboardingIncomplete
         ))
     );
     assert!(!state.is_composing());

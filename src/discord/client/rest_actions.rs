@@ -60,7 +60,7 @@ impl DiscordClient {
     }
 
     pub fn trigger_typing(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
-        self.ensure_channel_action(
+        self.ensure_guild_channel_action(
             channel_id,
             "Send Messages",
             "show a typing indicator",
@@ -112,10 +112,11 @@ impl DiscordClient {
         let channel = state.channel(channel_id).ok_or_else(|| {
             AppError::DiscordRequest("cannot verify message channel permissions".to_owned())
         })?;
-        if let Some(restriction) = state.message_verification_restriction(channel) {
-            return Err(AppError::DiscordRequest(format!(
-                "cannot send message until guild verification is complete: {restriction:?}"
-            )));
+        ensure_guild_participation(&state, channel, "send message")?;
+        if !state.channel_permissions_are_known(channel) {
+            return Err(AppError::DiscordRequest(
+                "cannot verify message channel permissions".to_owned(),
+            ));
         }
         if !state.can_send_in_channel(channel) {
             return Err(AppError::DiscordRequest(
@@ -148,10 +149,11 @@ impl DiscordClient {
                 "cannot create forum post outside a forum channel".to_owned(),
             ));
         }
-        if let Some(restriction) = state.message_verification_restriction(channel) {
-            return Err(AppError::DiscordRequest(format!(
-                "cannot create forum post until guild verification is complete: {restriction:?}"
-            )));
+        ensure_guild_participation(&state, channel, "create forum post")?;
+        if !state.channel_permissions_are_known(channel) {
+            return Err(AppError::DiscordRequest(
+                "cannot verify forum channel permissions".to_owned(),
+            ));
         }
         if !state.can_send_in_channel(channel) {
             return Err(AppError::DiscordRequest(
@@ -201,10 +203,11 @@ impl DiscordClient {
         let channel = state.channel(channel_id).ok_or_else(|| {
             AppError::DiscordRequest("cannot verify text-to-speech channel permissions".to_owned())
         })?;
-        if let Some(restriction) = state.message_verification_restriction(channel) {
-            return Err(AppError::DiscordRequest(format!(
-                "cannot send text-to-speech message until guild verification is complete: {restriction:?}"
-            )));
+        ensure_guild_participation(&state, channel, "send text-to-speech message")?;
+        if !state.channel_permissions_are_known(channel) {
+            return Err(AppError::DiscordRequest(
+                "cannot verify text-to-speech channel permissions".to_owned(),
+            ));
         }
         if !state.can_send_tts_in_channel(channel) {
             return Err(AppError::DiscordRequest(
@@ -236,6 +239,12 @@ impl DiscordClient {
                 .state
                 .read()
                 .expect("discord state lock is not poisoned");
+            let channel = state.channel(channel_id).ok_or_else(|| {
+                AppError::DiscordRequest(
+                    "cannot verify permission to remove message embeds".to_owned(),
+                )
+            })?;
+            ensure_guild_participation(&state, channel, "remove message embeds")?;
             let message = state
                 .messages_for_channel(channel_id)
                 .into_iter()
@@ -248,18 +257,11 @@ impl DiscordClient {
                     ))
                 })?;
             let is_author = Some(message.author_id) == state.current_user_id();
-            if !is_author {
-                let Some(channel) = state.channel(channel_id) else {
-                    return Err(AppError::DiscordRequest(
-                        "cannot verify permission to remove message embeds".to_owned(),
-                    ));
-                };
-                if !state.can_manage_messages_in_channel(channel) {
-                    return Err(permission_denied(
-                        "Manage Messages",
-                        "remove another member's message embeds",
-                    ));
-                }
+            if !is_author && !state.can_manage_messages_in_channel(channel) {
+                return Err(permission_denied(
+                    "Manage Messages",
+                    "remove another member's message embeds",
+                ));
             }
             message.flags | MESSAGE_FLAG_SUPPRESS_EMBEDS
         };
@@ -523,6 +525,7 @@ impl DiscordClient {
         message_id: Id<MessageMarker>,
         emoji: &ReactionEmoji,
     ) -> Result<()> {
+        self.ensure_can_remove_current_user_reaction(channel_id)?;
         self.rest
             .remove_current_user_reaction(channel_id, message_id, emoji)
             .await
@@ -555,12 +558,7 @@ impl DiscordClient {
         message_id: Id<MessageMarker>,
         pinned: bool,
     ) -> Result<()> {
-        self.ensure_channel_action(
-            channel_id,
-            "Pin Messages",
-            "pin or unpin messages",
-            |state, channel| state.can_pin_messages_in_channel(channel),
-        )?;
+        self.ensure_can_pin_message(channel_id)?;
         self.rest
             .set_message_pinned(channel_id, message_id, pinned)
             .await
@@ -572,7 +570,7 @@ impl DiscordClient {
         message_id: Id<MessageMarker>,
         answer_ids: &[u8],
     ) -> Result<()> {
-        self.ensure_can_read_message_history(channel_id)?;
+        self.ensure_can_vote_poll(channel_id)?;
         self.rest
             .vote_poll(channel_id, message_id, answer_ids)
             .await
@@ -601,11 +599,41 @@ impl DiscordClient {
         &self,
         invocation: &ApplicationCommandInvocation,
     ) -> Result<()> {
-        self.ensure_channel_action(
+        self.ensure_guild_channel_action(
             invocation.channel_id,
             "Use Application Commands",
             "run application commands",
             |state, channel| state.can_use_application_commands_in_channel(channel),
+        )
+    }
+
+    pub(super) fn ensure_can_remove_current_user_reaction(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> Result<()> {
+        self.ensure_guild_channel_action(
+            channel_id,
+            "View Channel",
+            "remove a reaction",
+            |state, channel| state.can_view_channel(channel),
+        )
+    }
+
+    pub(super) fn ensure_can_pin_message(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
+        self.ensure_guild_channel_action(
+            channel_id,
+            "Pin Messages",
+            "pin or unpin messages",
+            |state, channel| state.can_pin_messages_in_channel(channel),
+        )
+    }
+
+    pub(super) fn ensure_can_vote_poll(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
+        self.ensure_guild_channel_action(
+            channel_id,
+            "Read Message History",
+            "vote in a poll",
+            |state, channel| state.can_read_message_history_in_channel(channel),
         )
     }
 
@@ -614,7 +642,7 @@ impl DiscordClient {
         thread_id: Id<ChannelMarker>,
         action: &str,
     ) -> Result<()> {
-        self.ensure_channel_action(thread_id, "Manage Threads", action, |state, channel| {
+        self.ensure_guild_channel_action(thread_id, "Manage Threads", action, |state, channel| {
             channel.is_thread() && state.can_manage_threads_in_channel(channel)
         })
     }
@@ -636,6 +664,7 @@ impl DiscordClient {
                 "thread membership can only change for a thread".to_owned(),
             ));
         }
+        ensure_guild_participation(&state, channel, "change thread membership")?;
         if channel.thread_archived().unwrap_or(false) {
             return Err(AppError::DiscordRequest(
                 "thread membership cannot change while the thread is archived".to_owned(),
@@ -655,6 +684,7 @@ impl DiscordClient {
         let channel = state.channel(thread_id).ok_or_else(|| {
             AppError::DiscordRequest("cannot verify thread reopen permissions".to_owned())
         })?;
+        ensure_guild_participation(&state, channel, "reopen this thread")?;
         if state.can_reopen_thread(channel) {
             return Ok(());
         }
@@ -687,6 +717,10 @@ impl DiscordClient {
             .state
             .read()
             .expect("discord state lock is not poisoned");
+        let channel = state.channel(channel_id).ok_or_else(|| {
+            AppError::DiscordRequest("cannot verify permission to edit this message".to_owned())
+        })?;
+        ensure_guild_participation(&state, channel, "edit this message")?;
         let message = state
             .messages_for_channel(channel_id)
             .into_iter()
@@ -716,6 +750,10 @@ impl DiscordClient {
             .state
             .read()
             .expect("discord state lock is not poisoned");
+        let channel = state.channel(channel_id).ok_or_else(|| {
+            AppError::DiscordRequest("cannot verify permission to delete this message".to_owned())
+        })?;
+        ensure_guild_participation(&state, channel, "delete this message")?;
         let message = state
             .messages_for_channel(channel_id)
             .into_iter()
@@ -730,11 +768,6 @@ impl DiscordClient {
         if Some(message.author_id) == state.current_user_id() {
             return Ok(());
         }
-        let Some(channel) = state.channel(channel_id) else {
-            return Err(AppError::DiscordRequest(
-                "cannot verify permission to delete this message".to_owned(),
-            ));
-        };
         if state.can_manage_messages_in_channel(channel) {
             Ok(())
         } else {
@@ -758,6 +791,7 @@ impl DiscordClient {
         let channel = state.channel(channel_id).ok_or_else(|| {
             AppError::DiscordRequest("cannot verify reaction channel permissions".to_owned())
         })?;
+        ensure_guild_participation(&state, channel, "add a reaction")?;
         if !state.can_read_message_history_in_channel(channel) {
             return Err(permission_denied(
                 "Read Message History",
@@ -804,6 +838,33 @@ impl DiscordClient {
             &crate::discord::ChannelState,
         ) -> bool,
     ) -> Result<()> {
+        self.ensure_channel_action_with_policy(channel_id, permission, action, false, allowed)
+    }
+
+    fn ensure_guild_channel_action(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        permission: &str,
+        action: &str,
+        allowed: impl FnOnce(
+            &crate::discord::state::DiscordState,
+            &crate::discord::ChannelState,
+        ) -> bool,
+    ) -> Result<()> {
+        self.ensure_channel_action_with_policy(channel_id, permission, action, true, allowed)
+    }
+
+    fn ensure_channel_action_with_policy(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        permission: &str,
+        action: &str,
+        requires_guild_participation: bool,
+        allowed: impl FnOnce(
+            &crate::discord::state::DiscordState,
+            &crate::discord::ChannelState,
+        ) -> bool,
+    ) -> Result<()> {
         let state = self
             .state
             .read()
@@ -813,11 +874,28 @@ impl DiscordClient {
                 "cannot verify channel permissions required to {action}"
             ))
         })?;
+        if requires_guild_participation {
+            ensure_guild_participation(&state, channel, action)?;
+        }
         if allowed(&state, channel) {
             Ok(())
         } else {
             Err(permission_denied(permission, action))
         }
+    }
+}
+
+pub(super) fn ensure_guild_participation(
+    state: &crate::discord::state::DiscordState,
+    channel: &crate::discord::ChannelState,
+    action: &str,
+) -> Result<()> {
+    if let Some(restriction) = state.guild_participation_restriction(channel) {
+        Err(AppError::DiscordRequest(format!(
+            "cannot {action}: {restriction}"
+        )))
+    } else {
+        Ok(())
     }
 }
 

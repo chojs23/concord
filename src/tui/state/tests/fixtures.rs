@@ -5,8 +5,9 @@ use crate::discord::ids::{
 
 use super::super::{ActiveGuildScope, DashboardState};
 pub(super) use crate::discord::test_builders::{
-    GuildCreateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
-    guild_message_create_fixture, message_create_event, message_history_loaded_event,
+    GuildCreateFixture, GuildUpdateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
+    guild_message_create_fixture, guild_update_event, message_create_event,
+    message_history_loaded_event,
 };
 use crate::discord::{
     AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder, MemberInfo,
@@ -24,6 +25,31 @@ pub(super) const PERM_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 pub(super) const PERM_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
 pub(super) const PERM_USE_APPLICATION_COMMANDS: u64 = 0x0000_0000_8000_0000;
 pub(super) const PERM_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
+pub(super) const PERM_CONNECT: u64 = 0x0000_0000_0010_0000;
+
+pub(super) fn apply_incomplete_community_onboarding(
+    state: &mut DashboardState,
+    guild_id: Id<GuildMarker>,
+    user_id: Id<UserMarker>,
+) {
+    const MEMBER_FLAG_STARTED_ONBOARDING: u64 = 1 << 3;
+
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(user_id),
+    });
+    let mut member = member_with_username(user_id, "me", "me");
+    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
+    member.pending = Some(false);
+    state.push_event(AppEvent::GuildMemberUpsert { guild_id, member });
+    state.push_event(guild_update_event(GuildUpdateFixture {
+        guild_id,
+        name: "guild".to_owned(),
+        owner_id: Some(Id::new(u64::MAX - 1)),
+        features: Some(vec!["COMMUNITY".to_owned()]),
+        ..GuildUpdateFixture::new()
+    }));
+}
 
 pub(super) fn channel_info(
     channel_id: Id<ChannelMarker>,

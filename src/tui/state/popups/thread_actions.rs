@@ -237,6 +237,13 @@ impl DashboardState {
             "Copy thread ID",
             true,
         ));
+        if !self.guild_participation_allowed_in_channel(channel_id) {
+            for item in &mut items {
+                if item.kind.requires_guild_participation() {
+                    item.enabled = false;
+                }
+            }
+        }
         items
     }
 

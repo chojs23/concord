@@ -196,9 +196,7 @@ impl DashboardState {
         let Some(message) = self.selected_message_state() else {
             return;
         };
-        if Some(message.author_id) != self.discord.current_user_id
-            || !message.message_kind.is_regular_or_reply()
-        {
+        if !self.can_edit_message(message) {
             return;
         }
         let Some(content) = message.content.clone() else {

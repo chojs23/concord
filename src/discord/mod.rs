@@ -76,9 +76,11 @@ pub use events::{
     ThreadMembersUpdateInfo, UserGuildSettingsInfo,
 };
 pub(crate) use fingerprint::load_client_fingerprint_and_http;
-pub use guild::{CustomEmojiInfo, GuildFolder, GuildVerificationLevel};
+pub use guild::{
+    CustomEmojiInfo, GuildFolder, GuildOnboardingInfo, GuildOnboardingMode, GuildVerificationLevel,
+};
 pub use ids::{Id, marker};
-pub use member::{MemberInfo, RoleInfo};
+pub use member::{MemberInfo, MemberOnboardingStatus, RoleInfo};
 pub use message::{
     AttachmentInfo, AttachmentMediaType, AttachmentUpdate, EmbedFieldInfo, EmbedInfo,
     InlinePreviewInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MentionInfo, MessageInfo,
@@ -103,7 +105,7 @@ pub use state::{
 };
 pub(crate) use upload::read_profile_avatar_image;
 pub use user_settings::{UserCustomStatusInfo, UserFriendSourceFlagsInfo, UserSettingsInfo};
-pub use verification::MessageVerificationRestriction;
+pub use verification::{GuildParticipationRestriction, MessageVerificationRestriction};
 pub use voice::{MicrophoneSensitivityDb, VoiceVolumePercent};
 pub use voice::{
     VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,

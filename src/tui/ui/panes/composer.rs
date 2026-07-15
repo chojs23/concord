@@ -1042,6 +1042,9 @@ pub(in crate::tui::ui) fn verification_composer_text(
         MessageVerificationRestriction::MembershipScreening => {
             format!("read-only · complete {label}'s membership screening in the official app")
         }
+        MessageVerificationRestriction::OnboardingIncomplete => {
+            format!("read-only · complete {label}'s server onboarding in the official app")
+        }
         MessageVerificationRestriction::EmailVerificationRequired => {
             format!("read-only · verify your Discord account email before writing in {label}")
         }
