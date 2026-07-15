@@ -1210,7 +1210,7 @@ fn leader_a_opens_member_actions_from_member_pane() {
     let actions = state.selected_member_action_items();
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].label, "Show profile");
-    assert!(actions[0].enabled);
+    assert!(actions[0].is_enabled());
 }
 
 #[test]

@@ -1,42 +1,58 @@
 use super::*;
-use crate::discord::MessageVerificationRestriction;
+use crate::discord::{
+    GuildParticipationBlock, GuildParticipationDataGap, GuildParticipationRestriction,
+};
 
 #[test]
 fn verification_composer_text_explains_each_restriction() {
     let cases = [
         (
-            MessageVerificationRestriction::MembershipScreening,
+            GuildParticipationRestriction::MembershipScreening,
             "membership screening",
         ),
         (
-            MessageVerificationRestriction::OnboardingIncomplete,
+            GuildParticipationRestriction::OnboardingIncomplete,
             "server onboarding",
         ),
         (
-            MessageVerificationRestriction::EmailVerificationRequired,
+            GuildParticipationRestriction::EmailVerificationRequired,
             "account email",
         ),
         (
-            MessageVerificationRestriction::AccountTooNew {
+            GuildParticipationRestriction::AccountTooNew {
                 remaining_seconds: 30,
             },
             "account verification wait: 30s",
         ),
         (
-            MessageVerificationRestriction::MemberTooNew {
+            GuildParticipationRestriction::MemberTooNew {
                 remaining_seconds: 60,
             },
             "server verification wait: 60s",
         ),
         (
-            MessageVerificationRestriction::PhoneVerificationRequired,
+            GuildParticipationRestriction::PhoneVerificationRequired,
             "account phone",
         ),
     ];
 
     for (restriction, expected) in cases {
-        assert!(verification_composer_text("#general", restriction).contains(expected));
+        assert!(
+            verification_composer_text(
+                "#general",
+                GuildParticipationBlock::Restricted(restriction)
+            )
+            .contains(expected)
+        );
     }
+
+    assert!(
+        verification_composer_text(
+            "#general",
+            GuildParticipationBlock::DataUnavailable(GuildParticipationDataGap::Guild)
+        )
+        .contains("verification status is not available")
+    );
 }
 
 #[test]

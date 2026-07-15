@@ -529,7 +529,7 @@ fn paste_inserts_text_at_composer_cursor() {
 }
 
 #[test]
-fn paste_file_path_adds_pending_attachment() {
+fn paste_file_path_respects_attach_permission() {
     let path = temp_upload_file("paste path.txt", b"hello");
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
@@ -556,10 +556,7 @@ fn paste_file_path_adds_pending_attachment() {
     );
     assert_eq!(state.pending_composer_attachments()[0].size_bytes, 5);
     remove_temp_upload_file(&path);
-}
 
-#[test]
-fn paste_file_path_without_attach_permission_shows_error() {
     let path = temp_upload_file("denied attachment.txt", b"blocked");
     let mut state = state_with_channel_permissions(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES);
     assert!(

@@ -2,10 +2,10 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker},
 };
-use crate::discord::{AppCommand, MuteDuration};
+use crate::discord::{AppCommand, DiscordAction, MuteDuration};
 use crate::tui::keybindings::KeyChord;
 
-use super::super::model::{FocusPane, MUTE_ACTION_DURATIONS};
+use super::super::model::{ActionAvailability, FocusPane, MUTE_ACTION_DURATIONS};
 use super::super::{
     DashboardState, MuteActionDurationItem, ThreadActionItem, ThreadActionKind,
     ThreadNotificationItem,
@@ -168,7 +168,19 @@ impl DashboardState {
         );
 
         let can_moderate = self.can_moderate_thread(channel_id);
+        let can_edit = self.can_edit_thread(channel_id);
         let can_change_archive_state = self.can_change_thread_archive_state(channel_id);
+        let mutation_reason = |kind: ThreadActionKind| {
+            kind.discord_action()
+                .and_then(|action| self.discord_action_block_reason_in_channel(channel_id, action))
+        };
+        let close_action = if self.is_thread_archived(channel_id) {
+            DiscordAction::ReopenThread
+        } else {
+            DiscordAction::ArchiveThread
+        };
+        let close_policy_reason =
+            self.discord_action_block_reason_in_channel(channel_id, close_action);
         let close_label = format!(
             "{} {noun}",
             if self.is_thread_archived(channel_id) {
@@ -190,26 +202,57 @@ impl DashboardState {
             ThreadActionItem::new(
                 ThreadActionKind::MarkAsRead,
                 "Mark as read",
-                mark_as_read_enabled,
+                (!mark_as_read_enabled).then(|| "no unread messages".to_owned()),
             ),
             ThreadActionItem::new(
                 ThreadActionKind::ToggleFollow,
                 follow_label,
-                !self.is_thread_archived(channel_id),
+                mutation_reason(ThreadActionKind::ToggleFollow).or_else(|| {
+                    self.is_thread_archived(channel_id)
+                        .then(|| "thread archived".to_owned())
+                }),
             ),
             ThreadActionItem::new(
                 ThreadActionKind::Close,
                 close_label,
-                can_change_archive_state,
+                close_policy_reason.or_else(|| {
+                    (!can_change_archive_state).then(|| {
+                        if self.is_thread_archived(channel_id) && !self.is_thread_locked(channel_id)
+                        {
+                            "Send Messages or Manage Threads required".to_owned()
+                        } else {
+                            "Thread Creator or Manage Threads required".to_owned()
+                        }
+                    })
+                }),
             ),
-            ThreadActionItem::new(ThreadActionKind::Lock, lock_label, can_moderate),
-            ThreadActionItem::new(ThreadActionKind::Edit, format!("Edit {noun}"), can_moderate),
-            ThreadActionItem::new(ThreadActionKind::CopyLink, "Copy link", true),
-            ThreadActionItem::new(ThreadActionKind::ToggleMute, mute_label, followed),
+            ThreadActionItem::new(
+                ThreadActionKind::Lock,
+                lock_label,
+                mutation_reason(ThreadActionKind::Lock)
+                    .or_else(|| (!can_moderate).then(|| "Manage Threads required".to_owned())),
+            ),
+            ThreadActionItem::new(
+                ThreadActionKind::Edit,
+                format!("Edit {noun}"),
+                mutation_reason(ThreadActionKind::Edit).or_else(|| {
+                    (!can_edit).then(|| "Thread Creator or Manage Threads required".to_owned())
+                }),
+            ),
+            ThreadActionItem::new(
+                ThreadActionKind::CopyLink,
+                "Copy link",
+                ActionAvailability::Enabled,
+            ),
+            ThreadActionItem::new(
+                ThreadActionKind::ToggleMute,
+                mute_label,
+                (!followed).then(|| "follow thread first".to_owned()),
+            ),
             ThreadActionItem::new(
                 ThreadActionKind::NotificationSettings,
                 "Notification settings",
-                followed,
+                (!followed).then(|| "follow thread first".to_owned()),
             ),
         ];
         // Pinning only exists within a parent forum, so the row is forum-only.
@@ -222,7 +265,8 @@ impl DashboardState {
             items.push(ThreadActionItem::new(
                 ThreadActionKind::Pin,
                 pin_label,
-                can_moderate,
+                mutation_reason(ThreadActionKind::Pin)
+                    .or_else(|| (!can_moderate).then(|| "Manage Threads required".to_owned())),
             ));
         }
         // Deleting removes the whole thread (moderator-only); the author's
@@ -230,20 +274,14 @@ impl DashboardState {
         items.push(ThreadActionItem::new(
             ThreadActionKind::Delete,
             format!("Delete {noun}"),
-            can_moderate,
+            mutation_reason(ThreadActionKind::Delete)
+                .or_else(|| (!can_moderate).then(|| "Manage Threads required".to_owned())),
         ));
         items.push(ThreadActionItem::new(
             ThreadActionKind::CopyId,
             "Copy thread ID",
-            true,
+            ActionAvailability::Enabled,
         ));
-        if !self.guild_participation_allowed_in_channel(channel_id) {
-            for item in &mut items {
-                if item.kind.requires_guild_participation() {
-                    item.enabled = false;
-                }
-            }
-        }
         items
     }
 
@@ -273,7 +311,7 @@ impl DashboardState {
                     |key_bindings, actions, index| {
                         key_bindings.thread_action_shortcuts(actions, index)
                     },
-                    |action| action.enabled,
+                    |action| action.is_enabled(),
                 )?
             }
             ThreadActionMenuState::MuteDuration { .. } => {
@@ -380,7 +418,7 @@ impl DashboardState {
             } => {
                 let items = self.selected_thread_action_items();
                 let item = items.get(selection.selected_for_len(items.len()))?.clone();
-                if !item.enabled {
+                if !item.is_enabled() {
                     return None;
                 }
                 match item.kind {
@@ -557,11 +595,30 @@ impl DashboardState {
             .cache
             .channel(channel_id)
             .is_some_and(|channel| {
-                if channel.thread_archived().unwrap_or(false) {
-                    self.discord.cache.can_reopen_thread(channel)
+                let permission = if channel.thread_archived().unwrap_or(false) {
+                    crate::discord::DiscordPermission::ReopenThread
                 } else {
-                    self.discord.cache.can_manage_threads_in_channel(channel)
-                }
+                    crate::discord::DiscordPermission::EditOwnThread
+                };
+                self.discord
+                    .cache
+                    .channel_permission_decision(channel, permission)
+                    .is_allowed()
+            })
+    }
+
+    fn can_edit_thread(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.discord
+            .cache
+            .channel(channel_id)
+            .is_some_and(|channel| {
+                self.discord
+                    .cache
+                    .channel_permission_decision(
+                        channel,
+                        crate::discord::DiscordPermission::EditOwnThread,
+                    )
+                    .is_allowed()
             })
     }
 

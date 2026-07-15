@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::{DiscordPermission, PermissionDataGap, PermissionDecision};
 
 // Keep these literals separate from the implementation constants so the tests
 // verify Discord's documented bit values instead of reusing the code under test.
@@ -128,7 +129,7 @@ fn administrator_role_bypasses_channel_overwrites() {
 }
 
 #[test]
-fn member_timeout_limits_permissions_until_discord_clears_it() {
+fn member_timeout_limits_communication_but_not_administrators() {
     let me = Id::new(10);
     let owner = Id::new(11);
     let guild = Id::new(1);
@@ -178,14 +179,7 @@ fn member_timeout_limits_permissions_until_discord_clears_it() {
     let channel_state = state.channel(channel).expect("channel");
     assert!(state.can_send_in_channel(channel_state));
     assert!(state.can_add_reactions_in_channel(channel_state));
-}
 
-#[test]
-fn administrator_is_exempt_from_member_timeout() {
-    let me = Id::new(10);
-    let owner = Id::new(11);
-    let guild = Id::new(1);
-    let channel = Id::new(2);
     let admin_role = Id::new(50);
     let mut state = guild_with_permissions(
         owner,
@@ -238,7 +232,7 @@ fn elevated_guild_mfa_requires_current_user_two_factor_for_moderation() {
         .guilds
         .get_mut(&guild)
         .expect("guild")
-        .mfa_level = 1;
+        .mfa_level = Some(1);
 
     let channel_state = state.channel(channel).expect("channel");
     assert!(!state.can_manage_messages_in_channel(channel_state));
@@ -755,7 +749,7 @@ fn manage_messages_requires_explicit_guild_permission() {
 }
 
 #[test]
-fn manage_messages_defaults_permissive_while_guild_member_roles_hydrate() {
+fn permission_data_stays_unknown_while_current_member_roles_hydrate() {
     let me = Id::new(10);
     let owner = Id::new(11);
     let guild = Id::new(1);
@@ -780,40 +774,11 @@ fn manage_messages_defaults_permissive_while_guild_member_roles_hydrate() {
 
     let ch = state.channel(channel).expect("channel");
     assert!(state.can_manage_messages_in_channel(ch));
-}
-
-#[test]
-fn message_permission_state_stays_unknown_while_current_member_hydrates() {
-    let me = Id::new(10);
-    let owner = Id::new(11);
-    let guild = Id::new(1);
-    let channel = Id::new(2);
-    let mut state = DiscordState::default();
-    state.apply_event(&AppEvent::Ready {
-        user: "me".to_owned(),
-        user_id: Some(me),
-    });
-    state.apply_event(&guild_create_event(GuildCreateFixture {
-        member_count: Some(1),
-        owner_id: Some(owner),
-        channels: vec![ChannelInfo {
-            position: Some(0),
-            guild_id: Some(guild),
-            name: "general".to_owned(),
-            ..channel_info(channel, "GuildText", Vec::new())
-        }],
-        members: Vec::new(),
-        roles: vec![role_info(
-            Id::new(guild.get()),
-            "@everyone",
-            VIEW_CHANNEL | SEND_MESSAGES | SEND_TTS_MESSAGES | ATTACH_FILES | READ_MESSAGE_HISTORY,
-        )],
-        ..GuildCreateFixture::new(guild)
-    }));
-
-    let channel = state.channel(channel).expect("channel should exist");
-    assert!(!state.channel_permissions_are_known(channel));
-    assert!(state.can_send_in_channel(channel));
+    assert_eq!(
+        state.channel_permission_decision(ch, DiscordPermission::SendMessages),
+        PermissionDecision::Unavailable(PermissionDataGap::CurrentMember)
+    );
+    assert!(state.can_send_in_channel(ch));
 }
 
 #[test]
@@ -826,7 +791,7 @@ fn manage_messages_is_never_granted_for_dm_channels() {
 }
 
 #[test]
-fn pin_and_reaction_helpers_use_documented_permission_bits() {
+fn message_action_helpers_use_documented_permission_bits() {
     let me = Id::new(10);
     let owner = Id::new(11);
     let guild = Id::new(1);
@@ -840,7 +805,12 @@ fn pin_and_reaction_helpers_use_documented_permission_bits() {
         vec![role_info(
             Id::new(guild.get()),
             "@everyone",
-            VIEW_CHANNEL | READ_MESSAGE_HISTORY | ADD_REACTIONS | PIN_MESSAGES,
+            VIEW_CHANNEL
+                | READ_MESSAGE_HISTORY
+                | ADD_REACTIONS
+                | PIN_MESSAGES
+                | USE_EXTERNAL_EMOJIS
+                | USE_APPLICATION_COMMANDS,
         )],
         Vec::new(),
     );
@@ -849,6 +819,8 @@ fn pin_and_reaction_helpers_use_documented_permission_bits() {
     assert!(state.can_read_message_history_in_channel(ch));
     assert!(state.can_add_reactions_in_channel(ch));
     assert!(state.can_pin_messages_in_channel(ch));
+    assert!(state.can_use_external_emojis_in_channel(ch));
+    assert!(state.can_use_application_commands_in_channel(ch));
 }
 
 #[test]
@@ -917,16 +889,25 @@ fn owner_can_send_and_attach_unconditionally() {
 }
 
 #[test]
-fn thread_messages_require_send_messages_in_threads() {
+fn threads_inherit_parent_permissions_but_require_thread_send_permission() {
     let me = Id::new(10);
     let owner = Id::new(11);
     let guild = Id::new(1);
     let parent = Id::new(2);
     let thread = Id::new(3);
 
-    for (permissions, expected) in [
-        (VIEW_CHANNEL | SEND_MESSAGES, false),
-        (VIEW_CHANNEL | SEND_MESSAGES_IN_THREADS, true),
+    for (kind, permissions, expected_send) in [
+        ("GuildPublicThread", VIEW_CHANNEL | SEND_MESSAGES, false),
+        (
+            "GuildPublicThread",
+            VIEW_CHANNEL | SEND_MESSAGES_IN_THREADS,
+            true,
+        ),
+        (
+            "GuildPrivateThread",
+            VIEW_CHANNEL | SEND_MESSAGES_IN_THREADS,
+            true,
+        ),
     ] {
         let mut state = guild_with_permissions(
             owner,
@@ -941,50 +922,19 @@ fn thread_messages_require_send_messages_in_threads() {
             guild_id: Some(guild),
             parent_id: Some(parent),
             name: "planning".to_owned(),
-            kind: "GuildPublicThread".to_owned(),
             current_user_joined_thread: Some(true),
             thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
-            ..channel_info(thread, "GuildPublicThread", Vec::new())
+            ..channel_info(thread, kind, Vec::new())
         }));
 
         let thread_state = state.channel(thread).expect("thread");
-        assert_eq!(state.can_send_in_channel(thread_state), expected);
+        assert!(state.can_view_channel(thread_state), "{kind}");
+        assert_eq!(
+            state.can_send_in_channel(thread_state),
+            expected_send,
+            "{kind}"
+        );
     }
-}
-
-#[test]
-fn joined_private_threads_inherit_parent_permissions() {
-    let me = Id::new(10);
-    let owner = Id::new(11);
-    let guild = Id::new(1);
-    let parent = Id::new(2);
-    let thread = Id::new(3);
-    let mut state = guild_with_permissions(
-        owner,
-        me,
-        guild,
-        parent,
-        vec![],
-        vec![role_info(
-            Id::new(guild.get()),
-            "@everyone",
-            VIEW_CHANNEL | SEND_MESSAGES_IN_THREADS,
-        )],
-        Vec::new(),
-    );
-    state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
-        guild_id: Some(guild),
-        parent_id: Some(parent),
-        name: "private planning".to_owned(),
-        kind: "GuildPrivateThread".to_owned(),
-        current_user_joined_thread: Some(true),
-        thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
-        ..channel_info(thread, "GuildPrivateThread", Vec::new())
-    }));
-
-    let thread_state = state.channel(thread).expect("thread");
-    assert!(state.can_view_channel(thread_state));
-    assert!(state.can_send_in_channel(thread_state));
 }
 
 #[test]
@@ -1013,72 +963,21 @@ fn thread_moderation_requires_manage_threads() {
 }
 
 #[test]
-fn external_emojis_require_the_channel_permission() {
+fn microphone_transmission_requires_speak_and_voice_activity() {
     let me = Id::new(10);
     let owner = Id::new(11);
     let guild = Id::new(1);
     let channel = Id::new(2);
 
-    for (permissions, expected) in [
-        (VIEW_CHANNEL | READ_MESSAGE_HISTORY | ADD_REACTIONS, false),
+    for (permissions, expected_speak, expected_transmit) in [
+        (VIEW_CHANNEL | CONNECT, false, false),
+        (VIEW_CHANNEL | CONNECT | SPEAK, true, false),
         (
-            VIEW_CHANNEL | READ_MESSAGE_HISTORY | ADD_REACTIONS | USE_EXTERNAL_EMOJIS,
+            VIEW_CHANNEL | CONNECT | SPEAK | USE_VOICE_ACTIVITY,
+            true,
             true,
         ),
     ] {
-        let state = guild_with_permissions(
-            owner,
-            me,
-            guild,
-            channel,
-            vec![],
-            vec![role_info(Id::new(guild.get()), "@everyone", permissions)],
-            Vec::new(),
-        );
-        let channel = state.channel(channel).expect("channel");
-        assert_eq!(state.can_use_external_emojis_in_channel(channel), expected);
-    }
-}
-
-#[test]
-fn application_commands_require_the_channel_permission() {
-    let me = Id::new(10);
-    let owner = Id::new(11);
-    let guild = Id::new(1);
-    let channel = Id::new(2);
-
-    for (permissions, expected) in [
-        (VIEW_CHANNEL, false),
-        (VIEW_CHANNEL | USE_APPLICATION_COMMANDS, true),
-    ] {
-        let state = guild_with_permissions(
-            owner,
-            me,
-            guild,
-            channel,
-            vec![],
-            vec![role_info(Id::new(guild.get()), "@everyone", permissions)],
-            Vec::new(),
-        );
-        let channel = state.channel(channel).expect("channel");
-        assert_eq!(
-            state.can_use_application_commands_in_channel(channel),
-            expected
-        );
-    }
-}
-
-#[test]
-fn microphone_transmission_requires_speak() {
-    let me = Id::new(10);
-    let owner = Id::new(11);
-    let guild = Id::new(1);
-    let channel = Id::new(2);
-
-    for (permissions, expected) in [
-        (VIEW_CHANNEL | CONNECT, false),
-        (VIEW_CHANNEL | CONNECT | SPEAK, true),
-    ] {
         let mut state = guild_with_permissions(
             owner,
             me,
@@ -1092,37 +991,10 @@ fn microphone_transmission_requires_speak() {
             guild, channel,
         )));
         let channel = state.channel(channel).expect("voice channel");
-        assert_eq!(state.can_speak_in_voice_channel(channel), expected);
-    }
-}
-
-#[test]
-fn microphone_transmission_requires_voice_activity_permission() {
-    let me = Id::new(10);
-    let owner = Id::new(11);
-    let guild = Id::new(1);
-    let channel = Id::new(2);
-
-    for (permissions, expected) in [
-        (VIEW_CHANNEL | CONNECT | SPEAK, false),
-        (VIEW_CHANNEL | CONNECT | SPEAK | USE_VOICE_ACTIVITY, true),
-    ] {
-        let mut state = guild_with_permissions(
-            owner,
-            me,
-            guild,
-            channel,
-            vec![],
-            vec![role_info(Id::new(guild.get()), "@everyone", permissions)],
-            Vec::new(),
-        );
-        state.apply_event(&AppEvent::ChannelUpsert(guild_voice_channel(
-            guild, channel,
-        )));
-        let channel = state.channel(channel).expect("voice channel");
+        assert_eq!(state.can_speak_in_voice_channel(channel), expected_speak);
         assert_eq!(
             state.can_transmit_microphone_in_voice_channel(channel),
-            expected
+            expected_transmit
         );
     }
 }

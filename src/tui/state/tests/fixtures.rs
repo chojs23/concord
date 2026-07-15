@@ -10,10 +10,11 @@ pub(super) use crate::discord::test_builders::{
     message_history_loaded_event,
 };
 use crate::discord::{
-    AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder, MemberInfo,
-    MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState,
-    PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
-    ReactionEmoji, ReactionInfo, ReadStateInfo, RoleInfo, ThreadMetadataInfo, VoiceStateInfo,
+    AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder,
+    GuildOnboardingInfo, MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo,
+    MessageSnapshotInfo, MessageState, PermissionOverwriteInfo, PermissionOverwriteKind,
+    PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, RoleInfo,
+    ThreadMetadataInfo, VoiceStateInfo,
 };
 
 pub(super) const PERM_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
@@ -47,6 +48,13 @@ pub(super) fn apply_incomplete_community_onboarding(
         name: "guild".to_owned(),
         owner_id: Some(Id::new(u64::MAX - 1)),
         features: Some(vec!["COMMUNITY".to_owned()]),
+        onboarding: Some(GuildOnboardingInfo {
+            guild_id,
+            enabled: Some(true),
+            mode: None,
+            default_channel_ids: Vec::new(),
+            raw: std::sync::Arc::new(serde_json::Value::Null),
+        }),
         ..GuildUpdateFixture::new()
     }));
 }
@@ -568,6 +576,7 @@ pub(super) fn state_with_channel_tree() -> DashboardState {
                 child_text_channel_info(guild_id, general_id, category_id, "general", 0),
                 child_text_channel_info(guild_id, random_id, category_id, "random", 1),
             ],
+            roles: vec![role_info(Id::new(guild_id.get()), "@everyone", 0)],
             ..GuildCreateFixture::new(guild_id)
         },
     ));

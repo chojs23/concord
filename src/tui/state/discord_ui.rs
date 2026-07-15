@@ -8,8 +8,9 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 use crate::discord::{
-    AppEvent, ApplicationCommandInfo, ChannelUnreadState, DiscordSnapshot, DiscordState,
-    MessageInfo, PremiumTier, SnapshotAreas, SnapshotRevision,
+    ActionBlockReason, AppEvent, ApplicationCommandInfo, ChannelUnreadState, DiscordAction,
+    DiscordSnapshot, DiscordState, GuildParticipationRestriction, MessageInfo, PremiumTier,
+    SnapshotAreas, SnapshotRevision,
 };
 
 use super::{DashboardState, DesktopNotification, message_notification_body};
@@ -39,19 +40,41 @@ impl DerefMut for DiscordUiState {
 }
 
 impl DashboardState {
-    pub(super) fn guild_participation_allowed_in_channel(
+    pub(super) fn discord_action_allowed_in_channel(
         &self,
         channel_id: Id<ChannelMarker>,
+        action: DiscordAction,
     ) -> bool {
-        self.discord
+        self.discord_action_block_reason_in_channel(channel_id, action)
+            .is_none()
+    }
+
+    pub(super) fn discord_action_block_reason_in_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        action: DiscordAction,
+    ) -> Option<String> {
+        let channel = self.discord.cache.channel(channel_id)?;
+        let reason = self
+            .discord
             .cache
-            .channel(channel_id)
-            .is_some_and(|channel| {
-                self.discord
-                    .cache
-                    .guild_participation_restriction(channel)
-                    .is_none()
-            })
+            .channel_action_decision(channel, action)
+            .optimistic_ui_block_reason()?;
+        Some(match reason {
+            ActionBlockReason::ChannelDataUnavailable => "channel unavailable".to_owned(),
+            ActionBlockReason::ThreadStateUnavailable => "thread state unavailable".to_owned(),
+            ActionBlockReason::ThreadArchived => "thread archived".to_owned(),
+            ActionBlockReason::PermissionDenied(permission) => {
+                format!("{permission} required")
+            }
+            ActionBlockReason::PermissionDataUnavailable(_) => return None,
+            ActionBlockReason::ParticipationRestricted(restriction) => {
+                participation_restriction_label(restriction)
+            }
+            ActionBlockReason::ParticipationDataUnavailable(_) => {
+                "verification status unknown".to_owned()
+            }
+        })
     }
 
     pub(super) fn current_user_has_nitro(&self) -> bool {
@@ -166,6 +189,24 @@ impl DashboardState {
         self.clamp_message_viewport();
         if !should_scroll {
             self.refresh_message_auto_follow();
+        }
+    }
+}
+
+fn participation_restriction_label(restriction: GuildParticipationRestriction) -> String {
+    match restriction {
+        GuildParticipationRestriction::MembershipScreening => "screening incomplete".to_owned(),
+        GuildParticipationRestriction::OnboardingIncomplete => "onboarding incomplete".to_owned(),
+        GuildParticipationRestriction::EmailVerificationRequired => "email not verified".to_owned(),
+        GuildParticipationRestriction::AccountTooNew { remaining_seconds } => {
+            format!("account too new, wait {remaining_seconds}s")
+        }
+        GuildParticipationRestriction::MemberTooNew { remaining_seconds } => {
+            format!("new server member, wait {remaining_seconds}s")
+        }
+        GuildParticipationRestriction::PhoneVerificationRequired => "phone not verified".to_owned(),
+        GuildParticipationRestriction::UnsupportedLevel { value } => {
+            format!("verification level {value} unsupported")
         }
     }
 }

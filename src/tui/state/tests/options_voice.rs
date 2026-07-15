@@ -154,9 +154,9 @@ fn voice_channel_action_emits_join_then_leave_command() {
     state.open_selected_channel_actions();
     let actions = state.selected_channel_action_items();
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
     assert_eq!(actions[1].kind, ChannelActionKind::LeaveVoice);
-    assert!(actions[1].enabled);
+    assert!(actions[1].is_enabled());
 
     state.select_channel_action_row(1);
     let command = state.activate_selected_channel_action();
@@ -258,7 +258,7 @@ fn other_client_voice_state_shows_header_only() {
 }
 
 #[test]
-fn voice_channel_join_action_requires_connect_permission() {
+fn voice_channel_join_action_reflects_permission_and_participation() {
     let me = Id::new(10);
     let owner = Id::new(11);
     let guild_id = Id::new(1);
@@ -287,12 +287,10 @@ fn voice_channel_join_action_requires_connect_permission() {
 
     let actions = state.selected_channel_action_items();
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
+    assert_eq!(actions[0].disabled_reason(), Some("Connect required"));
     assert_eq!(state.activate_selected_channel_action(), None);
-}
 
-#[test]
-fn incomplete_onboarding_disables_voice_join_but_keeps_channel_settings() {
     let me = Id::new(10);
     let guild_id = Id::new(1);
     let voice_id = Id::new(11);
@@ -322,6 +320,10 @@ fn incomplete_onboarding_disables_voice_join_but_keeps_channel_settings() {
             .find(|action| action.kind == kind)
             .expect("channel action should exist")
     };
-    assert!(!action(ChannelActionKind::JoinVoice).enabled);
-    assert!(action(ChannelActionKind::ToggleMute).enabled);
+    assert!(!action(ChannelActionKind::JoinVoice).is_enabled());
+    assert_eq!(
+        action(ChannelActionKind::JoinVoice).disabled_reason(),
+        Some("onboarding incomplete")
+    );
+    assert!(action(ChannelActionKind::ToggleMute).is_enabled());
 }

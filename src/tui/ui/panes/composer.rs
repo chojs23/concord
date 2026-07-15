@@ -1036,31 +1036,31 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
 
 pub(in crate::tui::ui) fn verification_composer_text(
     label: &str,
-    restriction: MessageVerificationRestriction,
+    block: GuildParticipationBlock,
 ) -> String {
+    let GuildParticipationBlock::Restricted(restriction) = block else {
+        return format!("read-only · Discord verification status is not available for {label}");
+    };
     match restriction {
-        MessageVerificationRestriction::MembershipScreening => {
+        GuildParticipationRestriction::MembershipScreening => {
             format!("read-only · complete {label}'s membership screening in the official app")
         }
-        MessageVerificationRestriction::OnboardingIncomplete => {
+        GuildParticipationRestriction::OnboardingIncomplete => {
             format!("read-only · complete {label}'s server onboarding in the official app")
         }
-        MessageVerificationRestriction::EmailVerificationRequired => {
+        GuildParticipationRestriction::EmailVerificationRequired => {
             format!("read-only · verify your Discord account email before writing in {label}")
         }
-        MessageVerificationRestriction::AccountTooNew { remaining_seconds } => format!(
+        GuildParticipationRestriction::AccountTooNew { remaining_seconds } => format!(
             "read-only · account verification wait: {remaining_seconds}s remaining for {label}"
         ),
-        MessageVerificationRestriction::MemberTooNew { remaining_seconds } => format!(
+        GuildParticipationRestriction::MemberTooNew { remaining_seconds } => format!(
             "read-only · server verification wait: {remaining_seconds}s remaining for {label}"
         ),
-        MessageVerificationRestriction::PhoneVerificationRequired => {
+        GuildParticipationRestriction::PhoneVerificationRequired => {
             format!("read-only · verify your Discord account phone before writing in {label}")
         }
-        MessageVerificationRestriction::VerificationDataUnavailable => {
-            format!("read-only · Discord verification status is not available for {label}")
-        }
-        MessageVerificationRestriction::UnsupportedLevel { value } => {
+        GuildParticipationRestriction::UnsupportedLevel { value } => {
             format!("read-only · {label} uses unsupported verification level {value}")
         }
     }

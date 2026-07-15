@@ -115,18 +115,25 @@ impl DiscordRest {
         thread_id: Id<ChannelMarker>,
         name: &str,
         applied_tags: &[Id<ForumTagMarker>],
-        rate_limit_per_user: u64,
+        rate_limit_per_user: Option<u64>,
         auto_archive_duration: u64,
     ) -> Result<()> {
-        let body = json!({
+        let mut body = json!({
             "name": name,
             "applied_tags": applied_tags
                 .iter()
                 .map(|tag_id| Value::String(tag_id.to_string()))
                 .collect::<Vec<_>>(),
-            "rate_limit_per_user": rate_limit_per_user,
             "auto_archive_duration": auto_archive_duration,
         });
+        if let Some(rate_limit_per_user) = rate_limit_per_user {
+            body.as_object_mut()
+                .expect("thread edit body is an object")
+                .insert(
+                    "rate_limit_per_user".to_owned(),
+                    Value::from(rate_limit_per_user),
+                );
+        }
         self.edit_thread(thread_id, &body).await
     }
 

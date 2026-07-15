@@ -11,8 +11,8 @@ use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
-    ActivityInfo, ActivityKind, ChannelUnreadState, MessageState, MessageVerificationRestriction,
-    PresenceStatus,
+    ActivityInfo, ActivityKind, ChannelUnreadState, GuildParticipationBlock,
+    GuildParticipationRestriction, MessageState, PresenceStatus,
 };
 
 use super::super::{

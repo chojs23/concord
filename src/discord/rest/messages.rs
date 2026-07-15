@@ -12,9 +12,10 @@ use crate::{
         BASE_ATTACHMENT_LIMIT_BYTES, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload,
         MessageInfo, ReplyReference, gateway::parse_message_info,
     },
+    logging,
 };
 
-use super::{DiscordRest, clone_array, extra_fields};
+use super::{DiscordRest, clone_array, extra_fields, rest_error_kind};
 
 pub(in crate::discord) enum MessageEditRequest<'a> {
     Content(&'a str),
@@ -43,7 +44,15 @@ impl DiscordRest {
     pub fn spawn_typing(&self, channel_id: Id<ChannelMarker>) {
         let rest = self.clone();
         tokio::spawn(async move {
-            let _ = rest.trigger_typing(channel_id).await;
+            if let Err(error) = rest.trigger_typing(channel_id).await {
+                logging::error(
+                    "rest",
+                    format!(
+                        "background request failed action=\"trigger typing\" reason={}",
+                        rest_error_kind(&error)
+                    ),
+                );
+            }
         });
     }
 

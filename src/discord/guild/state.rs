@@ -1,4 +1,3 @@
-use crate::discord::guild::GUILD_FEATURE_COMMUNITY;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
@@ -23,34 +22,30 @@ pub struct GuildState {
     pub boost_tier: GuildBoostTier,
     pub boost_count: u32,
     /// Server-wide message verification level from the guild payload.
-    pub verification_level: GuildVerificationLevel,
+    pub verification_level: Option<GuildVerificationLevel>,
     /// Whether moderation permissions require two-factor authentication.
-    pub mfa_level: u64,
+    pub mfa_level: Option<u64>,
     /// Discord guild feature names. Unknown values are preserved so feature
     /// based safety checks do not require a parser update for every new flag.
-    pub features: Vec<String>,
+    pub features: Option<Vec<String>>,
     /// Full onboarding configuration when Discord has supplied it.
     pub onboarding: Option<GuildOnboardingInfo>,
 }
 
 impl GuildState {
     pub(crate) fn has_feature(&self, feature: &str) -> bool {
-        self.features.iter().any(|value| value == feature)
+        self.features
+            .as_ref()
+            .is_some_and(|features| features.iter().any(|value| value == feature))
     }
 
-    /// Discord does not include the full onboarding object in every user
-    /// gateway payload. An explicit disabled value is authoritative. When the
-    /// value is absent, Community status is the safe signal that onboarding
-    /// completion may still be required.
+    /// Community capability only means onboarding can be enabled. The
+    /// onboarding object's explicit state is the authority for this check.
     pub(crate) fn onboarding_may_require_completion(&self) -> bool {
-        match self
-            .onboarding
+        self.onboarding
             .as_ref()
             .and_then(|onboarding| onboarding.enabled)
-        {
-            Some(enabled) => enabled,
-            None => self.onboarding.is_some() || self.has_feature(GUILD_FEATURE_COMMUNITY),
-        }
+            == Some(true)
     }
 }
 

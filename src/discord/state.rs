@@ -244,13 +244,13 @@ impl DiscordState {
                         guild.boost_count = *boost_count;
                     }
                     if let Some(verification_level) = verification_level {
-                        guild.verification_level = *verification_level;
+                        guild.verification_level = Some(*verification_level);
                     }
                     if let Some(mfa_level) = mfa_level {
-                        guild.mfa_level = *mfa_level;
+                        guild.mfa_level = Some(*mfa_level);
                     }
                     if let Some(features) = features {
-                        guild.features = features.clone();
+                        guild.features = Some(features.clone());
                     }
                     if let Some(onboarding) = onboarding {
                         guild.onboarding = Some(onboarding.clone());
@@ -277,11 +277,9 @@ impl DiscordState {
                 self.guild_details.roles.insert(*guild_id, role_map(roles));
             }
             AppEvent::GuildRoleUpsert { guild_id, role } => {
-                self.guild_details
-                    .roles
-                    .entry(*guild_id)
-                    .or_default()
-                    .insert(role.id, role_state(role));
+                if let Some(roles) = self.guild_details.roles.get_mut(guild_id) {
+                    roles.insert(role.id, role_state(role));
+                }
             }
             AppEvent::GuildRoleDelete { guild_id, role_id } => {
                 if let Some(roles) = self.guild_details.roles.get_mut(guild_id) {
@@ -779,7 +777,11 @@ impl DiscordState {
                 member.status = *status;
             }
         }
-        self.guild_details.roles.insert(*guild_id, role_map(roles));
+        if let Some(roles) = roles {
+            self.guild_details.roles.insert(*guild_id, role_map(roles));
+        } else {
+            self.guild_details.roles.remove(guild_id);
+        }
         self.navigation
             .custom_emojis
             .insert(*guild_id, emojis.clone());

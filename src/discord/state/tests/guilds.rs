@@ -22,12 +22,13 @@ fn onboarding(guild_id: Id<GuildMarker>, enabled: bool) -> GuildOnboardingInfo {
 }
 
 #[test]
-fn guild_onboarding_is_cached_and_updated_without_losing_raw_fields() {
+fn guild_partial_updates_preserve_and_replace_optional_metadata() {
     let guild_id = Id::new(1);
     let mut state = DiscordState::default();
     state.apply_event(&guild_create_event(GuildCreateFixture {
         guild_id,
         onboarding: Some(onboarding(guild_id, false)),
+        features: vec!["COMMUNITY".to_owned(), "FUTURE_FEATURE".to_owned()],
         ..GuildCreateFixture::new(guild_id)
     }));
 
@@ -37,6 +38,8 @@ fn guild_onboarding_is_cached_and_updated_without_losing_raw_fields() {
         .expect("onboarding should be cached");
     assert_eq!(cached.enabled, Some(false));
     assert_eq!(cached.raw["future_field"], json!("kept"));
+    assert!(state.guild_has_feature(guild_id, "COMMUNITY"));
+    assert!(state.guild_has_feature(guild_id, "FUTURE_FEATURE"));
 
     state.apply_event(&guild_update_event(GuildUpdateFixture {
         guild_id,
@@ -50,6 +53,7 @@ fn guild_onboarding_is_cached_and_updated_without_losing_raw_fields() {
             .and_then(|onboarding| onboarding.enabled),
         Some(false)
     );
+    assert!(state.guild_has_feature(guild_id, "COMMUNITY"));
 
     state.apply_event(&AppEvent::GuildOnboardingUpdate {
         guild_id,
@@ -62,27 +66,6 @@ fn guild_onboarding_is_cached_and_updated_without_losing_raw_fields() {
             .and_then(|onboarding| onboarding.enabled),
         Some(true)
     );
-}
-
-#[test]
-fn guild_features_are_cached_and_only_replaced_when_supplied() {
-    let guild_id = Id::new(1);
-    let mut state = DiscordState::default();
-    state.apply_event(&guild_create_event(GuildCreateFixture {
-        guild_id,
-        features: vec!["COMMUNITY".to_owned(), "FUTURE_FEATURE".to_owned()],
-        ..GuildCreateFixture::new(guild_id)
-    }));
-
-    assert!(state.guild_has_feature(guild_id, "COMMUNITY"));
-    assert!(state.guild_has_feature(guild_id, "FUTURE_FEATURE"));
-
-    state.apply_event(&guild_update_event(GuildUpdateFixture {
-        guild_id,
-        name: "renamed".to_owned(),
-        ..GuildUpdateFixture::new()
-    }));
-    assert!(state.guild_has_feature(guild_id, "COMMUNITY"));
 
     state.apply_event(&guild_update_event(GuildUpdateFixture {
         guild_id,

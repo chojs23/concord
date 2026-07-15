@@ -38,7 +38,7 @@ impl DashboardState {
                     && self
                         .discord
                         .cache
-                        .message_verification_restriction(channel)
+                        .guild_participation_block(channel)
                         .is_none()
                     && self.slow_mode_remaining_seconds(channel.id).is_none()
             });

@@ -1,8 +1,8 @@
-use crate::discord::AppCommand;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, ForumTagMarker},
 };
+use crate::discord::{AppCommand, DiscordAction};
 use crate::tui::keybindings::ScrollAction;
 use crate::tui::text_input::TextEditAction;
 
@@ -53,6 +53,9 @@ fn nearest_option_index(options: &[(u64, &str)], value: u64) -> usize {
 
 impl super::super::DashboardState {
     pub fn open_thread_edit(&mut self, channel_id: Id<ChannelMarker>) {
+        if !self.discord_action_allowed_in_channel(channel_id, DiscordAction::EditThread) {
+            return;
+        }
         let Some(channel) = self.discord.cache.channel(channel_id) else {
             return;
         };

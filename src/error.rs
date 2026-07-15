@@ -2,6 +2,8 @@ use std::error::Error as StdError;
 
 use thiserror::Error;
 
+use crate::discord::{ActionBlockReason, DiscordAction};
+
 pub type Result<T> = std::result::Result<T, AppError>;
 
 #[derive(Debug, Error)]
@@ -31,6 +33,11 @@ pub enum AppError {
     TooManyAttachments { count: usize },
     #[error("Discord request failed: {0}")]
     DiscordRequest(String),
+    #[error("Discord action blocked: cannot {action}: {reason}")]
+    DiscordActionBlocked {
+        action: DiscordAction,
+        reason: ActionBlockReason,
+    },
     #[error("Discord stopped authenticated requests after rejecting the session")]
     DiscordAuthenticationStopped,
     #[error("Discord rate limited {action}; try again in {retry_after_millis} ms")]

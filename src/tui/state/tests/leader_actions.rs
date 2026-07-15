@@ -35,15 +35,17 @@ fn channel_action_menu_show_threads_opens_thread_list_view() {
     assert_eq!(actions.len(), 6);
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
     assert_eq!(actions[0].label, "Join voice");
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
+    assert_eq!(actions[0].disabled_reason(), Some("not a voice channel"));
     assert_eq!(actions[1].kind, ChannelActionKind::LeaveVoice);
     assert_eq!(actions[1].label, "Leave voice");
-    assert!(!actions[1].enabled);
+    assert!(!actions[1].is_enabled());
+    assert_eq!(actions[1].disabled_reason(), Some("not connected here"));
     assert_eq!(actions[2].kind, ChannelActionKind::ShowPinnedMessages);
     assert_eq!(actions[2].label, "Show pinned messages");
-    assert!(actions[2].enabled);
+    assert!(actions[2].is_enabled());
     assert_eq!(actions[3].kind, ChannelActionKind::ShowThreads);
-    assert!(actions[3].enabled);
+    assert!(actions[3].is_enabled());
     assert_eq!(actions[4].kind, ChannelActionKind::MarkAsRead);
     assert_eq!(actions[4].label, "Mark as read");
     assert_eq!(actions[5].kind, ChannelActionKind::ToggleMute);
@@ -87,7 +89,7 @@ fn channel_thread_list_view_fetches_and_sections_active_and_archived_threads() {
         .into_iter()
         .find(|action| action.kind == ChannelActionKind::ShowThreads)
         .expect("show threads action is present");
-    assert!(show_threads.enabled);
+    assert!(show_threads.is_enabled());
 
     assert_eq!(
         state.activate_channel_action_shortcut("t".parse().expect("t parses")),
@@ -225,7 +227,7 @@ fn mark_as_read_action_enablement_is_scoped_to_action_channel() {
         .iter()
         .find(|action| action.kind == ChannelActionKind::MarkAsRead)
         .expect("channel actions include Mark as read");
-    assert!(!mark_as_read.enabled);
+    assert!(!mark_as_read.is_enabled());
 }
 
 #[test]
@@ -278,7 +280,8 @@ fn guild_action_menu_lists_disabled_mark_server_read_when_guild_is_read() {
     assert_eq!(actions.len(), 3);
     assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
     assert_eq!(actions[0].label, "Mark server as read");
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
+    assert_eq!(actions[0].disabled_reason(), Some("no unread messages"));
     assert_eq!(actions[1].kind, GuildActionKind::ToggleMute);
     assert_eq!(actions[1].label, "Mute server");
     assert_eq!(actions[2].kind, GuildActionKind::LeaveServer);
@@ -296,7 +299,7 @@ fn folder_leader_action_opens_settings() {
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].kind, GuildActionKind::FolderSettings);
     assert_eq!(actions[0].label, "Folder settings");
-    assert!(actions[0].enabled);
+    assert!(actions[0].is_enabled());
 
     assert_eq!(state.activate_selected_guild_action(), None);
     assert!(state.is_folder_settings_open());
@@ -341,18 +344,18 @@ fn category_leader_action_lists_disabled_rows_and_dispatches_mute_command() {
     let actions = state.selected_channel_action_items();
     assert_eq!(actions.len(), 6);
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
     assert_eq!(actions[1].kind, ChannelActionKind::LeaveVoice);
-    assert!(!actions[1].enabled);
+    assert!(!actions[1].is_enabled());
     assert_eq!(actions[2].kind, ChannelActionKind::ShowPinnedMessages);
-    assert!(!actions[2].enabled);
+    assert!(!actions[2].is_enabled());
     assert_eq!(actions[3].kind, ChannelActionKind::ShowThreads);
-    assert!(!actions[3].enabled);
+    assert!(!actions[3].is_enabled());
     assert_eq!(actions[4].kind, ChannelActionKind::MarkAsRead);
-    assert!(!actions[4].enabled);
+    assert!(!actions[4].is_enabled());
     assert_eq!(actions[5].kind, ChannelActionKind::ToggleMute);
     assert_eq!(actions[5].label, "Mute category");
-    assert!(actions[5].enabled);
+    assert!(actions[5].is_enabled());
 
     assert_eq!(state.activate_selected_channel_action(), None);
     assert!(state.is_channel_action_menu_active());
@@ -523,7 +526,7 @@ fn guild_action_menu_marks_unread_server_channels_as_read() {
 
     let actions = state.selected_guild_action_items();
     assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
-    assert!(actions[0].enabled);
+    assert!(actions[0].is_enabled());
 
     let command = state.activate_selected_guild_action();
     let ack_commands = command.clone().into_iter().collect::<Vec<_>>();
@@ -581,5 +584,5 @@ fn direct_messages_keep_placeholder_guild_action() {
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].kind, GuildActionKind::NoActionsYet);
     assert_eq!(actions[0].label, "No server actions yet");
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
 }

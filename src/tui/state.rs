@@ -59,6 +59,8 @@ pub use composer::{
 pub use dashboard::DashboardState;
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub use message_viewport::MessagePaneSource;
+#[cfg(test)]
+pub(crate) use model::ActionAvailability;
 pub use model::{
     ActionItem, AppliedForumTag, AttachmentDownloadProgressView, AttachmentViewerItem,
     ChannelActionItem, ChannelPaneEntry, ChannelSearchSuggestionItem, ChannelSwitcherItem,

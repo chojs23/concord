@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use crate::{
     AppError,
     discord::{
-        ActivityInfo, AppEvent, ApplicationCommandInvocation, ChannelInfo, ForumPostCreate,
-        ForumTagInfo, GuildVerificationLevel, MemberInfo, MentionInfo, MessageAttachmentUpload,
-        ReactionEmoji, ReplyReference, RoleInfo, ThreadMetadataInfo, UserProfileInfo, VoiceScope,
-        VoiceSoundKind, VoiceStateInfo,
+        ActionBlockReason, ActivityInfo, AppEvent, ApplicationCommandInvocation, ChannelInfo,
+        DiscordAction, DiscordPermission, ForumPostCreate, ForumTagInfo, GuildBoostTier,
+        GuildOnboardingInfo, GuildParticipationDataGap, GuildParticipationRestriction,
+        GuildVerificationLevel, MemberInfo, MentionInfo, MessageAttachmentUpload,
+        PermissionDataGap, ReactionEmoji, ReplyReference, RoleInfo, ThreadMetadataInfo,
+        UserProfileInfo, VoiceScope, VoiceSoundKind, VoiceStateInfo,
         gateway::GatewayCommand,
         ids::{
             Id,
@@ -12,10 +16,9 @@ use crate::{
         },
         member::MEMBER_FLAG_STARTED_ONBOARDING,
         test_builders::{
-            GuildCreateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
-            UserProfileLoadFailedFixture, guild_create_event, guild_message_create_fixture,
-            message_create_event as build_message_create_event, message_history_loaded_event,
-            user_profile_load_failed_event,
+            MessageCreateFixture, MessageHistoryLoadedFixture, UserProfileLoadFailedFixture,
+            guild_message_create_fixture, message_create_event as build_message_create_event,
+            message_history_loaded_event, user_profile_load_failed_event,
         },
     },
 };
@@ -300,32 +303,7 @@ fn selected_rich_presence_round_trips_and_clears() {
 }
 
 #[tokio::test]
-async fn requested_voice_state_tracks_shutdown_fallback() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL | CONNECT).await;
-
-    client
-        .update_voice_state(VoiceScope::Guild(Id::new(1)), Some(Id::new(2)), true, false)
-        .expect("gateway command should queue");
-    let voice = client
-        .requested_voice_connection()
-        .expect("requested voice state should be tracked");
-
-    assert_eq!(voice.guild_id(), Some(Id::new(1)));
-    assert_eq!(voice.channel_id, Id::new(2));
-    assert!(voice.self_mute);
-    assert!(!voice.self_deaf);
-
-    client
-        .update_voice_state(VoiceScope::Guild(Id::new(1)), None, false, false)
-        .expect("gateway command should queue");
-
-    assert_eq!(client.requested_voice_connection(), None);
-}
-
-#[tokio::test]
-async fn requested_voice_state_skips_duplicate_gateway_updates() {
+async fn requested_voice_state_tracks_changes_and_skips_duplicate_gateway_updates() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
     publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL | CONNECT).await;
@@ -346,6 +324,13 @@ async fn requested_voice_state_skips_duplicate_gateway_updates() {
         true,
         false,
     );
+    let voice = client
+        .requested_voice_connection()
+        .expect("requested voice state should be tracked");
+    assert_eq!(voice.guild_id(), Some(Id::new(1)));
+    assert_eq!(voice.channel_id, Id::new(2));
+    assert!(voice.self_mute);
+    assert!(!voice.self_deaf);
 
     client
         .update_voice_state(VoiceScope::Guild(Id::new(1)), Some(Id::new(2)), true, false)
@@ -375,6 +360,7 @@ async fn requested_voice_state_skips_duplicate_gateway_updates() {
         .update_voice_state(VoiceScope::Guild(Id::new(1)), None, false, false)
         .expect("leave should queue");
     assert_voice_update(&mut gateway_commands, Id::new(1), None, false, false);
+    assert_eq!(client.requested_voice_connection(), None);
 
     client
         .update_voice_state(VoiceScope::Guild(Id::new(1)), None, false, false)
@@ -386,63 +372,52 @@ async fn requested_voice_state_skips_duplicate_gateway_updates() {
 }
 
 #[tokio::test]
-async fn send_message_rejects_explicit_missing_send_permission() {
+async fn send_message_rejects_missing_payload_permissions_before_rest() {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL).await;
+    for (permissions, reply, attachments, expected_permission) in [
+        (
+            VIEW_CHANNEL,
+            None,
+            Vec::new(),
+            DiscordPermission::SendMessages,
+        ),
+        (
+            VIEW_CHANNEL | SEND_MESSAGES,
+            None,
+            vec![MessageAttachmentUpload::from_bytes(
+                "note.txt".to_owned(),
+                b"x".to_vec(),
+            )],
+            DiscordPermission::AttachFiles,
+        ),
+        (
+            VIEW_CHANNEL | SEND_MESSAGES,
+            Some(ReplyReference {
+                message_id: Id::new(20),
+                mention_author: true,
+            }),
+            Vec::new(),
+            DiscordPermission::ReadMessageHistory,
+        ),
+    ] {
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        publish_permission_fixture(&client, "GuildText", permissions).await;
 
-    let error = client
-        .send_message(Id::new(2), "hello", None, &[])
-        .await
-        .expect_err("missing SEND_MESSAGES should stop before REST");
+        let error = client
+            .send_message(Id::new(2), "hello", reply, &attachments)
+            .await
+            .expect_err("missing message permission should stop before REST");
 
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message == "cannot send message in channel"
-    ));
+        assert_action_blocked_error(
+            error,
+            DiscordAction::SendMessage,
+            ActionBlockReason::PermissionDenied(expected_permission),
+        );
+    }
 }
 
 #[tokio::test]
-async fn send_message_rejects_incomplete_onboarding_before_rest() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL | SEND_MESSAGES).await;
-    let mut member = permission_fixture_member(Id::new(10));
-    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
-    client
-        .publish_event(AppEvent::GuildMemberUpsert {
-            guild_id: Id::new(1),
-            member,
-        })
-        .await;
-    client
-        .publish_event(AppEvent::GuildUpdate {
-            guild_id: Id::new(1),
-            name: "guild".to_owned(),
-            owner_id: None,
-            boost_tier: None,
-            boost_count: None,
-            verification_level: None,
-            mfa_level: None,
-            features: Some(vec!["COMMUNITY".to_owned()]),
-            onboarding: None,
-            roles: None,
-            emojis: None,
-        })
-        .await;
-
-    let error = client
-        .ensure_can_send_message(Id::new(2), None, &[])
-        .expect_err("incomplete onboarding should stop before REST");
-
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message.contains("server's onboarding")
-    ));
-}
-
-#[tokio::test]
-async fn message_mutation_validators_reject_incomplete_onboarding() {
+async fn mutation_validators_reject_incomplete_onboarding() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
     publish_permission_fixture(
@@ -453,7 +428,8 @@ async fn message_mutation_validators_reject_incomplete_onboarding() {
             | READ_MESSAGE_HISTORY
             | ADD_REACTIONS
             | PIN_MESSAGES
-            | USE_APPLICATION_COMMANDS,
+            | USE_APPLICATION_COMMANDS
+            | MANAGE_THREADS,
     )
     .await;
     client
@@ -465,60 +441,6 @@ async fn message_mutation_validators_reject_incomplete_onboarding() {
             ..guild_message_create_fixture()
         }))
         .await;
-    publish_incomplete_community_onboarding(&client).await;
-    let invocation = ApplicationCommandInvocation {
-        guild_id: Some(Id::new(1)),
-        channel_id: Id::new(2),
-        command_identity: None,
-        command_name: "test".to_owned(),
-        content: "/test".to_owned(),
-    };
-
-    let errors = [
-        client.ensure_can_edit_message(Id::new(2), Id::new(20)),
-        client.ensure_can_delete_message(Id::new(2), Id::new(20)),
-        client.ensure_can_add_reaction(
-            Id::new(2),
-            Id::new(20),
-            &ReactionEmoji::Unicode("👍".to_owned()),
-        ),
-        client.ensure_can_remove_current_user_reaction(Id::new(2)),
-        client.ensure_can_pin_message(Id::new(2)),
-        client.ensure_can_vote_poll(Id::new(2)),
-        client.ensure_can_run_application_command(&invocation),
-    ];
-    for result in errors {
-        assert!(matches!(
-            result,
-            Err(AppError::DiscordRequest(message)) if message.contains("server's onboarding")
-        ));
-    }
-}
-
-#[tokio::test]
-async fn voice_join_rejects_incomplete_onboarding_before_gateway_command() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL | CONNECT).await;
-    publish_incomplete_community_onboarding(&client).await;
-
-    let error = client
-        .update_voice_state(
-            VoiceScope::Guild(Id::new(1)),
-            Some(Id::new(2)),
-            false,
-            false,
-        )
-        .expect_err("incomplete onboarding should stop a voice join");
-
-    assert!(error.contains("server's onboarding"));
-}
-
-#[tokio::test]
-async fn thread_mutation_validator_rejects_incomplete_onboarding() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL | MANAGE_THREADS).await;
     client
         .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: Some(Id::new(1)),
@@ -530,58 +452,262 @@ async fn thread_mutation_validator_rejects_incomplete_onboarding() {
         }))
         .await;
     publish_incomplete_community_onboarding(&client).await;
+    let invocation = ApplicationCommandInvocation {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        command_identity: None,
+        command_name: "test".to_owned(),
+        content: "/test".to_owned(),
+    };
 
-    let error = client
-        .ensure_can_manage_thread(Id::new(3), "edit this thread")
-        .expect_err("incomplete onboarding should stop a thread mutation");
-
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message.contains("server's onboarding")
-    ));
+    let cases = [
+        (
+            client.ensure_can_send_message(Id::new(2), None, &[]),
+            DiscordAction::SendMessage,
+        ),
+        (
+            client.ensure_can_edit_message(Id::new(2), Id::new(20)),
+            DiscordAction::EditMessage,
+        ),
+        (
+            client.ensure_can_delete_message(Id::new(2), Id::new(20)),
+            DiscordAction::DeleteMessage,
+        ),
+        (
+            client.ensure_can_add_reaction(
+                Id::new(2),
+                Id::new(20),
+                &ReactionEmoji::Unicode("👍".to_owned()),
+            ),
+            DiscordAction::AddReaction,
+        ),
+        (
+            client.ensure_can_remove_current_user_reaction(Id::new(2)),
+            DiscordAction::RemoveReaction,
+        ),
+        (
+            client.ensure_can_pin_message(Id::new(2)),
+            DiscordAction::PinMessage,
+        ),
+        (
+            client.ensure_can_vote_poll(Id::new(2)),
+            DiscordAction::VotePoll,
+        ),
+        (
+            client.ensure_can_run_application_command(&invocation),
+            DiscordAction::RunApplicationCommand,
+        ),
+        (
+            client.ensure_can_manage_thread(Id::new(3), DiscordAction::EditThread),
+            DiscordAction::EditThread,
+        ),
+    ];
+    for (result, action) in cases {
+        assert_action_blocked(
+            result,
+            action,
+            ActionBlockReason::ParticipationRestricted(
+                GuildParticipationRestriction::OnboardingIncomplete,
+            ),
+        );
+    }
 }
 
 #[tokio::test]
-async fn send_message_rejects_explicit_missing_attach_permission() {
+async fn channel_action_validators_reject_unknown_permission_data() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL | SEND_MESSAGES).await;
-    let attachment = MessageAttachmentUpload::from_bytes("note.txt".to_owned(), b"x".to_vec());
-
-    let error = client
-        .send_message(Id::new(2), "hello", None, &[attachment])
-        .await
-        .expect_err("missing ATTACH_FILES should stop before REST");
-
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message == "cannot attach files in channel"
-    ));
-}
-
-#[tokio::test]
-async fn reply_rejects_missing_read_message_history_permission() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL | SEND_MESSAGES).await;
-
-    let error = client
-        .send_message(
+    client
+        .publish_event(AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(Id::new(10)),
+        })
+        .await;
+    client
+        .publish_event(AppEvent::ChannelUpsert(permission_fixture_channel(
+            Id::new(1),
             Id::new(2),
-            "hello",
-            Some(ReplyReference {
-                message_id: Id::new(20),
-                mention_author: true,
-            }),
-            &[],
-        )
-        .await
-        .expect_err("missing READ_MESSAGE_HISTORY should stop a reply before REST");
+            "GuildText",
+        )))
+        .await;
+    let invocation = ApplicationCommandInvocation {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        command_identity: None,
+        command_name: "test".to_owned(),
+        content: "/test".to_owned(),
+    };
 
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message.contains("Read Message History")
-    ));
+    let cases = [
+        (
+            client.ensure_can_read_message_history(Id::new(2)),
+            DiscordAction::ReadMessageHistory,
+            ActionBlockReason::PermissionDataUnavailable(PermissionDataGap::Guild),
+        ),
+        (
+            client.ensure_can_remove_current_user_reaction(Id::new(2)),
+            DiscordAction::RemoveReaction,
+            ActionBlockReason::ParticipationDataUnavailable(GuildParticipationDataGap::Guild),
+        ),
+        (
+            client.ensure_can_pin_message(Id::new(2)),
+            DiscordAction::PinMessage,
+            ActionBlockReason::ParticipationDataUnavailable(GuildParticipationDataGap::Guild),
+        ),
+        (
+            client.ensure_can_vote_poll(Id::new(2)),
+            DiscordAction::VotePoll,
+            ActionBlockReason::ParticipationDataUnavailable(GuildParticipationDataGap::Guild),
+        ),
+        (
+            client.ensure_can_run_application_command(&invocation),
+            DiscordAction::RunApplicationCommand,
+            ActionBlockReason::ParticipationDataUnavailable(GuildParticipationDataGap::Guild),
+        ),
+        (
+            client.ensure_can_add_reaction(
+                Id::new(2),
+                Id::new(20),
+                &ReactionEmoji::Unicode("👍".to_owned()),
+            ),
+            DiscordAction::AddReaction,
+            ActionBlockReason::ParticipationDataUnavailable(GuildParticipationDataGap::Guild),
+        ),
+    ];
+
+    for (result, expected_action, expected_reason) in cases {
+        let error = result.expect_err("unknown permission data must fail closed");
+        let AppError::DiscordActionBlocked { action, reason } = error else {
+            panic!("unexpected error: {error}");
+        };
+        assert_eq!(action, expected_action);
+        assert_eq!(reason, expected_reason);
+    }
+}
+
+#[tokio::test]
+async fn channel_actions_reject_each_missing_guild_authorization_input() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let cases = [
+        (
+            None,
+            Some(Vec::new()),
+            Some(permission_fixture_roles(VIEW_CHANNEL | SEND_MESSAGES)),
+            ActionBlockReason::ParticipationDataUnavailable(
+                GuildParticipationDataGap::VerificationLevel,
+            ),
+        ),
+        (
+            Some(GuildVerificationLevel::None),
+            None,
+            Some(permission_fixture_roles(VIEW_CHANNEL | SEND_MESSAGES)),
+            ActionBlockReason::ParticipationDataUnavailable(
+                GuildParticipationDataGap::GuildFeatures,
+            ),
+        ),
+        (
+            Some(GuildVerificationLevel::None),
+            Some(Vec::new()),
+            None,
+            ActionBlockReason::PermissionDataUnavailable(PermissionDataGap::GuildRoles),
+        ),
+        (
+            Some(GuildVerificationLevel::None),
+            Some(Vec::new()),
+            Some(vec![permission_fixture_role(
+                Id::new(50),
+                "staff",
+                VIEW_CHANNEL | SEND_MESSAGES,
+            )]),
+            ActionBlockReason::PermissionDataUnavailable(PermissionDataGap::GuildRoles),
+        ),
+    ];
+    for (verification_level, features, roles, expected_reason) in cases {
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        publish_permission_authorization_fixture(
+            &client,
+            "GuildText",
+            verification_level,
+            Some(0),
+            features,
+            roles,
+        )
+        .await;
+
+        assert_action_blocked(
+            client.ensure_can_send_message(Id::new(2), None, &[]),
+            DiscordAction::SendMessage,
+            expected_reason,
+        );
+    }
+
+    for (mfa_level, current_user_mfa_enabled, expected_gap) in [
+        (None, Some(true), PermissionDataGap::GuildMfaLevel),
+        (Some(1), None, PermissionDataGap::CurrentUserMfa),
+    ] {
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        publish_permission_authorization_fixture(
+            &client,
+            "GuildText",
+            Some(GuildVerificationLevel::None),
+            mfa_level,
+            Some(Vec::new()),
+            Some(permission_fixture_roles(
+                VIEW_CHANNEL | SEND_MESSAGES | MANAGE_MESSAGES,
+            )),
+        )
+        .await;
+        client
+            .publish_event(AppEvent::CurrentUserVerification {
+                email_verified: Some(true),
+                phone_verified: Some(true),
+                mfa_enabled: current_user_mfa_enabled,
+            })
+            .await;
+        client
+            .publish_event(build_message_create_event(MessageCreateFixture {
+                guild_id: Some(Id::new(1)),
+                channel_id: Id::new(2),
+                message_id: Id::new(20),
+                author_id: Id::new(99),
+                ..guild_message_create_fixture()
+            }))
+            .await;
+        assert_action_blocked(
+            client.ensure_can_delete_message(Id::new(2), Id::new(20)),
+            DiscordAction::DeleteMessage,
+            ActionBlockReason::PermissionDataUnavailable(expected_gap),
+        );
+    }
+}
+
+#[tokio::test]
+async fn voice_join_fails_closed_before_gateway_command() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    client
+        .publish_event(AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(Id::new(10)),
+        })
+        .await;
+    client
+        .publish_event(AppEvent::ChannelUpsert(permission_fixture_channel(
+            Id::new(1),
+            Id::new(2),
+            "GuildVoice",
+        )))
+        .await;
+    assert_voice_join_rejected(&client, "server is not loaded");
+
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL).await;
+    assert_voice_join_rejected(&client, "Connect is required");
+
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL | CONNECT).await;
+    publish_incomplete_community_onboarding(&client).await;
+    assert_voice_join_rejected(&client, "server's onboarding");
 }
 
 #[tokio::test]
@@ -623,10 +749,13 @@ async fn forum_post_rejects_unmet_guild_verification() {
         .ensure_can_create_forum_post(&post)
         .expect_err("verification should stop forum creation before REST");
 
-    assert!(matches!(
+    assert_action_blocked_error(
         error,
-        AppError::DiscordRequest(message) if message.contains("verify the Discord account email")
-    ));
+        DiscordAction::CreateForumPost,
+        ActionBlockReason::ParticipationRestricted(
+            GuildParticipationRestriction::EmailVerificationRequired,
+        ),
+    );
 }
 
 #[tokio::test]
@@ -660,10 +789,11 @@ async fn forum_post_rejects_moderated_tag_without_manage_threads() {
         .ensure_can_create_forum_post(&post)
         .expect_err("missing MANAGE_THREADS should reject a moderated tag");
 
-    assert!(matches!(
+    assert_action_blocked_error(
         error,
-        AppError::DiscordRequest(message) if message.contains("Manage Threads")
-    ));
+        DiscordAction::ApplyModeratedForumTag,
+        ActionBlockReason::PermissionDenied(DiscordPermission::ManageThreads),
+    );
 }
 
 #[tokio::test]
@@ -687,87 +817,21 @@ async fn thread_message_rejects_missing_send_messages_in_threads() {
         .await
         .expect_err("missing SEND_MESSAGES_IN_THREADS should stop before REST");
 
-    assert!(matches!(
+    assert_action_blocked_error(
         error,
-        AppError::DiscordRequest(message) if message == "cannot send message in channel"
-    ));
+        DiscordAction::SendMessage,
+        ActionBlockReason::PermissionDenied(DiscordPermission::SendMessages),
+    );
 }
 
 #[tokio::test]
-async fn message_pin_rejects_missing_pin_messages_permission() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL | READ_MESSAGE_HISTORY).await;
-
-    let error = client
-        .set_message_pinned(Id::new(2), Id::new(20), true)
-        .await
-        .expect_err("missing PIN_MESSAGES should stop before REST");
-
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message.contains("Pin Messages")
-    ));
-}
-
-#[tokio::test]
-async fn external_reaction_rejects_missing_use_external_emojis_permission() {
+async fn channel_action_validators_require_action_specific_permissions() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
     publish_permission_fixture(
         &client,
         "GuildText",
-        VIEW_CHANNEL | READ_MESSAGE_HISTORY | ADD_REACTIONS,
-    )
-    .await;
-    let emoji = ReactionEmoji::Custom {
-        id: Id::new(999),
-        name: Some("foreign".to_owned()),
-        animated: false,
-    };
-
-    let error = client
-        .add_reaction(Id::new(2), Id::new(20), &emoji)
-        .await
-        .expect_err("missing USE_EXTERNAL_EMOJIS should stop before REST");
-
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message.contains("Use External Emoji")
-    ));
-}
-
-#[tokio::test]
-async fn application_command_rejects_missing_channel_permission() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildText", VIEW_CHANNEL).await;
-    let invocation = ApplicationCommandInvocation {
-        guild_id: Some(Id::new(1)),
-        channel_id: Id::new(2),
-        command_identity: None,
-        command_name: "test".to_owned(),
-        content: "/test".to_owned(),
-    };
-
-    let error = client
-        .ensure_can_run_application_command(&invocation)
-        .expect_err("missing USE_APPLICATION_COMMANDS should stop before REST");
-
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message.contains("Use Application Commands")
-    ));
-}
-
-#[tokio::test]
-async fn thread_mutation_rejects_manage_channels_without_manage_threads() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(
-        &client,
-        "GuildText",
-        VIEW_CHANNEL | SEND_MESSAGES_IN_THREADS | MANAGE_CHANNELS,
+        VIEW_CHANNEL | READ_MESSAGE_HISTORY | ADD_REACTIONS | MANAGE_CHANNELS,
     )
     .await;
     client
@@ -780,20 +844,188 @@ async fn thread_mutation_rejects_manage_channels_without_manage_threads() {
             ..ChannelInfo::test(Id::new(3), "GuildPublicThread")
         }))
         .await;
+    let emoji = ReactionEmoji::Custom {
+        id: Id::new(999),
+        name: Some("foreign".to_owned()),
+        animated: false,
+    };
+    let invocation = ApplicationCommandInvocation {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        command_identity: None,
+        command_name: "test".to_owned(),
+        content: "/test".to_owned(),
+    };
 
-    let error = client
-        .set_thread_locked(Id::new(3), true)
-        .await
-        .expect_err("missing MANAGE_THREADS should stop before REST");
-
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message.contains("Manage Threads")
-    ));
+    assert_action_blocked(
+        client.ensure_can_pin_message(Id::new(2)),
+        DiscordAction::PinMessage,
+        ActionBlockReason::PermissionDenied(DiscordPermission::PinMessages),
+    );
+    assert_action_blocked(
+        client.ensure_can_add_reaction(Id::new(2), Id::new(20), &emoji),
+        DiscordAction::AddReaction,
+        ActionBlockReason::PermissionDenied(DiscordPermission::UseExternalEmojis),
+    );
+    assert_action_blocked(
+        client.ensure_can_run_application_command(&invocation),
+        DiscordAction::RunApplicationCommand,
+        ActionBlockReason::PermissionDenied(DiscordPermission::UseApplicationCommands),
+    );
+    assert_action_blocked(
+        client.ensure_can_manage_thread(Id::new(3), DiscordAction::ChangeThreadLock),
+        DiscordAction::ChangeThreadLock,
+        ActionBlockReason::PermissionDenied(DiscordPermission::ManageThreads),
+    );
 }
 
 #[tokio::test]
-async fn archived_thread_rejects_membership_changes_before_rest() {
+async fn archived_thread_rejects_mutations_before_rest() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(
+        &client,
+        "GuildText",
+        VIEW_CHANNEL | SEND_MESSAGES_IN_THREADS | READ_MESSAGE_HISTORY | ADD_REACTIONS,
+    )
+    .await;
+    client
+        .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            parent_id: Some(Id::new(2)),
+            name: "thread".to_owned(),
+            current_user_joined_thread: Some(true),
+            thread_metadata: Some(ThreadMetadataInfo::test(true, false)),
+            ..ChannelInfo::test(Id::new(3), "GuildPublicThread")
+        }))
+        .await;
+
+    let invocation = ApplicationCommandInvocation {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(3),
+        command_identity: None,
+        command_name: "test".to_owned(),
+        content: "/test".to_owned(),
+    };
+    let cases = [
+        (
+            client.ensure_can_change_thread_membership(Id::new(3), true),
+            DiscordAction::ChangeThreadMembership,
+        ),
+        (
+            client.ensure_can_edit_message(Id::new(3), Id::new(20)),
+            DiscordAction::EditMessage,
+        ),
+        (
+            client.ensure_can_remove_current_user_reaction(Id::new(3)),
+            DiscordAction::RemoveReaction,
+        ),
+        (
+            client.ensure_can_run_application_command(&invocation),
+            DiscordAction::RunApplicationCommand,
+        ),
+        (
+            client.ensure_can_manage_thread(Id::new(3), DiscordAction::ChangeThreadLock),
+            DiscordAction::ChangeThreadLock,
+        ),
+        (
+            client.ensure_can_manage_thread(Id::new(3), DiscordAction::PinForumPost),
+            DiscordAction::PinForumPost,
+        ),
+        (
+            client
+                .ensure_can_edit_thread_settings(Id::new(3), &[], 0)
+                .map(|_| ()),
+            DiscordAction::EditThread,
+        ),
+        (
+            client.ensure_can_add_reaction(
+                Id::new(3),
+                Id::new(20),
+                &ReactionEmoji::Unicode("👍".to_owned()),
+            ),
+            DiscordAction::AddReaction,
+        ),
+    ];
+    for (result, action) in cases {
+        assert_action_blocked(result, action, ActionBlockReason::ThreadArchived);
+    }
+}
+
+#[tokio::test]
+async fn active_locked_thread_allows_normal_activity_but_archived_locked_thread_cannot_auto_reopen()
+{
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(
+        &client,
+        "GuildText",
+        VIEW_CHANNEL | SEND_MESSAGES_IN_THREADS | READ_MESSAGE_HISTORY | USE_APPLICATION_COMMANDS,
+    )
+    .await;
+    client
+        .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            parent_id: Some(Id::new(2)),
+            owner_id: Some(Id::new(99)),
+            name: "thread".to_owned(),
+            current_user_joined_thread: Some(true),
+            thread_metadata: Some(ThreadMetadataInfo::test(false, true)),
+            ..ChannelInfo::test(Id::new(3), "GuildPublicThread")
+        }))
+        .await;
+    let invocation = ApplicationCommandInvocation {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(3),
+        command_identity: None,
+        command_name: "test".to_owned(),
+        content: "/test".to_owned(),
+    };
+
+    client
+        .ensure_can_send_message(Id::new(3), None, &[])
+        .expect("an active locked thread still accepts messages");
+    client
+        .ensure_can_run_application_command(&invocation)
+        .expect("an active locked thread still accepts application commands");
+
+    client
+        .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            parent_id: Some(Id::new(2)),
+            owner_id: Some(Id::new(99)),
+            name: "thread".to_owned(),
+            current_user_joined_thread: Some(true),
+            thread_metadata: Some(ThreadMetadataInfo::test(true, true)),
+            ..ChannelInfo::test(Id::new(3), "GuildPublicThread")
+        }))
+        .await;
+    assert_action_blocked(
+        client.ensure_can_send_message(Id::new(3), None, &[]),
+        DiscordAction::SendMessage,
+        ActionBlockReason::PermissionDenied(DiscordPermission::ReopenThread),
+    );
+
+    client
+        .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            parent_id: Some(Id::new(2)),
+            owner_id: Some(Id::new(99)),
+            name: "thread".to_owned(),
+            current_user_joined_thread: Some(true),
+            thread_metadata: None,
+            ..ChannelInfo::test(Id::new(4), "GuildPublicThread")
+        }))
+        .await;
+    assert_action_blocked(
+        client.ensure_can_reopen_thread(Id::new(4)),
+        DiscordAction::ReopenThread,
+        ActionBlockReason::ThreadStateUnavailable,
+    );
+}
+
+#[tokio::test]
+async fn thread_creator_can_archive_reopen_and_edit_creator_owned_fields() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
     publish_permission_fixture(
@@ -806,57 +1038,42 @@ async fn archived_thread_rejects_membership_changes_before_rest() {
         .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: Some(Id::new(1)),
             parent_id: Some(Id::new(2)),
+            owner_id: Some(Id::new(10)),
             name: "thread".to_owned(),
             current_user_joined_thread: Some(true),
-            thread_metadata: Some(ThreadMetadataInfo::test(true, false)),
+            thread_metadata: Some(ThreadMetadataInfo::test(false, false)),
             ..ChannelInfo::test(Id::new(3), "GuildPublicThread")
         }))
         .await;
 
-    for joining in [true, false] {
-        let error = client
-            .ensure_can_change_thread_membership(Id::new(3), joining)
-            .expect_err("archived thread membership should not change");
-        assert!(matches!(
-            error,
-            AppError::DiscordRequest(message) if message.contains("archived")
-        ));
-    }
-}
+    client
+        .ensure_can_manage_thread(Id::new(3), DiscordAction::ArchiveThread)
+        .expect("thread creator should be able to archive");
+    assert!(
+        !client
+            .ensure_can_edit_thread_settings(Id::new(3), &[], 0)
+            .expect("creator-owned fields should be editable")
+    );
+    assert_action_blocked(
+        client.ensure_can_edit_thread_settings(Id::new(3), &[], 5),
+        DiscordAction::EditThread,
+        ActionBlockReason::PermissionDenied(DiscordPermission::ManageThreads),
+    );
 
-#[tokio::test]
-async fn archived_thread_rejects_new_reaction_before_rest() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(
-        &client,
-        "GuildText",
-        VIEW_CHANNEL | READ_MESSAGE_HISTORY | ADD_REACTIONS,
-    )
-    .await;
     client
         .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
             guild_id: Some(Id::new(1)),
             parent_id: Some(Id::new(2)),
+            owner_id: Some(Id::new(10)),
             name: "thread".to_owned(),
             current_user_joined_thread: Some(true),
-            thread_metadata: Some(ThreadMetadataInfo::test(true, false)),
+            thread_metadata: Some(ThreadMetadataInfo::test(true, true)),
             ..ChannelInfo::test(Id::new(3), "GuildPublicThread")
         }))
         .await;
-
-    let error = client
-        .ensure_can_add_reaction(
-            Id::new(3),
-            Id::new(20),
-            &ReactionEmoji::Unicode("👍".to_owned()),
-        )
-        .expect_err("archived thread should reject new reactions");
-
-    assert!(matches!(
-        error,
-        AppError::DiscordRequest(message) if message.contains("archived")
-    ));
+    client
+        .ensure_can_reopen_thread(Id::new(3))
+        .expect("thread creator should be able to reopen their locked thread");
 }
 
 #[test]
@@ -868,107 +1085,50 @@ fn send_message_guard_rejects_unknown_channels_before_rest() {
         .ensure_can_send_message(Id::new(99), None, &[])
         .expect_err("unknown channel should fail closed");
 
-    assert!(matches!(
+    assert_action_blocked_error(
         error,
-        AppError::DiscordRequest(message) if message.contains("cannot verify")
-    ));
-}
-
-#[tokio::test]
-async fn voice_join_rejects_explicit_missing_connect_permission() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL).await;
-    let mut gateway_commands = client
-        .gateway_commands_rx
-        .lock()
-        .expect("gateway command receiver mutex is not poisoned")
-        .take()
-        .expect("gateway commands can be taken once");
-
-    let error = client
-        .update_voice_state(
-            VoiceScope::Guild(Id::new(1)),
-            Some(Id::new(2)),
-            false,
-            false,
-        )
-        .expect_err("missing CONNECT should stop before gateway command");
-
-    assert_eq!(error, "cannot connect to voice channel");
-    assert_eq!(client.requested_voice_connection(), None);
-    assert!(matches!(
-        gateway_commands.try_recv(),
-        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-    ));
-}
-
-#[tokio::test]
-async fn microphone_transmit_rejects_missing_speak_permission() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL | CONNECT).await;
-    client
-        .update_voice_state(
-            VoiceScope::Guild(Id::new(1)),
-            Some(Id::new(2)),
-            false,
-            false,
-        )
-        .expect("CONNECT should allow listen-only join");
-
-    let error = client
-        .update_voice_capture_permission(
-            VoiceScope::Guild(Id::new(1)),
-            Id::new(2),
-            true,
-            Default::default(),
-            Default::default(),
-            Default::default(),
-        )
-        .expect_err("missing SPEAK should keep microphone disabled");
-
-    assert!(error.contains("Speak permission"));
-    assert!(
-        !client
-            .requested_voice_connection()
-            .expect("voice request")
-            .allow_microphone_transmit
+        DiscordAction::SendMessage,
+        ActionBlockReason::ChannelDataUnavailable,
     );
 }
 
 #[tokio::test]
-async fn microphone_transmit_rejects_missing_voice_activity_permission() {
+async fn microphone_transmit_requires_speak_and_voice_activity_permissions() {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL | CONNECT | SPEAK).await;
-    client
-        .update_voice_state(
-            VoiceScope::Guild(Id::new(1)),
-            Some(Id::new(2)),
-            false,
-            false,
-        )
-        .expect("CONNECT should allow listen-only join");
+    for (permissions, expected_error) in [
+        (VIEW_CHANNEL | CONNECT, "Speak"),
+        (VIEW_CHANNEL | CONNECT | SPEAK, "Use Voice Activity"),
+    ] {
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        publish_permission_fixture(&client, "GuildVoice", permissions).await;
+        client
+            .update_voice_state(
+                VoiceScope::Guild(Id::new(1)),
+                Some(Id::new(2)),
+                false,
+                false,
+            )
+            .expect("CONNECT should allow listen-only join");
 
-    let error = client
-        .update_voice_capture_permission(
-            VoiceScope::Guild(Id::new(1)),
-            Id::new(2),
-            true,
-            Default::default(),
-            Default::default(),
-            Default::default(),
-        )
-        .expect_err("missing USE_VOICE_ACTIVITY should keep microphone disabled");
+        let error = client
+            .update_voice_capture_permission(
+                VoiceScope::Guild(Id::new(1)),
+                Id::new(2),
+                true,
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            )
+            .expect_err("missing voice permission should keep microphone disabled");
 
-    assert!(error.contains("Use Voice Activity"));
-    assert!(
-        !client
-            .requested_voice_connection()
-            .expect("voice request")
-            .allow_microphone_transmit
-    );
+        assert!(error.contains(expected_error));
+        assert!(
+            !client
+                .requested_voice_connection()
+                .expect("voice request")
+                .allow_microphone_transmit
+        );
+    }
 }
 
 #[tokio::test]
@@ -1314,8 +1474,33 @@ fn message_create_event(message_id: u64) -> AppEvent {
     })
 }
 
+fn assert_action_blocked<T>(
+    result: crate::Result<T>,
+    expected_action: DiscordAction,
+    expected_reason: ActionBlockReason,
+) {
+    let error = match result {
+        Ok(_) => panic!("expected Discord action to be blocked"),
+        Err(error) => error,
+    };
+    assert_action_blocked_error(error, expected_action, expected_reason);
+}
+
+fn assert_action_blocked_error(
+    error: AppError,
+    expected_action: DiscordAction,
+    expected_reason: ActionBlockReason,
+) {
+    let AppError::DiscordActionBlocked { action, reason } = error else {
+        panic!("unexpected error: {error}");
+    };
+    assert_eq!(action, expected_action);
+    assert_eq!(reason, expected_reason);
+}
+
 const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
 const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+const MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 const ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
 const READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
 const CONNECT: u64 = 0x0000_0000_0010_0000;
@@ -1331,6 +1516,25 @@ async fn publish_permission_fixture(
     channel_kind: &str,
     everyone_permissions: u64,
 ) {
+    publish_permission_authorization_fixture(
+        client,
+        channel_kind,
+        Some(GuildVerificationLevel::None),
+        Some(0),
+        Some(Vec::new()),
+        Some(permission_fixture_roles(everyone_permissions)),
+    )
+    .await;
+}
+
+async fn publish_permission_authorization_fixture(
+    client: &DiscordClient,
+    channel_kind: &str,
+    verification_level: Option<GuildVerificationLevel>,
+    mfa_level: Option<u64>,
+    features: Option<Vec<String>>,
+    roles: Option<Vec<RoleInfo>>,
+) {
     client
         .publish_event(AppEvent::Ready {
             user: "me".to_owned(),
@@ -1338,23 +1542,36 @@ async fn publish_permission_fixture(
         })
         .await;
     client
-        .publish_event(guild_create_event(GuildCreateFixture {
+        .publish_event(AppEvent::GuildCreate {
+            guild_id: Id::new(1),
+            name: "guild".to_owned(),
             member_count: Some(1),
             owner_id: Some(Id::new(99)),
+            boost_tier: GuildBoostTier::None,
+            boost_count: 0,
+            verification_level,
+            mfa_level,
+            features,
+            onboarding: None,
             channels: vec![permission_fixture_channel(
                 Id::new(1),
                 Id::new(2),
                 channel_kind,
             )],
             members: vec![permission_fixture_member(Id::new(10))],
-            roles: vec![permission_fixture_role(
-                Id::new(1),
-                "@everyone",
-                everyone_permissions,
-            )],
-            ..GuildCreateFixture::new(Id::new(1))
-        }))
+            presences: Vec::new(),
+            roles,
+            emojis: Vec::new(),
+        })
         .await;
+}
+
+fn permission_fixture_roles(everyone_permissions: u64) -> Vec<RoleInfo> {
+    vec![permission_fixture_role(
+        Id::new(1),
+        "@everyone",
+        everyone_permissions,
+    )]
 }
 
 async fn publish_incomplete_community_onboarding(client: &DiscordClient) {
@@ -1380,6 +1597,18 @@ async fn publish_incomplete_community_onboarding(client: &DiscordClient) {
             onboarding: None,
             roles: None,
             emojis: None,
+        })
+        .await;
+    client
+        .publish_event(AppEvent::GuildOnboardingUpdate {
+            guild_id: Id::new(1),
+            onboarding: GuildOnboardingInfo {
+                guild_id: Id::new(1),
+                enabled: Some(true),
+                mode: None,
+                default_channel_ids: Vec::new(),
+                raw: Arc::new(Value::Null),
+            },
         })
         .await;
 }
@@ -1504,6 +1733,31 @@ fn assert_voice_update(
     assert_eq!(channel_id, expected_channel_id);
     assert_eq!(self_mute, expected_self_mute);
     assert_eq!(self_deaf, expected_self_deaf);
+}
+
+fn assert_voice_join_rejected(client: &DiscordClient, expected_error: &str) {
+    let mut gateway_commands = client
+        .gateway_commands_rx
+        .lock()
+        .expect("gateway command receiver mutex is not poisoned")
+        .take()
+        .expect("gateway commands can be taken once");
+
+    let error = client
+        .update_voice_state(
+            VoiceScope::Guild(Id::new(1)),
+            Some(Id::new(2)),
+            false,
+            false,
+        )
+        .expect_err("blocked voice join should not reach the gateway");
+
+    assert!(error.contains(expected_error), "{error}");
+    assert_eq!(client.requested_voice_connection(), None);
+    assert!(matches!(
+        gateway_commands.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
 }
 
 fn thread_channel_upsert_event() -> AppEvent {

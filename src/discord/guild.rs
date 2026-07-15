@@ -2,7 +2,6 @@ mod state;
 
 pub use state::GuildState;
 
-pub(crate) const GUILD_FEATURE_COMMUNITY: &str = "COMMUNITY";
 pub(crate) const GUILD_FEATURE_MEMBER_VERIFICATION_GATE: &str = "MEMBER_VERIFICATION_GATE_ENABLED";
 
 use std::sync::Arc;

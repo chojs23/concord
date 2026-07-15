@@ -95,7 +95,7 @@ fn emoji_picker_items_include_custom_emojis_from_update_event() {
 }
 
 #[test]
-fn emoji_picker_items_include_foreign_custom_emojis_for_nitro_users() {
+fn emoji_picker_respects_channel_permission_for_foreign_custom_emojis() {
     let mut state = state_with_custom_emojis();
     push_foreign_reaction_emojis(&mut state);
     state.push_event(AppEvent::CurrentUserCapabilities {
@@ -114,10 +114,7 @@ fn emoji_picker_items_include_foreign_custom_emojis_for_nitro_users() {
         ReactionEmoji::Custom { id, name, animated: true }
             if *id == Id::new(61) && name.as_deref() == Some("dance_foreign")
     )));
-}
 
-#[test]
-fn emoji_picker_hides_foreign_custom_emojis_without_channel_permission() {
     let mut state = state_with_other_user_message_permissions(
         PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY | PERM_ADD_REACTIONS,
         Vec::new(),
@@ -268,9 +265,9 @@ fn reaction_message_actions_use_single_reacted_users_item() {
         .iter()
         .find(|action| action.kind == MessageActionKind::OpenPollVotePicker)
         .expect("poll action should exist");
-    assert!(!open_thread.enabled);
-    assert!(show_reaction_users.enabled);
-    assert!(!open_poll_vote_picker.enabled);
+    assert!(!open_thread.is_enabled());
+    assert!(show_reaction_users.is_enabled());
+    assert!(!open_poll_vote_picker.is_enabled());
     assert_eq!(
         actions
             .iter()
@@ -378,7 +375,7 @@ fn show_reacted_users_requires_read_message_history() {
         .into_iter()
         .find(|action| action.kind == MessageActionKind::ShowReactionUsers)
         .expect("show reacted users action should still be visible");
-    assert!(!without_history_action.enabled);
+    assert!(!without_history_action.is_enabled());
 
     let mut with_history = state_with_other_user_message_permissions(
         PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY,
@@ -391,7 +388,7 @@ fn show_reacted_users_requires_read_message_history() {
         .into_iter()
         .find(|action| action.kind == MessageActionKind::ShowReactionUsers)
         .expect("show reacted users action should be visible");
-    assert!(with_history_action.enabled);
+    assert!(with_history_action.is_enabled());
 }
 
 #[test]

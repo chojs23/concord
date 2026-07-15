@@ -21,8 +21,8 @@ use tokio::{
 use crate::{AppError, Result};
 
 use super::{
-    ActivityInfo, ApplicationCommandInfo, ApplicationCommandInvocation, DiscordAuthSession,
-    PresenceStatus,
+    ActivityInfo, ApplicationCommandInfo, ApplicationCommandInvocation, DiscordAction,
+    DiscordAuthSession, DiscordPermission, PresenceStatus,
     application_commands::application_command_interaction_from_invocation,
     events::{AppEvent, SequencedAppEvent},
     fingerprint::{
@@ -364,15 +364,12 @@ impl DiscordClient {
                     let Some(channel) = state.channel(channel_id) else {
                         return Err("cannot verify voice channel permissions".to_owned());
                     };
-                    rest_actions::ensure_guild_participation(
+                    rest_actions::ensure_channel_action_policy(
                         &state,
                         channel,
-                        "join this voice channel",
+                        DiscordAction::JoinVoiceChannel,
                     )
                     .map_err(|error| error.to_string())?;
-                    if !state.can_connect_voice_channel(channel) {
-                        return Err("cannot connect to voice channel".to_owned());
-                    }
                 }
             }
         }
@@ -441,17 +438,26 @@ impl DiscordClient {
             let Some(channel) = state.channel(channel_id) else {
                 return Err("cannot verify voice channel permissions".to_owned());
             };
-            rest_actions::ensure_guild_participation(&state, channel, "transmit microphone audio")
-                .map_err(|error| error.to_string())?;
-            if !state.can_speak_in_voice_channel(channel) {
-                return Err("Speak permission is required to transmit microphone audio".to_owned());
-            }
-            if !state.can_use_voice_activity_in_channel(channel) {
-                return Err(
-                    "Use Voice Activity permission is required to transmit microphone audio"
-                        .to_owned(),
-                );
-            }
+            rest_actions::ensure_channel_action_policy(
+                &state,
+                channel,
+                DiscordAction::TransmitMicrophone,
+            )
+            .map_err(|error| error.to_string())?;
+            rest_actions::ensure_permission(
+                &state,
+                channel,
+                DiscordAction::TransmitMicrophone,
+                DiscordPermission::Speak,
+            )
+            .map_err(|error| error.to_string())?;
+            rest_actions::ensure_permission(
+                &state,
+                channel,
+                DiscordAction::TransmitMicrophone,
+                DiscordPermission::UseVoiceActivity,
+            )
+            .map_err(|error| error.to_string())?;
         }
         let mut requested = self
             .requested_voice

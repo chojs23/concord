@@ -74,8 +74,7 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     let roles = data
         .get("roles")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parse_role_info).collect())
-        .unwrap_or_default();
+        .map(|items| items.iter().filter_map(parse_role_info).collect());
 
     let emojis = data
         .get("emojis")
@@ -86,9 +85,9 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     let owner_id = guild_field(data, "owner_id").and_then(parse_id::<UserMarker>);
     let boost_tier = parse_guild_boost_tier(data);
     let boost_count = parse_guild_boost_count(data).unwrap_or(0);
-    let verification_level = parse_guild_verification_level(data).unwrap_or_default();
-    let mfa_level = parse_guild_mfa_level(data).unwrap_or(0);
-    let features = parse_guild_features(data).unwrap_or_default();
+    let verification_level = parse_guild_verification_level(data);
+    let mfa_level = parse_guild_mfa_level(data);
+    let features = parse_guild_features(data);
     let onboarding = parse_guild_onboarding_from_guild(data, guild_id);
 
     Some(AppEvent::GuildCreate {

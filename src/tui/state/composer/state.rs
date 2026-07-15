@@ -14,10 +14,11 @@ use crate::discord::{
     APPLICATION_COMMAND_CHANNEL_KIND, APPLICATION_COMMAND_MENTIONABLE_KIND,
     APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND, ApplicationCommandIdentity,
     ApplicationCommandInfo, ApplicationCommandInvocation, BuiltinSlashCommandParse,
-    BuiltinSlashCommandSubmit, GlobalUserProfileUpdate, GuildUserProfileUpdate,
-    MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload, MessageVerificationRestriction,
-    UserProfileUpdate, application_command_content_is_complete, application_command_option_scope,
-    parse_builtin_slash_command, parsed_application_command_option_names,
+    BuiltinSlashCommandSubmit, GlobalUserProfileUpdate, GuildParticipationBlock,
+    GuildParticipationRestriction, GuildUserProfileUpdate, MAX_UPLOAD_ATTACHMENT_COUNT,
+    MessageAttachmentUpload, UserProfileUpdate, application_command_content_is_complete,
+    application_command_option_scope, parse_builtin_slash_command,
+    parsed_application_command_option_names,
 };
 
 use super::super::local_upload_preview::{
@@ -53,7 +54,7 @@ pub enum ComposerLock {
     NewConversation,
     EmptyChannel,
     SlowMode { remaining_seconds: u64 },
-    Verification(MessageVerificationRestriction),
+    Verification(GuildParticipationBlock),
 }
 
 /// Discord keeps a typing indicator alive for about ten seconds, so resend a
@@ -374,7 +375,12 @@ impl DashboardState {
         match self.selected_channel_state() {
             Some(channel) if channel.is_forum() => false,
             Some(_) if self.composer_lock().is_some() => false,
-            Some(channel) => self.discord.cache.can_send_in_channel(channel),
+            Some(channel) => self
+                .discord
+                .cache
+                .channel_action_decision(channel, crate::discord::DiscordAction::SendMessage)
+                .optimistic_ui_block_reason()
+                .is_none(),
             None => true,
         }
     }
@@ -382,8 +388,7 @@ impl DashboardState {
     pub fn composer_lock(&self) -> Option<ComposerLock> {
         let channel = self.selected_channel_state()?;
         if channel.is_forum() {
-            if let Some(restriction) = self.discord.cache.message_verification_restriction(channel)
-            {
+            if let Some(restriction) = self.discord.cache.guild_participation_block(channel) {
                 return Some(ComposerLock::Verification(restriction));
             }
             if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
@@ -433,7 +438,7 @@ impl DashboardState {
         if channel.guild_id.is_none() || !self.discord.cache.can_send_in_channel(channel) {
             return None;
         }
-        if let Some(restriction) = self.discord.cache.message_verification_restriction(channel) {
+        if let Some(restriction) = self.discord.cache.guild_participation_block(channel) {
             return Some(ComposerLock::Verification(restriction));
         }
         if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
@@ -522,10 +527,10 @@ impl DashboardState {
             ComposerLock::SlowMode {
                 remaining_seconds: _,
             }
-            | ComposerLock::Verification(
-                MessageVerificationRestriction::AccountTooNew { .. }
-                | MessageVerificationRestriction::MemberTooNew { .. },
-            ) => Some(Instant::now() + Duration::from_secs(1)),
+            | ComposerLock::Verification(GuildParticipationBlock::Restricted(
+                GuildParticipationRestriction::AccountTooNew { .. }
+                | GuildParticipationRestriction::MemberTooNew { .. },
+            )) => Some(Instant::now() + Duration::from_secs(1)),
             _ => None,
         }
     }
@@ -584,7 +589,7 @@ impl DashboardState {
                     && self
                         .discord
                         .cache
-                        .message_verification_restriction(channel)
+                        .guild_participation_block(channel)
                         .is_none()
                     && self.slow_mode_remaining_seconds(channel.id).is_none()
             }

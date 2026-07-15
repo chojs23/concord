@@ -5,8 +5,8 @@ use crate::discord::test_builders::{
     typing_start_event,
 };
 use crate::discord::{
-    ApplicationCommandInfo, ApplicationCommandOptionInfo, GuildVerificationLevel, MemberInfo,
-    MessageAttachmentUpload, MessageVerificationRestriction,
+    ApplicationCommandInfo, ApplicationCommandOptionInfo, GuildParticipationBlock,
+    GuildParticipationRestriction, GuildVerificationLevel, MessageAttachmentUpload,
 };
 use crate::tui::keybindings::ScrollAction;
 use crate::tui::state::{ActiveModalPopupKind, ForumPostComposerField, LocalUploadPreviewView};
@@ -14,10 +14,9 @@ use crate::tui::text_input::TextEditAction;
 use serde_json::json;
 
 const PERM_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
-const MEMBER_FLAG_STARTED_ONBOARDING: u64 = 1 << 3;
 
 #[test]
-fn slow_mode_closes_and_locks_the_composer_with_a_countdown() {
+fn slow_mode_locks_composer_for_live_and_cached_self_messages() {
     let mut state = state_with_writable_channel();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
@@ -51,13 +50,10 @@ fn slow_mode_closes_and_locks_the_composer_with_a_countdown() {
     expired.record_slow_mode_deadline(Id::new(2), std::time::Duration::from_millis(10));
     std::thread::sleep(std::time::Duration::from_millis(20));
     assert_eq!(expired.composer_lock(), None);
-}
 
-#[test]
-fn slow_mode_uses_recent_cached_self_message_after_channel_load() {
     const DISCORD_EPOCH_MILLIS: i64 = 1_420_070_400_000;
-    let mut state = state_with_writable_channel();
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+    let mut cached = state_with_writable_channel();
+    cached.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         guild_id: Some(Id::new(1)),
         name: "general".to_owned(),
         last_message_id: Some(Id::new(1)),
@@ -68,7 +64,7 @@ fn slow_mode_uses_recent_cached_self_message_after_channel_load() {
     let timestamp = u64::try_from(chrono::Utc::now().timestamp_millis() - DISCORD_EPOCH_MILLIS)
         .expect("current time should follow Discord epoch");
     let message_id = Id::new((timestamp << 22) | 1);
-    state.push_event(latest_history_loaded(
+    cached.push_event(latest_history_loaded(
         Id::new(2),
         vec![MessageInfo {
             channel_id: Id::new(2),
@@ -79,7 +75,7 @@ fn slow_mode_uses_recent_cached_self_message_after_channel_load() {
     ));
 
     assert!(matches!(
-        state.composer_lock(),
+        cached.composer_lock(),
         Some(ComposerLock::SlowMode {
             remaining_seconds: 29..=30
         })
@@ -87,7 +83,7 @@ fn slow_mode_uses_recent_cached_self_message_after_channel_load() {
 }
 
 #[test]
-fn verification_requirement_prevents_composer_activation() {
+fn participation_requirements_prevent_composer_activation() {
     let mut state = state_with_writable_channel();
     state.start_composer();
     assert!(state.is_composing());
@@ -103,96 +99,36 @@ fn verification_requirement_prevents_composer_activation() {
         ..GuildUpdateFixture::new()
     }));
 
-    assert_eq!(
-        state.composer_lock(),
-        Some(ComposerLock::Verification(
-            MessageVerificationRestriction::EmailVerificationRequired
-        ))
+    assert_composer_restricted(
+        &mut state,
+        GuildParticipationRestriction::EmailVerificationRequired,
     );
-    assert!(!state.is_composing());
-    state.start_composer();
-    assert!(!state.is_composing());
-}
 
-#[test]
-fn community_onboarding_requirement_prevents_composer_activation_without_config_object() {
     let mut state = state_with_writable_channel();
     state.start_composer();
     assert!(state.is_composing());
 
-    let mut member = MemberInfo::test(Id::new(10), "me");
-    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
-    state.push_event(AppEvent::GuildMemberUpsert {
-        guild_id: Id::new(1),
-        member,
-    });
-    state.push_event(guild_update_event(GuildUpdateFixture {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        features: Some(vec!["COMMUNITY".to_owned()]),
-        ..GuildUpdateFixture::new()
-    }));
+    apply_incomplete_community_onboarding(&mut state, Id::new(1), Id::new(10));
 
+    assert_composer_restricted(
+        &mut state,
+        GuildParticipationRestriction::OnboardingIncomplete,
+    );
+}
+
+fn assert_composer_restricted(
+    state: &mut DashboardState,
+    restriction: GuildParticipationRestriction,
+) {
     assert_eq!(
         state.composer_lock(),
         Some(ComposerLock::Verification(
-            MessageVerificationRestriction::OnboardingIncomplete
+            GuildParticipationBlock::Restricted(restriction)
         ))
     );
     assert!(!state.is_composing());
     state.start_composer();
     assert!(!state.is_composing());
-}
-
-#[test]
-fn verification_requirement_prevents_forum_post_composer_activation() {
-    let mut state = state_with_forum_post_channel(false);
-    state.push_event(AppEvent::CurrentUserVerification {
-        email_verified: Some(false),
-        phone_verified: Some(false),
-        mfa_enabled: None,
-    });
-    state.push_event(guild_update_event(GuildUpdateFixture {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        verification_level: Some(GuildVerificationLevel::Low),
-        ..GuildUpdateFixture::new()
-    }));
-
-    assert!(!state.can_create_post_in_selected_channel());
-    state.start_composer();
-    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
-
-    state.open_forum_post_composer(Id::new(20));
-    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
-}
-
-#[test]
-fn forum_slow_mode_prevents_post_composer_activation() {
-    let mut state = state_with_forum_post_channel(false);
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        guild_id: Some(Id::new(1)),
-        name: "support".to_owned(),
-        position: Some(0),
-        rate_limit_per_user: Some(2),
-        ..ChannelInfo::test(Id::new(20), "forum")
-    }));
-    state.push_event(AppEvent::MessageSendCooldownStarted {
-        channel_id: Id::new(20),
-        duration_millis: 2_000,
-    });
-
-    assert!(matches!(
-        state.composer_lock(),
-        Some(ComposerLock::SlowMode {
-            remaining_seconds: 1..=2
-        })
-    ));
-    assert!(!state.can_create_post_in_selected_channel());
-    assert!(state.toast_message().is_none());
-
-    state.start_composer();
-    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
 }
 
 fn application_command(
@@ -477,7 +413,7 @@ fn start_composer_refused_in_read_only_channel() {
 }
 
 #[test]
-fn start_composer_opens_forum_post_overlay_in_forum_channel() {
+fn forum_post_composer_activation_respects_channel_state() {
     let mut state = state_with_forum_post_channel(false);
 
     state.start_composer();
@@ -490,6 +426,47 @@ fn start_composer_opens_forum_post_overlay_in_forum_channel() {
     assert_eq!(view.channel_label, "#support");
     assert_eq!(view.active_field, ForumPostComposerField::Title);
     assert_eq!(view.editing_field, None);
+
+    let mut verification = state_with_forum_post_channel(false);
+    verification.push_event(AppEvent::CurrentUserVerification {
+        email_verified: Some(false),
+        phone_verified: Some(false),
+        mfa_enabled: None,
+    });
+    verification.push_event(guild_update_event(GuildUpdateFixture {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        verification_level: Some(GuildVerificationLevel::Low),
+        ..GuildUpdateFixture::new()
+    }));
+    assert!(!verification.can_create_post_in_selected_channel());
+    verification.start_composer();
+    assert!(!verification.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+    verification.open_forum_post_composer(Id::new(20));
+    assert!(!verification.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+
+    let mut slow_mode = state_with_forum_post_channel(false);
+    slow_mode.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        name: "support".to_owned(),
+        position: Some(0),
+        rate_limit_per_user: Some(2),
+        ..ChannelInfo::test(Id::new(20), "forum")
+    }));
+    slow_mode.push_event(AppEvent::MessageSendCooldownStarted {
+        channel_id: Id::new(20),
+        duration_millis: 2_000,
+    });
+    assert!(matches!(
+        slow_mode.composer_lock(),
+        Some(ComposerLock::SlowMode {
+            remaining_seconds: 1..=2
+        })
+    ));
+    assert!(!slow_mode.can_create_post_in_selected_channel());
+    assert!(slow_mode.toast_message().is_none());
+    slow_mode.start_composer();
+    assert!(!slow_mode.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
 }
 
 #[test]
@@ -2058,7 +2035,7 @@ fn animated_current_guild_emoji_sends_link_without_nitro_when_enabled() {
 }
 
 #[test]
-fn nitro_user_sends_foreign_custom_emojis_as_native_markup() {
+fn nitro_foreign_custom_emojis_require_channel_permission() {
     let mut state = state_with_custom_emojis();
     push_foreign_custom_emojis(&mut state);
     state.push_event(AppEvent::CurrentUserCapabilities {
@@ -2112,10 +2089,7 @@ fn nitro_user_sends_foreign_custom_emojis_as_native_markup() {
             attachments: Vec::new(),
         })
     );
-}
 
-#[test]
-fn foreign_custom_emoji_is_hidden_without_channel_permission() {
     let mut state = guild_state_with_overwrites(Vec::new(), Some(Id::new(1)));
     push_foreign_custom_emojis(&mut state);
     state.push_event(AppEvent::CurrentUserCapabilities {

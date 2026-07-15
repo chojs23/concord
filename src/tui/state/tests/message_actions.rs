@@ -25,7 +25,7 @@ fn message_action_index(actions: &[MessageActionItem], kind: MessageActionKind) 
 }
 
 #[test]
-fn message_action_items_reflect_selected_message_capabilities() {
+fn message_action_items_reflect_message_and_channel_capabilities() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
 
@@ -51,31 +51,43 @@ fn message_action_items_reflect_selected_message_capabilities() {
             MessageActionKind::OpenPollVotePicker,
         ]
     );
-    assert!(message_action(&actions, MessageActionKind::CopyContent).enabled);
-    assert!(message_action(&actions, MessageActionKind::Reply).enabled);
+    assert!(message_action(&actions, MessageActionKind::CopyContent).is_enabled());
+    assert!(message_action(&actions, MessageActionKind::Reply).is_enabled());
     assert_eq!(
         message_action(&actions, MessageActionKind::ShowProfile).label,
         "show message sender profile"
     );
-    assert!(message_action(&actions, MessageActionKind::ShowProfile).enabled);
-    assert!(!message_action(&actions, MessageActionKind::GoToReferencedMessage).enabled);
-    assert!(!message_action(&actions, MessageActionKind::RemoveEmbeds).enabled);
-    assert!(!message_action(&actions, MessageActionKind::PlayMedia).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
-}
+    assert!(message_action(&actions, MessageActionKind::ShowProfile).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::GoToReferencedMessage).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::RemoveEmbeds).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::PlayMedia).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 
-#[test]
-fn incomplete_onboarding_disables_message_mutations_but_keeps_local_actions() {
-    let mut state = state_with_messages(1);
-    apply_incomplete_community_onboarding(&mut state, Id::new(1), Id::new(99));
-    state.activate_guild(ActiveGuildScope::Guild(Id::new(1)));
-    state.activate_channel(Id::new(2));
-    state.focus_pane(FocusPane::Messages);
-    state.jump_bottom();
+    let mut restricted = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES,
+        Vec::new(),
+    );
+    restricted.focus_pane(FocusPane::Messages);
+    let actions = restricted.selected_message_action_items();
+    let reply = message_action(&actions, MessageActionKind::Reply);
+    assert!(!reply.is_enabled());
+    assert_eq!(
+        reply.disabled_reason(),
+        Some("Read Message History required")
+    );
+    restricted.direct_reply_to_selected_message();
+    assert!(!restricted.is_composing());
 
-    let actions = state.selected_message_action_items();
+    let mut onboarding = state_with_messages(1);
+    apply_incomplete_community_onboarding(&mut onboarding, Id::new(1), Id::new(99));
+    onboarding.activate_guild(ActiveGuildScope::Guild(Id::new(1)));
+    onboarding.activate_channel(Id::new(2));
+    onboarding.focus_pane(FocusPane::Messages);
+    onboarding.jump_bottom();
+
+    let actions = onboarding.selected_message_action_items();
     for kind in [
         MessageActionKind::OpenReactionPicker,
         MessageActionKind::Reply,
@@ -85,16 +97,26 @@ fn incomplete_onboarding_disables_message_mutations_but_keeps_local_actions() {
         MessageActionKind::OpenPinConfirmation,
         MessageActionKind::OpenPollVotePicker,
     ] {
+        let action = message_action(&actions, kind);
         assert!(
-            !message_action(&actions, kind).enabled,
+            !action.is_enabled(),
             "{kind:?} should require completed onboarding"
         );
+        assert_eq!(
+            action.disabled_reason(),
+            Some(if kind == MessageActionKind::OpenPollVotePicker {
+                "no poll"
+            } else {
+                "onboarding incomplete"
+            }),
+            "{kind:?} should explain why it is disabled"
+        );
     }
-    assert!(message_action(&actions, MessageActionKind::CopyContent).enabled);
-    assert!(message_action(&actions, MessageActionKind::ShowProfile).enabled);
+    assert!(message_action(&actions, MessageActionKind::CopyContent).is_enabled());
+    assert!(message_action(&actions, MessageActionKind::ShowProfile).is_enabled());
 
-    state.direct_edit_selected_message();
-    assert!(!state.is_composing());
+    onboarding.direct_edit_selected_message();
+    assert!(!onboarding.is_composing());
 }
 
 #[test]
@@ -114,7 +136,7 @@ fn remove_embeds_message_action_emits_command_for_unsuppressed_embeds() {
     state.focus_pane(FocusPane::Messages);
 
     let actions = state.selected_message_action_items();
-    assert!(message_action(&actions, MessageActionKind::RemoveEmbeds).enabled);
+    assert!(message_action(&actions, MessageActionKind::RemoveEmbeds).is_enabled());
 
     assert_eq!(
         state.activate_message_action_kind(MessageActionKind::RemoveEmbeds),
@@ -148,7 +170,7 @@ fn remove_embeds_message_action_is_disabled_after_suppression() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::RemoveEmbeds).enabled);
+    assert!(!message_action(&actions, MessageActionKind::RemoveEmbeds).is_enabled());
 }
 
 #[test]
@@ -396,9 +418,9 @@ fn normal_message_actions_show_disabled_dynamic_actions() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 }
 
 #[test]
@@ -412,9 +434,9 @@ fn own_regular_message_actions_show_disabled_dynamic_actions() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 }
 
 #[test]
@@ -429,9 +451,9 @@ fn own_reply_message_actions_show_disabled_dynamic_actions() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 }
 
 #[test]
@@ -525,21 +547,6 @@ fn other_user_delete_requires_manage_messages() {
     assert!(
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
-}
-
-#[test]
-fn reply_requires_read_message_history() {
-    let mut state = state_with_other_user_message_permissions(
-        PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES,
-        Vec::new(),
-    );
-    state.focus_pane(FocusPane::Messages);
-
-    let actions = state.selected_message_action_items();
-    assert!(!message_action(&actions, MessageActionKind::Reply).enabled);
-
-    state.direct_reply_to_selected_message();
-    assert!(!state.is_composing());
 }
 
 #[test]
@@ -666,10 +673,10 @@ fn reply_attachment_action_can_open_attachment_viewer() {
     );
     state.focus_pane(FocusPane::Messages);
     let actions = state.selected_message_action_items();
-    assert!(message_action(&actions, MessageActionKind::ViewAttachment).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(message_action(&actions, MessageActionKind::ViewAttachment).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 
     state.direct_open_selected_message_attachment_viewer();
 
@@ -798,7 +805,7 @@ fn media_playback_disabled_removes_message_play_action() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::PlayMedia).enabled);
+    assert!(!message_action(&actions, MessageActionKind::PlayMedia).is_enabled());
     assert_eq!(state.direct_play_selected_message_media(), None);
 }
 
@@ -978,11 +985,11 @@ fn non_regular_message_actions_only_show_supported_actions() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::Edit).enabled);
-    assert!(message_action(&actions, MessageActionKind::ViewAttachment).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(!message_action(&actions, MessageActionKind::Edit).is_enabled());
+    assert!(message_action(&actions, MessageActionKind::ViewAttachment).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 }
 
 #[test]
@@ -1002,9 +1009,9 @@ fn message_action_items_keep_poll_actions_for_attachment_messages() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 }
 
 #[test]
@@ -1101,6 +1108,11 @@ fn multi_select_poll_action_opens_picker_and_submits_selected_answers() {
     }));
 
     let actions = state.selected_message_action_items();
+    assert!(
+        actions
+            .iter()
+            .all(|action| action.is_enabled() || action.disabled_reason().is_some())
+    );
     assert_eq!(
         message_action(&actions, MessageActionKind::OpenPollVotePicker).label,
         "choose poll votes"
