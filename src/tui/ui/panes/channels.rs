@@ -1,5 +1,5 @@
-use super::*;
 use super::members::primary_activity_summary;
+use super::*;
 use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
 pub(in crate::tui::ui) fn render_channels(
@@ -99,7 +99,9 @@ pub(in crate::tui::ui) fn render_channels(
         .filter_map(|(line_index, (entry, is_activity_row))| {
             if *is_activity_row {
                 let ChannelPaneEntry::Channel {
-                    state: channel, branch, ..
+                    state: channel,
+                    branch,
+                    ..
                 } = entry
                 else {
                     return None;
@@ -107,17 +109,18 @@ pub(in crate::tui::ui) fn render_channels(
                 let recipient = channel.recipients.first()?;
                 let activities = state.user_activities(recipient.user_id);
                 let render = primary_activity_summary(activities, emoji_images)?;
-                let dm_prefix_width = dm_presence_dot_span(channel)
-                    .map_or_else(|| channel_prefix(&channel.kind).width(), |span| span.content.width());
+                let dm_prefix_width = dm_presence_dot_span(channel).map_or_else(
+                    || channel_prefix(&channel.kind).width(),
+                    |span| span.content.width(),
+                );
                 let leading_width = branch.prefix().width() + dm_prefix_width + 2;
                 let body_width = max_width.saturating_sub(leading_width);
                 let body = truncate_display_width_from(
                     &render.body,
                     horizontal_scroll,
-                    body_width.saturating_sub(usize::from(matches!(
-                        render.leading,
-                        ActivityLeading::Icon(_)
-                    )) * 2),
+                    body_width.saturating_sub(
+                        usize::from(matches!(render.leading, ActivityLeading::Icon(_))) * 2,
+                    ),
                 );
                 let leading = " ".repeat(leading_width);
                 let line = match render.leading {

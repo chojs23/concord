@@ -901,20 +901,28 @@ impl DashboardState {
 
     pub fn channel_entry_has_activity_row(&self, entry: &ChannelPaneEntry<'_>) -> bool {
         match entry {
-            ChannelPaneEntry::Channel { state, .. } if state.is_dm() && !state.recipients.is_empty() => {
+            ChannelPaneEntry::Channel { state, .. }
+                if state.is_dm() && !state.recipients.is_empty() =>
+            {
                 let recipient = &state.recipients[0];
-                !matches!(recipient.status, PresenceStatus::Offline | PresenceStatus::Unknown)
-                    && !self.user_activities(recipient.user_id).is_empty()
+                !matches!(
+                    recipient.status,
+                    PresenceStatus::Offline | PresenceStatus::Unknown
+                ) && !self.user_activities(recipient.user_id).is_empty()
             }
             _ => false,
         }
     }
 
     pub(super) fn selected_channel_line(&self, entries: &[ChannelPaneEntry<'_>]) -> Option<usize> {
-        let selected_channel = self.navigation.channels.list.selected.min(entries.len().saturating_sub(1));
-        let mut channel_index = 0usize;
+        let selected_channel = self
+            .navigation
+            .channels
+            .list
+            .selected
+            .min(entries.len().saturating_sub(1));
         let mut line_index = 0usize;
-        for entry in entries {
+        for (channel_index, entry) in entries.iter().enumerate() {
             if channel_index == selected_channel {
                 return Some(line_index);
             }
@@ -922,7 +930,6 @@ impl DashboardState {
             if self.channel_entry_has_activity_row(entry) {
                 line_index += 1;
             }
-            channel_index += 1;
         }
         None
     }
@@ -949,11 +956,9 @@ impl DashboardState {
     fn channel_line_indices(&self) -> Vec<(usize, usize)> {
         let entries = self.channel_pane_filtered_entries();
         let mut indices = Vec::new();
-        let mut entry_index = 0usize;
         let mut line_index = 0usize;
-        for entry in &entries {
+        for (entry_index, entry) in entries.iter().enumerate() {
             indices.push((entry_index, line_index));
-            entry_index += 1;
             line_index += 1;
             if self.channel_entry_has_activity_row(entry) {
                 line_index += 1;

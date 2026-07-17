@@ -170,13 +170,25 @@ fn channel_navigation_skips_over_activity_subrows() {
     let charlie = Id::new(30);
 
     state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
-        Id::new(100), "alice", alice, "alice", 1,
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        1,
     )));
     state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
-        Id::new(101), "bob", bob, "bob", 2,
+        Id::new(101),
+        "bob",
+        bob,
+        "bob",
+        2,
     )));
     state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
-        Id::new(102), "charlie", charlie, "charlie", 3,
+        Id::new(102),
+        "charlie",
+        charlie,
+        "charlie",
+        3,
     )));
 
     state.push_event(AppEvent::PresenceUpdate {
@@ -209,7 +221,7 @@ fn channel_navigation_skips_over_activity_subrows() {
 fn channel_half_page_scrolls_by_rendered_lines() {
     let mut state = DashboardState::new();
     let mut recipient_ids = Vec::new();
-    for (idx, id) in (1u64..=4).enumerate() {
+    for id in 1u64..=4 {
         let user_id: Id<UserMarker> = Id::new(id + 10);
         recipient_ids.push(user_id);
         state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
