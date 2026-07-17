@@ -184,7 +184,7 @@ const VOICE_MIC_OVERLOAD_TRANSIENT_GAIN: f32 = 0.03;
 const VOICE_MIC_OVERLOAD_RECOVERY_START_GAIN: f32 = 0.15;
 #[allow(dead_code)]
 #[cfg(any(test, feature = "voice-playback"))]
-const VOICE_MIC_TRANSMIT_BOOST_GAIN: f32 = 1.15;
+const VOICE_MIC_TRANSMIT_BOOST_GAIN: f32 = 1.5;
 #[cfg(any(test, feature = "voice-playback"))]
 const VOICE_MIC_SOFT_LIMIT_THRESHOLD: f32 = 0.85;
 #[cfg(any(test, feature = "voice-playback"))]

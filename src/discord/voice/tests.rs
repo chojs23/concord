@@ -908,6 +908,15 @@ fn voice_volume_scales_i16_pcm_frame() {
 }
 
 #[test]
+fn voice_microphone_transmit_boost_increases_pcm_by_half() {
+    let mut frame = vec![1000, -1000];
+
+    apply_voice_microphone_gain(&mut frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
+
+    assert_eq!(frame, vec![1500, -1500]);
+}
+
+#[test]
 fn voice_microphone_protection_soft_limits_extreme_samples() {
     let mut frame = vec![1000, -1000, i16::MAX, i16::MIN];
 
