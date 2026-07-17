@@ -1,21 +1,24 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crate::discord::{
-    ids::{Id, marker::ChannelMarker},
+    ids::{
+        Id,
+        marker::{ChannelMarker, GuildMarker},
+    },
     json::extra_fields,
 };
 use crate::{AppError, Result, logging};
 
 use reqwest::{
-    RequestBuilder, Response, StatusCode,
-    header::{AUTHORIZATION, HeaderMap, RETRY_AFTER},
+    Method, RequestBuilder, Response, StatusCode,
+    header::{AUTHORIZATION, HeaderMap, HeaderValue, ORIGIN, REFERER, RETRY_AFTER},
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -40,13 +43,17 @@ pub use forum::{CreatedForumPost, ForumPostPage};
 pub(in crate::discord) use messages::MessageEditRequest;
 pub use reactions::ReactionUsersPage;
 
+use super::fingerprint::{ClientFingerprint, discord_channel_referer, discord_rest_headers};
+
 #[derive(Clone, Debug)]
 pub struct DiscordRest {
     raw_http: reqwest::Client,
-    headers: HeaderMap,
+    fingerprint: Arc<ClientFingerprint>,
+    page_referer: Arc<RwLock<Option<HeaderValue>>>,
     token: String,
     request_safety: Arc<RequestSafety>,
     rate_limiter: Arc<RestRateLimiter>,
+    mutation_pacer: Arc<RestMutationPacer>,
     message_sends: Arc<MessageSendCoordinator>,
 }
 
@@ -58,17 +65,45 @@ const FORBIDDEN_FAILURE_WINDOW: Duration = Duration::from_secs(5 * 60);
 // Request routes can include message IDs. A fixed cap prevents one-off 403s on
 // many messages from retaining state for the whole application session.
 const MAX_FORBIDDEN_CIRCUITS: usize = 512;
+const REST_MUTATION_MIN_INTERVAL: Duration = Duration::from_millis(200);
+const REST_UNKNOWN_MUTATION_ROUTE_INTERVAL: Duration = Duration::from_secs(1);
 
 impl DiscordRest {
-    pub fn new(token: String, raw_http: reqwest::Client, headers: HeaderMap) -> Self {
+    pub(crate) fn new(
+        token: String,
+        raw_http: reqwest::Client,
+        fingerprint: Arc<ClientFingerprint>,
+    ) -> Self {
         Self {
             raw_http,
-            headers,
+            fingerprint,
+            page_referer: Arc::new(RwLock::new(None)),
             token,
             request_safety: Arc::new(RequestSafety::default()),
             rate_limiter: Arc::new(RestRateLimiter::default()),
+            mutation_pacer: Arc::new(RestMutationPacer::default()),
             message_sends: Arc::new(MessageSendCoordinator::default()),
         }
+    }
+
+    pub(super) fn set_channel_referer(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+    ) {
+        let referer = discord_channel_referer(guild_id, channel_id);
+        *self
+            .page_referer
+            .write()
+            .expect("REST page referer lock is not poisoned") =
+            Some(HeaderValue::from_str(&referer).expect("Discord channel referer is valid"));
+    }
+
+    pub(super) fn reset_page_referer(&self) {
+        *self
+            .page_referer
+            .write()
+            .expect("REST page referer lock is not poisoned") = None;
     }
 
     async fn execute_authenticated(
@@ -76,13 +111,23 @@ impl DiscordRest {
         request: RequestBuilder,
         label: &str,
     ) -> Result<Response> {
-        let request = request
-            .headers(self.headers.clone())
+        let mut headers = discord_rest_headers(&self.fingerprint);
+        if let Some(referer) = self
+            .page_referer
+            .read()
+            .expect("REST page referer lock is not poisoned")
+            .clone()
+        {
+            headers.insert(REFERER, referer);
+        }
+        let mut request = request
+            .headers(headers)
             .header(AUTHORIZATION, &self.token)
             .build()
             .map_err(|error| {
                 AppError::DiscordRequest(format!("{label} request build failed: {error}"))
             })?;
+        apply_authenticated_method_headers(&mut request);
         let route = RequestRoute::from_request(&request);
         let rate_limit_route = RestRateLimitRoute::from_request(&request);
         let method = request.method().as_str().to_owned();
@@ -95,6 +140,21 @@ impl DiscordRest {
                 ),
             );
             return Err(error);
+        }
+
+        let pacing_started_at = Instant::now();
+        if !matches!(*request.method(), Method::GET | Method::HEAD) {
+            self.mutation_pacer.acquire().await;
+        }
+        let pacing_wait = pacing_started_at.elapsed();
+        if pacing_wait >= Duration::from_millis(1) {
+            logging::debug(
+                "rest",
+                format!(
+                    "request paced action={label:?} method={method} wait_ms={}",
+                    duration_millis_ceil(pacing_wait)
+                ),
+            );
         }
 
         let rate_limit_started_at = Instant::now();
@@ -120,10 +180,16 @@ impl DiscordRest {
             return Err(error);
         }
 
-        logging::debug(
-            "rest",
-            format!("request started action={label:?} method={method}"),
-        );
+        if logging::debug_logging_enabled() {
+            logging::debug(
+                "rest",
+                format!(
+                    "request started action={label:?} method={method} endpoint={:?} headers={}",
+                    request.url().as_str(),
+                    request_headers_for_log(request.headers())
+                ),
+            );
+        }
         let started_at = Instant::now();
         let response = match self.raw_http.execute(request).await {
             Ok(response) => response,
@@ -140,17 +206,41 @@ impl DiscordRest {
                 )));
             }
         };
-        rate_limit_permit.record_response(response.headers(), response.status());
+        let status = response.status();
         logging::debug(
             "rest",
             format!(
                 "request completed action={label:?} method={method} status={} elapsed_ms={}",
-                response.status().as_u16(),
+                status.as_u16(),
                 duration_millis_ceil(started_at.elapsed())
             ),
         );
-        self.request_safety
-            .record_response(&route, response.status());
+        self.request_safety.record_response(&route, status);
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            let error = response
+                .error_for_status_ref()
+                .expect_err("429 response has an error status");
+            let headers = response.headers().clone();
+            let retry_after_header = retry_after_header(&headers);
+            let body = response.text().await.ok();
+            let parsed_body = body
+                .as_deref()
+                .and_then(|body| serde_json::from_str::<Value>(body).ok());
+            rate_limit_permit.record_response(
+                &headers,
+                status,
+                Some(rest_rate_limit_body(parsed_body.as_ref())),
+            );
+            return Err(request_error_from_parts(
+                error,
+                status,
+                retry_after_header,
+                body,
+                parsed_body,
+                label,
+            ));
+        }
+        rate_limit_permit.record_response(response.headers(), status, None);
         Ok(response)
     }
 
@@ -176,6 +266,41 @@ impl DiscordRest {
             .await
             .map_err(|error| AppError::DiscordRequest(format!("{label} decode failed: {error}")))
     }
+}
+
+fn apply_authenticated_method_headers(request: &mut reqwest::Request) {
+    if matches!(*request.method(), Method::GET | Method::HEAD) {
+        request.headers_mut().remove(ORIGIN);
+    } else {
+        request
+            .headers_mut()
+            .insert(ORIGIN, HeaderValue::from_static("https://discord.com"));
+    }
+}
+
+fn request_headers_for_log(headers: &HeaderMap) -> String {
+    let mut entries = headers
+        .iter()
+        .filter(|(name, _)| !sensitive_request_header(name.as_str()))
+        .map(|(name, value)| {
+            let value = value.to_str().unwrap_or("<non-UTF-8>");
+            format!("{}={value:?}", name.as_str())
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable();
+    format!("[{}]", entries.join(", "))
+}
+
+fn sensitive_request_header(name: &str) -> bool {
+    matches!(
+        name,
+        "authorization"
+            | "cookie"
+            | "proxy-authorization"
+            | "x-fingerprint"
+            | "x-installation-id"
+            | "x-super-properties"
+    )
 }
 
 #[derive(Debug, Default)]
@@ -272,15 +397,23 @@ fn prune_forbidden_circuits(circuits: &mut HashMap<RequestRoute, ForbiddenCircui
 struct RequestRoute {
     method: String,
     path: String,
+    major_parameter: String,
 }
 
 impl RequestRoute {
     fn from_request(request: &reqwest::Request) -> Self {
+        let rate_limit_route = RestRateLimitRoute::from_request(request);
         Self {
-            method: request.method().as_str().to_owned(),
-            path: request.url().path().to_owned(),
+            method: rate_limit_route.family.method,
+            path: rate_limit_route.family.template,
+            major_parameter: rate_limit_route.major_parameter,
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct RestMutationPacer {
+    next_allowed: Mutex<Option<Instant>>,
 }
 
 // Discord does not publish fixed REST limits. The response headers are the
@@ -347,8 +480,15 @@ struct RestRateLimitPermit {
 struct RestRateLimitResponse<'a> {
     headers: &'a HeaderMap,
     status: StatusCode,
+    body: Option<RestRateLimitBody>,
     now: Instant,
     wall_clock: SystemTime,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct RestRateLimitBody {
+    retry_after: Option<Duration>,
+    global: bool,
 }
 
 impl RestRateLimiter {
@@ -424,6 +564,7 @@ impl RestRateLimiter {
         let RestRateLimitResponse {
             headers,
             status,
+            body,
             now,
             wall_clock,
         } = response;
@@ -452,9 +593,12 @@ impl RestRateLimiter {
             state.windows.remove(admitted_key);
         }
 
-        let is_global = header_bool(headers, "x-ratelimit-global")
+        let body = body.unwrap_or_default();
+        let is_global = body.global
+            || header_bool(headers, "x-ratelimit-global")
             || header_string(headers, "x-ratelimit-scope").as_deref() == Some("global");
-        let mut reset_at = rate_limit_reset_at(headers, now, wall_clock);
+        let mut reset_at = rate_limit_reset_at(headers, now, wall_clock)
+            .or_else(|| body.retry_after.map(|retry_after| now + retry_after));
         let mut remaining = header_u32(headers, "x-ratelimit-remaining");
         if status == StatusCode::TOO_MANY_REQUESTS {
             remaining = Some(0);
@@ -467,7 +611,18 @@ impl RestRateLimiter {
         }
 
         if remaining.is_none() && reset_at.is_none() {
-            state.windows.remove(&response_key);
+            if route.family.method != Method::GET.as_str()
+                && route.family.method != Method::HEAD.as_str()
+            {
+                state.update_window(
+                    response_key,
+                    Some(0),
+                    Some(now + REST_UNKNOWN_MUTATION_ROUTE_INTERVAL),
+                    now,
+                );
+            } else {
+                state.windows.remove(&response_key);
+            }
         } else {
             state.update_window(response_key, remaining, reset_at, now);
         }
@@ -485,6 +640,28 @@ impl RestRateLimiter {
         if removed {
             self.changed.notify_waiters();
         }
+    }
+}
+
+impl RestMutationPacer {
+    async fn acquire(&self) {
+        while let Some(delay) = self.reserve_at(Instant::now()) {
+            tokio::time::sleep(delay).await;
+        }
+    }
+
+    fn reserve_at(&self, now: Instant) -> Option<Duration> {
+        let mut next_allowed = self
+            .next_allowed
+            .lock()
+            .expect("REST mutation pacer mutex is not poisoned");
+        if let Some(deadline) = *next_allowed
+            && deadline > now
+        {
+            return Some(deadline.duration_since(now));
+        }
+        *next_allowed = Some(now + REST_MUTATION_MIN_INTERVAL);
+        None
     }
 }
 
@@ -586,7 +763,12 @@ impl RestRateLimitRoute {
 }
 
 impl RestRateLimitPermit {
-    fn record_response(mut self, headers: &HeaderMap, status: StatusCode) {
+    fn record_response(
+        mut self,
+        headers: &HeaderMap,
+        status: StatusCode,
+        body: Option<RestRateLimitBody>,
+    ) {
         self.limiter.finish(
             &self.route,
             &self.key,
@@ -594,6 +776,7 @@ impl RestRateLimitPermit {
             RestRateLimitResponse {
                 headers,
                 status,
+                body,
                 now: Instant::now(),
                 wall_clock: SystemTime::now(),
             },
@@ -732,15 +915,22 @@ async fn request_error(
     label: &str,
 ) -> AppError {
     let status = response.status();
-    let retry_after_header = response
-        .headers()
-        .get(RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<f64>().ok());
+    let retry_after_header = retry_after_header(response.headers());
     let body = response.text().await.ok();
     let parsed_body = body
         .as_deref()
         .and_then(|body| serde_json::from_str::<Value>(body).ok());
+    request_error_from_parts(error, status, retry_after_header, body, parsed_body, label)
+}
+
+fn request_error_from_parts(
+    error: reqwest::Error,
+    status: StatusCode,
+    retry_after_header: Option<f64>,
+    body: Option<String>,
+    parsed_body: Option<Value>,
+    label: &str,
+) -> AppError {
     let discord_code = parsed_body.as_ref().and_then(discord_error_code);
     let captcha_challenge = body
         .as_deref()
@@ -794,6 +984,29 @@ async fn request_error(
     match detail {
         Some(detail) => AppError::DiscordRequest(format!("{label} failed: {error}: {detail}")),
         None => AppError::DiscordRequest(format!("{label} failed: {error}")),
+    }
+}
+
+fn retry_after_header(headers: &HeaderMap) -> Option<f64> {
+    headers
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<f64>().ok())
+}
+
+fn rest_rate_limit_body(parsed_body: Option<&Value>) -> RestRateLimitBody {
+    let retry_after = parsed_body
+        .and_then(|body| body.get("retry_after"))
+        .and_then(Value::as_f64)
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+        .map(|seconds| Duration::from_millis(seconds_to_millis_ceil(seconds)));
+    let global = parsed_body
+        .and_then(|body| body.get("global"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    RestRateLimitBody {
+        retry_after,
+        global,
     }
 }
 

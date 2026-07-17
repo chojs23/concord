@@ -66,15 +66,6 @@ impl App {
             let gateway_task = client.start_gateway(serve_rich_presence);
             let command_task = start_command_loop(client.clone(), commands_rx);
 
-            // Warm the REST pool before the first user-triggered request pays the
-            // TCP, TLS, and HTTP/2 setup cost.
-            let prime_client = client.clone();
-            tokio::spawn(async move {
-                if let Err(error) = prime_client.prime_rest_pool().await {
-                    logging::error("app", format!("rest pool warmup failed: {error}"));
-                }
-            });
-
             let version_client = client.clone();
             tokio::spawn(async move {
                 match version_check::check_latest_version().await {

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::fingerprint::{
     CLIENT_BUILD_NUMBER, ClientFingerprint, discord_http_client, discord_rest_headers,
+    insert_session_headers,
 };
 
 pub(super) const DISCORD_ORIGIN: &str = "https://discord.com";
@@ -41,16 +42,20 @@ impl DiscordAuthSession {
 }
 
 pub(super) fn discord_login_headers(fingerprint: &ClientFingerprint) -> reqwest::header::HeaderMap {
-    use reqwest::header::{HeaderValue, REFERER};
+    use reqwest::header::{CACHE_CONTROL, HeaderValue, ORIGIN, PRAGMA, REFERER};
 
     let mut headers = discord_rest_headers(fingerprint);
+    headers.insert(ORIGIN, HeaderValue::from_static(DISCORD_ORIGIN));
     headers.insert(REFERER, HeaderValue::from_static(DISCORD_LOGIN_REFERER));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+    insert_session_headers(&mut headers, fingerprint);
     headers
 }
 
 #[cfg(test)]
 mod tests {
-    use reqwest::header::REFERER;
+    use reqwest::header::{CACHE_CONTROL, ORIGIN, PRAGMA, REFERER};
 
     use super::*;
     use crate::discord::fingerprint::{CLIENT_BUILD_NUMBER, discord_rest_headers};
@@ -73,6 +78,20 @@ mod tests {
         assert_eq!(
             login.get(REFERER).and_then(|value| value.to_str().ok()),
             Some(DISCORD_LOGIN_REFERER)
+        );
+        assert_eq!(
+            login.get(ORIGIN).and_then(|value| value.to_str().ok()),
+            Some(DISCORD_ORIGIN)
+        );
+        assert_eq!(
+            login
+                .get(CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-cache")
+        );
+        assert_eq!(
+            login.get(PRAGMA).and_then(|value| value.to_str().ok()),
+            Some("no-cache")
         );
     }
 }

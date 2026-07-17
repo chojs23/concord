@@ -158,6 +158,11 @@ fn push_dashboard_effect(event: AppEvent, ctx: &mut EffectContext<'_>) {
         ctx.state.sign_out();
         return;
     }
+    if matches!(event, AppEvent::GatewayReidentified)
+        && let Some(command) = ctx.state.selected_channel_subscription_command()
+    {
+        ctx.state.enqueue_pending_command(command);
+    }
     if matches!(
         event,
         AppEvent::GatewayResumed | AppEvent::GatewayReidentified
@@ -534,16 +539,22 @@ mod tests {
                 ..MessageHistoryLoadedFixture::new()
             }));
 
+            let reidentified = matches!(event, AppEvent::GatewayReidentified);
             process_effect_in_default_context(&mut state, event);
 
-            assert_eq!(
-                state.drain_pending_commands(),
-                vec![AppCommand::LoadMessageHistoryAfter {
+            let mut expected = Vec::new();
+            if reidentified {
+                expected.push(AppCommand::SubscribeGuildChannel {
+                    guild_id,
                     channel_id,
-                    after: Id::new(20),
-                    mode: MessageHistoryAfterMode::CatchUp,
-                }]
-            );
+                });
+            }
+            expected.push(AppCommand::LoadMessageHistoryAfter {
+                channel_id,
+                after: Id::new(20),
+                mode: MessageHistoryAfterMode::CatchUp,
+            });
+            assert_eq!(state.drain_pending_commands(), expected);
         }
     }
 

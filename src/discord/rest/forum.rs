@@ -20,11 +20,8 @@ use super::messages::{message_multipart_form, validate_message_payload};
 use super::{DiscordRest, clone_array, extra_fields};
 
 const FORUM_POST_SEARCH_PAGE_LIMIT: u16 = 25;
-// Discord returns 202 ACCEPTED while it warms the per-forum search index.
-// Wait briefly then retry. With two attempts after the original we cover the
-// common cold-start window without making the user wait on a stuck index.
-const FORUM_POST_SEARCH_RETRY_DELAYS: [Duration; 2] =
-    [Duration::from_millis(250), Duration::from_millis(500)];
+const FORUM_POST_SEARCH_MAX_ATTEMPTS: usize = 3;
+const FORUM_POST_SEARCH_DEFAULT_RETRY: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForumPostPage {
@@ -292,12 +289,8 @@ impl DiscordRest {
         // `first_messages` alongside thread metadata, so we never want to
         // fall back to the active or archived endpoints. They cannot supply
         // previews and routinely 403 on user-account tokens. Instead retry
-        // briefly when the search index is still warming up.
-        let mut last_error = None;
-        for delay in std::iter::once(Duration::ZERO).chain(FORUM_POST_SEARCH_RETRY_DELAYS) {
-            if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
-            }
+        // according to Discord's response when the search index is warming up.
+        for attempt in 0..FORUM_POST_SEARCH_MAX_ATTEMPTS {
             match self
                 .request_forum_post_search_page(
                     guild_id,
@@ -309,13 +302,18 @@ impl DiscordRest {
                 .await
             {
                 Ok(page) => return Ok(page),
-                Err(error) if is_search_index_warming(&error) => {
-                    last_error = Some(error);
+                Err(error) => {
+                    let Some(delay) = forum_search_retry_after(&error) else {
+                        return Err(error);
+                    };
+                    if attempt + 1 == FORUM_POST_SEARCH_MAX_ATTEMPTS {
+                        return Err(error);
+                    }
+                    tokio::time::sleep(delay).await;
                 }
-                Err(error) => return Err(error),
             }
         }
-        Err(last_error.expect("retry loop runs at least once"))
+        unreachable!("forum search attempt loop always returns")
     }
 
     async fn request_forum_post_search_page(
@@ -344,9 +342,16 @@ impl DiscordRest {
             .execute_authenticated(request, "forum post search")
             .await?;
         if response.status() == StatusCode::ACCEPTED {
-            return Err(AppError::DiscordRequest(
-                "forum post search index is not ready".to_owned(),
-            ));
+            let raw = response.json::<Value>().await.unwrap_or(Value::Null);
+            let delay = raw
+                .get("retry_after")
+                .and_then(Value::as_f64)
+                .and_then(super::rate_limit_delay)
+                .filter(|delay| !delay.is_zero())
+                .unwrap_or(FORUM_POST_SEARCH_DEFAULT_RETRY);
+            return Err(AppError::ForumSearchIndexWarming {
+                retry_after_millis: super::duration_millis_ceil(delay),
+            });
         }
         if let Err(error) = response.error_for_status_ref() {
             return Err(super::request_error(error, response, "forum post search").await);
@@ -526,12 +531,12 @@ fn parse_forum_messages_from_field(
         .unwrap_or_default()
 }
 
-pub(super) fn is_search_index_warming(error: &AppError) -> bool {
+pub(super) fn forum_search_retry_after(error: &AppError) -> Option<Duration> {
     match error {
-        AppError::DiscordRequest(message) => {
-            message.contains("forum post search index is not ready")
+        AppError::ForumSearchIndexWarming { retry_after_millis } => {
+            Some(Duration::from_millis(*retry_after_millis))
         }
-        _ => false,
+        _ => None,
     }
 }
 

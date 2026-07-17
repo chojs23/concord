@@ -28,8 +28,10 @@ use super::{
     client::publish_app_event,
     events::{AppEvent, SequencedAppEvent},
     fingerprint::{
-        CLIENT_BROWSER, CLIENT_BROWSER_VERSION, ClientFingerprint, discord_gateway_headers,
+        CLIENT_BROWSER, CLIENT_BROWSER_VERSION, ClientFingerprint, DISCORD_REFERRER_CURRENT,
+        DISCORD_REFERRING_DOMAIN_CURRENT, discord_gateway_headers,
     },
+    request_lifecycle::RequestLifecycle,
     state::{DiscordState, SnapshotRevision},
     voice::{self, VoiceRuntimeEvent},
 };
@@ -91,6 +93,7 @@ pub(crate) struct GatewayRuntime {
     pub(crate) revision: Arc<RwLock<SnapshotRevision>>,
     pub(crate) gateway_session_id: Arc<RwLock<Option<String>>>,
     pub(crate) publish_lock: Arc<Mutex<()>>,
+    pub(crate) request_lifecycle: Arc<std::sync::Mutex<RequestLifecycle>>,
     pub(crate) voice_events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
 }
 
@@ -127,6 +130,7 @@ const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
 // WebSocket control frames such as Pong and Close are not Gateway events.
 const GATEWAY_SEND_LIMIT: usize = 120;
 const GATEWAY_SEND_WINDOW: Duration = Duration::from_secs(60);
+const MAX_GATEWAY_RETRY_DELAY: Duration = Duration::from_secs(30 * 60);
 
 type GatewayStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -215,6 +219,7 @@ struct GatewayPublishContext<'a> {
     revision: &'a Arc<RwLock<SnapshotRevision>>,
     gateway_session_id: &'a Arc<RwLock<Option<String>>>,
     publish_lock: &'a Arc<Mutex<()>>,
+    request_lifecycle: &'a Arc<std::sync::Mutex<RequestLifecycle>>,
     voice_events_tx: &'a mpsc::UnboundedSender<VoiceRuntimeEvent>,
 }
 
@@ -223,6 +228,7 @@ struct FrameContext<'a> {
     sequence_cell: &'a Arc<Mutex<Option<u64>>>,
     heartbeat_ack: &'a Arc<Mutex<HeartbeatAckState>>,
     sender: &'a GatewaySender,
+    fingerprint: &'a ClientFingerprint,
     publish: GatewayPublishContext<'a>,
 }
 
@@ -315,6 +321,7 @@ pub async fn run_gateway(
             revision: &runtime.revision,
             gateway_session_id: &runtime.gateway_session_id,
             publish_lock: &runtime.publish_lock,
+            request_lifecycle: &runtime.request_lifecycle,
             voice_events_tx: &runtime.voice_events_tx,
         };
         let outcome = match connect_and_run(
@@ -384,6 +391,7 @@ pub async fn run_gateway(
             revision: &runtime.revision,
             gateway_session_id: &runtime.gateway_session_id,
             publish_lock: &runtime.publish_lock,
+            request_lifecycle: &runtime.request_lifecycle,
             voice_events_tx: &runtime.voice_events_tx,
         };
         publish_gateway_event(publish, AppEvent::GatewayClosed).await;
@@ -532,6 +540,7 @@ async fn connect_and_run(
                             sequence_cell: &sequence_cell,
                             heartbeat_ack: &heartbeat_ack,
                             sender: &sender,
+                            fingerprint,
                             publish,
                         };
                         match handle_frame(
@@ -629,12 +638,36 @@ async fn handle_frame(
             }
             let dispatch_type = value.get("t").and_then(Value::as_str).unwrap_or("");
             let mut publish_reidentified = false;
+            if dispatch_type == "RATE_LIMITED"
+                && let Some((guild_id, retry_after)) = gateway_guild_member_rate_limit(&value)
+            {
+                logging::debug(
+                    "gateway",
+                    format!(
+                        "guild member requests rate limited: guild={} retry_after_ms={}",
+                        guild_id.get(),
+                        retry_after.as_millis()
+                    ),
+                );
+            }
             // Capture the session_id and resume_url from READY so a later
             // disconnect can RESUME instead of redoing the heavy initial sync.
             if dispatch_type == "READY"
                 && let Some(d) = value.get("d")
             {
                 let was_reidentify = session.has_received_ready;
+                if let Some(installation_id) = ready_installation_id(d) {
+                    match context.fingerprint.update_installation_id(installation_id) {
+                        Ok(true) => {
+                            logging::debug("fingerprint", "updated installation id from READY");
+                        }
+                        Ok(false) => {}
+                        Err(error) => logging::debug(
+                            "fingerprint",
+                            format!("could not persist READY installation id: {error}"),
+                        ),
+                    }
+                }
                 session.session_id = d
                     .get("session_id")
                     .and_then(Value::as_str)
@@ -715,6 +748,11 @@ async fn handle_frame(
 }
 
 async fn publish_gateway_event(context: GatewayPublishContext<'_>, event: AppEvent) {
+    context
+        .request_lifecycle
+        .lock()
+        .expect("request lifecycle lock is not poisoned")
+        .record_event(&event);
     publish_app_event(
         context.effects_tx,
         context.snapshots_tx,
@@ -725,6 +763,13 @@ async fn publish_gateway_event(context: GatewayPublishContext<'_>, event: AppEve
     )
     .await;
     voice::forward_app_event(context.voice_events_tx, &event);
+}
+
+fn ready_installation_id(ready: &Value) -> Option<&str> {
+    ready
+        .get("apex_experiments")
+        .and_then(|experiments| experiments.get("installation"))
+        .and_then(Value::as_str)
 }
 
 async fn log_and_publish_gateway_error(context: GatewayPublishContext<'_>, message: String) {
@@ -959,6 +1004,28 @@ fn spawn_gateway_sender(
     )
 }
 
+fn gateway_guild_member_rate_limit(value: &Value) -> Option<(Id<GuildMarker>, Duration)> {
+    let data = value.get("d")?;
+    if data.get("opcode").and_then(Value::as_u64) != Some(8) {
+        return None;
+    }
+    let guild_id = data
+        .get("meta")?
+        .get("guild_id")?
+        .as_str()?
+        .parse::<u64>()
+        .ok()
+        .and_then(Id::new_checked)?;
+    let retry_after = data.get("retry_after")?.as_f64()?;
+    if !retry_after.is_finite() || retry_after < 0.0 {
+        return None;
+    }
+    Some((
+        guild_id,
+        Duration::from_secs_f64(retry_after.min(MAX_GATEWAY_RETRY_DELAY.as_secs_f64())),
+    ))
+}
+
 async fn run_gateway_sender(
     writer: WriterHandle,
     mut urgent_rx: mpsc::UnboundedReceiver<GatewaySendRequest>,
@@ -1051,27 +1118,32 @@ fn drain_gateway_requests(
 }
 
 fn build_identify_payload(token: &str, fingerprint: &ClientFingerprint) -> String {
+    let mut properties = json!({
+        "os": fingerprint.os,
+        "browser": CLIENT_BROWSER,
+        "device": "",
+        "system_locale": fingerprint.system_locale,
+        "browser_user_agent": fingerprint.user_agent,
+        "browser_version": CLIENT_BROWSER_VERSION,
+        "os_version": fingerprint.os_version,
+        "referrer": "",
+        "referring_domain": "",
+        "referrer_current": DISCORD_REFERRER_CURRENT,
+        "referring_domain_current": DISCORD_REFERRING_DOMAIN_CURRENT,
+        "release_channel": "stable",
+        "client_build_number": fingerprint.client_build_number,
+        "client_event_source": Value::Null,
+    });
+    if let Some(installation_id) = fingerprint.installation_id() {
+        properties["installation_id"] = Value::String(installation_id);
+    }
+
     json!({
         "op": 2,
         "d": {
             "token": token,
             "capabilities": USER_ACCOUNT_CAPABILITIES,
-            "properties": {
-                "os": fingerprint.os,
-                "browser": CLIENT_BROWSER,
-                "device": "",
-                "system_locale": fingerprint.system_locale,
-                "browser_user_agent": fingerprint.user_agent,
-                "browser_version": CLIENT_BROWSER_VERSION,
-                "os_version": fingerprint.os_version,
-                "referrer": "",
-                "referring_domain": "",
-                "referrer_current": "",
-                "referring_domain_current": "",
-                "release_channel": "stable",
-                "client_build_number": fingerprint.client_build_number,
-                "client_event_source": Value::Null,
-            },
+            "properties": properties,
             "presence": {
                 "status": PresenceStatus::Online.gateway_status(),
                 "since": 0,

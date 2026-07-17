@@ -322,7 +322,7 @@ fn member_request_is_sent_once_per_active_guild() {
 }
 
 #[test]
-fn member_request_can_retry_after_remove() {
+fn gateway_member_requests_can_retry_after_remove_or_new_gateway_session() {
     let mut requests = MemberRequests::default();
     let guild_id = Id::new(1);
 
@@ -330,6 +330,78 @@ fn member_request_can_retry_after_remove() {
     requests.remove(guild_id);
 
     assert_eq!(requests.next(Some(guild_id)), Some(guild_id));
+
+    let mut lifecycle = RequestLifecycle::default();
+    assert_eq!(
+        lifecycle.next_member_request(Some(guild_id)),
+        Some(guild_id)
+    );
+    assert_eq!(lifecycle.next_member_request(Some(guild_id)), None);
+    let now = std::time::Instant::now();
+    let message_author_user_id = Id::new(10);
+    let initial_unknown_user_id = Id::new(20);
+    let message_author_request = vec![(guild_id, vec![message_author_user_id])];
+    let initial_unknown_request = vec![(guild_id, vec![initial_unknown_user_id])];
+    assert_eq!(
+        lifecycle.next_message_author_member_requests(message_author_request.clone(), now),
+        message_author_request
+    );
+    assert_eq!(
+        lifecycle.next_initial_unknown_member_requests(initial_unknown_request.clone(), now),
+        initial_unknown_request
+    );
+    let mention_target = MentionMemberSearchTarget {
+        guild_id,
+        query: "neo".to_owned(),
+    };
+    lifecycle.set_mention_member_search_target(Some(mention_target.clone()), now);
+    let mention_deadline = lifecycle
+        .mention_member_search_deadline()
+        .expect("mention member search should be scheduled");
+    assert_eq!(
+        lifecycle.next_due_mention_member_search(mention_deadline),
+        Some(mention_target.clone())
+    );
+    let target = subscription_target(1);
+    lifecycle.set_member_list_subscription_target(Some(target.clone()), now);
+    let deadline = lifecycle
+        .member_list_subscription_deadline()
+        .expect("wider member range should be scheduled");
+    assert_eq!(
+        lifecycle.next_due_member_list_subscription(deadline),
+        Some(target.clone())
+    );
+
+    lifecycle.record_event(&AppEvent::GatewayReidentified);
+
+    assert_eq!(
+        lifecycle.next_member_request(Some(guild_id)),
+        Some(guild_id)
+    );
+    assert_eq!(
+        lifecycle.next_message_author_member_requests(message_author_request.clone(), now),
+        message_author_request
+    );
+    assert_eq!(
+        lifecycle.next_initial_unknown_member_requests(initial_unknown_request.clone(), now),
+        initial_unknown_request
+    );
+    lifecycle.set_mention_member_search_target(Some(mention_target.clone()), now);
+    let mention_deadline = lifecycle
+        .mention_member_search_deadline()
+        .expect("new Gateway session should resend the same mention member search");
+    assert_eq!(
+        lifecycle.next_due_mention_member_search(mention_deadline),
+        Some(mention_target)
+    );
+    lifecycle.set_member_list_subscription_target(Some(target.clone()), now);
+    let deadline = lifecycle
+        .member_list_subscription_deadline()
+        .expect("new Gateway session should resend the same member range");
+    assert_eq!(
+        lifecycle.next_due_member_list_subscription(deadline),
+        Some(target)
+    );
 }
 
 #[test]

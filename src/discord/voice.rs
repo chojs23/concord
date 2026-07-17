@@ -216,6 +216,7 @@ const VOICE_REMOTE_SPEAKING_TTL: Duration = Duration::from_millis(500);
 const VOICE_REMOTE_SPEAKING_SWEEP_INTERVAL: Duration = Duration::from_millis(250);
 
 const VOICE_OP_READY: u8 = 2;
+const VOICE_OP_HEARTBEAT: u8 = 3;
 const VOICE_OP_SESSION_DESCRIPTION: u8 = 4;
 const VOICE_OP_SPEAKING: u8 = 5;
 const VOICE_OP_HEARTBEAT_ACK: u8 = 6;
@@ -501,6 +502,29 @@ struct VoiceChildTasks {
     // Declared last so it is dropped after the task handles above — aborting
     // them before the runtime they ran on tears down.
     audio_runtime: Option<VoiceAudioRuntime>,
+}
+
+#[derive(Default)]
+struct VoiceHeartbeatAckState {
+    awaiting_ack: bool,
+}
+
+impl VoiceHeartbeatAckState {
+    fn mark_sent(&mut self) -> bool {
+        if self.awaiting_ack {
+            return false;
+        }
+        self.awaiting_ack = true;
+        true
+    }
+
+    fn mark_acknowledged(&mut self) {
+        self.awaiting_ack = false;
+    }
+
+    fn reset(&mut self) {
+        self.awaiting_ack = false;
+    }
 }
 
 impl Default for VoiceChildTasks {

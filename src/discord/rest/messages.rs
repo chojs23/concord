@@ -274,13 +274,13 @@ impl DiscordRest {
     ) -> Result<()> {
         let request = if pinned {
             self.raw_http.put(format!(
-                "https://discord.com/api/v9/channels/{}/pins/{}",
+                "https://discord.com/api/v9/channels/{}/messages/pins/{}",
                 channel_id.get(),
                 message_id.get()
             ))
         } else {
             self.raw_http.delete(format!(
-                "https://discord.com/api/v9/channels/{}/pins/{}",
+                "https://discord.com/api/v9/channels/{}/messages/pins/{}",
                 channel_id.get(),
                 message_id.get()
             ))
@@ -394,10 +394,13 @@ pub(super) fn message_request_body_with_tts(
     attachments: &[MessageAttachmentUpload],
     tts: bool,
 ) -> Value {
-    let mut body = json!({ "content": content, "nonce": generate_nonce() });
-    if tts {
-        body["tts"] = Value::Bool(true);
-    }
+    let mut body = json!({
+        "mobile_network_type": "unknown",
+        "content": content,
+        "nonce": generate_nonce(),
+        "tts": tts,
+        "flags": 0,
+    });
     if let Some(reply) = reply_to {
         body["message_reference"] = json!({ "message_id": reply.message_id.to_string() });
         // `parse` must be spelled out here: without it, dropping the reply ping

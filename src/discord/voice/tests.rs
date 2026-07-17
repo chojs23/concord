@@ -1261,6 +1261,17 @@ fn voice_identify_payload_matches_expected_shape() {
         payload["d"]["max_dave_protocol_version"].as_u64(),
         Some(u64::from(davey::DAVE_PROTOCOL_VERSION))
     );
+
+    let heartbeat: Value = serde_json::from_str(&voice_heartbeat_payload(42))
+        .expect("voice heartbeat payload is valid JSON");
+    assert_eq!(heartbeat["op"].as_u64(), Some(3));
+    assert_eq!(heartbeat["d"]["seq_ack"].as_i64(), Some(42));
+
+    let mut heartbeat_ack = VoiceHeartbeatAckState::default();
+    assert!(heartbeat_ack.mark_sent());
+    assert!(!heartbeat_ack.mark_sent());
+    heartbeat_ack.mark_acknowledged();
+    assert!(heartbeat_ack.mark_sent());
 }
 
 #[test]
