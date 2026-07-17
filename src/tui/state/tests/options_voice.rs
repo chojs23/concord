@@ -5,6 +5,24 @@ use crate::discord::test_builders::{
 use crate::discord::{AppCommand, VoiceScope};
 use crate::tui::keybindings::OptionsCategoryShortcut;
 
+fn private_voice_state(kind: &str) -> DashboardState {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(1)),
+    });
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        last_message_id: Some(Id::new(200)),
+        name: "private call".to_owned(),
+        ..ChannelInfo::test(Id::new(20), kind)
+    }));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+    state
+}
+
 #[test]
 fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     let mut state = DashboardState::new();
@@ -258,7 +276,7 @@ fn other_client_voice_state_shows_header_only() {
 }
 
 #[test]
-fn voice_channel_join_action_reflects_permission_and_participation() {
+fn voice_join_action_reflects_scope_permissions_and_participation() {
     let me = Id::new(10);
     let owner = Id::new(11);
     let guild_id = Id::new(1);
@@ -290,6 +308,32 @@ fn voice_channel_join_action_reflects_permission_and_participation() {
     assert!(!actions[0].is_enabled());
     assert_eq!(actions[0].disabled_reason(), Some("Connect required"));
     assert_eq!(state.activate_selected_channel_action(), None);
+
+    for kind in ["dm", "group-dm"] {
+        let mut state = private_voice_state(kind);
+        assert_eq!(
+            state.composer_lock(),
+            Some(ComposerLock::LoadingMessages),
+            "{kind}"
+        );
+        let join = &state.selected_channel_action_items()[0];
+        assert!(join.is_enabled(), "{kind}");
+        assert_eq!(join.disabled_reason(), None, "{kind}");
+        assert_eq!(
+            state.activate_selected_channel_action(),
+            Some(AppCommand::JoinVoiceChannel {
+                scope: VoiceScope::Private(Id::new(20)),
+                channel_id: Id::new(20),
+                self_mute: false,
+                self_deaf: false,
+                allow_microphone_transmit: false,
+                microphone_sensitivity: Default::default(),
+                microphone_volume: Default::default(),
+                voice_output_volume: Default::default(),
+            }),
+            "{kind}"
+        );
+    }
 
     let me = Id::new(10);
     let guild_id = Id::new(1);

@@ -89,11 +89,13 @@ impl DashboardState {
                 voice.scope == channel.voice_scope() && voice.channel_id == Some(channel_id)
             });
         // Guild voice needs the connect permission. DM and group-DM calls have
-        // no guild permission model, so they are always joinable.
+        // no guild permission model, so they bypass this policy.
         let join_voice_disabled_reason = if !channel.supports_voice_call() {
             Some("not a voice channel".to_owned())
         } else if joined_here {
             Some("already joined".to_owned())
+        } else if channel.guild_id.is_none() {
+            None
         } else {
             self.discord_action_block_reason_in_channel(channel_id, DiscordAction::JoinVoiceChannel)
         };
