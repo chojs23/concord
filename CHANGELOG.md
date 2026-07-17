@@ -2,7 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.4.1] - 2026-07-16
+## [2.4.2] - 2026-07-18
+
+### Bug Fixes
+
+- _(voice)_ Bypass guild connect checks for DM calls by @chojs23
+- _(discord)_ Harden network requests and session recovery (#265) in [#265](https://github.com/chojs23/concord/pull/265) by @chojs23
+
+### Features
+
+- _(voice)_ Increase microphone transmit boost gain to 1.5 (#262) in [#262](https://github.com/chojs23/concord/pull/262) by @chojs23
+
+## [2.4.1] - 2026-07-15
 
 ### Features
 
