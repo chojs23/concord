@@ -352,6 +352,16 @@ impl DashboardState {
 }
 
 impl DashboardState {
+    pub fn focused_channel_selection_line(
+        &self,
+        entries: &[ChannelPaneEntry<'_>],
+    ) -> Option<usize> {
+        if self.navigation.focus != FocusPane::Channels {
+            return None;
+        }
+        self.selected_channel_line(entries)
+    }
+
     pub fn selected_member(&self) -> usize {
         clamp_selected_index(
             self.navigation.members.list.selected,
@@ -382,6 +392,10 @@ impl DashboardState {
         }
     }
 
+    pub fn channel_scroll(&self) -> usize {
+        self.navigation.channels.list.scroll
+    }
+
     pub fn member_scroll(&self) -> usize {
         self.navigation.members.list.scroll
     }
@@ -396,6 +410,10 @@ impl DashboardState {
 
     pub fn member_horizontal_scroll(&self) -> usize {
         self.navigation.members.list.horizontal_scroll
+    }
+
+    pub fn channel_content_height(&self) -> usize {
+        self.navigation.channels.list.content_height()
     }
 
     pub fn member_content_height(&self) -> usize {
@@ -526,14 +544,20 @@ impl DashboardState {
             FocusedNavigationAction::JumpBottom => self.jump_channel_selection_bottom(),
             FocusedNavigationAction::HalfPageDown => {
                 let distance = self.navigation.channels.list.content_height() / 2;
-                self.move_channel_selection_down_by(distance.max(1));
+                let selected_line = self.selected_channel_line_from_entries();
+                self.select_channel_near_line(selected_line.saturating_add(distance.max(1)));
+                self.navigation.channels.list.keep_selection_visible();
+                self.clamp_channel_viewport();
             }
             FocusedNavigationAction::HalfPageUp => {
                 let distance = self.navigation.channels.list.content_height() / 2;
-                self.move_channel_selection_up_by(distance.max(1));
+                let selected_line = self.selected_channel_line_from_entries();
+                self.select_channel_near_line(selected_line.saturating_sub(distance.max(1)));
+                self.navigation.channels.list.keep_selection_visible();
+                self.clamp_channel_viewport();
             }
             FocusedNavigationAction::ScrollViewportDown => {
-                let len = self.channel_pane_filtered_entries().len();
+                let len = self.count_channel_lines();
                 self.navigation.channels.list.scroll_down(len);
             }
             FocusedNavigationAction::ScrollViewportUp => self.navigation.channels.list.scroll_up(),
@@ -733,17 +757,22 @@ impl DashboardState {
     }
 
     fn select_visible_channel_row(&mut self, row: usize) -> bool {
-        let index = self.navigation.channels.list.scroll.saturating_add(row);
+        let target_line = self.navigation.channels.list.scroll.saturating_add(row);
         let entries = self.channel_pane_filtered_entries();
-        if !entries
-            .get(index)
-            .is_some_and(ChannelPaneEntry::is_selectable)
-        {
-            return false;
+        for (entry_index, line_index) in self.channel_line_indices() {
+            if line_index == target_line {
+                if entries
+                    .get(entry_index)
+                    .is_some_and(ChannelPaneEntry::is_selectable)
+                {
+                    self.navigation.channels.list.selected = entry_index;
+                    self.navigation.channels.list.keep_selection_visible();
+                    return true;
+                }
+                return false;
+            }
         }
-        self.navigation.channels.list.selected = index;
-        self.navigation.channels.list.keep_selection_visible();
-        true
+        false
     }
 
     fn select_visible_member_line(&mut self, row: usize) -> bool {
@@ -836,12 +865,20 @@ impl DashboardState {
 
     pub(super) fn clamp_channel_viewport(&mut self) {
         let entries_len = self.channel_pane_filtered_entries().len();
-        self.navigation.channels.list.clamp_selected(entries_len);
-        let selected = self.navigation.channels.list.selected;
+        if entries_len == 0 {
+            self.navigation.channels.list.selected = 0;
+            self.navigation.channels.list.scroll = 0;
+            return;
+        }
+
+        self.navigation.channels.list.selected =
+            self.navigation.channels.list.selected.min(entries_len - 1);
+        let selected_line = self.selected_channel_line_from_entries();
+        let len = self.count_channel_lines();
         self.navigation
             .channels
             .list
-            .clamp_viewport(selected, entries_len);
+            .clamp_viewport(selected_line, len);
     }
 
     pub(super) fn clamp_member_viewport(&mut self) {
@@ -860,6 +897,94 @@ impl DashboardState {
             .members
             .list
             .clamp_viewport(selected_line, len);
+    }
+
+    pub fn channel_entry_has_activity_row(&self, entry: &ChannelPaneEntry<'_>) -> bool {
+        match entry {
+            ChannelPaneEntry::Channel { state, .. } if state.is_dm() && !state.recipients.is_empty() => {
+                let recipient = &state.recipients[0];
+                !matches!(recipient.status, PresenceStatus::Offline | PresenceStatus::Unknown)
+                    && !self.user_activities(recipient.user_id).is_empty()
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn selected_channel_line(&self, entries: &[ChannelPaneEntry<'_>]) -> Option<usize> {
+        let selected_channel = self.navigation.channels.list.selected.min(entries.len().saturating_sub(1));
+        let mut channel_index = 0usize;
+        let mut line_index = 0usize;
+        for entry in entries {
+            if channel_index == selected_channel {
+                return Some(line_index);
+            }
+            line_index += 1;
+            if self.channel_entry_has_activity_row(entry) {
+                line_index += 1;
+            }
+            channel_index += 1;
+        }
+        None
+    }
+
+    pub(super) fn selected_channel_line_from_entries(&self) -> usize {
+        let entries = self.channel_pane_filtered_entries();
+        self.selected_channel_line(&entries).unwrap_or_default()
+    }
+
+    pub fn channel_entry_line_count(&self, entries: &[ChannelPaneEntry<'_>]) -> usize {
+        entries
+            .iter()
+            .map(|e| 1 + usize::from(self.channel_entry_has_activity_row(e)))
+            .sum()
+    }
+
+    pub(super) fn count_channel_lines(&self) -> usize {
+        self.channel_pane_filtered_entries()
+            .iter()
+            .map(|e| 1 + usize::from(self.channel_entry_has_activity_row(e)))
+            .sum()
+    }
+
+    fn channel_line_indices(&self) -> Vec<(usize, usize)> {
+        let entries = self.channel_pane_filtered_entries();
+        let mut indices = Vec::new();
+        let mut entry_index = 0usize;
+        let mut line_index = 0usize;
+        for entry in &entries {
+            indices.push((entry_index, line_index));
+            entry_index += 1;
+            line_index += 1;
+            if self.channel_entry_has_activity_row(entry) {
+                line_index += 1;
+            }
+        }
+        indices
+    }
+
+    fn select_channel_near_line(&mut self, target_line: usize) {
+        let entries = self.channel_pane_filtered_entries();
+        let mut last_selectable_entry = None;
+        for (entry_index, line_index) in self.channel_line_indices() {
+            if line_index >= target_line {
+                if entries
+                    .get(entry_index)
+                    .is_some_and(ChannelPaneEntry::is_selectable)
+                {
+                    self.navigation.channels.list.selected = entry_index;
+                }
+                return;
+            }
+            if entries
+                .get(entry_index)
+                .is_some_and(ChannelPaneEntry::is_selectable)
+            {
+                last_selectable_entry = Some(entry_index);
+            }
+        }
+        if let Some(entry_index) = last_selectable_entry {
+            self.navigation.channels.list.selected = entry_index;
+        }
     }
 
     pub(super) fn selected_member_line(&self) -> usize {

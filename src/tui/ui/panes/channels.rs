@@ -1,6 +1,13 @@
 use super::*;
+use super::members::primary_activity_summary;
+use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
-pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: &DashboardState) {
+pub(in crate::tui::ui) fn render_channels(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    emoji_images: &[EmojiImage<'_>],
+) {
     let dashboard = state;
     let focused = state.focus() == FocusPane::Channels;
     let filter_query = state.channel_pane_filter_query();
@@ -42,7 +49,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
     let (list_area, filter_area) = split_pane_filter_area(channels_area, filter_query.is_some());
 
     let channel_entries = state.channel_pane_filtered_entries();
-    let channel_entry_count = channel_entries.len();
+    let channel_line_count = state.channel_entry_line_count(&channel_entries);
     let all_channel_entries;
     let populated_channel_entries = if state.channel_pane_filter_query().is_some() {
         all_channel_entries = state.channel_pane_entries();
@@ -62,34 +69,94 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
         })
         .collect();
     let channel_scroll = state.channel_scroll();
-    let selected_channel = (state.focus() == FocusPane::Channels && channel_entry_count > 0)
-        .then(|| state.selected_channel_from_entries(&channel_entries));
+    let content_height = state.channel_content_height();
+    let selected_line = state.focused_channel_selection_line(&channel_entries);
     let entries: Vec<_> = channel_entries
-        .into_iter()
+        .iter()
+        .flat_map(|entry| {
+            std::iter::once((entry, false)).chain(
+                state
+                    .channel_entry_has_activity_row(entry)
+                    .then_some((entry, true)),
+            )
+        })
+        .enumerate()
         .skip(channel_scroll)
-        .take(list_area.height as usize)
+        .take(content_height)
         .collect();
     let scrollbar_width = usize::from(vertical_scrollbar_visible(
         list_area,
         list_area.height as usize,
-        channel_entry_count,
+        channel_line_count,
     ));
     let max_width = (list_area.width as usize)
         .saturating_sub(selection_marker(false).content.width())
         .saturating_sub(scrollbar_width);
     let horizontal_scroll = state.channel_horizontal_scroll();
-    let selected = selected_channel
-        .filter(|selected| {
-            *selected >= channel_scroll && *selected < channel_scroll + entries.len()
-        })
-        .map(|selected| selected - channel_scroll);
+    let mut emoji_line_urls: Vec<(usize, String)> = Vec::new();
     let items: Vec<ListItem> = entries
         .iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            let is_selected = selected == Some(index);
+        .filter_map(|(line_index, (entry, is_activity_row))| {
+            if *is_activity_row {
+                let ChannelPaneEntry::Channel {
+                    state: channel, branch, ..
+                } = entry
+                else {
+                    return None;
+                };
+                let recipient = channel.recipients.first()?;
+                let activities = state.user_activities(recipient.user_id);
+                let render = primary_activity_summary(activities, emoji_images)?;
+                let dm_prefix_width = dm_presence_dot_span(channel)
+                    .map_or_else(|| channel_prefix(&channel.kind).width(), |span| span.content.width());
+                let leading_width = branch.prefix().width() + dm_prefix_width + 2;
+                let body_width = max_width.saturating_sub(leading_width);
+                let body = truncate_display_width_from(
+                    &render.body,
+                    horizontal_scroll,
+                    body_width.saturating_sub(usize::from(matches!(
+                        render.leading,
+                        ActivityLeading::Icon(_)
+                    )) * 2),
+                );
+                let leading = " ".repeat(leading_width);
+                let line = match render.leading {
+                    ActivityLeading::Image(url) => {
+                        emoji_line_urls.push((*line_index, url));
+                        Line::from(vec![
+                            Span::raw(leading),
+                            Span::styled(
+                                body,
+                                theme::current().style(theme::HighlightGroup::Activity),
+                            ),
+                        ])
+                    }
+                    ActivityLeading::Icon(icon) => Line::from(vec![
+                        Span::raw(leading),
+                        Span::styled(
+                            icon.to_string(),
+                            theme::current().style(theme::HighlightGroup::PresenceOnline),
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            body,
+                            theme::current().style(theme::HighlightGroup::Activity),
+                        ),
+                    ]),
+                    ActivityLeading::None => Line::from(vec![
+                        Span::raw(leading),
+                        Span::styled(
+                            body,
+                            theme::current().style(theme::HighlightGroup::Activity),
+                        ),
+                    ]),
+                };
+                return Some(ListItem::new(line));
+            }
+
+            let is_selected = selected_line == Some(*line_index);
             let is_active = dashboard.is_active_channel_entry(entry);
-            styled_list_item(
+            Some(styled_list_item(
                 match entry {
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
@@ -305,12 +372,27 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                     }
                 },
                 is_selected,
-            )
+            ))
         })
         .collect();
 
     let list = List::new(items);
     frame.render_widget(list, list_area);
+
+    if state.show_custom_emoji() {
+        overlay_emoji_slots(
+            frame,
+            list_area,
+            emoji_images,
+            &[],
+            emoji_line_urls.iter().map(|(line_index, url)| EmojiSlot {
+                row_in_list: *line_index as isize - channel_scroll as isize,
+                col: list_area.x as isize + 2,
+                max_width: u16::MAX,
+                url: url.clone(),
+            }),
+        );
+    }
 
     render_pane_filter_bar_with_cursor(
         frame,
@@ -325,7 +407,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
         list_area,
         state.channel_scroll(),
         list_area.height as usize,
-        channel_entry_count,
+        channel_line_count,
     );
 }
 

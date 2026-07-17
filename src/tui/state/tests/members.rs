@@ -497,3 +497,20 @@ fn member_half_page_scrolls_by_rendered_lines() {
     assert_eq!(state.selected_member(), 0);
     assert_eq!(state.selected_member_line(), 1);
 }
+
+#[test]
+fn member_focused_selection_line_accounts_for_scroll_offset() {
+    let mut state = state_with_members(8);
+    state.focus_pane(FocusPane::Members);
+    state.set_member_view_height(3);
+
+    for _ in 0..4 {
+        state.move_down();
+    }
+    assert_eq!(state.selected_member(), 4);
+    assert_eq!(state.selected_member_line(), 5);
+
+    let scroll = state.member_scroll();
+    let relative = state.focused_member_selection_line().unwrap();
+    assert_eq!(relative + scroll, state.selected_member_line());
+}

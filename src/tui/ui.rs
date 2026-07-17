@@ -304,7 +304,7 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
         render_guilds(frame, areas.guilds, state);
     }
     if state.is_pane_visible(FocusPane::Channels) {
-        render_channels(frame, areas.channels, state);
+        render_channels(frame, areas.channels, state, &emoji_images);
     }
     let media_occlusion_areas = background_media_occlusion_areas(frame.area(), state);
     render_messages(

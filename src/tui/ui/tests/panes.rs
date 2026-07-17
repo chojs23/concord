@@ -433,7 +433,7 @@ fn dm_channel_pane_shows_unread_channel_count_badge() {
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -470,7 +470,7 @@ fn dm_channel_pane_shows_loaded_unread_message_count_badge() {
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -548,7 +548,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let backend = TestBackend::new(40, 9);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -642,7 +642,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let backend = TestBackend::new(40, 4);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -694,7 +694,7 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
     let backend = TestBackend::new(32, 5);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -824,7 +824,7 @@ fn pane_filters_keep_content_width_when_active() {
     let backend = TestBackend::new(32, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -917,7 +917,7 @@ fn muted_category_and_channel_names_are_dimmed() {
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -1174,7 +1174,7 @@ fn channel_pane_header_shows_guild_boost_line_only_when_boosted() {
         let backend = TestBackend::new(30, 8);
         let mut terminal = Terminal::new(backend).expect("test terminal should build");
         terminal
-            .draw(|frame| render_channels(frame, frame.area(), &state))
+            .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
             .expect("draw should succeed");
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
