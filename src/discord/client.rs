@@ -25,9 +25,7 @@ use super::{
     DiscordAuthSession, DiscordPermission, PresenceStatus,
     application_commands::application_command_interaction_from_invocation,
     events::{AppEvent, SequencedAppEvent},
-    fingerprint::{
-        CLIENT_BUILD_NUMBER, ClientFingerprint, discord_http_client, discord_rest_headers,
-    },
+    fingerprint::{CLIENT_BUILD_NUMBER, ClientFingerprint, discord_http_client},
     gateway::{GatewayCommand, GatewayRuntime, run_gateway},
     request_lifecycle::RequestLifecycle,
     rest::DiscordRest,
@@ -108,7 +106,7 @@ impl DiscordClient {
         http: reqwest::Client,
     ) -> Result<Self> {
         validate_token_header(&token)?;
-        let rest = DiscordRest::new(token.clone(), http, discord_rest_headers(&fingerprint));
+        let rest = DiscordRest::new(token.clone(), http, Arc::clone(&fingerprint));
         let initial_state = DiscordState::default();
         let (effects_tx, effects_rx) = mpsc::channel(4096);
         let (snapshots_tx, _) = watch::channel(SnapshotRevision::default());
@@ -170,6 +168,20 @@ impl DiscordClient {
             .current_user_id()
     }
 
+    pub(crate) fn update_rest_page_referer(&self, channel_id: Option<Id<ChannelMarker>>) {
+        let channel = channel_id.and_then(|channel_id| {
+            self.state
+                .read()
+                .expect("discord state lock is not poisoned")
+                .channel(channel_id)
+                .map(|channel| (channel.guild_id, channel_id))
+        });
+        match channel {
+            Some((guild_id, channel_id)) => self.rest.set_channel_referer(guild_id, channel_id),
+            None => self.rest.reset_page_referer(),
+        }
+    }
+
     /// Current user `(id, username)` for the RPC READY handshake. RPC clients read
     /// `data.user.username` from it.
     pub fn current_user_rpc_identity(&self) -> Option<(String, String)> {
@@ -205,6 +217,7 @@ impl DiscordClient {
         let gateway_session_id = Arc::clone(&self.gateway_session_id);
         let fingerprint = Arc::clone(&self.fingerprint);
         let publish_lock = Arc::clone(&self.publish_lock);
+        let request_lifecycle = Arc::clone(&self.request_lifecycle);
         let gateway_commands = self
             .gateway_commands_rx
             .lock()
@@ -246,22 +259,10 @@ impl DiscordClient {
                 revision,
                 gateway_session_id,
                 publish_lock,
+                request_lifecycle,
                 voice_events_tx,
             };
             run_gateway(token, gateway_commands, runtime).await;
-        })
-    }
-
-    pub fn request_guild_members(
-        &self,
-        guild_id: Id<GuildMarker>,
-    ) -> std::result::Result<(), String> {
-        self.send_gateway_command(GatewayCommand::RequestGuildMembers {
-            guild_id,
-            query: String::new(),
-            limit: 0,
-            presences: true,
-            nonce: None,
         })
     }
 

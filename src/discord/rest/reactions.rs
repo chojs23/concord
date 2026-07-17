@@ -48,7 +48,7 @@ impl DiscordRest {
     ) -> Result<()> {
         self.send_unit(
             self.raw_http.delete(format!(
-                "https://discord.com/api/v9/channels/{}/messages/{}/reactions/{}/@me",
+                "https://discord.com/api/v9/channels/{}/messages/{}/reactions/{}/0/@me",
                 channel_id.get(),
                 message_id.get(),
                 reaction_route_component(emoji)

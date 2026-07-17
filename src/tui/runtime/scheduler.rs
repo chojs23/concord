@@ -24,11 +24,11 @@ impl DashboardCommandScheduler {
         let mut dirty = false;
         let now = std::time::Instant::now();
 
+        self.report_active_selection(state, commands, &mut dirty)
+            .await;
         self.schedule_mention_member_search(state, client, commands, now, &mut dirty)
             .await;
         self.schedule_message_history(state, client, commands, &mut dirty)
-            .await;
-        self.report_active_selection(state, commands, &mut dirty)
             .await;
         self.schedule_pinned_messages(state, client, commands, &mut dirty)
             .await;
@@ -201,30 +201,27 @@ impl DashboardCommandScheduler {
         dirty: &mut bool,
     ) {
         if let Some(guild_id) = client.next_member_request(state.selected_guild_id()) {
-            if send_command(state, commands, AppCommand::LoadGuildMembers { guild_id })
-                .await
-                .is_channel_closed()
-            {
-                client.remove_member_request(guild_id);
-                *dirty = true;
-            }
-
-            // The op-8 RequestGuildMembers above is unreliable for user tokens
-            // in larger guilds. Send an op-37 subscription against any text
-            // channel as well so Discord starts streaming member list updates.
-            if let Some(channel_id) = state.guild_member_list_channel(guild_id)
-                && send_command(
-                    state,
-                    commands,
-                    AppCommand::SubscribeGuildChannel {
-                        guild_id,
-                        channel_id,
-                    },
-                )
-                .await
-                .is_channel_closed()
-            {
-                *dirty = true;
+            // User accounts may request the complete guild member list only
+            // with moderation permissions. The normal web client uses an
+            // op-37 channel subscription for member-list streaming instead.
+            match state.guild_member_list_channel(guild_id) {
+                Some(channel_id) => {
+                    if send_command(
+                        state,
+                        commands,
+                        AppCommand::SubscribeGuildChannel {
+                            guild_id,
+                            channel_id,
+                        },
+                    )
+                    .await
+                    .is_channel_closed()
+                    {
+                        client.remove_member_request(guild_id);
+                        *dirty = true;
+                    }
+                }
+                None => client.remove_member_request(guild_id),
             }
         }
 

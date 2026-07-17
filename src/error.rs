@@ -45,6 +45,8 @@ pub enum AppError {
         action: String,
         retry_after_millis: u64,
     },
+    #[error("Discord forum search index is warming; try again in {retry_after_millis} ms")]
+    ForumSearchIndexWarming { retry_after_millis: u64 },
     #[error("message slowmode is active; try again in {retry_after_millis} ms")]
     MessageSlowModeActive { retry_after_millis: u64 },
     #[error(

@@ -18,10 +18,6 @@ use crate::discord::{
 use crate::{AppError, Result};
 
 impl DiscordClient {
-    pub async fn prime_rest_pool(&self) -> Result<()> {
-        self.rest.prime_connection_pool().await
-    }
-
     pub async fn validate_token_authentication(&self) -> Result<()> {
         self.rest.validate_token_authentication().await
     }

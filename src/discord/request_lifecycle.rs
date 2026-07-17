@@ -66,7 +66,7 @@ pub(super) struct MemberBatchRequests {
     requested: TimedRequestSet<(Id<GuildMarker>, Id<UserMarker>)>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct MemberListSubscriptionTarget {
     pub(crate) guild_id: Id<GuildMarker>,
     pub(crate) channel_id: Id<ChannelMarker>,
@@ -116,6 +116,9 @@ pub(crate) struct RequestLifecycle {
 
 impl RequestLifecycle {
     pub(crate) fn record_event(&mut self, event: &AppEvent) {
+        if matches!(event, AppEvent::GatewayReidentified) {
+            self.reset_gateway_session();
+        }
         self.history.record_event(event);
         self.older_history.record_event(event);
         self.newer_history.record_event(event);
@@ -127,6 +130,14 @@ impl RequestLifecycle {
         self.thread_previews.record_event(event);
         self.user_profiles.record_event(event);
         self.user_notes.record_event(event);
+    }
+
+    fn reset_gateway_session(&mut self) {
+        self.message_author_members = MemberBatchRequests::default();
+        self.initial_unknown_members = MemberBatchRequests::default();
+        self.member_list_subscriptions = MemberListSubscriptionRequests::default();
+        self.mention_member_searches = MentionMemberSearchRequests::default();
+        self.members = MemberRequests::default();
     }
 
     pub(crate) fn next_history_request(

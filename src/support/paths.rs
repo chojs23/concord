@@ -5,6 +5,8 @@ const CONFIG_FILE: &str = "config.toml";
 const KEYMAP_FILE: &str = "keymap.toml";
 const THEME_FILE: &str = "theme.toml";
 const CREDENTIAL_FILE: &str = "credentials.toml";
+const DISCORD_BROWSER_FILE: &str = "discord-browser.toml";
+const DISCORD_COOKIE_FILE: &str = "discord-cookies.json";
 const LOG_FILE: &str = "concord.log";
 const STATE_FILE: &str = "state.toml";
 
@@ -32,6 +34,14 @@ pub fn theme_file() -> Option<PathBuf> {
 
 pub fn credential_file() -> Option<PathBuf> {
     Some(state_dir()?.join(CREDENTIAL_FILE))
+}
+
+pub(crate) fn discord_browser_file() -> Option<PathBuf> {
+    Some(state_dir()?.join(DISCORD_BROWSER_FILE))
+}
+
+pub(crate) fn discord_cookie_file() -> Option<PathBuf> {
+    Some(state_dir()?.join(DISCORD_COOKIE_FILE))
 }
 
 pub fn state_file() -> Option<PathBuf> {

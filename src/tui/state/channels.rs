@@ -1045,21 +1045,30 @@ impl DashboardState {
     }
 
     fn activate_channel_command(&mut self, channel_id: Id<ChannelMarker>) -> Option<AppCommand> {
-        let command = {
-            let state = self.discord.cache.channel(channel_id)?;
-            if is_direct_message_channel(state) {
-                Some(AppCommand::SubscribeDirectMessage { channel_id })
-            } else {
-                state
-                    .guild_id
-                    .map(|guild_id| AppCommand::SubscribeGuildChannel {
-                        guild_id,
-                        channel_id,
-                    })
-            }
-        };
+        let command = self.channel_subscription_command(channel_id);
         self.activate_channel(channel_id);
         command
+    }
+
+    pub(in crate::tui) fn selected_channel_subscription_command(&self) -> Option<AppCommand> {
+        self.navigation
+            .channels
+            .active_channel_id
+            .and_then(|channel_id| self.channel_subscription_command(channel_id))
+    }
+
+    fn channel_subscription_command(&self, channel_id: Id<ChannelMarker>) -> Option<AppCommand> {
+        let state = self.discord.cache.channel(channel_id)?;
+        if is_direct_message_channel(state) {
+            Some(AppCommand::SubscribeDirectMessage { channel_id })
+        } else {
+            state
+                .guild_id
+                .map(|guild_id| AppCommand::SubscribeGuildChannel {
+                    guild_id,
+                    channel_id,
+                })
+        }
     }
 
     pub(super) fn record_thread_return_target(&mut self, thread_channel_id: Id<ChannelMarker>) {

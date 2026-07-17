@@ -11,6 +11,7 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{TimeZone, Utc};
+use reqwest::header::{AUTHORIZATION, ORIGIN};
 
 use crate::discord::ids::{
     Id,
@@ -24,19 +25,22 @@ use crate::{
         BASE_ATTACHMENT_LIMIT_BYTES, ChannelInfo, GuildFolder, MessageAttachmentUpload,
         MessageSearchAuthorType, MessageSearchHas, MessageSearchQuery, ReactionEmoji,
         ReplyReference,
+        fingerprint::{CLIENT_BUILD_NUMBER, ClientFingerprint},
     },
 };
 
 use super::{
     DiscordRest, FORBIDDEN_FAILURE_WINDOW, MAX_FORBIDDEN_CIRCUITS, MessageSendCoordinator,
-    RequestRoute, RequestSafety, RestRateLimitDecision, RestRateLimitResponse, RestRateLimitRoute,
-    RestRateLimiter,
+    REST_MUTATION_MIN_INTERVAL, REST_UNKNOWN_MUTATION_ROUTE_INTERVAL, RequestRoute, RequestSafety,
+    RestMutationPacer, RestRateLimitBody, RestRateLimitDecision, RestRateLimitResponse,
+    RestRateLimitRoute, RestRateLimiter,
     application_commands::{
         application_command_interaction_body, application_command_option_body,
         parse_application_command_index,
     },
+    apply_authenticated_method_headers,
     forum::{
-        ForumPostPage, ForumSearchSort, create_forum_post_request_body, is_search_index_warming,
+        ForumPostPage, ForumSearchSort, create_forum_post_request_body, forum_search_retry_after,
         merge_forum_pages, merge_pinned_forum_posts, parse_create_forum_post_response,
         parse_forum_first_messages, parse_forum_threads,
     },
@@ -72,6 +76,28 @@ fn rest_rate_limit_routes_normalize_ids_but_keep_major_scope() {
     );
     assert_eq!(first.major_parameter, "123");
     assert_eq!(second.major_parameter, "999");
+
+    let safety_first = RequestRoute::from_request(&test_request(
+        "https://discord.com/api/v9/channels/123/messages/456/reactions/%F0%9F%91%8D/@me",
+    ));
+    let safety_second = RequestRoute::from_request(&test_request(
+        "https://discord.com/api/v9/channels/999/messages/777/reactions/%F0%9F%8E%89/@me",
+    ));
+    assert_ne!(safety_first, safety_second);
+    assert_eq!(
+        safety_first.path,
+        "/api/v9/channels/:major/messages/:id/reactions/:reaction/@me"
+    );
+    assert_eq!(safety_first.major_parameter, "123");
+    assert_eq!(safety_second.major_parameter, "999");
+
+    let pacer = RestMutationPacer::default();
+    let started_at = std::time::Instant::now();
+    assert_eq!(pacer.reserve_at(started_at), None);
+    assert_eq!(
+        pacer.reserve_at(started_at),
+        Some(REST_MUTATION_MIN_INTERVAL)
+    );
 }
 
 #[tokio::test]
@@ -130,6 +156,7 @@ fn rest_rate_limiter_applies_learned_bucket_per_major_scope() {
         RestRateLimitResponse {
             headers: &headers,
             status: reqwest::StatusCode::OK,
+            body: None,
             now,
             wall_clock: SystemTime::now(),
         },
@@ -142,6 +169,34 @@ fn rest_rate_limiter_applies_learned_bucket_per_major_scope() {
     assert!(matches!(
         limiter.reserve_at(&other_channel_route, now + Duration::from_secs(1)),
         RestRateLimitDecision::Admit { probe: true, .. }
+    ));
+
+    let fallback_limiter = RestRateLimiter::default();
+    let mutation_request = test_request_with_method(
+        reqwest::Method::POST,
+        "https://discord.com/api/v9/channels/123/messages",
+    );
+    let mutation_route = RestRateLimitRoute::from_request(&mutation_request);
+    let (mutation_key, mutation_probe) = match fallback_limiter.reserve_at(&mutation_route, now) {
+        RestRateLimitDecision::Admit { key, probe } => (key, probe),
+        _ => panic!("the first mutation should be admitted"),
+    };
+    fallback_limiter.finish(
+        &mutation_route,
+        &mutation_key,
+        mutation_probe,
+        RestRateLimitResponse {
+            headers: &reqwest::header::HeaderMap::new(),
+            status: reqwest::StatusCode::OK,
+            body: None,
+            now,
+            wall_clock: SystemTime::now(),
+        },
+    );
+    assert!(matches!(
+        fallback_limiter.reserve_at(&mutation_route, now),
+        RestRateLimitDecision::Delay(delay)
+            if delay == REST_UNKNOWN_MUTATION_ROUTE_INTERVAL
     ));
 }
 
@@ -157,9 +212,7 @@ fn rest_rate_limiter_applies_global_retry_after_to_other_routes() {
         RestRateLimitDecision::Admit { key, probe } => (key, probe),
         _ => panic!("the first request should be admitted"),
     };
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("x-ratelimit-global", "true".parse().expect("valid header"));
-    headers.insert("retry-after", "3".parse().expect("valid header"));
+    let headers = reqwest::header::HeaderMap::new();
 
     limiter.finish(
         &first_route,
@@ -168,6 +221,10 @@ fn rest_rate_limiter_applies_global_retry_after_to_other_routes() {
         RestRateLimitResponse {
             headers: &headers,
             status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            body: Some(RestRateLimitBody {
+                retry_after: Some(Duration::from_secs(3)),
+                global: true,
+            }),
             now,
             wall_clock: SystemTime::now(),
         },
@@ -185,6 +242,7 @@ fn forbidden_circuit_resets_stale_failures_and_bounds_storage() {
     let route = RequestRoute {
         method: "POST".to_owned(),
         path: "/channels/1/messages".to_owned(),
+        major_parameter: "none".to_owned(),
     };
     let start = std::time::Instant::now();
     safety.record_response_at(&route, reqwest::StatusCode::FORBIDDEN, start);
@@ -219,6 +277,7 @@ fn forbidden_circuit_resets_stale_failures_and_bounds_storage() {
             &RequestRoute {
                 method: "GET".to_owned(),
                 path: format!("/messages/{index}"),
+                major_parameter: "none".to_owned(),
             },
             reqwest::StatusCode::FORBIDDEN,
             start + Duration::from_millis(index as u64),
@@ -242,6 +301,7 @@ fn forbidden_circuit_resets_stale_failures_and_bounds_storage() {
             &RequestRoute {
                 method: "GET".to_owned(),
                 path: "/untracked".to_owned(),
+                major_parameter: "none".to_owned(),
             },
             cleanup_time,
         )
@@ -257,10 +317,47 @@ fn forbidden_circuit_resets_stale_failures_and_bounds_storage() {
 
 #[tokio::test]
 async fn authenticated_requests_stop_after_unauthorized_response() {
+    let rest = test_rest();
+    let mut get_request = rest
+        .raw_http
+        .get("https://discord.com/api/v9/users/@me")
+        .header(ORIGIN, "https://wrong.example")
+        .build()
+        .expect("GET request should build");
+    apply_authenticated_method_headers(&mut get_request);
+    assert!(get_request.headers().get(ORIGIN).is_none());
+
+    let mut post_request = rest
+        .raw_http
+        .post("https://discord.com/api/v9/channels/1/messages")
+        .build()
+        .expect("POST request should build");
+    apply_authenticated_method_headers(&mut post_request);
+    assert_eq!(
+        post_request
+            .headers()
+            .get(ORIGIN)
+            .and_then(|value| value.to_str().ok()),
+        Some("https://discord.com")
+    );
+
+    let mut log_headers = reqwest::header::HeaderMap::new();
+    log_headers.insert(AUTHORIZATION, "secret-token".parse().expect("valid header"));
+    log_headers.insert(
+        "x-super-properties",
+        "secret-properties".parse().expect("valid header"),
+    );
+    log_headers.insert("user-agent", "safe-agent".parse().expect("valid header"));
+    let logged = super::request_headers_for_log(&log_headers);
+    assert!(!logged.contains("authorization"));
+    assert!(!logged.contains("x-super-properties"));
+    assert!(logged.contains("user-agent=\"safe-agent\""));
+    assert!(!logged.contains("secret-token"));
+    assert!(!logged.contains("secret-properties"));
+
     let (base_url, server) = status_server(vec![
         "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
     ]);
-    let rest = test_rest();
 
     let first = rest
         .send_unit(rest.raw_http.get(format!("{base_url}/users/@me")), "first")
@@ -280,9 +377,10 @@ async fn authenticated_requests_stop_after_unauthorized_response() {
 }
 
 #[tokio::test]
-async fn repeated_forbidden_route_opens_circuit_without_query_bypass() {
+async fn repeated_forbidden_route_is_scoped_to_major_resource() {
     let forbidden = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-    let (base_url, server) = status_server(vec![forbidden, forbidden, forbidden]);
+    let success = "HTTP/1.1 204 No Content\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    let (base_url, server) = status_server(vec![forbidden, forbidden, forbidden, success]);
     let rest = test_rest();
 
     for attempt in 0..3 {
@@ -297,18 +395,26 @@ async fn repeated_forbidden_route_opens_circuit_without_query_bypass() {
         assert!(matches!(error, AppError::DiscordRequest(_)));
     }
 
+    rest.send_unit(
+        rest.raw_http
+            .get(format!("{base_url}/channels/99/messages?attempt=4")),
+        "other channel",
+    )
+    .await
+    .expect("a different channel must not share the forbidden circuit");
+
     let blocked = rest
         .send_unit(
             rest.raw_http
-                .get(format!("{base_url}/channels/1/messages?attempt=4")),
+                .get(format!("{base_url}/channels/1/messages?attempt=5")),
             "forbidden",
         )
         .await
-        .expect_err("fourth matching route should be blocked locally");
+        .expect_err("the repeated channel route should be blocked locally");
     assert!(matches!(
         blocked,
         AppError::DiscordRequestCircuitOpen { ref path, .. }
-            if path == "/channels/1/messages"
+            if path == "/channels/:major/messages"
     ));
     server.join().expect("test server should finish");
 }
@@ -316,7 +422,7 @@ async fn repeated_forbidden_route_opens_circuit_without_query_bypass() {
 #[tokio::test]
 async fn rate_limit_returns_retry_delay_without_retrying() {
     let (base_url, server) = status_server(vec![
-        "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1.5\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 19\r\n\r\n{\"retry_after\":1.5}",
+        "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 34\r\n\r\n{\"retry_after\":1.5,\"global\":false}",
     ]);
     let rest = test_rest();
 
@@ -409,14 +515,18 @@ fn test_rest() -> DiscordRest {
     DiscordRest::new(
         "test-token".to_owned(),
         reqwest::Client::new(),
-        reqwest::header::HeaderMap::new(),
+        Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)),
     )
 }
 
 fn test_request(url: &str) -> reqwest::Request {
+    test_request_with_method(reqwest::Method::GET, url)
+}
+
+fn test_request_with_method(method: reqwest::Method, url: &str) -> reqwest::Request {
     let _ = rustls::crypto::ring::default_provider().install_default();
     reqwest::Client::new()
-        .get(url)
+        .request(method, url)
         .build()
         .expect("test request should build")
 }
@@ -493,10 +603,13 @@ fn validates_attachment_only_message_payload() {
 }
 
 #[test]
-fn message_request_body_carries_snowflake_nonce() {
+fn message_request_body_matches_web_defaults_and_carries_snowflake_nonce() {
     let body = message_request_body("hi", None, &[]);
     let nonce = body["nonce"].as_str().expect("nonce is a string");
     assert!(nonce.parse::<u64>().is_ok(), "nonce must be a snowflake");
+    assert_eq!(body["mobile_network_type"], "unknown");
+    assert_eq!(body["tts"], false);
+    assert_eq!(body["flags"], 0);
 }
 
 #[test]
@@ -621,7 +734,7 @@ fn guild_folder_settings_proto_includes_name_and_color() {
 }
 
 #[test]
-fn message_request_body_sets_tts_only_when_requested() {
+fn message_request_body_sets_requested_tts_value() {
     let tts = message_request_body_with_tts("hello", None, &[], true);
     assert_eq!(tts["tts"], true);
 }
@@ -1100,12 +1213,20 @@ fn forum_thread_info(
 
 #[test]
 fn search_index_warming_error_is_detected() {
-    let warming = AppError::DiscordRequest("forum post search index is not ready".to_owned());
+    let warming = AppError::ForumSearchIndexWarming {
+        retry_after_millis: 5_000,
+    };
     let other = AppError::DiscordRequest("forum post search failed: 500".to_owned());
 
-    assert!(is_search_index_warming(&warming));
-    assert!(!is_search_index_warming(&other));
-    assert!(!is_search_index_warming(&AppError::EmptyMessageContent));
+    assert_eq!(
+        forum_search_retry_after(&warming),
+        Some(Duration::from_secs(5))
+    );
+    assert_eq!(forum_search_retry_after(&other), None);
+    assert_eq!(
+        forum_search_retry_after(&AppError::EmptyMessageContent),
+        None
+    );
 }
 
 #[test]

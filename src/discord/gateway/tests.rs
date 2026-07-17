@@ -1,13 +1,16 @@
 use super::{
     ConnectionOutcome, GATEWAY_SEND_LIMIT, GATEWAY_SEND_WINDOW, GATEWAY_WEBSOCKET_LIMIT,
-    GatewayCommand, GatewaySendWindow, HeartbeatAckState, SessionState, SubscriptionDeduper,
-    USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload, close_code_outcome,
-    direct_message_subscribe_payload, gateway_request, gateway_websocket_config,
-    guild_channel_subscribe_payload, presence_update_payload, request_guild_members_by_ids_payload,
-    request_guild_members_payload, voice_state_update_payload,
+    GatewayCommand, GatewaySendWindow, GatewaySender, HeartbeatAckState, SessionState,
+    SubscriptionDeduper, USER_ACCOUNT_CAPABILITIES, build_identify_payload, build_resume_payload,
+    close_code_outcome, direct_message_subscribe_payload, dispatch_command,
+    gateway_guild_member_rate_limit, gateway_request, gateway_websocket_config,
+    guild_channel_subscribe_payload, presence_update_payload, ready_installation_id,
+    request_guild_members_by_ids_payload, request_guild_members_payload,
+    voice_state_update_payload,
 };
 use crate::discord::fingerprint::{
-    CLIENT_BROWSER, CLIENT_BROWSER_VERSION, CLIENT_BUILD_NUMBER, ClientFingerprint, accept_language,
+    CLIENT_BROWSER, CLIENT_BROWSER_VERSION, CLIENT_BUILD_NUMBER, ClientFingerprint,
+    DISCORD_REFERRER_CURRENT, DISCORD_REFERRING_DOMAIN_CURRENT, accept_language,
 };
 use crate::discord::ids::{
     Id,
@@ -30,7 +33,7 @@ fn gateway_websocket_config_allows_large_ready_payloads() {
 }
 
 #[test]
-fn gateway_send_window_limits_all_events_to_120_per_minute() {
+fn gateway_rate_limit_covers_connection_window_and_parses_member_retry() {
     let mut window = GatewaySendWindow::default();
     let started_at = Instant::now();
 
@@ -45,6 +48,47 @@ fn gateway_send_window_limits_all_events_to_120_per_minute() {
         Some(Duration::from_secs(1))
     );
     assert_eq!(window.delay_at(started_at + GATEWAY_SEND_WINDOW), None);
+
+    let guild_id = Id::<GuildMarker>::new(10);
+
+    let rate_limited = json!({
+        "op": 0,
+        "t": "RATE_LIMITED",
+        "d": {
+            "opcode": 8,
+            "retry_after": 45.0,
+            "meta": { "guild_id": "10" }
+        }
+    });
+    let (limited_guild_id, retry_after) =
+        gateway_guild_member_rate_limit(&rate_limited).expect("rate limit should parse");
+    assert_eq!(limited_guild_id, guild_id);
+    assert_eq!(retry_after, Duration::from_secs(45));
+
+    let (urgent_tx, _urgent_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (normal_tx, mut normal_rx) = tokio::sync::mpsc::unbounded_channel();
+    let sender = GatewaySender {
+        urgent_tx,
+        normal_tx,
+    };
+    dispatch_command(
+        &sender,
+        GatewayCommand::RequestGuildMembers {
+            guild_id,
+            query: "neo".to_owned(),
+            limit: 10,
+            presences: false,
+            nonce: None,
+        },
+        &mut SubscriptionDeduper::default(),
+    )
+    .expect("ordinary guild member search should enqueue immediately");
+    let request = normal_rx
+        .try_recv()
+        .expect("ordinary guild member search should not wait for a guild cooldown");
+    let payload: serde_json::Value =
+        serde_json::from_str(&request.payload).expect("gateway payload should be valid json");
+    assert_eq!(payload["op"].as_u64(), Some(8));
 }
 
 #[test]
@@ -85,6 +129,7 @@ fn gateway_handshake_headers_match_shared_fingerprint() {
 #[test]
 fn identify_payload_carries_user_account_capabilities() {
     let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
+    fingerprint.set_installation_id_for_test("installation-id");
     let payload: serde_json::Value =
         serde_json::from_str(&build_identify_payload("dummy-token", &fingerprint))
             .expect("identify payload should be valid json");
@@ -121,8 +166,28 @@ fn identify_payload_carries_user_account_capabilities() {
         payload["d"]["properties"]["system_locale"].as_str(),
         Some(fingerprint.system_locale.as_str())
     );
+    assert_eq!(
+        payload["d"]["properties"]["referrer_current"].as_str(),
+        Some(DISCORD_REFERRER_CURRENT)
+    );
+    assert_eq!(
+        payload["d"]["properties"]["referring_domain_current"].as_str(),
+        Some(DISCORD_REFERRING_DOMAIN_CURRENT)
+    );
+    assert_eq!(
+        payload["d"]["properties"]["installation_id"].as_str(),
+        Some("installation-id")
+    );
     assert_eq!(payload["d"]["compress"].as_bool(), Some(false));
     assert_eq!(payload["d"]["presence"]["status"].as_str(), Some("online"));
+    assert_eq!(
+        ready_installation_id(&json!({
+            "apex_experiments": {
+                "installation": "ready-installation-id"
+            }
+        })),
+        Some("ready-installation-id")
+    );
 }
 
 #[test]

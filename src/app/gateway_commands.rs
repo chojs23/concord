@@ -8,9 +8,6 @@ const MENTION_MEMBER_SEARCH_LIMIT: u16 = 10;
 
 pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
     match command {
-        AppCommand::LoadGuildMembers { guild_id } => {
-            publish_gateway_result(&client, client.request_guild_members(guild_id)).await;
-        }
         AppCommand::LoadGuildMembersByIds { guild_id, user_ids } => {
             publish_gateway_result(
                 &client,
@@ -31,6 +28,7 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                 .await;
         }
         AppCommand::SetSelectedMessageChannel { channel_id } => {
+            client.update_rest_page_referer(channel_id);
             client
                 .publish_event(AppEvent::SelectedMessageChannelChanged { channel_id })
                 .await;

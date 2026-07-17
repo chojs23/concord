@@ -60,8 +60,7 @@ impl CommandDispatcher {
             | AppCommand::SearchMessages { .. }) => {
                 history_commands::handle(self.client.clone(), command).await;
             }
-            command @ (AppCommand::LoadGuildMembers { .. }
-            | AppCommand::LoadGuildMembersByIds { .. }
+            command @ (AppCommand::LoadGuildMembersByIds { .. }
             | AppCommand::SearchGuildMembers { .. }
             | AppCommand::SetSelectedGuild { .. }
             | AppCommand::SetSelectedMessageChannel { .. }

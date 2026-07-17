@@ -92,6 +92,8 @@ pub(super) async fn connect_voice_gateway(
     )]
     let mut voice_ready: Option<VoiceTransportSession> = None;
     let last_sequence = Arc::new(Mutex::new(None));
+    let heartbeat_ack = Arc::new(Mutex::new(VoiceHeartbeatAckState::default()));
+    let (heartbeat_timeout_tx, mut heartbeat_timeout_rx) = mpsc::unbounded_channel();
     let dave_state = Arc::new(Mutex::new(VoiceDaveState::new(session)));
 
     let result: Result<(), String> = async {
@@ -163,6 +165,9 @@ pub(super) async fn connect_voice_gateway(
                 }
                 continue;
             }
+            _ = heartbeat_timeout_rx.recv() => {
+                return Err("voice heartbeat ACK timed out".to_owned());
+            }
             frame = reader.next() => frame,
         };
         let Some(frame) = frame else {
@@ -223,9 +228,19 @@ pub(super) async fn connect_voice_gateway(
                             .await;
                         }
                     }
-                    VOICE_OP_HEARTBEAT_ACK => {}
+                    VOICE_OP_HEARTBEAT_ACK => {
+                        heartbeat_ack.lock().await.mark_acknowledged();
+                    }
                     VOICE_OP_HELLO => {
-                        handle_voice_hello(&value, &writer, &last_sequence, &mut child_tasks)?;
+                        handle_voice_hello(
+                            &value,
+                            &writer,
+                            &last_sequence,
+                            &heartbeat_ack,
+                            &heartbeat_timeout_tx,
+                            &mut child_tasks,
+                        )
+                        .await?;
                     }
                     VOICE_OP_CLIENTS_CONNECT
                     | VOICE_OP_CLIENT_DISCONNECT
@@ -425,10 +440,12 @@ pub(super) async fn run_voice_udp_keepalive(socket: Arc<UdpSocket>) {
     }
 }
 
-fn handle_voice_hello(
+async fn handle_voice_hello(
     value: &Value,
     writer: &VoiceWriter,
     last_sequence: &Arc<Mutex<Option<i64>>>,
+    heartbeat_ack: &Arc<Mutex<VoiceHeartbeatAckState>>,
+    heartbeat_timeout_tx: &mpsc::UnboundedSender<()>,
     child_tasks: &mut VoiceChildTasks,
 ) -> Result<(), String> {
     let interval = value
@@ -444,10 +461,17 @@ fn handle_voice_hello(
             interval.as_millis()
         ),
     );
+    let writer = Arc::clone(writer);
+    let last_sequence = Arc::clone(last_sequence);
+    let heartbeat_ack = Arc::clone(heartbeat_ack);
+    let heartbeat_timeout_tx = heartbeat_timeout_tx.clone();
+    heartbeat_ack.lock().await.reset();
     child_tasks.replace_heartbeat(tokio::spawn(run_voice_heartbeat(
-        Arc::clone(writer),
+        writer,
         interval,
-        Arc::clone(last_sequence),
+        last_sequence,
+        heartbeat_ack,
+        heartbeat_timeout_tx,
     )));
     logging::debug("voice", "voice heartbeat task started");
     Ok(())
@@ -751,11 +775,18 @@ pub(super) async fn run_voice_heartbeat(
     writer: VoiceWriter,
     interval: Duration,
     last_sequence: Arc<Mutex<Option<i64>>>,
+    heartbeat_ack: Arc<Mutex<VoiceHeartbeatAckState>>,
+    heartbeat_timeout_tx: mpsc::UnboundedSender<()>,
 ) {
     loop {
+        if !heartbeat_ack.lock().await.mark_sent() {
+            let _ = heartbeat_timeout_tx.send(());
+            break;
+        }
         let sequence = last_sequence.lock().await.unwrap_or(-1);
         if let Err(error) = send_voice_text(&writer, voice_heartbeat_payload(sequence)).await {
             logging::error("voice", format!("voice heartbeat send failed: {error}"));
+            let _ = heartbeat_timeout_tx.send(());
             break;
         }
         sleep(interval).await;
@@ -816,7 +847,7 @@ pub(super) fn voice_identify_payload(session: &VoiceGatewaySession) -> String {
 
 pub(super) fn voice_heartbeat_payload(sequence: i64) -> String {
     json!({
-        "op": 3,
+        "op": VOICE_OP_HEARTBEAT,
         "d": {
             "t": chrono::Utc::now().timestamp_millis(),
             "seq_ack": sequence,
