@@ -175,6 +175,15 @@ impl DiscordState {
         selected_member_role_color(member, roles)
     }
 
+    pub(crate) fn role_color_for_ids(
+        &self,
+        guild_id: Id<GuildMarker>,
+        role_ids: &[Id<RoleMarker>],
+    ) -> Option<u32> {
+        let roles = self.guild_details.roles.get(&guild_id)?;
+        selected_role_ids_color(role_ids, roles)
+    }
+
     pub fn member_display_name(
         &self,
         guild_id: Id<GuildMarker>,

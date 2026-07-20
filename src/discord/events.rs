@@ -301,10 +301,20 @@ pub enum AppEvent {
     },
     InboxMentionsLoaded {
         request_id: u64,
+        before: Option<Id<MessageMarker>>,
         messages: Vec<MessageInfo>,
+        has_more: bool,
     },
     InboxMentionsLoadFailed {
         request_id: u64,
+        before: Option<Id<MessageMarker>>,
+    },
+    InboxRecentMentionDeleted {
+        message_id: Id<MessageMarker>,
+    },
+    InboxRecentMentionDeleteFailed {
+        message_id: Id<MessageMarker>,
+        message: String,
     },
     InboxChannelMessagesLoaded {
         request_id: u64,
@@ -631,6 +641,8 @@ define_app_event_kinds! {
     MessageSearchLoadFailed: AppEvent::MessageSearchLoadFailed { .. },
     InboxMentionsLoaded: AppEvent::InboxMentionsLoaded { .. },
     InboxMentionsLoadFailed: AppEvent::InboxMentionsLoadFailed { .. },
+    InboxRecentMentionDeleted: AppEvent::InboxRecentMentionDeleted { .. },
+    InboxRecentMentionDeleteFailed: AppEvent::InboxRecentMentionDeleteFailed { .. },
     InboxChannelMessagesLoaded: AppEvent::InboxChannelMessagesLoaded { .. },
     InboxChannelMessagesLoadFailed: AppEvent::InboxChannelMessagesLoadFailed { .. },
     MessageHistoryLoadFailed: AppEvent::MessageHistoryLoadFailed { .. },
@@ -1694,6 +1706,8 @@ impl AppEventKind {
             | AppEventKind::MessageHistoryLoadFailed
             | AppEventKind::InboxMentionsLoaded
             | AppEventKind::InboxMentionsLoadFailed
+            | AppEventKind::InboxRecentMentionDeleted
+            | AppEventKind::InboxRecentMentionDeleteFailed
             | AppEventKind::InboxChannelMessagesLoaded
             | AppEventKind::InboxChannelMessagesLoadFailed
             | AppEventKind::PinnedMessagesLoadFailed

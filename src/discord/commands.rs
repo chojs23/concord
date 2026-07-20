@@ -709,6 +709,11 @@ pub enum AppCommand {
     /// Fetch recent mentions for the inbox Mentions tab in one request.
     LoadInboxMentions {
         request_id: u64,
+        before: Option<Id<MessageMarker>>,
+    },
+    /// Remove one message from Discord's recent-mentions inbox.
+    DeleteInboxMention {
+        message_id: Id<MessageMarker>,
     },
     /// Fetch a small slice of a channel's latest messages for the inbox Unreads tab.
     LoadInboxChannelHistory {

@@ -264,21 +264,22 @@ fn keymap_leader_n_opens_notification_inbox_and_switches_tabs() {
         Some(NotificationInboxTab::Unreads)
     );
 
-    // Opening fetches the Mentions tab in one request.
-    assert!(
-        state
-            .drain_pending_commands()
-            .iter()
-            .any(|command| matches!(
-                command,
-                crate::discord::AppCommand::LoadInboxMentions { .. }
-            ))
-    );
+    // Opening fetches mentions. Unreads are derived locally.
+    let commands = state.drain_pending_commands();
+    assert!(commands.iter().any(|command| matches!(
+        command,
+        crate::discord::AppCommand::LoadInboxMentions { .. }
+    )));
 
     handle_key(&mut state, key(KeyCode::Right));
     assert_eq!(
         state.notification_inbox_tab(),
         Some(NotificationInboxTab::Mentions)
+    );
+    handle_key(&mut state, key(KeyCode::Left));
+    assert_eq!(
+        state.notification_inbox_tab(),
+        Some(NotificationInboxTab::Unreads)
     );
     handle_key(&mut state, key(KeyCode::Esc));
     assert!(!state.is_active_modal_popup(ActiveModalPopupKind::NotificationInbox));
@@ -297,7 +298,7 @@ fn notification_inbox_mentions_snapshot_respects_request_id() {
         .drain_pending_commands()
         .into_iter()
         .find_map(|command| match command {
-            AppCommand::LoadInboxMentions { request_id } => Some(request_id),
+            AppCommand::LoadInboxMentions { request_id, .. } => Some(request_id),
             _ => None,
         })
         .expect("mentions request is enqueued on open");
@@ -309,7 +310,9 @@ fn notification_inbox_mentions_snapshot_respects_request_id() {
     // A stale response from a different open is ignored.
     state.push_event(AppEvent::InboxMentionsLoaded {
         request_id: request_id.wrapping_add(1),
+        before: None,
         messages: Vec::new(),
+        has_more: false,
     });
     assert_eq!(
         state.notification_inbox_mentions_status(),
@@ -319,12 +322,279 @@ fn notification_inbox_mentions_snapshot_respects_request_id() {
     // The matching response settles the tab.
     state.push_event(AppEvent::InboxMentionsLoaded {
         request_id,
+        before: None,
         messages: Vec::new(),
+        has_more: false,
     });
     assert_eq!(
         state.notification_inbox_mentions_status(),
         Some(NotificationInboxLoad::Loaded)
     );
+}
+
+#[test]
+fn notification_inbox_refreshes_the_message_author_role_color_after_member_load() {
+    use crate::discord::{
+        AppCommand, AppEvent, ChannelInfo, GuildMembersChunkInfo, MemberInfo, MessageInfo,
+        RoleInfo,
+        ids::{
+            Id,
+            marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
+        },
+        test_builders::{GuildCreateFixture, guild_create_event},
+    };
+    use crate::tui::state::NotificationInboxItem;
+
+    let guild_id = Id::<GuildMarker>::new(1);
+    let channel_id = Id::<ChannelMarker>::new(2);
+    let role_id = Id::<RoleMarker>::new(90);
+    let role_color = 0x12_34_56;
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            name: "general".to_owned(),
+            ..ChannelInfo::test(channel_id, "text")
+        }],
+        roles: vec![RoleInfo {
+            color: Some(role_color),
+            position: 10,
+            ..RoleInfo::test(role_id, "colored")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.open_notification_inbox();
+    let request_id = state
+        .drain_pending_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            AppCommand::LoadInboxMentions { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .expect("mentions request is enqueued on open");
+    state.push_event(AppEvent::InboxMentionsLoaded {
+        request_id,
+        before: None,
+        messages: vec![MessageInfo {
+            guild_id: Some(guild_id),
+            channel_id,
+            message_id: Id::<MessageMarker>::new(700),
+            author_id: Id::<UserMarker>::new(42),
+            author: "alice".to_owned(),
+            author_role_ids: Vec::new(),
+            content: Some("hello".to_owned()),
+            ..MessageInfo::default()
+        }],
+        has_more: false,
+    });
+    state.push_event(AppEvent::GuildMembersChunk {
+        chunk: GuildMembersChunkInfo {
+            guild_id,
+            members: vec![MemberInfo {
+                role_ids: vec![role_id],
+                ..MemberInfo::test(Id::new(42), "alice")
+            }],
+            presences: Vec::new(),
+            chunk_index: Some(0),
+            chunk_count: Some(1),
+            nonce: None,
+            not_found: Vec::new(),
+            extra_fields: BTreeMap::new(),
+        },
+    });
+    handle_key(&mut state, key(KeyCode::Right));
+
+    let color = state
+        .notification_inbox_items()
+        .into_iter()
+        .find_map(|item| match item {
+            NotificationInboxItem::Mention(item) => item.author_role_color,
+            NotificationInboxItem::Unread(_) => None,
+        });
+    assert_eq!(color, Some(role_color));
+}
+
+#[test]
+fn notification_inbox_mention_read_uses_the_recent_mention_endpoint_command() {
+    use crate::discord::{
+        AppCommand, AppEvent, MessageInfo,
+        ids::{
+            Id,
+            marker::{ChannelMarker, MessageMarker},
+        },
+    };
+
+    let mut notification_inbox_actions = BTreeMap::new();
+    notification_inbox_actions.insert("MarkRead".to_owned(), KeymapBinding::one("q"));
+    let mut state = state_with_keymap(KeymapOptions {
+        notification_inbox_actions,
+        ..Default::default()
+    });
+    state.open_notification_inbox();
+    let request_id = state
+        .drain_pending_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            AppCommand::LoadInboxMentions { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .expect("mentions request is enqueued on open");
+    let message_id = Id::<MessageMarker>::new(700);
+    state.push_event(AppEvent::InboxMentionsLoaded {
+        request_id,
+        before: None,
+        messages: vec![MessageInfo {
+            channel_id: Id::<ChannelMarker>::new(2),
+            message_id,
+            author: "alice".to_owned(),
+            content: Some("@neo hello".to_owned()),
+            ..MessageInfo::default()
+        }],
+        has_more: false,
+    });
+    assert_eq!(state.notification_inbox_mention_count(), 1);
+
+    handle_key(&mut state, key(KeyCode::Right));
+    assert_eq!(handle_key(&mut state, char_key('r')), None);
+    assert_eq!(
+        handle_key(&mut state, char_key('q')),
+        Some(AppCommand::DeleteInboxMention { message_id })
+    );
+    assert!(
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::NotificationInbox)
+    );
+    state.push_event(AppEvent::InboxRecentMentionDeleted { message_id });
+    assert!(state.notification_inbox_items().is_empty());
+    assert_eq!(state.notification_inbox_mention_count(), 0);
+}
+
+#[test]
+fn notification_inbox_keeps_loading_after_visible_mentions_are_deleted() {
+    use crate::discord::{
+        AppCommand, AppEvent, MessageInfo,
+        ids::{
+            Id,
+            marker::{ChannelMarker, MessageMarker},
+        },
+    };
+
+    let mut state = state_with_channel_tree();
+    state.open_notification_inbox();
+    let request_id = state
+        .drain_pending_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            AppCommand::LoadInboxMentions { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .expect("mentions request is enqueued on open");
+    let messages = (701..=725)
+        .rev()
+        .map(|message_id| MessageInfo {
+            channel_id: Id::<ChannelMarker>::new(2),
+            message_id: Id::<MessageMarker>::new(message_id),
+            author: "alice".to_owned(),
+            content: Some("@neo hello".to_owned()),
+            ..MessageInfo::default()
+        })
+        .collect::<Vec<_>>();
+    let next_before = messages
+        .last()
+        .map(|message| message.message_id)
+        .expect("mentions page is not empty");
+    state.push_event(AppEvent::InboxMentionsLoaded {
+        request_id,
+        before: None,
+        messages: messages.clone(),
+        has_more: true,
+    });
+    handle_key(&mut state, key(KeyCode::Right));
+    assert!(state.drain_pending_commands().is_empty());
+
+    for message in messages {
+        state.push_event(AppEvent::InboxRecentMentionDeleted {
+            message_id: message.message_id,
+        });
+    }
+
+    assert!(state.drain_pending_commands().iter().any(|command| {
+        matches!(
+            command,
+            AppCommand::LoadInboxMentions {
+                request_id: command_request_id,
+                before: Some(before),
+            } if *command_request_id == request_id && *before == next_before
+        )
+    }));
+}
+
+#[test]
+fn notification_inbox_includes_unreads_from_collapsed_guild_folders() {
+    use crate::discord::{
+        AppEvent, ChannelInfo, GuildFolder, ReadStateInfo, UserSettingsInfo,
+        ids::{
+            Id,
+            marker::{ChannelMarker, GuildMarker, MessageMarker},
+        },
+        test_builders::{GuildCreateFixture, guild_create_event},
+    };
+    use crate::tui::state::NotificationInboxItem;
+
+    let first_guild = Id::<GuildMarker>::new(1);
+    let second_guild = Id::<GuildMarker>::new(2);
+    let first_channel = Id::<ChannelMarker>::new(101);
+    let second_channel = Id::<ChannelMarker>::new(201);
+    let mut state = DashboardState::new();
+    for (guild_id, channel_id, name) in [
+        (first_guild, first_channel, "first"),
+        (second_guild, second_channel, "second"),
+    ] {
+        state.push_event(guild_create_event(GuildCreateFixture {
+            name: name.to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                name: "general".to_owned(),
+                last_message_id: Some(Id::<MessageMarker>::new(2)),
+                ..ChannelInfo::test(channel_id, "text")
+            }],
+            ..GuildCreateFixture::new(guild_id)
+        }));
+    }
+    state.push_event(AppEvent::ReadStateInit {
+        entries: [first_channel, second_channel]
+            .into_iter()
+            .map(|channel_id| ReadStateInfo {
+                last_acked_message_id: Some(Id::<MessageMarker>::new(1)),
+                ..ReadStateInfo::test(channel_id)
+            })
+            .collect(),
+    });
+    state.push_event(AppEvent::UserSettingsUpdate {
+        settings: UserSettingsInfo {
+            guild_folders: Some(vec![GuildFolder {
+                id: Some(42),
+                name: Some("folder".to_owned()),
+                color: None,
+                guild_ids: vec![first_guild, second_guild],
+            }]),
+            ..UserSettingsInfo::default()
+        },
+    });
+    state.focus_pane(FocusPane::Guilds);
+    handle_key(&mut state, key(KeyCode::Enter));
+    assert_selected_folder_collapsed(&state, true);
+
+    state.open_notification_inbox();
+
+    let unread_channels = state
+        .notification_inbox_items()
+        .into_iter()
+        .filter_map(|item| match item {
+            NotificationInboxItem::Unread(item) => Some(item.channel_id),
+            NotificationInboxItem::Mention(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(unread_channels, vec![first_channel, second_channel]);
 }
 
 #[test]

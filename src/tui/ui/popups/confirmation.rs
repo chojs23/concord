@@ -1,5 +1,5 @@
 use super::*;
-use crate::tui::state::{ConfirmationButton, MessageConfirmationKind, NotificationInboxTab};
+use crate::tui::state::{ConfirmationButton, MessageConfirmationKind};
 
 pub(in crate::tui::ui) fn render_message_confirmation(
     frame: &mut Frame,
@@ -85,12 +85,7 @@ pub(in crate::tui::ui) fn render_notification_inbox_mark_all_confirmation(
         return;
     }
 
-    let Some(tab) = state.notification_inbox_tab() else {
-        return;
-    };
-
-    let lines =
-        notification_inbox_mark_all_confirmation_lines(tab, state.active_confirmation_button());
+    let lines = notification_inbox_mark_all_confirmation_lines(state.active_confirmation_button());
     let popup = message_confirmation_popup_area(area, lines.len());
     render_modal_paragraph(frame, popup, "Mark read?", lines);
 }
@@ -262,15 +257,10 @@ fn confirmation_button_lines(active: ConfirmationButton) -> Vec<Line<'static>> {
 }
 
 fn notification_inbox_mark_all_confirmation_lines(
-    tab: NotificationInboxTab,
     active: ConfirmationButton,
 ) -> Vec<Line<'static>> {
-    let target = match tab {
-        NotificationInboxTab::Unreads => "all unread channels",
-        NotificationInboxTab::Mentions => "all mentions",
-    };
     let mut lines = vec![
-        Line::from(Span::raw(format!("Mark {target} as read?"))),
+        Line::from(Span::raw("Mark all unread channels as read?")),
         Line::from(Span::raw(String::new())),
     ];
     lines.extend(confirmation_button_lines(active));

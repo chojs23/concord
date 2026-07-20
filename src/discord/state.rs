@@ -415,6 +415,8 @@ impl DiscordState {
             // never touch the shared cache. They are handled as UI effects.
             AppEvent::InboxMentionsLoaded { .. }
             | AppEvent::InboxMentionsLoadFailed { .. }
+            | AppEvent::InboxRecentMentionDeleted { .. }
+            | AppEvent::InboxRecentMentionDeleteFailed { .. }
             | AppEvent::InboxChannelMessagesLoaded { .. }
             | AppEvent::InboxChannelMessagesLoadFailed { .. } => {}
             // Detected Rich Presence is UI-only. It does not mutate the shared cache.

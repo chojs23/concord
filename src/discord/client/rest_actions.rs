@@ -498,8 +498,16 @@ impl DiscordClient {
             .await
     }
 
-    pub async fn load_recent_mentions(&self, limit: u16) -> Result<Vec<MessageInfo>> {
-        self.rest.load_recent_mentions(limit).await
+    pub async fn load_recent_mentions(
+        &self,
+        before: Option<Id<MessageMarker>>,
+        limit: u16,
+    ) -> Result<Vec<MessageInfo>> {
+        self.rest.load_recent_mentions(before, limit).await
+    }
+
+    pub async fn delete_recent_mention(&self, message_id: Id<MessageMarker>) -> Result<()> {
+        self.rest.delete_recent_mention(message_id).await
     }
 
     pub async fn load_message_history_after(

@@ -28,6 +28,10 @@ MuteChannel = { keys = ["x"], description = "mute channel" }
 OpenThread = { keys = ["t"], description = "open thread" }
 GoToReferencedMessage = "g"
 
+[keymap.notification_inbox_actions]
+MarkRead = "r"
+MarkAllRead = "a"
+
 [keymap.composer]
 OpenEditor = "<C-o>"
 DeletePreviousWord = "<A-backspace>"
@@ -35,13 +39,13 @@ DeletePreviousWord = "<A-backspace>"
 
 There are several kinds of keymap settings:
 
-| Config path                                                                                                                            | What it controls                                                                                        |
-| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `[keymap] leader`                                                                                                                      | The key that opens the leader popup. Defaults to `Space`.                                               |
-| `[keymap] <ActionName>`                                                                                                                | Directly assignable UI actions such as `StartComposer`, `ClosePopup`, `ReplyMessage`, and `OpenThread`. |
-| `[keymap.groups]`                                                                                                                      | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                               |
-| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]`, `[keymap.thread_actions]` | Shortcuts shown inside focused-pane and thread/post action menus.                                       |
-| `[keymap.composer]`                                                                                                                    | Shortcuts used while the message composer is open, such as editor and cursor commands.                  |
+| Config path                                                                                                                                                                   | What it controls                                                                                        |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `[keymap] leader`                                                                                                                                                             | The key that opens the leader popup. Defaults to `Space`.                                               |
+| `[keymap] <ActionName>`                                                                                                                                                       | Directly assignable UI actions such as `StartComposer`, `ClosePopup`, `ReplyMessage`, and `OpenThread`. |
+| `[keymap.groups]`                                                                                                                                                             | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                               |
+| `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]`, `[keymap.thread_actions]`, `[keymap.notification_inbox_actions]` | Shortcuts used inside focused-pane action menus and the notification inbox.                             |
+| `[keymap.composer]`                                                                                                                                                           | Shortcuts used while the message composer is open, such as editor and cursor commands.                  |
 
 `[keymap]` action values can be either a string or an object with `keys` and an
 optional `description`:
@@ -74,7 +78,8 @@ Scoped action tables use the same string or object shape, but each `keys` entry
 must be a single key chord. Multi-key sequences such as `gt` are only supported
 by direct `[keymap]` actions, not by `[keymap.guild_actions]`,
 `[keymap.channel_actions]`, `[keymap.message_actions]`,
-`[keymap.member_actions]`, or `[keymap.thread_actions]`.
+`[keymap.member_actions]`, `[keymap.thread_actions]`, or
+`[keymap.notification_inbox_actions]`.
 
 ```toml
 [keymap.channel_actions]
@@ -182,6 +187,22 @@ profile settings popup:
 | -------- | ----------------------------------- |
 | `o`      | sign out, delete saved credentials. |
 
+## Notification inbox actions
+
+The notification inbox uses the single-key bindings from `CycleFocusPrevious`
+and `CycleFocusNext` to switch between Unreads and Mentions.
+
+```toml
+[keymap.notification_inbox_actions]
+MarkRead = "r"
+MarkAllRead = "a"
+```
+
+| Scoped action | Default | Action                                     |
+| ------------- | ------- | ------------------------------------------ |
+| `MarkRead`    | `r`     | Mark the selected inbox item as read.      |
+| `MarkAllRead` | `a`     | Mark all items in the Unreads tab as read. |
+
 ## Composer actions
 
 These action names can be assigned under `[keymap.composer]`. Configured keys
@@ -196,28 +217,28 @@ editing title/body, removes the selected attachment while choosing attachments,
 or toggles the selected tag. Paste files or images while editing the body to add
 attachments. Press `s` outside edit mode to create the post.
 
-| Composer action        | Default config                                     | Action                                  |
-| ---------------------- | -------------------------------------------------- | --------------------------------------- |
-| `OpenEditor`           | `"<C-e>"`                                          | Open the current draft in `$EDITOR`.    |
-| `PasteClipboard`       | `"<C-v>"`                                          | Request clipboard paste.                |
-| `InsertNewline`        | `["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"]` | Insert a newline.                       |
-| `Submit`               | `"enter"`                                          | Submit the composer.                    |
-| `Close`                | `"esc"`                                            | Close the composer.                     |
-| `ClearInput`           | `"<C-c>"`                                          | Clear the composer input.               |
-| `RemoveLastAttachment` | `"delete"`                                         | Remove the last pending attachment.     |
-| `DeletePreviousChar`   | `"backspace"`                                      | Delete the previous character.          |
-| `DeletePreviousWord`   | `["<A-backspace>", "<C-backspace>", "<C-w>"]`      | Delete the word before the cursor.      |
+| Composer action        | Default config                                     | Action                                   |
+| ---------------------- | -------------------------------------------------- | ---------------------------------------- |
+| `OpenEditor`           | `"<C-e>"`                                          | Open the current draft in `$EDITOR`.     |
+| `PasteClipboard`       | `"<C-v>"`                                          | Request clipboard paste.                 |
+| `InsertNewline`        | `["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"]` | Insert a newline.                        |
+| `Submit`               | `"enter"`                                          | Submit the composer.                     |
+| `Close`                | `"esc"`                                            | Close the composer.                      |
+| `ClearInput`           | `"<C-c>"`                                          | Clear the composer input.                |
+| `RemoveLastAttachment` | `"delete"`                                         | Remove the last pending attachment.      |
+| `DeletePreviousChar`   | `"backspace"`                                      | Delete the previous character.           |
+| `DeletePreviousWord`   | `["<A-backspace>", "<C-backspace>", "<C-w>"]`      | Delete the word before the cursor.       |
 | `DeleteToLineStart`    | `"<C-u>"`                                          | Delete to the start of the current line. |
 | `DeleteToLineEnd`      | `"<C-k>"`                                          | Delete to the end of the current line.   |
-| `MoveCursorUp`         | `"up"`                                             | Move the cursor up.                     |
-| `MoveCursorDown`       | `"down"`                                           | Move the cursor down.                   |
-| `MoveCursorWordLeft`   | `"<C-left>"`                                       | Move the cursor one word left.          |
-| `MoveCursorLeft`       | `"left"`                                           | Move the cursor left.                   |
-| `MoveCursorWordRight`  | `"<C-right>"`                                      | Move the cursor one word right.         |
-| `MoveCursorRight`      | `"right"`                                          | Move the cursor right.                  |
-| `MoveCursorHome`       | `"home"`                                           | Move the cursor to the start.           |
-| `MoveCursorEnd`        | `"end"`                                            | Move the cursor to the end.             |
-| `ToggleReplyPing`      | `"<A-p>"`                                          | Toggle whether replies ping the author. |
+| `MoveCursorUp`         | `"up"`                                             | Move the cursor up.                      |
+| `MoveCursorDown`       | `"down"`                                           | Move the cursor down.                    |
+| `MoveCursorWordLeft`   | `"<C-left>"`                                       | Move the cursor one word left.           |
+| `MoveCursorLeft`       | `"left"`                                           | Move the cursor left.                    |
+| `MoveCursorWordRight`  | `"<C-right>"`                                      | Move the cursor one word right.          |
+| `MoveCursorRight`      | `"right"`                                          | Move the cursor right.                   |
+| `MoveCursorHome`       | `"home"`                                           | Move the cursor to the start.            |
+| `MoveCursorEnd`        | `"end"`                                            | Move the cursor to the end.              |
+| `ToggleReplyPing`      | `"<A-p>"`                                          | Toggle whether replies ping the author.  |
 
 ## Focused pane actions
 
