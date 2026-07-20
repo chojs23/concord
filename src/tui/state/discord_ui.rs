@@ -128,6 +128,7 @@ impl DashboardState {
         let channel_cursor_id = self.selected_channel_cursor_id();
 
         restore(&mut self.discord.cache);
+        self.reconcile_pending_messages_with_cache();
         self.clear_message_row_content_metrics_cache();
         if areas.navigation {
             self.repair_navigation_after_discord_restore(channel_cursor_id);

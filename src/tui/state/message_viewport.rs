@@ -245,7 +245,12 @@ impl DashboardState {
         messages
             .iter()
             .position(|message| message.id == marker_id)
-            .map(|index| messages.len().saturating_sub(index))
+            .map(|index| {
+                messages[index..]
+                    .iter()
+                    .filter(|message| !self.message_is_pending(message))
+                    .count()
+            })
             .unwrap_or(0)
     }
 
@@ -261,7 +266,9 @@ impl DashboardState {
         }
         let last_acked = self.messages.unread_divider_last_acked_id?;
         let messages = self.messages();
-        messages.iter().position(|message| message.id > last_acked)
+        messages
+            .iter()
+            .position(|message| !self.message_is_pending(message) && message.id > last_acked)
     }
 
     pub(crate) fn should_draw_unread_divider_at(&self, index: usize) -> bool {
@@ -279,7 +286,10 @@ impl DashboardState {
         }
         let last_acked = self.messages.unread_divider_last_acked_id?;
         let messages = self.messages();
-        let unread_count = messages.iter().filter(|m| m.id > last_acked).count();
+        let unread_count = messages
+            .iter()
+            .filter(|message| !self.message_is_pending(message) && message.id > last_acked)
+            .count();
         if unread_count == 0 {
             return None;
         }
@@ -581,7 +591,12 @@ impl DashboardState {
 
     pub(in crate::tui) fn selected_message_history_catch_up_command(&self) -> Option<AppCommand> {
         let channel_id = self.selected_message_history_channel_id()?;
-        let after = self.messages().iter().map(|message| message.id).max()?;
+        let after = self
+            .messages()
+            .into_iter()
+            .filter(|message| !self.message_is_pending(message))
+            .map(|message| message.id)
+            .max()?;
         Some(AppCommand::LoadMessageHistoryAfter {
             channel_id,
             after,
@@ -610,7 +625,11 @@ impl DashboardState {
         let channel_id = self.selected_message_history_channel_id()?;
         let messages = self.messages();
         for index in start..=end {
-            let lower_id = messages.get(index)?.id;
+            let lower = messages.get(index)?;
+            if self.message_is_pending(lower) {
+                continue;
+            }
+            let lower_id = lower.id;
             let Some(upper_id) = self
                 .discord
                 .cache
@@ -619,7 +638,9 @@ impl DashboardState {
                 continue;
             };
             let next_cached_id = messages
-                .get(index.saturating_add(1))
+                .iter()
+                .skip(index.saturating_add(1))
+                .find(|message| !self.message_is_pending(message))
                 .map(|message| message.id);
             if next_cached_id == Some(upper_id) {
                 return Some(AppCommand::LoadMessageHistoryAfter {
@@ -1597,7 +1618,18 @@ impl DashboardState {
     pub fn messages(&self) -> Vec<&MessageState> {
         match self.message_pane_source() {
             Some(MessagePaneSource::ChannelMessages { channel_id }) => {
-                self.discord.cache.messages_for_channel(channel_id)
+                let mut messages = self.discord.cache.messages_for_channel(channel_id);
+                // Confirmed messages already follow Discord arrival order, while
+                // pending messages follow local submission order. A pending nonce
+                // and a server-assigned message ID are separate timelines, so
+                // sorting them together can move a confirmed message below newer
+                // pending rows.
+                messages.extend(
+                    self.pending_messages
+                        .messages_for_channel(channel_id)
+                        .iter(),
+                );
+                messages
             }
             Some(MessagePaneSource::PinnedMessages { channel_id }) => {
                 self.discord.cache.pinned_messages_for_channel(channel_id)
@@ -1841,7 +1873,10 @@ impl DashboardState {
             return None;
         }
 
-        self.messages().first().map(|message| message.id)
+        self.messages()
+            .into_iter()
+            .find(|message| !self.message_is_pending(message))
+            .map(|message| message.id)
     }
 
     fn older_history_viewport_cursor(&self) -> Option<Id<MessageMarker>> {
@@ -1853,7 +1888,10 @@ impl DashboardState {
             return None;
         }
 
-        self.messages().first().map(|message| message.id)
+        self.messages()
+            .into_iter()
+            .find(|message| !self.message_is_pending(message))
+            .map(|message| message.id)
     }
 
     pub fn missing_thread_preview_load_requests(

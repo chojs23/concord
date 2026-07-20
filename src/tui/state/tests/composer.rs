@@ -944,10 +944,11 @@ fn submit_builtin_text_slash_commands_as_messages() {
         ("/spoiler secret words", "||secret words||"),
         ("/shrug hello", r"hello ¯\_(ツ)_/¯"),
     ] {
-        assert_eq!(
+        assert_send_message_eq!(
             submit_composer_text(input),
             Some(AppCommand::SendMessage {
                 channel_id: Id::new(2),
+                nonce: Id::new(1),
                 content: expected.to_owned(),
                 reply_to: None,
                 attachments: Vec::new(),
@@ -958,11 +959,116 @@ fn submit_builtin_text_slash_commands_as_messages() {
 }
 
 #[test]
-fn submit_builtin_tts_and_nick_commands_use_specific_app_commands() {
+fn submitted_message_stays_pending_until_discord_confirms_or_rejects_it() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for ch in "sending".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let Some(AppCommand::SendMessage { nonce, .. }) = state.submit_composer() else {
+        panic!("message should submit");
+    };
+    let pending = state.messages();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, nonce);
+    assert_eq!(pending[0].content.as_deref(), Some("sending"));
+    assert!(state.message_is_pending(pending[0]));
+
+    state.focus_pane(FocusPane::Messages);
+    assert!(
+        state.selected_message_action_items().is_empty(),
+        "pending messages must not expose Discord actions"
+    );
+    assert!(
+        state.selected_message_history_catch_up_command().is_none(),
+        "pending nonces must not become Discord history cursors"
+    );
+
+    let confirmed_id = Id::new(nonce.get().saturating_add(1));
+    state.push_event(message_create_event(MessageCreateFixture {
+        nonce: Some(nonce),
+        author_id: Id::new(10),
+        author: "me".to_owned(),
+        message_id: confirmed_id,
+        content: Some("sending".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    let confirmed = state.messages();
+    assert_eq!(confirmed.len(), 1);
+    assert_eq!(confirmed[0].id, confirmed_id);
+    assert!(!state.message_is_pending(confirmed[0]));
+
+    state.start_composer();
+    state.push_composer_char('x');
+    let Some(AppCommand::SendMessage { nonce, .. }) = state.submit_composer() else {
+        panic!("second message should submit");
+    };
+    assert_eq!(state.messages().len(), 2);
+
+    state.push_event(AppEvent::MessageSendFailed {
+        channel_id: Id::new(2),
+        nonce,
+    });
+    assert_eq!(state.messages().len(), 1);
+}
+
+#[test]
+fn rapid_sends_keep_submission_order_as_pending_messages_confirm() {
+    let mut state = state_with_writable_channel();
+    state.push_event(message_create_event(guild_text_message(10, "1")));
+    state.push_event(message_create_event(guild_text_message(20, "2")));
+
+    for (nonce, content) in [(100, "3"), (200, "4"), (300, "5")] {
+        state.stage_pending_message(Id::new(2), Id::new(nonce), content, None, &[]);
+    }
     assert_eq!(
+        state
+            .messages()
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>(),
+        ["1", "2", "3", "4", "5"]
+    );
+
+    state.push_event(message_create_event(MessageCreateFixture {
+        nonce: Some(Id::new(100)),
+        message_id: Id::new(400),
+        content: Some("3".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    assert_eq!(
+        state
+            .messages()
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>(),
+        ["1", "2", "3", "4", "5"]
+    );
+
+    state.push_event(message_create_event(MessageCreateFixture {
+        nonce: Some(Id::new(200)),
+        message_id: Id::new(500),
+        content: Some("4".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    assert_eq!(
+        state
+            .messages()
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>(),
+        ["1", "2", "3", "4", "5"]
+    );
+}
+
+#[test]
+fn submit_builtin_tts_and_nick_commands_use_specific_app_commands() {
+    assert_send_message_eq!(
         submit_composer_text("/tts hello there"),
         Some(AppCommand::SendTtsMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "hello there".to_owned(),
         })
     );
@@ -1424,10 +1530,11 @@ fn confirm_inserts_display_name_and_submit_expands_to_wire_format() {
     state.push_composer_char('h');
     state.push_composer_char('i');
 
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<@20> hi".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1451,10 +1558,11 @@ fn confirm_mention_in_middle_keeps_trailing_text() {
 
     assert_eq!(state.composer_input(), "hello @Sally world");
     assert_eq!(state.composer_cursor_byte_index(), "hello @Sally ".len());
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "hello <@20> world".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1486,10 +1594,11 @@ fn role_and_channel_mentions_expand_to_wire_format() {
         }
         assert!(state.confirm_composer_mention());
         assert_eq!(state.composer_input(), visible);
-        assert_eq!(
+        assert_send_message_eq!(
             state.submit_composer(),
             Some(AppCommand::SendMessage {
                 channel_id: Id::new(2),
+                nonce: Id::new(1),
                 content: wire.to_owned(),
                 reply_to: None,
                 attachments: Vec::new(),
@@ -1515,10 +1624,11 @@ fn role_mention_picker_avoids_duplicate_everyone_prefix() {
     assert_eq!(everyone.visible_text(), "@everyone");
     assert!(state.confirm_composer_mention());
     assert_eq!(state.composer_input(), "@everyone ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "@everyone".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1932,10 +2042,11 @@ fn emoji_picker_keeps_more_than_visible_candidates_selectable() {
     assert_eq!(state.composer_emoji_selected(), 9);
     assert!(state.confirm_composer_emoji());
     assert_eq!(state.composer_input(), ":overflow_09: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<:overflow_09:109>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1965,10 +2076,11 @@ fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":party_time: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<a:party_time:50>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1989,10 +2101,11 @@ fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":wave: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<:wave:60>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2023,10 +2136,11 @@ fn animated_current_guild_emoji_sends_link_without_nitro_when_enabled() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":party_time: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "[party_time](https://cdn.discordapp.com/emojis/50.gif?size=48&name=party_time&lossless=true)".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2049,10 +2163,11 @@ fn nitro_foreign_custom_emojis_require_channel_permission() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":wave_foreign: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<:wave_foreign:60>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2080,10 +2195,11 @@ fn nitro_foreign_custom_emojis_require_channel_permission() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":dance_foreign: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<a:dance_foreign:61>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2132,10 +2248,11 @@ fn foreign_custom_emoji_uses_link_fallback_without_nitro_when_enabled() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":wave_foreign: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "[wave_foreign](https://cdn.discordapp.com/emojis/60.png?size=48&name=wave_foreign&lossless=true)".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2167,10 +2284,11 @@ fn foreign_animated_emoji_uses_link_fallback_without_nitro_when_enabled() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":dance_foreign: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "[dance_foreign](https://cdn.discordapp.com/emojis/61.gif?size=48&name=dance_foreign&lossless=true)".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2201,10 +2319,11 @@ fn submit_expands_mention_and_following_custom_emoji_without_stale_ranges() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), "@Sally :party_time: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<@20> <a:party_time:50>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2235,10 +2354,11 @@ fn submit_expands_known_emoji_shortcodes_and_keeps_unknown_text() {
         state.push_composer_char(ch);
     }
 
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "take ❤️ :unknown:".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2260,10 +2380,11 @@ fn submit_preserves_empty_shortcode_colon_runs() {
             state.push_composer_char(ch);
         }
 
-        assert_eq!(
+        assert_send_message_eq!(
             state.submit_composer(),
             Some(AppCommand::SendMessage {
                 channel_id: Id::new(2),
+                nonce: Id::new(1),
                 content: expected.to_owned(),
                 reply_to: None,
                 attachments: Vec::new(),
@@ -2281,10 +2402,11 @@ fn submit_keeps_custom_emoji_markup_literal() {
         state.push_composer_char(ch);
     }
 
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "custom <:heart:123> <a:party:456> ❤️".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -2479,10 +2601,11 @@ fn composer_sends_to_opened_thread_channel() {
     state.push_composer_char('h');
     state.push_composer_char('i');
 
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(10),
+            nonce: Id::new(1),
             content: "hi".to_owned(),
             reply_to: None,
             attachments: Vec::new(),

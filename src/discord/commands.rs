@@ -1,6 +1,8 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::discord::ids::{
@@ -19,6 +21,30 @@ pub const MAX_PROFILE_AVATAR_BYTES: u64 = 10 * 1024 * 1024;
 /// separate from the upload limit (now up to 500 MiB) so a preview of a huge
 /// file is skipped rather than loaded into RAM. The upload still proceeds.
 pub const MAX_UPLOAD_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Generates a unique snowflake-shaped nonce before a message enters the
+/// asynchronous send pipeline. The TUI and Discord request share this value,
+/// which lets the local pending row match the later `MESSAGE_CREATE` event.
+pub(crate) fn next_message_nonce() -> Id<MessageMarker> {
+    const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
+    static LAST_NONCE: AtomicU64 = AtomicU64::new(0);
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(DISCORD_EPOCH_MS);
+    let time_candidate = now_ms.saturating_sub(DISCORD_EPOCH_MS) << 22;
+
+    let mut previous = LAST_NONCE.load(Ordering::Relaxed);
+    loop {
+        let next = time_candidate.max(previous.saturating_add(1)).max(1);
+        match LAST_NONCE.compare_exchange_weak(previous, next, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => return Id::new(next),
+            Err(actual) => previous = actual,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AttachmentDownloadId(u64);
@@ -526,6 +552,7 @@ pub enum AppCommand {
     },
     SendMessage {
         channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
         content: String,
         reply_to: Option<ReplyReference>,
         attachments: Vec<MessageAttachmentUpload>,
@@ -535,6 +562,7 @@ pub enum AppCommand {
     },
     SendTtsMessage {
         channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
         content: String,
     },
     LoadApplicationCommands {
@@ -751,4 +779,18 @@ pub struct MediaPlaybackTarget {
     pub url: String,
     pub label: String,
     pub source: MediaPlaybackSource,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_nonces_are_unique_snowflake_values() {
+        let first = next_message_nonce();
+        let second = next_message_nonce();
+
+        assert_ne!(first, second);
+        assert!(second.get() > first.get());
+    }
 }

@@ -338,20 +338,36 @@ fn message_viewport_lines_from_plan(
             line_offset: row.item_line_offset,
             avatar_offset,
         });
-        if row.selected {
-            lines.extend(selected_message_lines(
+        let item_lines = if row.selected {
+            selected_message_lines(
                 item_lines,
                 &sent_time,
                 plan.layout.selected_card_width,
                 row.body_skip == 0,
                 row.bottom_gap,
                 row.show_header,
-            ));
+            )
         } else {
-            lines.extend(item_lines);
-        }
+            item_lines
+        };
+        lines.extend(if state.message_is_pending(row.message) {
+            pending_message_lines(item_lines)
+        } else {
+            item_lines
+        });
     }
     (lines, body_emoji_slots)
+}
+
+fn pending_message_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let pending_style = theme::current().style(theme::HighlightGroup::MessageSecondary);
+    for line in &mut lines {
+        line.style = line.style.patch(pending_style);
+        for span in &mut line.spans {
+            span.style = span.style.patch(pending_style);
+        }
+    }
+    lines
 }
 
 #[cfg(test)]

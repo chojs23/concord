@@ -22,21 +22,37 @@ pub(in crate::discord) enum MessageEditRequest<'a> {
     Flags(u64),
 }
 
+pub(in crate::discord) struct MessageCreateRequest<'a> {
+    pub nonce: Id<MessageMarker>,
+    pub content: &'a str,
+    pub reply_to: Option<ReplyReference>,
+    pub attachments: &'a [MessageAttachmentUpload],
+}
+
 impl DiscordRest {
     pub async fn send_message(
         &self,
         channel_id: Id<ChannelMarker>,
-        content: &str,
-        reply_to: Option<ReplyReference>,
-        attachments: &[MessageAttachmentUpload],
+        request: MessageCreateRequest<'_>,
         upload_limit: u64,
         slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
-        validate_message_payload(content, attachments, upload_limit)?;
-        let body = message_request_body(content, reply_to, attachments);
+        validate_message_payload(request.content, request.attachments, upload_limit)?;
+        let body = message_request_body(
+            request.content,
+            request.nonce,
+            request.reply_to,
+            request.attachments,
+        );
 
-        self.send_message_body(channel_id, body, attachments, upload_limit, slow_mode)
-            .await
+        self.send_message_body(
+            channel_id,
+            body,
+            request.attachments,
+            upload_limit,
+            slow_mode,
+        )
+        .await
     }
 
     /// Fires a typing indicator without blocking the send it precedes. A
@@ -70,11 +86,12 @@ impl DiscordRest {
     pub async fn send_tts_message(
         &self,
         channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
         content: &str,
         slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
         validate_message_content(content)?;
-        let body = message_request_body_with_tts(content, None, &[], true);
+        let body = message_request_body_with_tts(content, nonce, None, &[], true);
 
         self.send_message_body(
             channel_id,
@@ -404,25 +421,26 @@ fn parse_message_list_response(
 
 pub(super) fn message_request_body(
     content: &str,
+    nonce: Id<MessageMarker>,
     reply_to: Option<ReplyReference>,
     attachments: &[MessageAttachmentUpload],
 ) -> Value {
-    message_request_body_with_tts(content, reply_to, attachments, false)
-}
-
-/// The official client tags every message create with a snowflake nonce. Its
-/// absence is a self-bot signal.
-fn generate_nonce() -> String {
-    const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(DISCORD_EPOCH_MS);
-    (now_ms.saturating_sub(DISCORD_EPOCH_MS) << 22).to_string()
+    message_request_body_with_nonce(content, nonce, reply_to, attachments, false)
 }
 
 pub(super) fn message_request_body_with_tts(
     content: &str,
+    nonce: Id<MessageMarker>,
+    reply_to: Option<ReplyReference>,
+    attachments: &[MessageAttachmentUpload],
+    tts: bool,
+) -> Value {
+    message_request_body_with_nonce(content, nonce, reply_to, attachments, tts)
+}
+
+fn message_request_body_with_nonce(
+    content: &str,
+    nonce: Id<MessageMarker>,
     reply_to: Option<ReplyReference>,
     attachments: &[MessageAttachmentUpload],
     tts: bool,
@@ -430,7 +448,8 @@ pub(super) fn message_request_body_with_tts(
     let mut body = json!({
         "mobile_network_type": "unknown",
         "content": content,
-        "nonce": generate_nonce(),
+        "nonce": nonce.to_string(),
+        "enforce_nonce": true,
         "tts": tts,
         "flags": 0,
     });

@@ -404,7 +404,7 @@ async fn send_message_rejects_missing_payload_permissions_before_rest() {
         publish_permission_fixture(&client, "GuildText", permissions).await;
 
         let error = client
-            .send_message(Id::new(2), "hello", reply, &attachments)
+            .send_message(Id::new(2), Id::new(99), "hello", reply, &attachments)
             .await
             .expect_err("missing message permission should stop before REST");
 
@@ -813,7 +813,7 @@ async fn thread_message_rejects_missing_send_messages_in_threads() {
         .await;
 
     let error = client
-        .send_message(Id::new(3), "hello", None, &[])
+        .send_message(Id::new(3), Id::new(99), "hello", None, &[])
         .await
         .expect_err("missing SEND_MESSAGES_IN_THREADS should stop before REST");
 

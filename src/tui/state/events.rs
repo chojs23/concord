@@ -188,6 +188,9 @@ impl DashboardState {
                     std::time::Duration::from_millis(*duration_millis),
                 );
             }
+            AppEvent::MessageSendFailed { channel_id, nonce } => {
+                self.remove_pending_message(*channel_id, *nonce);
+            }
             AppEvent::MediaPlaybackWindowReady { request_id, .. } => {
                 self.clear_media_playback_preparing(*request_id);
             }
@@ -388,6 +391,9 @@ impl DashboardState {
                 self.record_thread_channel_upserted(channel);
             }
             AppEvent::MessageCreate { message } => {
+                if let Some(nonce) = message.nonce {
+                    self.remove_pending_message(message.channel_id, nonce);
+                }
                 self.record_dm_established_from_messages(
                     message.channel_id,
                     std::slice::from_ref(message),

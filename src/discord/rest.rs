@@ -40,7 +40,7 @@ mod search;
 mod user_settings;
 
 pub use forum::{CreatedForumPost, ForumPostPage};
-pub(in crate::discord) use messages::MessageEditRequest;
+pub(in crate::discord) use messages::{MessageCreateRequest, MessageEditRequest};
 pub use reactions::ReactionUsersPage;
 
 use super::fingerprint::{ClientFingerprint, discord_channel_referer, discord_rest_headers};

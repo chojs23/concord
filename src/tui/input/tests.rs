@@ -34,6 +34,18 @@ use crate::{
     tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
 };
 
+macro_rules! assert_send_message_eq {
+    ($actual:expr, $expected:expr $(, $($message:tt)+)?) => {{
+        let mut actual = $actual;
+        match &mut actual {
+            Some(AppCommand::SendMessage { nonce, .. })
+            | Some(AppCommand::SendTtsMessage { nonce, .. }) => *nonce = Id::new(1),
+            _ => {}
+        }
+        assert_eq!(actual, $expected $(, $($message)+)?);
+    }};
+}
+
 mod composer;
 mod leader;
 mod messages;

@@ -286,10 +286,11 @@ fn message_pane_shortcuts_reuse_message_actions() {
     assert!(reply_state.is_composing());
     handle_key(&mut reply_state, char_key('o'));
     let command = handle_key(&mut reply_state, key(KeyCode::Enter));
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "o".to_owned(),
             reply_to: Some(crate::discord::ReplyReference {
                 message_id: Id::new(1),

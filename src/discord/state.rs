@@ -694,6 +694,7 @@ impl DiscordState {
             AppEvent::GatewayDispatchReceived { .. }
             | AppEvent::GatewayError { .. }
             | AppEvent::CaptchaRequired { .. }
+            | AppEvent::MessageSendFailed { .. }
             | AppEvent::MessageSendRateLimited { .. }
             | AppEvent::MessageSendCooldownStarted { .. }
             | AppEvent::SignedOut

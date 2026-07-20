@@ -2741,6 +2741,21 @@ fn message_info_parser_keeps_author_role_ids_from_member_payload() {
 }
 
 #[test]
+fn message_info_parser_keeps_outgoing_nonce() {
+    let message = parse_message_info(&json!({
+        "id": "20",
+        "channel_id": "10",
+        "nonce": "99",
+        "author": { "id": "30", "username": "neo" },
+        "content": "hello",
+        "attachments": []
+    }))
+    .expect("message should parse");
+
+    assert_eq!(message.nonce, Some(Id::new(99)));
+}
+
+#[test]
 fn message_create_parser_builds_author_avatar_url() {
     let event = parse_message_create(&json!({
         "id": "20",

@@ -1696,6 +1696,46 @@ fn message_viewport_lines_group_consecutive_messages_by_author() {
 }
 
 #[test]
+fn message_viewport_lines_dim_pending_message_content() {
+    let mut state = state_with_message();
+    state.insert_pending_message_for_test(MessageState {
+        id: Id::new(2),
+        nonce: Some(Id::new(2)),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        content: Some("sending".to_owned()),
+        ..MessageState::default()
+    });
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
+        super::default_message_viewport_layout(),
+        &[],
+    );
+    let confirmed_content = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.contains("hello"))
+        .expect("confirmed content span");
+    let pending_content = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.contains("sending"))
+        .expect("pending content span");
+
+    assert!(!confirmed_content.style.add_modifier.contains(Modifier::DIM));
+    assert!(
+        pending_content.style.add_modifier.contains(Modifier::DIM),
+        "pending content should use the muted style"
+    );
+}
+
+#[test]
 fn message_viewport_lines_start_new_author_group_after_time_gap() {
     let base = 1_743_465_600_000;
     let mut state = state_with_message_id(test_message_id_for_unix_millis(base), "hello");

@@ -15,15 +15,22 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
     match command {
         AppCommand::SendMessage {
             channel_id,
+            nonce,
             content,
             reply_to,
             attachments,
         } => match client
-            .send_message(channel_id, &content, reply_to, &attachments)
+            .send_message(channel_id, nonce, &content, reply_to, &attachments)
             .await
         {
-            Ok(message) => client.publish_event(message_create_event(message)).await,
+            Ok(mut message) => {
+                message.nonce = Some(nonce);
+                client.publish_event(message_create_event(message)).await;
+            }
             Err(error) => {
+                client
+                    .publish_event(AppEvent::MessageSendFailed { channel_id, nonce })
+                    .await;
                 publish_message_send_error(&client, channel_id, "send message failed", &error).await
             }
         },
@@ -34,10 +41,17 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
         }
         AppCommand::SendTtsMessage {
             channel_id,
+            nonce,
             content,
-        } => match client.send_tts_message(channel_id, &content).await {
-            Ok(message) => client.publish_event(message_create_event(message)).await,
+        } => match client.send_tts_message(channel_id, nonce, &content).await {
+            Ok(mut message) => {
+                message.nonce = Some(nonce);
+                client.publish_event(message_create_event(message)).await;
+            }
             Err(error) => {
+                client
+                    .publish_event(AppEvent::MessageSendFailed { channel_id, nonce })
+                    .await;
                 publish_message_send_error(&client, channel_id, "send tts message failed", &error)
                     .await
             }

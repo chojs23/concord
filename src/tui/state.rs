@@ -25,6 +25,7 @@ mod model;
 mod navigation;
 mod options;
 mod pane_filter;
+mod pending_messages;
 mod popups;
 mod presentation;
 mod request_tracking;
@@ -45,6 +46,7 @@ use message_viewport::{MessageViewportState, ThreadReturnTarget};
 use navigation::{ActiveGuildScope, FolderKey, FolderSettingsState, NavigationState};
 use options::SettingsState;
 use pane_filter::PaneFilterState;
+use pending_messages::PendingMessageUiState;
 use popups::PopupUiState;
 use request_tracking::RequestTrackingState;
 use runtime_state::{

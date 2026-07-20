@@ -655,10 +655,11 @@ fn paste_file_uri_list_can_submit_attachment_only_message() {
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
     assert_eq!(state.pending_composer_attachments(), &[]);
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(11),
+            nonce: Id::new(1),
             content: String::new(),
             reply_to: None,
             attachments: vec![crate::discord::MessageAttachmentUpload::from_path(
@@ -749,10 +750,11 @@ fn enter_submits_multiline_composer() {
     // back-to-back messages.
     assert!(state.is_composing());
     assert_eq!(state.composer_input(), "");
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(11),
+            nonce: Id::new(1),
             content: "h\ni".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -791,10 +793,11 @@ fn enter_submits_no_match_emoji_query_without_hidden_picker() {
 
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(11),
+            nonce: Id::new(1),
             content: ":qq".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -916,10 +919,11 @@ fn direct_reply_shortcut_opens_composer() {
     handle_key(&mut state, char_key('i'));
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "hi".to_owned(),
             reply_to: Some(crate::discord::ReplyReference {
                 message_id: Id::new(1),
@@ -944,10 +948,11 @@ fn canceling_reply_composer_clears_reply_target() {
     handle_key(&mut state, char_key('n'));
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "n".to_owned(),
             reply_to: None,
             attachments: Vec::new(),

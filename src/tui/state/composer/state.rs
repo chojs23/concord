@@ -865,6 +865,29 @@ impl DashboardState {
                     self.composer.reply_target_message_id = None;
                     self.composer.pending_composer_attachments.clear();
                     self.composer.pending_composer_attachment_previews.clear();
+                    if let AppCommand::SendMessage {
+                        channel_id,
+                        nonce,
+                        content,
+                        reply_to,
+                        attachments,
+                    } = &command
+                    {
+                        self.stage_pending_message(
+                            *channel_id,
+                            *nonce,
+                            content,
+                            *reply_to,
+                            attachments,
+                        );
+                    } else if let AppCommand::SendTtsMessage {
+                        channel_id,
+                        nonce,
+                        content,
+                    } = &command
+                    {
+                        self.stage_pending_message(*channel_id, *nonce, content, None, &[]);
+                    }
                     return Some(command);
                 }
                 BuiltinCommandSubmit::Incomplete => return None,
@@ -902,12 +925,15 @@ impl DashboardState {
             });
         let attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
         self.composer.pending_composer_attachment_previews.clear();
+        let nonce = crate::discord::next_message_nonce();
+        self.stage_pending_message(channel_id, nonce, &content, reply_to, &attachments);
         // Stay in insert mode so the user can send several messages in a
         // row without re-pressing `i`. The composer closes only when the
         // user explicitly bails with Esc or the channel revokes
         // SEND_MESSAGES (handled above).
         Some(AppCommand::SendMessage {
             channel_id,
+            nonce,
             content,
             reply_to,
             attachments,
@@ -1651,11 +1677,13 @@ impl DashboardState {
                     }
                     BuiltinCommandSubmit::Ready(AppCommand::SendTtsMessage {
                         channel_id,
+                        nonce: crate::discord::next_message_nonce(),
                         content,
                     })
                 } else {
                     BuiltinCommandSubmit::Ready(AppCommand::SendMessage {
                         channel_id,
+                        nonce: crate::discord::next_message_nonce(),
                         content,
                         reply_to: None,
                         attachments: Vec::new(),
