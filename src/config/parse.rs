@@ -258,13 +258,14 @@ impl ThemeLeafParser {
 /// Named map fields of `KeymapOptions`. Any other `[keymap]` key flattens into
 /// `mappings` and is validated as a top-level binding instead. A test keeps this
 /// in sync with the struct's named `BTreeMap` fields.
-pub(super) const KEYMAP_ACTION_MAPS: [&str; 7] = [
+pub(super) const KEYMAP_ACTION_MAPS: [&str; 8] = [
     "groups",
     "guild_actions",
     "channel_actions",
     "message_actions",
     "member_actions",
     "thread_actions",
+    "notification_inbox_actions",
     "composer",
 ];
 

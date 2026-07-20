@@ -75,8 +75,8 @@ define_ui_actions! {
     FocusMemberPane => ("focus Members", &[&[Char('4')]], Some(DashboardAction::FocusPane(FocusPane::Members))),
     SelectNext => ("select next", &[&[Char('j')]], Some(DashboardAction::Select(SelectionAction::Next))),
     SelectPrevious => ("select previous", &[&[Char('k')]], Some(DashboardAction::Select(SelectionAction::Previous))),
-    CycleFocusNext => ("focus next", &[&[Key(KeyCode::Tab)], &[Char('l')], &[Key(KeyCode::Right)]], Some(DashboardAction::CycleFocusForward)),
-    CycleFocusPrevious => ("focus previous", &[&[ModifiedKey(KeyCode::Tab, KeyModifiers::SHIFT)], &[Char('h')], &[Key(KeyCode::Left)]], Some(DashboardAction::CycleFocusBackward)),
+    CycleFocusNext => ("focus next", &[&[Char('l')], &[Key(KeyCode::Tab)], &[Key(KeyCode::Right)]], Some(DashboardAction::CycleFocusForward)),
+    CycleFocusPrevious => ("focus previous", &[&[Char('h')], &[ModifiedKey(KeyCode::Tab, KeyModifiers::SHIFT)], &[Key(KeyCode::Left)]], Some(DashboardAction::CycleFocusBackward)),
     HalfPageDown => ("half page down", &[&[Ctrl('d')]], Some(DashboardAction::HalfPageDown)),
     HalfPageUp => ("half page up", &[&[Ctrl('u')]], Some(DashboardAction::HalfPageUp)),
     ScrollViewportDown => ("scroll viewport down", &[&[Char('J')]], Some(DashboardAction::ScrollViewportDown)),
@@ -256,6 +256,12 @@ pub(in crate::tui) enum NotificationInboxAction {
     Close,
     ActivateSelected,
     MarkSelectedRead,
+    MarkAllRead,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum NotificationInboxActionKind {
+    MarkRead,
     MarkAllRead,
 }
 

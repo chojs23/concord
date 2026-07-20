@@ -1,5 +1,10 @@
 use super::*;
 
+const NOTIFICATION_INBOX_ACTION_KINDS: [NotificationInboxActionKind; 2] = [
+    NotificationInboxActionKind::MarkRead,
+    NotificationInboxActionKind::MarkAllRead,
+];
+
 /// The lookup trio every action-menu scope exposes: shortcut resolution,
 /// item label, and (where the menu shows one) the shortcut gutter label.
 /// Adding a scope is one invocation plus its default key table.
@@ -189,38 +194,144 @@ impl KeyBindings {
     pub(in crate::tui) fn notification_inbox_action(
         &self,
         key: KeyEvent,
+        tab: NotificationInboxTab,
     ) -> Option<NotificationInboxAction> {
+        if self
+            .notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkRead)
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+        {
+            return Some(NotificationInboxAction::MarkSelectedRead);
+        }
+        if tab == NotificationInboxTab::Unreads
+            && self
+                .notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkAllRead)
+                .iter()
+                .any(|shortcut| shortcut.matches(key))
+        {
+            return Some(NotificationInboxAction::MarkAllRead);
+        }
         if self.is_popup_close_key(key) {
             return Some(NotificationInboxAction::Close);
         }
         if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
             return Some(NotificationInboxAction::Select(action));
         }
-        match key.code {
-            KeyCode::Enter => Some(NotificationInboxAction::ActivateSelected),
-            // Left/Right (and h/l) flip between the Unreads and Mentions tabs.
-            KeyCode::Left => Some(NotificationInboxAction::SwitchTab(
-                SelectionAction::Previous,
-            )),
-            KeyCode::Right => Some(NotificationInboxAction::SwitchTab(SelectionAction::Next)),
-            KeyCode::Tab => Some(NotificationInboxAction::SwitchTab(SelectionAction::Next)),
-            KeyCode::BackTab => Some(NotificationInboxAction::SwitchTab(
-                SelectionAction::Previous,
-            )),
-            KeyCode::Char('h') | KeyCode::Char('H') if is_shortcut_key(key) => Some(
-                NotificationInboxAction::SwitchTab(SelectionAction::Previous),
-            ),
-            KeyCode::Char('l') | KeyCode::Char('L') if is_shortcut_key(key) => {
-                Some(NotificationInboxAction::SwitchTab(SelectionAction::Next))
-            }
-            KeyCode::Char('r') | KeyCode::Char('R') if is_shortcut_key(key) => {
-                Some(NotificationInboxAction::MarkSelectedRead)
-            }
-            KeyCode::Char('a') | KeyCode::Char('A') if is_shortcut_key(key) => {
-                Some(NotificationInboxAction::MarkAllRead)
-            }
-            _ => None,
+        if let Some(action) = self.notification_inbox_tab_action(key) {
+            return Some(NotificationInboxAction::SwitchTab(action));
         }
+        if self
+            .notification_inbox_activate_shortcuts()
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+        {
+            return Some(NotificationInboxAction::ActivateSelected);
+        }
+
+        None
+    }
+
+    fn notification_inbox_tab_action(&self, key: KeyEvent) -> Option<SelectionAction> {
+        if self
+            .keymap_single_key_shortcuts(UiAction::CycleFocusPrevious)
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+        {
+            return Some(SelectionAction::Previous);
+        }
+        self.keymap_single_key_shortcuts(UiAction::CycleFocusNext)
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+            .then_some(SelectionAction::Next)
+    }
+
+    fn notification_inbox_action_shortcuts(
+        &self,
+        kind: NotificationInboxActionKind,
+    ) -> Vec<KeyChord> {
+        let index = NOTIFICATION_INBOX_ACTION_KINDS
+            .iter()
+            .position(|candidate| *candidate == kind)
+            .expect("notification inbox action kind is listed");
+        scoped_action_shortcuts(
+            index,
+            NOTIFICATION_INBOX_ACTION_KINDS,
+            &self.action_shortcuts.notification_inbox,
+            |kind| self.default_notification_inbox_action_shortcuts(kind),
+        )
+    }
+
+    fn default_notification_inbox_action_shortcuts(
+        &self,
+        kind: NotificationInboxActionKind,
+    ) -> Vec<KeyChord> {
+        vec![char_chord(match kind {
+            NotificationInboxActionKind::MarkRead => 'r',
+            NotificationInboxActionKind::MarkAllRead => 'a',
+        })]
+    }
+
+    pub(in crate::tui) fn notification_inbox_mark_read_label(&self) -> String {
+        key_chord_list_label(
+            &self.notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkRead),
+        )
+    }
+
+    pub(in crate::tui) fn notification_inbox_mark_all_read_label(&self) -> String {
+        key_chord_list_label(
+            &self.notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkAllRead),
+        )
+    }
+
+    pub(in crate::tui) fn notification_inbox_activate_label(&self) -> String {
+        key_chord_list_label(&self.notification_inbox_activate_shortcuts())
+    }
+
+    pub(in crate::tui) fn notification_inbox_tab_switch_label(
+        &self,
+        tab: NotificationInboxTab,
+    ) -> String {
+        let mut action_shortcuts =
+            self.notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkRead);
+        if tab == NotificationInboxTab::Unreads {
+            action_shortcuts.extend(
+                self.notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkAllRead),
+            );
+        }
+        let shortcuts = self
+            .notification_inbox_tab_shortcuts()
+            .into_iter()
+            .filter(|shortcut| {
+                !action_shortcuts
+                    .iter()
+                    .any(|action| action.matches_chord(*shortcut))
+            })
+            .collect::<Vec<_>>();
+        key_chord_list_label(&shortcuts)
+    }
+
+    fn notification_inbox_activate_shortcuts(&self) -> [KeyChord; 1] {
+        [KeyChord {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::empty(),
+        }]
+    }
+
+    fn notification_inbox_tab_shortcuts(&self) -> Vec<KeyChord> {
+        let mut shortcuts = Vec::new();
+        for action in [UiAction::CycleFocusPrevious, UiAction::CycleFocusNext] {
+            let Some(shortcut) = self.keymap_single_key_shortcuts(action).into_iter().next() else {
+                continue;
+            };
+            if shortcuts
+                .iter()
+                .any(|existing: &KeyChord| existing.matches_chord(shortcut))
+            {
+                continue;
+            }
+            shortcuts.push(shortcut);
+        }
+        shortcuts
     }
 
     pub(in crate::tui) fn search_popup_action(&self, key: KeyEvent) -> Option<SearchPopupAction> {

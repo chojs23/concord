@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::state::{
     ChannelActionItem, ChannelActionKind, EmojiReactionItem, FocusPane, GuildActionItem,
     GuildActionKind, MemberActionItem, MemberActionKind, MessageActionItem, MessageActionKind,
-    ThreadActionItem, ThreadActionKind,
+    NotificationInboxTab, ThreadActionItem, ThreadActionKind,
 };
 use crate::{
     config::{KeymapBinding, KeymapOptions},
@@ -23,10 +23,10 @@ pub(in crate::tui) use actions::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, ComposerCompletionAction,
     DashboardAction, DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction, LoginBusyAction,
     LoginGlobalAction, LoginMfaSelectAction, LoginModeSelectAction, LoginPasswordInputAction,
-    LoginTextInputAction, NotificationInboxAction, OptionsPopupAction, PaneFilterAction,
-    PollVotePickerAction, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
-    ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
-    UiAction,
+    LoginTextInputAction, NotificationInboxAction, NotificationInboxActionKind, OptionsPopupAction,
+    PaneFilterAction, PollVotePickerAction, PopupListAction, ProfilePopupAction,
+    ProfilePopupTabAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction,
+    SelectionAction, SelectionKeySet, UiAction,
 };
 pub(in crate::tui) use chord::KeyChord;
 #[cfg(test)]
@@ -84,6 +84,7 @@ struct ActionShortcutBindings {
     message: Vec<ActionShortcutBinding<MessageActionKind>>,
     member: Vec<ActionShortcutBinding<MemberActionKind>>,
     thread: Vec<ActionShortcutBinding<ThreadActionKind>>,
+    notification_inbox: Vec<ActionShortcutBinding<NotificationInboxActionKind>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,6 +162,10 @@ impl ActionShortcutBindings {
                 &options.thread_actions,
                 ThreadActionKind::from_keymap_name,
             ),
+            notification_inbox: parse_action_scope_lossy(
+                &options.notification_inbox_actions,
+                NotificationInboxActionKind::from_keymap_name,
+            ),
         }
     }
 
@@ -190,6 +195,11 @@ impl ActionShortcutBindings {
                 "keymap.thread_actions",
                 &options.thread_actions,
                 ThreadActionKind::from_keymap_name,
+            )?,
+            notification_inbox: parse_action_scope(
+                "keymap.notification_inbox_actions",
+                &options.notification_inbox_actions,
+                NotificationInboxActionKind::from_keymap_name,
             )?,
         })
     }
@@ -221,6 +231,15 @@ impl ActionShortcutBindings {
             action: binding.kind.name().to_owned(),
             keys: key_labels(&binding.shortcuts),
         }));
+        summaries.extend(
+            self.notification_inbox
+                .iter()
+                .map(|binding| KeymapBindingSummary {
+                    scope: "keymap.notification_inbox_actions",
+                    action: binding.kind.name().to_owned(),
+                    keys: key_labels(&binding.shortcuts),
+                }),
+        );
         summaries
     }
 }
@@ -689,6 +708,23 @@ fn parse_action_shortcut_key(value: &str) -> std::result::Result<KeyChord, Strin
     match key.code {
         KeyCode::Char(value) if !value.is_whitespace() => Ok(key.canonical()),
         _ => Err("action shortcut must be a character key".to_owned()),
+    }
+}
+
+impl NotificationInboxActionKind {
+    fn from_keymap_name(name: &str) -> Option<Self> {
+        match name {
+            "MarkRead" => Some(Self::MarkRead),
+            "MarkAllRead" => Some(Self::MarkAllRead),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::MarkRead => "MarkRead",
+            Self::MarkAllRead => "MarkAllRead",
+        }
     }
 }
 

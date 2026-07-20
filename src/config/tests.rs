@@ -402,6 +402,7 @@ fn keymap_options_parse_partial_toml() {
     assert!(keymap.channel_actions.is_empty());
     assert!(keymap.message_actions.is_empty());
     assert!(keymap.member_actions.is_empty());
+    assert!(keymap.notification_inbox_actions.is_empty());
     assert!(keymap.composer.is_empty());
 }
 
@@ -576,6 +577,7 @@ fn keymap_action_maps_list_stays_in_sync_with_struct() {
         message_actions: action(),
         member_actions: action(),
         thread_actions: action(),
+        notification_inbox_actions: action(),
         composer: action(),
         mappings: BTreeMap::new(),
     };

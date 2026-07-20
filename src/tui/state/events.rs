@@ -309,12 +309,20 @@ impl DashboardState {
             AppEvent::MessageHistoryLoaded { .. } | AppEvent::MessageHistoryAfterLoaded { .. } => {}
             AppEvent::InboxMentionsLoaded {
                 request_id,
+                before,
                 messages,
+                has_more,
             } => {
-                self.apply_inbox_mentions_loaded(*request_id, messages);
+                self.apply_inbox_mentions_loaded(*request_id, *before, messages, *has_more);
             }
-            AppEvent::InboxMentionsLoadFailed { request_id } => {
-                self.apply_inbox_mentions_load_failed(*request_id);
+            AppEvent::InboxMentionsLoadFailed { request_id, before } => {
+                self.apply_inbox_mentions_load_failed(*request_id, *before);
+            }
+            AppEvent::InboxRecentMentionDeleted { message_id } => {
+                self.apply_inbox_recent_mention_deleted(*message_id);
+            }
+            AppEvent::InboxRecentMentionDeleteFailed { message, .. } => {
+                self.show_error_toast(message, Instant::now());
             }
             AppEvent::InboxChannelMessagesLoaded {
                 request_id,

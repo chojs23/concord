@@ -6,6 +6,7 @@ mod channels;
 mod guilds;
 mod members;
 mod messages;
+mod notifications;
 mod presence;
 mod ready;
 mod relationships;
@@ -32,6 +33,7 @@ use messages::{
     parse_message_delete_bulk, parse_message_reaction_add, parse_message_reaction_remove,
     parse_message_reaction_remove_all, parse_message_reaction_remove_emoji, parse_message_update,
 };
+use notifications::parse_recent_mention_delete;
 pub(in crate::discord) use presence::parse_activity;
 use presence::{parse_presence_update, parse_typing_start};
 use ready::{parse_ready, parse_ready_supplemental};
@@ -113,6 +115,7 @@ fn parse_user_account_event_data(event_type: &str, data: &Value) -> Vec<AppEvent
             .collect(),
         "CHANNEL_PINS_UPDATE" => parse_channel_pins_update(data).into_iter().collect(),
         "MESSAGE_ACK" => parse_message_ack(data).into_iter().collect(),
+        "RECENT_MENTION_DELETE" => parse_recent_mention_delete(data).into_iter().collect(),
         "USER_GUILD_SETTINGS_UPDATE" => {
             parse_user_guild_settings_update(data).into_iter().collect()
         }

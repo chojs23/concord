@@ -11,7 +11,6 @@ use crate::{
 
 const MESSAGE_HISTORY_LIMIT: u16 = 50;
 const THREAD_PREVIEW_LIMIT: u16 = 1;
-const INBOX_MENTIONS_LIMIT: u16 = 25;
 const INBOX_CHANNEL_HISTORY_LIMIT: u16 = 5;
 
 pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
@@ -325,31 +324,6 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                     .await;
             }
         },
-        AppCommand::LoadInboxMentions { request_id } => {
-            match client.load_recent_mentions(INBOX_MENTIONS_LIMIT).await {
-                Ok(messages) => {
-                    client
-                        .publish_event(AppEvent::InboxMentionsLoaded {
-                            request_id,
-                            messages,
-                        })
-                        .await;
-                }
-                Err(error) => {
-                    let message = format!("load inbox mentions failed: {error}");
-                    let detail = error.log_detail();
-                    logging::error(
-                        "history",
-                        format!(
-                            "op=load_inbox_mentions limit={INBOX_MENTIONS_LIMIT} endpoint=\"GET /users/@me/mentions\" {message}; detail={detail}"
-                        ),
-                    );
-                    client
-                        .publish_event(AppEvent::InboxMentionsLoadFailed { request_id })
-                        .await;
-                }
-            }
-        }
         AppCommand::LoadInboxChannelHistory {
             channel_id,
             request_id,

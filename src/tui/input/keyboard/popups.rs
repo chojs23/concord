@@ -500,7 +500,8 @@ pub(super) fn handle_notification_inbox_key(
         );
     }
 
-    match state.key_bindings().notification_inbox_action(key) {
+    let tab = state.notification_inbox_tab()?;
+    match state.key_bindings().notification_inbox_action(key, tab) {
         Some(NotificationInboxAction::Select(SelectionAction::Next)) => {
             state.move_notification_inbox_down();
             None

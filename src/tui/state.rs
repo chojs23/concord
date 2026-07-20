@@ -84,8 +84,9 @@ pub(in crate::tui) use popups::{
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,
     NotificationInboxChannelLoad, NotificationInboxItem, NotificationInboxLoad,
-    NotificationInboxMessage, NotificationInboxTab, PollVotePickerState, ReactionUsersEntry,
-    ReactionUsersPopupState, UserProfileSettingsField, UserProfileSettingsTab,
+    NotificationInboxMessage, NotificationInboxTab, NotificationInboxUnreadItem,
+    PollVotePickerState, ReactionUsersEntry, ReactionUsersPopupState, UserProfileSettingsField,
+    UserProfileSettingsTab,
 };
 pub use presentation::{
     apply_discord_foreground, discord_role_mention_background, folder_style, normal_text_style,

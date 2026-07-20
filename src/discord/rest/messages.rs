@@ -194,18 +194,23 @@ impl DiscordRest {
     /// request. This is the endpoint Discord's own inbox uses for its Mentions
     /// tab, so no per-channel fetching is needed. `roles`/`everyone` include
     /// role and @everyone mentions, matching the client default.
-    pub async fn load_recent_mentions(&self, limit: u16) -> Result<Vec<MessageInfo>> {
-        let request = self
-            .raw_http
-            .get("https://discord.com/api/v9/users/@me/mentions")
-            .query(&[
-                ("limit", limit.to_string()),
-                ("roles", "true".to_owned()),
-                ("everyone", "true".to_owned()),
-            ]);
+    pub async fn load_recent_mentions(
+        &self,
+        before: Option<Id<MessageMarker>>,
+        limit: u16,
+    ) -> Result<Vec<MessageInfo>> {
+        let request = recent_mentions_request(&self.raw_http, before, limit);
         let raw_messages: Vec<Value> = self.send_json(request, "recent mentions").await?;
         parse_message_list_response(raw_messages, "recent mentions response")
             .map(|response| response.messages)
+    }
+
+    pub async fn delete_recent_mention(&self, message_id: Id<MessageMarker>) -> Result<()> {
+        self.send_unit(
+            recent_mention_delete_request(&self.raw_http, message_id),
+            "delete recent mention",
+        )
+        .await
     }
 
     pub async fn load_message_history_around(
@@ -287,6 +292,34 @@ impl DiscordRest {
         };
         self.send_unit(request, "pin update").await
     }
+}
+
+fn recent_mentions_request(
+    http: &reqwest::Client,
+    before: Option<Id<MessageMarker>>,
+    limit: u16,
+) -> reqwest::RequestBuilder {
+    let mut request = http
+        .get("https://discord.com/api/v9/users/@me/mentions")
+        .query(&[
+            ("limit", limit.to_string()),
+            ("roles", "true".to_owned()),
+            ("everyone", "true".to_owned()),
+        ]);
+    if let Some(before) = before {
+        request = request.query(&[("before", before.to_string())]);
+    }
+    request
+}
+
+fn recent_mention_delete_request(
+    http: &reqwest::Client,
+    message_id: Id<MessageMarker>,
+) -> reqwest::RequestBuilder {
+    http.delete(format!(
+        "https://discord.com/api/v9/users/@me/mentions/{}",
+        message_id.get()
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -570,4 +603,29 @@ pub(super) fn validate_message_content(content: &str) -> Result<()> {
     // No attachments here, so the limit is unused. Pass the base to reuse the
     // shared payload validator.
     validate_message_payload(content, &[], BASE_ATTACHMENT_LIMIT_BYTES)
+}
+
+#[cfg(test)]
+mod recent_mentions_tests {
+    use super::*;
+
+    #[test]
+    fn recent_mention_requests_use_message_ids_and_documented_filters() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let http = reqwest::Client::new();
+        let list = recent_mentions_request(&http, Some(Id::new(700)), 25)
+            .build()
+            .expect("recent mentions request builds");
+        assert_eq!(list.url().path(), "/api/v9/users/@me/mentions");
+        let query = list.url().query_pairs().collect::<Vec<_>>();
+        assert!(query.contains(&("before".into(), "700".into())));
+        assert!(query.contains(&("roles".into(), "true".into())));
+        assert!(query.contains(&("everyone".into(), "true".into())));
+
+        let delete = recent_mention_delete_request(&http, Id::new(700))
+            .build()
+            .expect("recent mention delete request builds");
+        assert_eq!(delete.method(), reqwest::Method::DELETE);
+        assert_eq!(delete.url().path(), "/api/v9/users/@me/mentions/700");
+    }
 }

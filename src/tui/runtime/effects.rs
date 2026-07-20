@@ -103,6 +103,8 @@ fn member_hydration_messages_for_event(event: &AppEvent) -> Option<Vec<MessageIn
         | AppEvent::MessageHistoryRefreshed { messages, .. }
         | AppEvent::MessageHistoryAfterLoaded { messages, .. }
         | AppEvent::MessageHistoryAroundLoaded { messages, .. }
+        | AppEvent::InboxMentionsLoaded { messages, .. }
+        | AppEvent::InboxChannelMessagesLoaded { messages, .. }
         | AppEvent::MessageSearchLoaded {
             page: crate::discord::MessageSearchPage { messages, .. },
         }
@@ -435,6 +437,46 @@ mod tests {
                 user_ids: vec![author_id],
             }]
         );
+    }
+
+    #[test]
+    fn notification_inbox_message_events_enqueue_missing_author_member_request() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let author_id = Id::new(99);
+        let message_id = Id::new(20);
+        let events = [
+            AppEvent::InboxMentionsLoaded {
+                request_id: 1,
+                before: None,
+                messages: vec![message_info(guild_id, channel_id, message_id, author_id)],
+                has_more: false,
+            },
+            AppEvent::InboxChannelMessagesLoaded {
+                request_id: 1,
+                channel_id,
+                messages: vec![message_info(guild_id, channel_id, message_id, author_id)],
+            },
+        ];
+
+        for event in events {
+            let mut state = DashboardState::new();
+            push_guild_with_channel(
+                &mut state,
+                guild_id,
+                channel_info(guild_id, channel_id, None, "general", "GuildText"),
+            );
+
+            process_effect_in_default_context(&mut state, event);
+
+            assert_eq!(
+                state.drain_pending_commands(),
+                vec![AppCommand::LoadGuildMembersByIds {
+                    guild_id,
+                    user_ids: vec![author_id],
+                }]
+            );
+        }
     }
 
     #[test]

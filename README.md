@@ -276,8 +276,7 @@ options menu.
 
 ### Notifications
 
-- Notification inbox (`<leader>n`) with Unreads and Mentions tabs, per-channel
-  message previews, and mark-as-read / mark-all-read
+- Notification inbox (`<leader>n`) with Unreads and Mentions tabs.
 - You can configure notification sounds with custom WAV files
 - Desktop notifications for messages that pass your Discord
   notification settings
@@ -633,6 +632,10 @@ VoiceLeave = "<leader>vl"
 [keymap.groups]
 "<leader>v" = "Voice"
 
+[keymap.notification_inbox_actions]
+MarkRead = "r"
+MarkAllRead = "a"
+
 [keymap.guild_actions]
 MarkAsRead = "m"
 MuteServer = "u"
@@ -716,6 +719,7 @@ unset fields. Every group and field is optional.
 <summary>Default theme config</summary>
 
 <!-- default-theme-config:start -->
+
 ```toml
 # Complete Highlight Group reference with Concord's built-in defaults.
 # Copy this configuration to `theme.toml` in the Concord config directory,
@@ -1127,6 +1131,7 @@ foreground = "green"
 [highlight.Info]
 foreground = "cyan"
 ```
+
 <!-- default-theme-config:end -->
 
 </details><br>

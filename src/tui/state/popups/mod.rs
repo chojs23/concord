@@ -40,7 +40,7 @@ use channel_switcher::ChannelSwitcherState;
 use notification_inbox::NotificationInboxState;
 pub use notification_inbox::{
     NotificationInboxChannelLoad, NotificationInboxItem, NotificationInboxLoad,
-    NotificationInboxMessage, NotificationInboxTab,
+    NotificationInboxMessage, NotificationInboxTab, NotificationInboxUnreadItem,
 };
 use search::SearchPopupState;
 

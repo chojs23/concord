@@ -3,6 +3,7 @@ mod command_loop;
 mod credentials;
 mod gateway_commands;
 mod history_commands;
+mod inbox_commands;
 mod media_adapters;
 mod media_commands;
 mod message_commands;

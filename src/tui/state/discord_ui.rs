@@ -236,10 +236,6 @@ impl DashboardState {
         self.discord.cache.direct_message_unread_count()
     }
 
-    pub fn total_mention_count(&self) -> usize {
-        self.discord.cache.total_mention_count() as usize
-    }
-
     pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
         self.discord.cache.channel_unread_message_count(channel_id)
     }
