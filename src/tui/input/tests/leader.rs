@@ -74,10 +74,11 @@ fn keymap_nested_leader_m_r_replies_to_message() {
     handle_key(&mut state, char_key('o'));
     handle_key(&mut state, char_key('k'));
     let command = handle_key(&mut state, key(KeyCode::Enter));
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "ok".to_owned(),
             reply_to: Some(crate::discord::ReplyReference {
                 message_id: Id::new(1),

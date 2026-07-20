@@ -26,6 +26,7 @@ use super::shared::{
 pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
     let message_id = parse_id::<MessageMarker>(data.get("id")?)?;
+    let nonce = data.get("nonce").and_then(parse_id::<MessageMarker>);
     let author = data.get("author")?;
     let author_id = parse_id::<UserMarker>(author.get("id")?)?;
     let author_name = message_author_display_name(data, author);
@@ -75,6 +76,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         guild_id,
         channel_id,
         message_id,
+        nonce,
         author_id,
         author: author_name,
         author_avatar_url,

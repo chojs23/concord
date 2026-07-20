@@ -13,7 +13,7 @@ use crate::discord::{
         Id,
         marker::{ChannelMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker},
     },
-    rest::{CreatedForumPost, ForumPostPage, MessageEditRequest},
+    rest::{CreatedForumPost, ForumPostPage, MessageCreateRequest, MessageEditRequest},
 };
 use crate::{AppError, Result};
 
@@ -25,6 +25,7 @@ impl DiscordClient {
     pub async fn send_message(
         &self,
         channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
         content: &str,
         reply_to: Option<ReplyReference>,
         attachments: &[MessageAttachmentUpload],
@@ -35,9 +36,12 @@ impl DiscordClient {
         self.rest
             .send_message(
                 channel_id,
-                content,
-                reply_to,
-                attachments,
+                MessageCreateRequest {
+                    nonce,
+                    content,
+                    reply_to,
+                    attachments,
+                },
                 upload_limit,
                 slow_mode,
             )
@@ -47,12 +51,13 @@ impl DiscordClient {
     pub async fn send_tts_message(
         &self,
         channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
         content: &str,
     ) -> Result<MessageInfo> {
         self.ensure_can_send_tts_message(channel_id)?;
         let slow_mode = self.message_slow_mode(channel_id);
         self.rest
-            .send_tts_message(channel_id, content, slow_mode)
+            .send_tts_message(channel_id, nonce, content, slow_mode)
             .await
     }
 

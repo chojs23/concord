@@ -59,6 +59,7 @@ pub use channel::{
 };
 pub use client::DiscordClient;
 pub(crate) use client::validate_token_header;
+pub(crate) use commands::next_message_nonce;
 pub use commands::{
     AppCommand, AttachmentDownloadId, DownloadAttachmentSource, ForumPostArchiveState,
     ForumPostCreate, GlobalUserProfileUpdate, GuildUserProfileUpdate, MediaPlaybackRequestId,

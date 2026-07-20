@@ -240,6 +240,10 @@ pub enum AppEvent {
     MessageCreate {
         message: MessageInfo,
     },
+    MessageSendFailed {
+        channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
+    },
     MessageSendRateLimited {
         channel_id: Id<ChannelMarker>,
         retry_after_millis: u64,
@@ -627,6 +631,7 @@ define_app_event_kinds! {
     ThreadListSync: AppEvent::ThreadListSync { .. },
     ThreadMembersUpdateDispatch: AppEvent::ThreadMembersUpdateDispatch { .. },
     MessageCreate: AppEvent::MessageCreate { .. },
+    MessageSendFailed: AppEvent::MessageSendFailed { .. },
     MessageSendRateLimited: AppEvent::MessageSendRateLimited { .. },
     MessageSendCooldownStarted: AppEvent::MessageSendCooldownStarted { .. },
     MessageHistoryLoaded: AppEvent::MessageHistoryLoaded { .. },
@@ -1685,6 +1690,7 @@ impl AppEventKind {
 
             AppEventKind::GatewayError
             | AppEventKind::CaptchaRequired
+            | AppEventKind::MessageSendFailed
             | AppEventKind::MessageSendRateLimited
             | AppEventKind::MessageSendCooldownStarted
             | AppEventKind::GatewayDispatchReceived

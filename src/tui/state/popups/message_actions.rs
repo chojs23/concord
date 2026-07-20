@@ -34,7 +34,11 @@ impl DashboardState {
     }
 
     pub fn open_selected_message_actions(&mut self) {
-        if self.navigation.focus == FocusPane::Messages && self.selected_message_state().is_some() {
+        if self.navigation.focus == FocusPane::Messages
+            && self
+                .selected_message_state()
+                .is_some_and(|message| !self.message_is_pending(message))
+        {
             self.popups.modal = Some(ModalPopup::MessageActionMenu(
                 MessageActionMenuState::default(),
             ));
@@ -75,6 +79,9 @@ impl DashboardState {
         let Some(message) = self.selected_message_state() else {
             return Vec::new();
         };
+        if self.message_is_pending(message) {
+            return Vec::new();
+        }
         [
             (MessageActionKind::CopyContent, "copy message"),
             (MessageActionKind::OpenReactionPicker, "react"),

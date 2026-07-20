@@ -589,6 +589,7 @@ fn validates_attachment_only_message_payload() {
 
     let body = message_request_body(
         "",
+        Id::new(99),
         Some(ReplyReference {
             message_id: Id::new(44),
             mention_author: true,
@@ -604,9 +605,10 @@ fn validates_attachment_only_message_payload() {
 
 #[test]
 fn message_request_body_matches_web_defaults_and_carries_snowflake_nonce() {
-    let body = message_request_body("hi", None, &[]);
+    let body = message_request_body("hi", Id::new(99), None, &[]);
     let nonce = body["nonce"].as_str().expect("nonce is a string");
-    assert!(nonce.parse::<u64>().is_ok(), "nonce must be a snowflake");
+    assert_eq!(nonce, "99");
+    assert_eq!(body["enforce_nonce"], true);
     assert_eq!(body["mobile_network_type"], "unknown");
     assert_eq!(body["tts"], false);
     assert_eq!(body["flags"], 0);
@@ -616,6 +618,7 @@ fn message_request_body_matches_web_defaults_and_carries_snowflake_nonce() {
 fn message_request_body_suppresses_reply_ping_when_disabled() {
     let body = message_request_body(
         "hi",
+        Id::new(99),
         Some(ReplyReference {
             message_id: Id::new(44),
             mention_author: false,
@@ -735,7 +738,7 @@ fn guild_folder_settings_proto_includes_name_and_color() {
 
 #[test]
 fn message_request_body_sets_requested_tts_value() {
-    let tts = message_request_body_with_tts("hello", None, &[], true);
+    let tts = message_request_body_with_tts("hello", Id::new(99), None, &[], true);
     assert_eq!(tts["tts"], true);
 }
 
@@ -926,7 +929,7 @@ async fn multipart_form_rechecks_current_file_size() {
     .expect("oversized temp file can be written");
 
     let result = message_multipart_form(
-        message_request_body("", None, std::slice::from_ref(&attachment)),
+        message_request_body("", Id::new(99), None, std::slice::from_ref(&attachment)),
         &[attachment],
         BASE_ATTACHMENT_LIMIT_BYTES,
     )

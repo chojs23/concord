@@ -18,6 +18,7 @@ use crate::discord::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageState {
     pub id: Id<MessageMarker>,
+    pub nonce: Option<Id<MessageMarker>>,
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
     pub author_id: Id<UserMarker>,
@@ -47,6 +48,7 @@ impl Default for MessageState {
     fn default() -> Self {
         Self {
             id: Id::new(1),
+            nonce: None,
             guild_id: None,
             channel_id: Id::new(1),
             author_id: Id::new(1),
@@ -1054,6 +1056,7 @@ impl DiscordState {
         let guild_id = message.guild_id.or(channel_guild_id);
         MessageState {
             id: message.message_id,
+            nonce: message.nonce,
             guild_id,
             channel_id: message.channel_id,
             author_id: message.author_id,
