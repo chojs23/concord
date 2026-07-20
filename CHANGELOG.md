@@ -2,7 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.4.2] - 2026-07-18
+## [2.4.3] - 2026-07-20
+
+### Bug Fixes
+
+- Rebuild the notification inbox (#269) in [#269](https://github.com/chojs23/concord/pull/269) by @chojs23
+
+### Features
+
+- _(messages)_ Show pending messages (#270) in [#270](https://github.com/chojs23/concord/pull/270) by @chojs23
+
+## [2.4.2] - 2026-07-17
 
 ### Bug Fixes
 
