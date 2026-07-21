@@ -332,17 +332,14 @@ impl DashboardState {
             .unwrap_or_default()
     }
 
-    pub fn notification_inbox_is_loading_more_unreads(&self) -> bool {
+    pub(in crate::tui) fn notification_inbox_is_loading_more_unreads(&self) -> bool {
         self.popups
             .notification_inbox()
             .is_some_and(|inbox| inbox.loading_unread_page.is_some())
     }
 
-    pub fn notification_inbox_mention_count(&self) -> usize {
-        self.popups
-            .notification_inbox()
-            .map(|inbox| inbox.mentions.len())
-            .unwrap_or_default()
+    pub(in crate::tui) fn notification_inbox_unread_mention_count(&self) -> u32 {
+        self.discord.total_mention_count()
     }
 
     pub fn notification_inbox_mentions_status(&self) -> Option<NotificationInboxLoad> {
@@ -351,7 +348,7 @@ impl DashboardState {
             .map(|inbox| inbox.mentions_status)
     }
 
-    pub fn notification_inbox_is_loading_more_mentions(&self) -> bool {
+    pub(in crate::tui) fn notification_inbox_is_loading_more_mentions(&self) -> bool {
         self.popups
             .notification_inbox()
             .is_some_and(|inbox| inbox.mentions_loading_more)

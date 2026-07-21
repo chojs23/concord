@@ -18,7 +18,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt::{self, Write as _};
 use std::hash::{Hash as _, Hasher as _};
 
-use crate::tui::state::DashboardState;
+use crate::tui::state::{DashboardState, NotificationInboxTab};
 
 /// Hash a value's `Debug` output into the running hasher. Lets us fingerprint
 /// view state without requiring every involved type to implement `Hash`.
@@ -118,11 +118,20 @@ pub(super) fn view_signature(state: &DashboardState) -> u64 {
     hash_dbg(&mut hasher, &state.composer_emoji_candidates());
     hash_dbg(&mut hasher, &state.composer_command_candidates());
 
-    // Notification inbox: its messages stream in from background REST responses.
-    hash_dbg(&mut hasher, &state.notification_inbox_items());
-    hash_dbg(&mut hasher, &state.notification_inbox_mentions_status());
-    state.notification_inbox_unread_count().hash(&mut hasher);
-    state.notification_inbox_mention_count().hash(&mut hasher);
+    // Notification inbox: only hash it while open. The active items, unread
+    // mention badge, and loading state can all change from background events.
+    if let Some(tab) = state.notification_inbox_tab() {
+        hash_dbg(&mut hasher, &state.notification_inbox_items());
+        if tab == NotificationInboxTab::Mentions {
+            hash_dbg(&mut hasher, &state.notification_inbox_mentions_status());
+        }
+        state
+            .notification_inbox_unread_mention_count()
+            .hash(&mut hasher);
+        state
+            .notification_inbox_has_visible_loading_indicator()
+            .hash(&mut hasher);
+    }
 
     hasher.finish()
 }

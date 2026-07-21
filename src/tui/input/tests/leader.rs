@@ -453,9 +453,9 @@ fn notification_inbox_mention_read_uses_the_recent_mention_endpoint_command() {
         }],
         has_more: false,
     });
-    assert_eq!(state.notification_inbox_mention_count(), 1);
 
     handle_key(&mut state, key(KeyCode::Right));
+    assert_eq!(state.notification_inbox_items().len(), 1);
     assert_eq!(handle_key(&mut state, char_key('r')), None);
     assert_eq!(
         handle_key(&mut state, char_key('q')),
@@ -466,7 +466,6 @@ fn notification_inbox_mention_read_uses_the_recent_mention_endpoint_command() {
     );
     state.push_event(AppEvent::InboxRecentMentionDeleted { message_id });
     assert!(state.notification_inbox_items().is_empty());
-    assert_eq!(state.notification_inbox_mention_count(), 0);
 }
 
 #[test]

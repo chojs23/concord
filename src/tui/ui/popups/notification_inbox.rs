@@ -82,7 +82,7 @@ fn notification_inbox_lines(
         notification_inbox_tab_line(
             tab,
             state.notification_inbox_unread_count(),
-            state.notification_inbox_mention_count(),
+            state.notification_inbox_unread_mention_count(),
         ),
         Line::from(Span::styled(
             "─".repeat(width.max(1)),
@@ -127,10 +127,9 @@ fn notification_inbox_notice_line(text: &str) -> Line<'static> {
 fn notification_inbox_tab_line(
     tab: NotificationInboxTab,
     unread_count: usize,
-    mention_count: usize,
+    unread_mention_count: u32,
 ) -> Line<'static> {
-    let tab_span = |label: &str, count: usize, active: bool| {
-        let text = format!(" {label} ({count}) ");
+    let tab_span = |text: String, active: bool| {
         let style = if active {
             theme::current().style(theme::HighlightGroup::ActiveTab)
         } else {
@@ -146,14 +145,12 @@ fn notification_inbox_tab_line(
     };
     Line::from(vec![
         tab_span(
-            "Unreads",
-            unread_count,
+            format!(" Unreads ({unread_count}) "),
             tab == NotificationInboxTab::Unreads,
         ),
         separator(),
         tab_span(
-            "Mentions",
-            mention_count,
+            format!(" Mentions ({unread_mention_count}) "),
             tab == NotificationInboxTab::Mentions,
         ),
     ])

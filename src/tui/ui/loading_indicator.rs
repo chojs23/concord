@@ -22,17 +22,14 @@ const CHARACTER_FRAMES: [[&str; 3]; 4] = [
     ["   /\\_/\\", "  ( o.o )", "  \\|_[]_|/"],
 ];
 
-pub(in crate::tui) struct AsciiLoadingIndicator {
-    label: String,
+pub(in crate::tui) struct AsciiLoadingIndicator<'a> {
+    label: &'a str,
     style: Style,
 }
 
-impl AsciiLoadingIndicator {
-    pub(in crate::tui) fn new(label: impl Into<String>, style: Style) -> Self {
-        Self {
-            label: label.into(),
-            style,
-        }
+impl<'a> AsciiLoadingIndicator<'a> {
+    pub(in crate::tui) fn new(label: &'a str, style: Style) -> Self {
+        Self { label, style }
     }
 
     pub(in crate::tui) const fn height(&self) -> usize {

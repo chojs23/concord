@@ -19,7 +19,7 @@ use super::{
     clipboard::{ClipboardError, ClipboardPasteData, ClipboardService},
     commands as command_helpers, input,
     state::DashboardState,
-    ui,
+    ui::loading_indicator::LOADING_ANIMATION_FRAME_INTERVAL,
 };
 
 pub(super) mod effects;
@@ -198,7 +198,7 @@ pub(super) async fn run_dashboard(
         // deadline avoids restarting the frame delay when unrelated events arrive.
         if state.needs_animation_frame() {
             animation_frame_deadline.get_or_insert_with(|| {
-                tokio::time::Instant::now() + ui::LOADING_ANIMATION_FRAME_INTERVAL
+                tokio::time::Instant::now() + LOADING_ANIMATION_FRAME_INTERVAL
             });
         } else {
             animation_frame_deadline = None;
@@ -428,7 +428,7 @@ pub(super) async fn run_dashboard(
             } => {
                 state.advance_animation_frame();
                 animation_frame_deadline = Some(
-                    tokio::time::Instant::now() + ui::LOADING_ANIMATION_FRAME_INTERVAL,
+                    tokio::time::Instant::now() + LOADING_ANIMATION_FRAME_INTERVAL,
                 );
                 dirty = true;
             }
