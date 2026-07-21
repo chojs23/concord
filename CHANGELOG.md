@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.4] - 2026-07-20
+
+### Bug Fixes
+
+- _(inbox)_ Show unread mention count in the Mentions tab by @chojs23
+
+### Features
+
+- _(inbox)_ Paginate unread previews and animate loading states by @chojs23
+
 ## [2.4.3] - 2026-07-20
 
 ### Bug Fixes
