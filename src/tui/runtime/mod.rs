@@ -19,6 +19,7 @@ use super::{
     clipboard::{ClipboardError, ClipboardPasteData, ClipboardService},
     commands as command_helpers, input,
     state::DashboardState,
+    ui,
 };
 
 pub(super) mod effects;
@@ -137,6 +138,7 @@ pub(super) async fn run_dashboard(
     // image emission tracker re-emits a surface only when it actually changes.
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
+    let mut animation_frame_deadline: Option<tokio::time::Instant> = None;
     let mut clipboard_paste_in_flight = false;
     // Fingerprint of the last drawn frame's background-visible state. Background
     // events only schedule a redraw when this moves (see `redraw_gate`).
@@ -192,6 +194,15 @@ pub(super) async fn run_dashboard(
         let pending_mention_member_search_deadline = client.mention_member_search_deadline();
         let pending_member_list_subscription_deadline = client.member_list_subscription_deadline();
         let pending_composer_lock_refresh_deadline = state.next_composer_lock_refresh_deadline();
+        // Keep the dashboard idle when no animation is visible. A persistent
+        // deadline avoids restarting the frame delay when unrelated events arrive.
+        if state.needs_animation_frame() {
+            animation_frame_deadline.get_or_insert_with(|| {
+                tokio::time::Instant::now() + ui::LOADING_ANIMATION_FRAME_INTERVAL
+            });
+        } else {
+            animation_frame_deadline = None;
+        }
 
         tokio::select! {
             maybe_event = terminal_events.next() => {
@@ -408,6 +419,18 @@ pub(super) async fn run_dashboard(
                         dirty = true;
                     }
                 }
+            }
+            _ = async {
+                match animation_frame_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                state.advance_animation_frame();
+                animation_frame_deadline = Some(
+                    tokio::time::Instant::now() + ui::LOADING_ANIMATION_FRAME_INTERVAL,
+                );
+                dirty = true;
             }
             _ = async {
                 match pending_redraw_deadline {

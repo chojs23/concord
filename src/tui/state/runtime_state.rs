@@ -52,6 +52,8 @@ pub(super) struct RuntimeUiState {
     pub(super) attachment_downloads: Vec<AttachmentDownloadUiState>,
     pub(super) next_attachment_download_id: u64,
     pub(super) next_media_playback_request_id: u64,
+    /// Shared clock used by deterministic animated TUI components.
+    pub(super) animation_frame: usize,
     pub(super) should_quit: bool,
     pub(super) should_sign_out: bool,
     /// Inverted so the `Default` of `false` means "focused"; terminals that
@@ -75,6 +77,18 @@ impl DashboardState {
 
     pub(in crate::tui) fn should_sign_out(&self) -> bool {
         self.runtime.should_sign_out
+    }
+
+    pub(in crate::tui) fn animation_frame(&self) -> usize {
+        self.runtime.animation_frame
+    }
+
+    pub(in crate::tui) fn advance_animation_frame(&mut self) {
+        self.runtime.animation_frame = self.runtime.animation_frame.wrapping_add(1);
+    }
+
+    pub(in crate::tui) fn needs_animation_frame(&self) -> bool {
+        self.terminal_focused() && self.notification_inbox_has_visible_loading_indicator()
     }
 
     pub fn set_terminal_focused(&mut self, focused: bool) {

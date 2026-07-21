@@ -44,6 +44,7 @@ mod emoji_overlay;
 pub(in crate::tui) mod forum;
 mod hit_test;
 mod layout;
+pub(in crate::tui) mod loading_indicator;
 mod message;
 mod panes;
 mod popups;
@@ -58,6 +59,7 @@ use self::layout::{
 };
 #[cfg(test)]
 use self::layout::{composer_content_line_count, composer_prompt_line_count};
+pub(in crate::tui) use self::loading_indicator::LOADING_ANIMATION_FRAME_INTERVAL;
 use self::message::list::{MessageMedia, render_messages};
 use self::panes::{
     channel_pane_header_height, render_channels, render_guilds, render_header, render_members,

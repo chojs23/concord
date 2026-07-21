@@ -4,6 +4,7 @@ use crate::tui::state::{
     NotificationInboxChannelLoad, NotificationInboxItem, NotificationInboxLoad,
     NotificationInboxMessage, NotificationInboxTab, NotificationInboxUnreadItem,
 };
+use crate::tui::ui::loading_indicator::AsciiLoadingIndicator;
 use crate::tui::ui::message::list::message_author_style;
 
 const NOTIFICATION_INBOX_POPUP_WIDTH: u16 = 82;
@@ -46,7 +47,36 @@ fn notification_inbox_lines(
     let items = state.notification_inbox_items();
     let selected = state.selected_notification_inbox_index().unwrap_or(0);
     let help_lines = notification_inbox_help_lines(state, tab, width);
-    let body_lines = available_lines.saturating_sub(3 + help_lines.len()).max(1);
+    let status = match tab {
+        NotificationInboxTab::Unreads => None,
+        NotificationInboxTab::Mentions => state.notification_inbox_mentions_status(),
+    };
+    let loading_more_unreads =
+        tab == NotificationInboxTab::Unreads && state.notification_inbox_is_loading_more_unreads();
+    let loading_more_mentions = tab == NotificationInboxTab::Mentions
+        && state.notification_inbox_is_loading_more_mentions();
+    let loading_label = match tab {
+        NotificationInboxTab::Unreads if loading_more_unreads => {
+            Some("Bringing more unread messages...")
+        }
+        NotificationInboxTab::Mentions if status == Some(NotificationInboxLoad::Loading) => {
+            Some("Bringing your mentions...")
+        }
+        NotificationInboxTab::Mentions if loading_more_mentions => {
+            Some("Bringing more mentions...")
+        }
+        NotificationInboxTab::Unreads | NotificationInboxTab::Mentions => None,
+    };
+    let loading_indicator = loading_label.map(|label| {
+        AsciiLoadingIndicator::new(label, theme::current().style(theme::HighlightGroup::Hint))
+    });
+    let loading_lines = loading_indicator
+        .as_ref()
+        .map(AsciiLoadingIndicator::height)
+        .unwrap_or_default();
+    let body_lines = available_lines
+        .saturating_sub(3 + help_lines.len() + loading_lines)
+        .max(1);
 
     let mut lines = vec![
         notification_inbox_tab_line(
@@ -60,23 +90,22 @@ fn notification_inbox_lines(
         )),
     ];
 
-    let status = match tab {
-        NotificationInboxTab::Unreads => None,
-        NotificationInboxTab::Mentions => state.notification_inbox_mentions_status(),
-    };
-    if status == Some(NotificationInboxLoad::Loading) {
-        lines.push(notification_inbox_notice_line("Loading mentions…"));
-    } else if status == Some(NotificationInboxLoad::Failed) {
+    if status == Some(NotificationInboxLoad::Failed) {
         lines.push(notification_inbox_notice_line("Failed to load mentions."));
-    } else if items.is_empty() {
+    } else if items.is_empty() && loading_indicator.is_none() {
         lines.push(notification_inbox_notice_line(match tab {
             NotificationInboxTab::Unreads => "You're all caught up! No unread channels.",
             NotificationInboxTab::Mentions => "No recent mentions.",
         }));
     } else {
-        lines.extend(notification_inbox_body_lines(
-            &items, selected, body_lines, width,
-        ));
+        if !items.is_empty() {
+            lines.extend(notification_inbox_body_lines(
+                &items, selected, body_lines, width,
+            ));
+        }
+        if let Some(loading_indicator) = loading_indicator {
+            lines.extend(loading_indicator.lines(state.animation_frame()));
+        }
     }
 
     let footer_start = available_lines.saturating_sub(1 + help_lines.len());
@@ -397,6 +426,85 @@ mod tests {
 
     use super::*;
     use crate::config::{KeymapBinding, KeymapOptions};
+    use crate::discord::{
+        AppCommand, AppEvent, ChannelInfo, MessageInfo, ReadStateInfo,
+        ids::{
+            Id,
+            marker::{ChannelMarker, MessageMarker},
+        },
+    };
+    use crate::tui::keybindings::SelectionAction;
+
+    fn state_with_unread_inbox_page() -> DashboardState {
+        let mut state = DashboardState::new();
+        let channels = (1..=5).map(Id::<ChannelMarker>::new).collect::<Vec<_>>();
+        for channel_id in &channels {
+            state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+                last_message_id: Some(Id::<MessageMarker>::new(channel_id.get() + 100)),
+                name: format!("channel-{}", channel_id.get()),
+                ..ChannelInfo::test(*channel_id, "dm")
+            }));
+        }
+        state.push_event(AppEvent::ReadStateInit {
+            entries: channels
+                .into_iter()
+                .map(|channel_id| ReadStateInfo {
+                    last_acked_message_id: Some(Id::<MessageMarker>::new(1)),
+                    ..ReadStateInfo::test(channel_id)
+                })
+                .collect(),
+        });
+        state.open_notification_inbox();
+        state
+    }
+
+    fn take_unread_history_request(state: &mut DashboardState) -> (u64, Id<ChannelMarker>) {
+        state
+            .drain_pending_commands()
+            .into_iter()
+            .find_map(|command| match command {
+                AppCommand::LoadInboxChannelHistory {
+                    channel_id,
+                    request_id,
+                } => Some((request_id, channel_id)),
+                _ => None,
+            })
+            .expect("unread history request is pending")
+    }
+
+    fn take_mentions_request(state: &mut DashboardState) -> (u64, Option<Id<MessageMarker>>) {
+        state
+            .drain_pending_commands()
+            .into_iter()
+            .find_map(|command| match command {
+                AppCommand::LoadInboxMentions { request_id, before } => Some((request_id, before)),
+                _ => None,
+            })
+            .expect("mentions request is pending")
+    }
+
+    fn rendered_inbox_lines(state: &DashboardState, tab: NotificationInboxTab) -> String {
+        notification_inbox_lines(state, tab, 20, 80)
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn assert_loading_animation(
+        state: &mut DashboardState,
+        tab: NotificationInboxTab,
+        label: &str,
+    ) {
+        let first_frame = rendered_inbox_lines(state, tab);
+        assert!(first_frame.contains(label), "{first_frame}");
+        assert!(state.needs_animation_frame());
+
+        state.advance_animation_frame();
+        let second_frame = rendered_inbox_lines(state, tab);
+        assert_ne!(first_frame, second_frame);
+    }
 
     #[test]
     fn notification_inbox_helper_uses_primary_keys_and_wraps_at_popup_width() {
@@ -469,5 +577,101 @@ mod tests {
             &popup_lines[popup_lines.len() - help_lines.len()..],
             help_lines.as_slice()
         );
+    }
+
+    #[test]
+    fn notification_inbox_animates_loading_for_unreads_and_mentions() {
+        {
+            let mut state = state_with_unread_inbox_page();
+            for _ in 0..4 {
+                let (request_id, channel_id) = take_unread_history_request(&mut state);
+                state.push_event(AppEvent::InboxChannelMessagesLoaded {
+                    request_id,
+                    channel_id,
+                    messages: Vec::new(),
+                });
+            }
+
+            for _ in 1..4 {
+                state.move_notification_inbox_down();
+            }
+            assert_loading_animation(
+                &mut state,
+                NotificationInboxTab::Unreads,
+                "Bringing more unread messages...",
+            );
+
+            let (request_id, channel_id) = take_unread_history_request(&mut state);
+            state.push_event(AppEvent::InboxChannelMessagesLoaded {
+                request_id,
+                channel_id,
+                messages: Vec::new(),
+            });
+
+            let loaded = rendered_inbox_lines(&state, NotificationInboxTab::Unreads);
+            assert!(
+                !loaded.contains("Bringing more unread messages..."),
+                "{loaded}"
+            );
+            assert!(!state.needs_animation_frame());
+            assert_eq!(state.notification_inbox_items().len(), 5);
+        }
+
+        {
+            let mut state = state_with_unread_inbox_page();
+            let (request_id, before) = take_mentions_request(&mut state);
+            assert_eq!(before, None);
+            state.switch_notification_inbox_tab(SelectionAction::Next);
+
+            assert_loading_animation(
+                &mut state,
+                NotificationInboxTab::Mentions,
+                "Bringing your mentions...",
+            );
+
+            let messages = (701..=725)
+                .rev()
+                .map(|message_id| MessageInfo {
+                    channel_id: Id::<ChannelMarker>::new(1),
+                    message_id: Id::<MessageMarker>::new(message_id),
+                    author: "alice".to_owned(),
+                    content: Some("@neo hello".to_owned()),
+                    ..MessageInfo::default()
+                })
+                .collect::<Vec<_>>();
+            let next_before = messages
+                .last()
+                .map(|message| message.message_id)
+                .expect("mentions page is not empty");
+            state.push_event(AppEvent::InboxMentionsLoaded {
+                request_id,
+                before: None,
+                messages,
+                has_more: true,
+            });
+            assert!(!state.needs_animation_frame());
+
+            for _ in 0..22 {
+                state.move_notification_inbox_down();
+            }
+            assert_loading_animation(
+                &mut state,
+                NotificationInboxTab::Mentions,
+                "Bringing more mentions...",
+            );
+            let (next_request_id, before) = take_mentions_request(&mut state);
+            assert_eq!(next_request_id, request_id);
+            assert_eq!(before, Some(next_before));
+
+            state.push_event(AppEvent::InboxMentionsLoaded {
+                request_id,
+                before: Some(next_before),
+                messages: Vec::new(),
+                has_more: false,
+            });
+            let loaded = rendered_inbox_lines(&state, NotificationInboxTab::Mentions);
+            assert!(!loaded.contains("Bringing more mentions..."), "{loaded}");
+            assert!(!state.needs_animation_frame());
+        }
     }
 }
