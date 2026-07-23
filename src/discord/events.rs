@@ -237,6 +237,10 @@ pub enum AppEvent {
     ThreadMembersUpdateDispatch {
         update: ThreadMembersUpdateInfo,
     },
+    ThreadMemberUpdate {
+        guild_id: Option<Id<GuildMarker>>,
+        channel_id: Id<ChannelMarker>,
+    },
     MessageCreate {
         message: MessageInfo,
     },
@@ -630,6 +634,7 @@ define_app_event_kinds! {
     ChannelDelete: AppEvent::ChannelDelete { .. },
     ThreadListSync: AppEvent::ThreadListSync { .. },
     ThreadMembersUpdateDispatch: AppEvent::ThreadMembersUpdateDispatch { .. },
+    ThreadMemberUpdate: AppEvent::ThreadMemberUpdate { .. },
     MessageCreate: AppEvent::MessageCreate { .. },
     MessageSendFailed: AppEvent::MessageSendFailed { .. },
     MessageSendRateLimited: AppEvent::MessageSendRateLimited { .. },
@@ -1609,6 +1614,7 @@ impl AppEventKind {
             | AppEventKind::GuildDelete
             | AppEventKind::ThreadListSync
             | AppEventKind::ThreadMembersUpdateDispatch
+            | AppEventKind::ThreadMemberUpdate
             | AppEventKind::ChannelUpsert
             | AppEventKind::ChannelDelete
             | AppEventKind::Ready => AppEventMetadata::mutating(SnapshotAreas::all()),
