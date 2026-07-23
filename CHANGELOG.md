@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.4.4] - 2026-07-20
+## [2.4.5] - 2026-07-23
+
+### Features
+
+- Add voice participant actions (#273) in [#273](https://github.com/chojs23/concord/pull/273) by @chojs23
+
+## [2.4.4] - 2026-07-21
 
 ### Bug Fixes
 
