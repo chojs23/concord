@@ -378,6 +378,14 @@ pub(in crate::tui) enum OptionsPopupAction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum VoiceParticipantAudioPopupAction {
+    Close,
+    Select(SelectionAction),
+    AdjustVolume(i8),
+    ToggleMuted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum ComposerAction {
     OpenInEditor,
     PasteClipboard,

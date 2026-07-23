@@ -284,7 +284,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                             .saturating_sub(branch_prefix.width())
                             .saturating_sub(prefix.width());
                         Line::from(vec![
-                            selection_marker(false),
+                            selection_marker(is_selected),
                             Span::styled(
                                 branch_prefix,
                                 theme::current().style(theme::HighlightGroup::Decoration),
@@ -299,7 +299,7 @@ pub(in crate::tui::ui) fn render_channels(frame: &mut Frame, area: Rect, state: 
                                     horizontal_scroll,
                                     label_width,
                                 ),
-                                label_style,
+                                selected_text_style(is_selected, label_style),
                             ),
                         ])
                     }

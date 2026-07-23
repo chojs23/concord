@@ -8,7 +8,9 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker},
 };
-use crate::discord::{MessageAttachmentUpload, ReactionEmoji};
+use crate::discord::{
+    AppCommand, MessageAttachmentUpload, ReactionEmoji, VoiceParticipantPlaybackSettings,
+};
 use crate::discord::{PresenceStatus, ProfileAvatarUpload};
 
 use crate::discord::ReactionUserInfo;
@@ -30,6 +32,9 @@ mod search;
 mod thread_actions;
 mod thread_edit;
 mod user;
+mod voice_participant_audio;
+pub(in crate::tui) use voice_participant_audio::VoiceParticipantAudioField;
+use voice_participant_audio::VoiceParticipantAudioPopupState;
 
 use super::scroll::clamp_list_scroll;
 use super::{
@@ -96,6 +101,7 @@ pub(super) enum ModalPopup {
     ThreadEdit(ThreadEditState),
     ThreadActionMenu(ThreadActionMenuState),
     ThreadDeleteConfirmation(ThreadDeleteConfirmationState),
+    VoiceParticipantAudio(VoiceParticipantAudioPopupState),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -124,6 +130,7 @@ pub(in crate::tui) enum ActiveModalPopupKind {
     ThreadEdit,
     ThreadActionMenu,
     ThreadDeleteConfirmation,
+    VoiceParticipantAudio,
 }
 
 impl ModalPopup {
@@ -153,6 +160,7 @@ impl ModalPopup {
             Self::ThreadEdit(_) => ActiveModalPopupKind::ThreadEdit,
             Self::ThreadActionMenu(_) => ActiveModalPopupKind::ThreadActionMenu,
             Self::ThreadDeleteConfirmation(_) => ActiveModalPopupKind::ThreadDeleteConfirmation,
+            Self::VoiceParticipantAudio(_) => ActiveModalPopupKind::VoiceParticipantAudio,
         }
     }
 }
@@ -851,6 +859,14 @@ pub(super) enum ChannelActionMenuState {
         channel_id: Id<ChannelMarker>,
         selection: SelectablePopupState,
     },
+    ParticipantActions {
+        // Keep the channel in the context so later participant actions, such
+        // as watching a stream, do not need a second lookup.
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+        display_name: String,
+        selection: SelectablePopupState,
+    },
     MuteDuration {
         channel_id: Id<ChannelMarker>,
         selection: SelectablePopupState,
@@ -1271,6 +1287,13 @@ impl PopupUiState {
         popup
     );
     modal_popup_accessors!(
+        voice_participant_audio,
+        voice_participant_audio_mut,
+        VoiceParticipantAudio,
+        VoiceParticipantAudioPopupState,
+        popup
+    );
+    modal_popup_accessors!(
         attachment_viewer,
         attachment_viewer_mut,
         AttachmentViewer,
@@ -1610,6 +1633,7 @@ impl DashboardState {
             | Some(ActiveModalPopupKind::ForumPostComposer)
             | Some(ActiveModalPopupKind::ThreadEdit)
             | Some(ActiveModalPopupKind::ThreadDeleteConfirmation)
+            | Some(ActiveModalPopupKind::VoiceParticipantAudio)
             | None => false,
         }
     }

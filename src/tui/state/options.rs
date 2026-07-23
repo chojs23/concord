@@ -1,8 +1,12 @@
+use std::collections::BTreeMap;
+
 use crate::config::{
     AppOptions, ComposerOptions, CredentialOptions, DisplayOptions, ImagePreviewQualityPreset,
     KeymapOptions, NotificationOptions, PresenceOptions, UiStateOptions, VoiceOptions,
+    VoiceParticipantPlaybackOption,
 };
-use crate::discord::AppCommand;
+use crate::discord::ids::{Id, marker::UserMarker};
+use crate::discord::{AppCommand, VoiceParticipantPlaybackSettings};
 use crate::tui::keybindings::KeyBindings;
 
 use super::{DashboardState, FocusPane, FolderKey};
@@ -12,9 +16,29 @@ pub struct DisplayOptionItem {
     pub label: &'static str,
     pub enabled: bool,
     pub value: Option<String>,
-    pub gauge_percent: Option<u16>,
+    pub gauge: Option<DisplayOptionGauge>,
     pub effective: bool,
     pub description: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DisplayOptionGauge {
+    value: u16,
+    maximum: u16,
+}
+
+impl DisplayOptionGauge {
+    pub(crate) const fn new(value: u16, maximum: u16) -> Self {
+        Self { value, maximum }
+    }
+
+    pub(crate) const fn value(self) -> u16 {
+        self.value
+    }
+
+    pub(crate) const fn maximum(self) -> u16 {
+        self.maximum
+    }
 }
 
 #[cfg(test)]
@@ -25,7 +49,7 @@ impl DisplayOptionItem {
             label,
             enabled: false,
             value: None,
-            gauge_percent: None,
+            gauge: None,
             effective: false,
             description: "",
         }
@@ -43,6 +67,8 @@ pub(super) struct SettingsState {
     // the user's Rich Presence choice instead of resetting it to the default.
     pub(super) presence_options: PresenceOptions,
     pub(super) key_bindings: KeyBindings,
+    pub(super) voice_participant_playback:
+        BTreeMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
     pub(super) config_save_pending: bool,
     pub(super) ui_state_save_pending: bool,
 }
@@ -153,6 +179,12 @@ impl DashboardState {
         self.navigation.channels.collapsed_channel_categories =
             options.collapsed_channel_categories.into_iter().collect();
         self.navigation.channels.established_dms = options.established_dms.into_iter().collect();
+        self.options.voice_participant_playback = options
+            .voice_participant_playback
+            .into_iter()
+            .map(|option| (option.user_id, option.settings))
+            .filter(|(_, settings)| *settings != VoiceParticipantPlaybackSettings::default())
+            .collect();
         self.navigation.guilds.collapsed_folders = options
             .collapsed_server_folder_ids
             .into_iter()
@@ -211,7 +243,56 @@ impl DashboardState {
             collapsed_server_folder_ids,
             collapsed_server_folder_guilds,
             established_dms,
+            voice_participant_playback: self.voice_participant_playback_options(),
         }
+    }
+
+    pub(in crate::tui) fn voice_participant_playback_settings(
+        &self,
+        user_id: Id<UserMarker>,
+    ) -> VoiceParticipantPlaybackSettings {
+        self.options
+            .voice_participant_playback
+            .get(&user_id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub(in crate::tui) fn voice_participant_playback_settings_snapshot(
+        &self,
+    ) -> Vec<(Id<UserMarker>, VoiceParticipantPlaybackSettings)> {
+        self.options
+            .voice_participant_playback
+            .iter()
+            .map(|(user_id, settings)| (*user_id, *settings))
+            .collect()
+    }
+
+    pub(in crate::tui) fn update_voice_participant_playback_settings(
+        &mut self,
+        user_id: Id<UserMarker>,
+        settings: VoiceParticipantPlaybackSettings,
+    ) -> AppCommand {
+        if settings == VoiceParticipantPlaybackSettings::default() {
+            self.options.voice_participant_playback.remove(&user_id);
+        } else {
+            self.options
+                .voice_participant_playback
+                .insert(user_id, settings);
+        }
+        self.options.ui_state_save_pending = true;
+        AppCommand::UpdateVoiceParticipantPlayback { user_id, settings }
+    }
+
+    fn voice_participant_playback_options(&self) -> Vec<VoiceParticipantPlaybackOption> {
+        self.options
+            .voice_participant_playback
+            .iter()
+            .map(|(user_id, settings)| VoiceParticipantPlaybackOption {
+                user_id: *user_id,
+                settings: *settings,
+            })
+            .collect()
     }
 
     pub fn show_avatars(&self) -> bool {

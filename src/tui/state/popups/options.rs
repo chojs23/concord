@@ -1,8 +1,8 @@
 use crate::discord::AppCommand;
-use crate::discord::MicrophoneSensitivityDb;
+use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::tui::keybindings::OptionsCategoryShortcut;
 
-use super::super::{DashboardState, DisplayOptionItem};
+use super::super::{DashboardState, DisplayOptionGauge, DisplayOptionItem};
 use super::{ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState};
 
 const DISPLAY_OPTION_COUNT: usize = 8;
@@ -127,7 +127,7 @@ impl DashboardState {
                         .options_category_shortcut_label(OptionsCategoryShortcut::Display)
                         .to_owned(),
                 ),
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
                 description: "Image, custom emoji, and pane display settings.",
             },
@@ -139,7 +139,7 @@ impl DashboardState {
                         .options_category_shortcut_label(OptionsCategoryShortcut::Composer)
                         .to_owned(),
                 ),
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
                 description: "Message input and send-format settings.",
             },
@@ -151,7 +151,7 @@ impl DashboardState {
                         .options_category_shortcut_label(OptionsCategoryShortcut::Notifications)
                         .to_owned(),
                 ),
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
                 description: "Desktop notification settings.",
             },
@@ -163,7 +163,7 @@ impl DashboardState {
                         .options_category_shortcut_label(OptionsCategoryShortcut::Voice)
                         .to_owned(),
                 ),
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
                 description: "Mute, deaf, microphone transmit, sensitivity, and volume settings.",
             },
@@ -177,7 +177,7 @@ impl DashboardState {
                 label: "Disable all image previews",
                 enabled: options.disable_image_preview,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.disable_image_preview,
                 description: "Master switch for avatars, images, and custom emoji images.",
             },
@@ -185,7 +185,7 @@ impl DashboardState {
                 label: "Show avatars",
                 enabled: options.show_avatars,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.avatars_visible(),
                 description: "Message and profile avatars.",
             },
@@ -193,7 +193,7 @@ impl DashboardState {
                 label: "Show images",
                 enabled: options.show_images,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.images_visible(),
                 description: "Attachment, embed, and attachment viewer previews.",
             },
@@ -201,7 +201,7 @@ impl DashboardState {
                 label: "Image preview quality",
                 enabled: true,
                 value: Some(options.image_preview_quality.label().to_owned()),
-                gauge_percent: None,
+                gauge: None,
                 effective: options.images_visible(),
                 description: "Quality preset for attachment and embed.",
             },
@@ -209,7 +209,7 @@ impl DashboardState {
                 label: "Attachment viewer quality",
                 enabled: true,
                 value: Some(options.attachment_viewer_quality.label().to_owned()),
-                gauge_percent: None,
+                gauge: None,
                 effective: options.images_visible(),
                 description: "Quality preset for attachment viewer previews.",
             },
@@ -217,7 +217,7 @@ impl DashboardState {
                 label: "Show custom emoji images",
                 enabled: options.show_custom_emoji,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.custom_emoji_visible(),
                 description: "When off, custom emoji are shown as their emoji id.",
             },
@@ -225,7 +225,7 @@ impl DashboardState {
                 label: "Circular avatars",
                 enabled: options.circular_avatars,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.avatars_visible() && options.circular_avatars,
                 description: "Mask message and profile avatars into a circle.",
             },
@@ -233,7 +233,7 @@ impl DashboardState {
                 label: "Media playback",
                 enabled: options.media_playback,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.media_playback_enabled(),
                 description: "Allow videos to open in the external media player.",
             },
@@ -246,7 +246,7 @@ impl DashboardState {
             label: "Emojis as links",
             enabled: options.emojis_as_links,
             value: None,
-            gauge_percent: None,
+            gauge: None,
             effective: options.emojis_as_links,
             description: "Sends unavailable emojis as a link instead.",
         }]
@@ -257,7 +257,7 @@ impl DashboardState {
             label: "Desktop notifications",
             enabled: self.options.notification_options.desktop_notifications,
             value: None,
-            gauge_percent: None,
+            gauge: None,
             effective: self.options.notification_options.desktop_notifications,
             description: "Show OS notifications for Discord messages that pass notification settings.",
         }]
@@ -269,7 +269,7 @@ impl DashboardState {
                 label: "Voice muted",
                 enabled: self.options.voice_options.self_mute,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
                 description: "Set your Discord voice microphone mute state.",
             },
@@ -277,7 +277,7 @@ impl DashboardState {
                 label: "Voice deafened",
                 enabled: self.options.voice_options.self_deaf,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
                 description: "Set your Discord voice playback deaf state.",
             },
@@ -285,7 +285,7 @@ impl DashboardState {
                 label: "Allow microphone transmit",
                 enabled: self.options.voice_options.allow_microphone_transmit,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
                 description: "Permit microphone transmit while joined and not muted.",
             },
@@ -293,8 +293,11 @@ impl DashboardState {
                 label: "Microphone sensitivity",
                 enabled: true,
                 value: Some(self.options.voice_options.microphone_sensitivity.label()),
-                gauge_percent: Some(microphone_sensitivity_percent(
-                    self.options.voice_options.microphone_sensitivity,
+                gauge: Some(DisplayOptionGauge::new(
+                    microphone_sensitivity_percent(
+                        self.options.voice_options.microphone_sensitivity,
+                    ),
+                    100,
                 )),
                 effective: self.options.voice_options.allow_microphone_transmit,
                 description: "Lower dB values transmit quieter microphone input.",
@@ -303,8 +306,9 @@ impl DashboardState {
                 label: "Microphone volume",
                 enabled: true,
                 value: Some(self.options.voice_options.microphone_volume.label()),
-                gauge_percent: Some(u16::from(
-                    self.options.voice_options.microphone_volume.value(),
+                gauge: Some(DisplayOptionGauge::new(
+                    u16::from(self.options.voice_options.microphone_volume.value()),
+                    u16::from(VoiceVolumePercent::maximum()),
                 )),
                 effective: self.options.voice_options.allow_microphone_transmit,
                 description: "Adjust outgoing microphone audio level.",
@@ -313,8 +317,9 @@ impl DashboardState {
                 label: "Voice volume",
                 enabled: true,
                 value: Some(self.options.voice_options.voice_output_volume.label()),
-                gauge_percent: Some(u16::from(
-                    self.options.voice_options.voice_output_volume.value(),
+                gauge: Some(DisplayOptionGauge::new(
+                    u16::from(self.options.voice_options.voice_output_volume.value()),
+                    u16::from(VoiceVolumePercent::maximum()),
                 )),
                 effective: !self.options.voice_options.self_deaf,
                 description: "Adjust received voice playback level.",

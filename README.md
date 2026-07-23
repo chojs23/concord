@@ -195,6 +195,7 @@ choose `[o] sign out`.
 - Open channel actions for pinned messages, thread lists, and mark-as-read
 - Join and leave voice channels/DM calls
 - Highlight active voice speakers in voice channel/DM calls
+- Adjust local volume and mute for voice participants
 - Track unread messages and mention counts per channel
 - Mute and unmute channels and servers
 - Leave the selected server after confirmation
@@ -389,6 +390,7 @@ Channel actions:
 | -------- | -------------------- | -------------------------------------------- |
 | `e`      | Join voice           | Join the selected voice channel or DM call   |
 | `l`      | Leave voice          | Leave the current voice channel or DM call   |
+| `a`      | Audio settings       | Set participant volume or mute               |
 | `p`      | Show pinned messages | Open the selected channel's pinned messages  |
 | `t`      | Show threads         | List threads for the selected channel        |
 | `m`      | Mark as read         | Mark the selected channel read               |
@@ -547,10 +549,10 @@ allow_microphone_transmit = false
 # Voice activity threshold in dB. Lower values transmit quieter input.
 microphone_sensitivity = -30
 
-# Microphone input volume percentage, from 0 to 100.
+# Microphone input volume percentage, from 0 to 200.
 microphone_volume = 100
 
-# Received voice playback volume percentage, from 0 to 100.
+# Received voice playback volume percentage, from 0 to 200.
 voice_output_volume = 100
 ```
 
@@ -638,17 +640,18 @@ MarkAllRead = "a"
 
 [keymap.guild_actions]
 MarkAsRead = "m"
-MuteServer = "u"
+ToggleMute = "u"
 LeaveServer = "l"
 FolderSettings = "r"
 
 [keymap.channel_actions]
 JoinVoice = "e"
 LeaveVoice = "l"
+VoiceParticipantAudio = "a"
 ShowPinnedMessages = "p"
 ShowThreads = "t"
 MarkAsRead = "m"
-MuteChannel = "u"
+ToggleMute = "u"
 
 [keymap.message_actions]
 CopyMessage = "y"

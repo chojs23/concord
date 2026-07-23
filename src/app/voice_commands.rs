@@ -15,7 +15,9 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
             microphone_sensitivity,
             microphone_volume,
             voice_output_volume,
+            participant_playback_settings,
         } => {
+            client.replace_voice_participant_playback_settings(participant_playback_settings);
             if let Err(message) =
                 client.update_voice_state(scope, Some(channel_id), self_mute, self_deaf)
             {
@@ -98,6 +100,9 @@ pub(super) async fn handle(client: DiscordClient, command: AppCommand) {
                     .publish_event(AppEvent::GatewayError { message })
                     .await;
             }
+        }
+        AppCommand::UpdateVoiceParticipantPlayback { user_id, settings } => {
+            client.update_voice_participant_playback_settings(user_id, settings);
         }
         AppCommand::LeaveVoiceChannel {
             scope,

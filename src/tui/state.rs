@@ -43,6 +43,7 @@ use layout_cache::{LayoutCacheState, MessageRowContentMetrics, MessageRowContent
 use message_history_refresh::MessageHistoryRefreshState;
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use message_viewport::{MessageViewportState, ThreadReturnTarget};
+use model::ChannelPaneCursor;
 use navigation::{ActiveGuildScope, FolderKey, FolderSettingsState, NavigationState};
 use options::SettingsState;
 use pane_filter::PaneFilterState;
@@ -79,9 +80,9 @@ pub use model::{
 pub use model::{
     ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem, ThreadActionKind,
 };
-pub use options::DisplayOptionItem;
+pub use options::{DisplayOptionGauge, DisplayOptionItem};
 pub(in crate::tui) use popups::{
-    ActiveModalPopupKind, ConfirmationButton, MessageConfirmationKind,
+    ActiveModalPopupKind, ConfirmationButton, MessageConfirmationKind, VoiceParticipantAudioField,
 };
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,

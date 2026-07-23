@@ -2,8 +2,13 @@ use super::*;
 use crate::discord::test_builders::{
     VoiceConnectionStatusChangedFixture, guild_create_event, voice_connection_status_changed_event,
 };
-use crate::discord::{AppCommand, VoiceScope};
+use crate::discord::{
+    AppCommand, VoiceParticipantPlaybackSettings, VoiceParticipantVolumePercent, VoiceScope,
+    VoiceVolumePercent,
+};
 use crate::tui::keybindings::OptionsCategoryShortcut;
+use crate::tui::state::ChannelActionKind;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn private_voice_state(kind: &str) -> DashboardState {
     let mut state = DashboardState::new();
@@ -92,41 +97,111 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
             voice_output_volume: Default::default(),
         }]
     );
+
+    state.move_option_down();
+    state.adjust_selected_display_option(100);
+    assert_eq!(
+        state.voice_options().microphone_volume,
+        VoiceVolumePercent::new(200)
+    );
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceCapturePermission {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Id::new(11),
+            allow_microphone_transmit: true,
+            microphone_sensitivity: state.voice_options().microphone_sensitivity,
+            microphone_volume: VoiceVolumePercent::new(200),
+            voice_output_volume: Default::default(),
+        }]
+    );
+
+    state.move_option_down();
+    state.adjust_selected_display_option(100);
+    assert_eq!(
+        state.voice_options().voice_output_volume,
+        VoiceVolumePercent::new(200)
+    );
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceCapturePermission {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Id::new(11),
+            allow_microphone_transmit: true,
+            microphone_sensitivity: state.voice_options().microphone_sensitivity,
+            microphone_volume: VoiceVolumePercent::new(200),
+            voice_output_volume: VoiceVolumePercent::new(200),
+        }]
+    );
 }
 
 #[test]
-fn voice_channel_participants_render_as_child_rows_and_are_skipped_by_selection() {
+fn voice_channel_participant_audio_controls_persist() {
     let mut state = state_with_voice_channel_participant();
     state.focus_pane(FocusPane::Channels);
     state.set_channel_view_height(10);
-    let entries = state.channel_pane_entries();
 
-    assert!(matches!(
-        &entries[1],
-        ChannelPaneEntry::Channel {
-            branch: ChannelBranch::Middle,
-            ..
-        }
-    ));
-    assert!(matches!(
-        &entries[2],
-        ChannelPaneEntry::VoiceParticipant { participant, .. }
-            if participant.display_name == "Alice"
-    ));
-    assert!(matches!(
-        &entries[3],
-        ChannelPaneEntry::Channel {
-            branch: ChannelBranch::Last,
-            ..
-        }
-    ));
+    assert!(state.select_visible_pane_row(FocusPane::Channels, 2));
+    assert_eq!(state.navigation.channels.list.selected, 2);
+    assert_eq!(state.confirm_selected_channel_command(), None);
+    assert_eq!(
+        crate::tui::input::handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        ),
+        None
+    );
+    assert_eq!(
+        state
+            .voice_participant_audio_popup_view()
+            .expect("participant audio popup should open")
+            .settings,
+        Default::default()
+    );
 
-    state.move_down();
-    assert_eq!(state.navigation.channels.list.selected, 1);
-    assert!(!state.select_visible_pane_row(FocusPane::Channels, 2));
-    assert_eq!(state.navigation.channels.list.selected, 1);
-    state.move_down();
-    assert_eq!(state.navigation.channels.list.selected, 3);
+    let volume_settings = VoiceParticipantPlaybackSettings {
+        volume: VoiceParticipantVolumePercent::new(101),
+        muted: false,
+    };
+    assert_eq!(
+        crate::tui::input::handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        ),
+        Some(AppCommand::UpdateVoiceParticipantPlayback {
+            user_id: Id::new(20),
+            settings: volume_settings,
+        })
+    );
+    assert_eq!(
+        crate::tui::input::handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),),
+        None
+    );
+    assert_eq!(
+        crate::tui::input::handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        ),
+        Some(AppCommand::UpdateVoiceParticipantPlayback {
+            user_id: Id::new(20),
+            settings: VoiceParticipantPlaybackSettings {
+                muted: true,
+                ..volume_settings
+            },
+        })
+    );
+    let saved = state
+        .take_ui_state_save_request()
+        .expect("participant audio changes should request a state save");
+    assert_eq!(saved.voice_participant_playback.len(), 1);
+    assert_eq!(saved.voice_participant_playback[0].user_id, Id::new(20));
+    assert_eq!(
+        saved.voice_participant_playback[0].settings,
+        VoiceParticipantPlaybackSettings {
+            muted: true,
+            ..volume_settings
+        }
+    );
 }
 
 #[test]
@@ -158,6 +233,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
             microphone_sensitivity: Default::default(),
             microphone_volume: Default::default(),
             voice_output_volume: Default::default(),
+            participant_playback_settings: Vec::new(),
         })
     );
 
@@ -330,6 +406,7 @@ fn voice_join_action_reflects_scope_permissions_and_participation() {
                 microphone_sensitivity: Default::default(),
                 microphone_volume: Default::default(),
                 voice_output_volume: Default::default(),
+                participant_playback_settings: Vec::new(),
             }),
             "{kind}"
         );

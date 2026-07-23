@@ -6,6 +6,11 @@ pub(super) enum VoiceRuntimeAction {
     Close,
 }
 
+struct VoiceRuntimeApplyResult {
+    action: Option<VoiceRuntimeAction>,
+    participant_playback_changed: bool,
+}
+
 #[derive(Default)]
 pub(super) struct VoiceRuntimeState {
     current_user_id: Option<Id<UserMarker>>,
@@ -13,6 +18,7 @@ pub(super) struct VoiceRuntimeState {
     current_voice: Option<ObservedSelfVoiceState>,
     server: Option<VoiceServerInfo>,
     active: Option<VoiceGatewaySession>,
+    participant_playback_settings: HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,7 +29,13 @@ struct ObservedSelfVoiceState {
 }
 
 impl VoiceRuntimeState {
+    #[cfg(test)]
     pub(super) fn apply(&mut self, event: VoiceRuntimeEvent) -> Option<VoiceRuntimeAction> {
+        self.apply_with_changes(event).action
+    }
+
+    fn apply_with_changes(&mut self, event: VoiceRuntimeEvent) -> VoiceRuntimeApplyResult {
+        let mut participant_playback_changed = false;
         match event {
             VoiceRuntimeEvent::Requested(requested) => {
                 if let Some(next) = requested
@@ -37,7 +49,32 @@ impl VoiceRuntimeState {
                 if self.requested.is_none() {
                     self.current_voice = None;
                     self.server = None;
-                    return self.close_active();
+                    return VoiceRuntimeApplyResult {
+                        action: self.close_active(),
+                        participant_playback_changed,
+                    };
+                }
+            }
+            VoiceRuntimeEvent::ReplaceParticipantPlaybackSettings(settings) => {
+                let settings = settings
+                    .into_iter()
+                    .filter(|(_, settings)| {
+                        *settings != VoiceParticipantPlaybackSettings::default()
+                    })
+                    .collect();
+                participant_playback_changed = self.participant_playback_settings != settings;
+                self.participant_playback_settings = settings;
+            }
+            VoiceRuntimeEvent::UpdateParticipantPlaybackSettings { user_id, settings } => {
+                if settings == VoiceParticipantPlaybackSettings::default() {
+                    participant_playback_changed = self
+                        .participant_playback_settings
+                        .remove(&user_id)
+                        .is_some();
+                } else {
+                    participant_playback_changed =
+                        self.participant_playback_settings.insert(user_id, settings)
+                            != Some(settings);
                 }
             }
             VoiceRuntimeEvent::CurrentUserReady(user_id) => {
@@ -45,13 +82,19 @@ impl VoiceRuntimeState {
             }
             VoiceRuntimeEvent::VoiceState(state) => {
                 if let Some(action) = self.record_voice_state(state) {
-                    return Some(action);
+                    return VoiceRuntimeApplyResult {
+                        action: Some(action),
+                        participant_playback_changed,
+                    };
                 }
             }
             VoiceRuntimeEvent::VoiceServer(server) => {
                 if server.endpoint.is_none() {
                     self.server = None;
-                    return self.close_active();
+                    return VoiceRuntimeApplyResult {
+                        action: self.close_active(),
+                        participant_playback_changed,
+                    };
                 }
                 self.server = Some(server);
             }
@@ -65,14 +108,28 @@ impl VoiceRuntimeState {
                     active.matches_connection_end(scope, channel_id, &session_id, &endpoint)
                 }) {
                     self.active = None;
-                    return self.connect_if_ready();
+                    return VoiceRuntimeApplyResult {
+                        action: self.connect_if_ready(),
+                        participant_playback_changed,
+                    };
                 }
-                return None;
+                return VoiceRuntimeApplyResult {
+                    action: None,
+                    participant_playback_changed,
+                };
             }
-            VoiceRuntimeEvent::Shutdown => return self.close_active(),
+            VoiceRuntimeEvent::Shutdown => {
+                return VoiceRuntimeApplyResult {
+                    action: self.close_active(),
+                    participant_playback_changed,
+                };
+            }
         }
 
-        self.connect_if_ready()
+        VoiceRuntimeApplyResult {
+            action: self.connect_if_ready(),
+            participant_playback_changed,
+        }
     }
 
     fn record_voice_state(&mut self, state: VoiceStateInfo) -> Option<VoiceRuntimeAction> {
@@ -182,10 +239,18 @@ pub(crate) async fn run_voice_runtime(
     let mut connection_task: Option<JoinHandle<()>> = None;
     let mut capture_gate_tx: Option<mpsc::UnboundedSender<VoiceCaptureGate>> = None;
     let mut playback_gate_tx: Option<mpsc::UnboundedSender<VoicePlaybackGate>> = None;
+    let mut participant_playback_tx: Option<
+        watch::Sender<HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>>,
+    > = None;
 
     while let Some(event) = events.recv().await {
         let shutdown = matches!(event, VoiceRuntimeEvent::Shutdown);
-        if let Some(action) = state.apply(event) {
+        let VoiceRuntimeApplyResult {
+            action,
+            participant_playback_changed,
+        } = state.apply_with_changes(event);
+        let connected_this_event = matches!(&action, Some(VoiceRuntimeAction::Connect(_)));
+        if let Some(action) = action {
             match action {
                 VoiceRuntimeAction::Connect(session) => {
                     stop_voice_connection_task(
@@ -197,8 +262,11 @@ pub(crate) async fn run_voice_runtime(
                     .await;
                     let (next_capture_gate_tx, capture_gate_rx) = mpsc::unbounded_channel();
                     let (next_playback_gate_tx, playback_gate_rx) = mpsc::unbounded_channel();
+                    let (next_participant_playback_tx, participant_playback_rx) =
+                        watch::channel(state.participant_playback_settings.clone());
                     capture_gate_tx = Some(next_capture_gate_tx);
                     playback_gate_tx = Some(next_playback_gate_tx);
+                    participant_playback_tx = Some(next_participant_playback_tx);
                     let initial_capture_gate = state.capture_gate().unwrap_or(VoiceCaptureGate {
                         enabled: false,
                         microphone_sensitivity: MicrophoneSensitivityDb::default(),
@@ -213,10 +281,13 @@ pub(crate) async fn run_voice_runtime(
                         session,
                         events_tx.clone(),
                         status_publisher.clone(),
-                        initial_capture_gate,
-                        capture_gate_rx,
-                        initial_playback_gate,
-                        playback_gate_rx,
+                        VoiceGatewayControls {
+                            initial_capture_gate,
+                            capture_gate_rx,
+                            initial_playback_gate,
+                            playback_gate_rx,
+                            participant_playback_rx,
+                        },
                     )));
                 }
                 VoiceRuntimeAction::Close => {
@@ -227,12 +298,14 @@ pub(crate) async fn run_voice_runtime(
                         "stopping active voice connection task",
                     )
                     .await;
+                    participant_playback_tx = None;
                 }
             }
         }
         if state.active.is_none() {
             capture_gate_tx = None;
             playback_gate_tx = None;
+            participant_playback_tx = None;
         }
         if let (Some(capture_gate_tx), Some(capture_gate)) =
             (capture_gate_tx.as_ref(), state.capture_gate())
@@ -243,6 +316,12 @@ pub(crate) async fn run_voice_runtime(
             (playback_gate_tx.as_ref(), state.playback_gate())
         {
             let _ = playback_gate_tx.send(playback_gate);
+        }
+        if participant_playback_changed
+            && !connected_this_event
+            && let Some(participant_playback_tx) = participant_playback_tx.as_mut()
+        {
+            participant_playback_tx.send_replace(state.participant_playback_settings.clone());
         }
         if shutdown {
             break;

@@ -247,7 +247,10 @@ fn channel_action_menu_content(
         },
         |action| state.key_bindings().channel_action_label(action),
     );
-    Some(("Channel actions", action_menu_lines(&rows, selected)))
+    Some((
+        state.channel_action_menu_title(),
+        action_menu_lines(&rows, selected),
+    ))
 }
 
 pub(in crate::tui::ui) fn render_member_action_menu(

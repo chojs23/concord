@@ -7,13 +7,11 @@ use super::super::model::{
     MUTE_ACTION_DURATIONS,
 };
 use super::super::{DashboardState, MuteActionDurationItem};
-#[cfg(test)]
 use super::ModalPopup;
 use super::{ChannelActionMenuState, SelectablePopupState};
 
 impl DashboardState {
-    #[cfg(test)]
-    pub fn open_selected_channel_actions(&mut self) {
+    pub(in crate::tui) fn open_selected_channel_actions(&mut self) {
         if let Some(menu) = self.selected_channel_action_context() {
             self.popups.modal = Some(ModalPopup::ChannelActionMenu(menu));
         }
@@ -23,12 +21,24 @@ impl DashboardState {
         if self.navigation.focus != FocusPane::Channels {
             return None;
         }
-        let channel_id = self.selected_channel_action_target_id()?;
-        let channel = self.discord.cache.channel(channel_id)?;
-        (!channel.is_thread()).then_some(ChannelActionMenuState::Actions {
-            channel_id,
-            selection: Default::default(),
-        })
+        match self.channel_pane_entries().get(self.selected_channel())? {
+            ChannelPaneEntry::VoiceParticipant {
+                channel_id,
+                participant,
+                ..
+            } => Some(ChannelActionMenuState::ParticipantActions {
+                channel_id: *channel_id,
+                user_id: participant.user_id,
+                display_name: participant.display_name.clone(),
+                selection: Default::default(),
+            }),
+            ChannelPaneEntry::CategoryHeader { state, .. }
+            | ChannelPaneEntry::Channel { state, .. } => Some(ChannelActionMenuState::Actions {
+                channel_id: state.id,
+                selection: Default::default(),
+            }),
+            ChannelPaneEntry::Thread { .. } => None,
+        }
     }
 
     pub fn close_channel_action_menu(&mut self) {
@@ -56,6 +66,13 @@ impl DashboardState {
     pub fn selected_channel_action_items(&self) -> Vec<ChannelActionItem> {
         let channel_id = match self.popups.channel_action_menu() {
             Some(ChannelActionMenuState::Actions { channel_id, .. }) => *channel_id,
+            Some(ChannelActionMenuState::ParticipantActions { .. }) => {
+                return vec![ChannelActionItem::new(
+                    ChannelActionKind::ParticipantAudioSettings,
+                    "Audio settings",
+                    ActionAvailability::Enabled,
+                )];
+            }
             _ => return Vec::new(),
         };
         let Some(channel) = self.discord.cache.channel(channel_id) else {
@@ -173,7 +190,8 @@ impl DashboardState {
 
     pub fn selected_channel_action_index(&self) -> Option<usize> {
         match self.popups.channel_action_menu()? {
-            ChannelActionMenuState::Actions { selection, .. } => {
+            ChannelActionMenuState::Actions { selection, .. }
+            | ChannelActionMenuState::ParticipantActions { selection, .. } => {
                 Some(selection.selected_for_len(self.selected_channel_action_items().len()))
             }
             ChannelActionMenuState::MuteDuration { selection, .. } => {
@@ -184,9 +202,10 @@ impl DashboardState {
 
     pub(in crate::tui) fn channel_action_row_count(&self) -> usize {
         match self.popups.channel_action_menu() {
-            Some(ChannelActionMenuState::Actions { .. }) => {
-                self.selected_channel_action_items().len()
-            }
+            Some(
+                ChannelActionMenuState::Actions { .. }
+                | ChannelActionMenuState::ParticipantActions { .. },
+            ) => self.selected_channel_action_items().len(),
             Some(ChannelActionMenuState::MuteDuration { .. }) => {
                 self.selected_channel_mute_duration_items().len()
             }
@@ -197,7 +216,19 @@ impl DashboardState {
     pub(super) fn channel_action_selection_mut(&mut self) -> Option<&mut SelectablePopupState> {
         match self.popups.channel_action_menu_mut()? {
             ChannelActionMenuState::Actions { selection, .. }
+            | ChannelActionMenuState::ParticipantActions { selection, .. }
             | ChannelActionMenuState::MuteDuration { selection, .. } => Some(selection),
+        }
+    }
+
+    pub(in crate::tui) fn channel_action_menu_title(&self) -> &'static str {
+        match self.popups.channel_action_menu() {
+            Some(ChannelActionMenuState::ParticipantActions { .. }) => "Participant actions",
+            Some(
+                ChannelActionMenuState::Actions { .. }
+                | ChannelActionMenuState::MuteDuration { .. },
+            )
+            | None => "Channel actions",
         }
     }
 
@@ -272,6 +303,8 @@ impl DashboardState {
                                     .microphone_sensitivity,
                                 microphone_volume: self.options.voice_options.microphone_volume,
                                 voice_output_volume: self.options.voice_options.voice_output_volume,
+                                participant_playback_settings: self
+                                    .voice_participant_playback_settings_snapshot(),
                             }
                         })
                     }
@@ -321,7 +354,24 @@ impl DashboardState {
                             None
                         }
                     }
+                    ChannelActionKind::ParticipantAudioSettings => None,
                 }
+            }
+            ChannelActionMenuState::ParticipantActions {
+                user_id,
+                display_name,
+                selection,
+                ..
+            } => {
+                let items = self.selected_channel_action_items();
+                let item = items.get(selection.selected_for_len(items.len()))?;
+                if !item.is_enabled() {
+                    return None;
+                }
+                if item.kind == ChannelActionKind::ParticipantAudioSettings {
+                    self.open_voice_participant_audio_popup(user_id, display_name);
+                }
+                None
             }
             ChannelActionMenuState::MuteDuration {
                 channel_id,
@@ -338,7 +388,8 @@ impl DashboardState {
 
     pub fn activate_channel_action_shortcut(&mut self, shortcut: KeyChord) -> Option<AppCommand> {
         match self.popups.channel_action_menu()? {
-            ChannelActionMenuState::Actions { .. } => {
+            ChannelActionMenuState::Actions { .. }
+            | ChannelActionMenuState::ParticipantActions { .. } => {
                 let actions = self.selected_channel_action_items();
                 let index = self.options.key_bindings().matching_action_shortcut_index(
                     &actions,
@@ -362,17 +413,6 @@ impl DashboardState {
                 self.select_channel_action_row(index);
                 self.activate_selected_channel_action()
             }
-        }
-    }
-
-    fn selected_channel_action_target_id(&self) -> Option<Id<ChannelMarker>> {
-        match self.channel_pane_entries().get(self.selected_channel()) {
-            Some(ChannelPaneEntry::CategoryHeader { state, .. }) => Some(state.id),
-            Some(
-                ChannelPaneEntry::Channel { state, .. } | ChannelPaneEntry::Thread { state, .. },
-            ) => Some(state.id),
-            Some(ChannelPaneEntry::VoiceParticipant { .. }) => None,
-            None => None,
         }
     }
 }

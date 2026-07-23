@@ -377,6 +377,7 @@ pub enum ChannelActionKind {
     ShowThreads,
     MarkAsRead,
     ToggleMute,
+    ParticipantAudioSettings,
 }
 
 pub type ChannelActionItem = ActionItem<ChannelActionKind>;
@@ -646,6 +647,7 @@ pub enum ChannelPaneEntry<'a> {
         branch: ChannelBranch,
     },
     VoiceParticipant {
+        channel_id: Id<ChannelMarker>,
         participant: VoiceParticipantState,
         parent_branch: ChannelBranch,
     },
@@ -673,11 +675,33 @@ impl ChannelPaneEntry<'_> {
     }
 
     pub(super) fn is_selectable(&self) -> bool {
-        matches!(
-            self,
-            Self::CategoryHeader { .. } | Self::Channel { .. } | Self::Thread { .. }
-        )
+        true
     }
+
+    pub(super) fn cursor(&self) -> ChannelPaneCursor {
+        match self {
+            Self::CategoryHeader { state, .. }
+            | Self::Channel { state, .. }
+            | Self::Thread { state, .. } => ChannelPaneCursor::Channel(state.id),
+            Self::VoiceParticipant {
+                channel_id,
+                participant,
+                ..
+            } => ChannelPaneCursor::VoiceParticipant {
+                channel_id: *channel_id,
+                user_id: participant.user_id,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ChannelPaneCursor {
+    Channel(Id<ChannelMarker>),
+    VoiceParticipant {
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

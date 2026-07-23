@@ -650,7 +650,7 @@ async fn silence_voice_transmission(
 /// Applies overload smoothing, user volume, transmit boost, and the limiter
 /// to a captured microphone frame in place.
 #[cfg(feature = "voice-playback")]
-fn condition_voice_microphone_frame(
+pub(super) fn condition_voice_microphone_frame(
     frame: &mut [i16],
     gate: VoiceCaptureGate,
     microphone_gate: &mut VoiceMicrophoneGateState,
@@ -666,13 +666,15 @@ fn condition_voice_microphone_frame(
         } else {
             microphone_gate.overload_decision(frame)
         };
-    if let Some(decision) = overload_decision {
+    let overload_gain = if let Some(decision) = overload_decision {
         transmit_stats.overload_smoothed_frames += 1;
-        apply_voice_microphone_gain(frame, decision.gain);
-    }
-    apply_voice_volume_to_i16_frame(frame, gate.microphone_volume);
-    apply_voice_microphone_gain(frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
-    transmit_stats.limited_samples += protect_voice_microphone_frame(frame);
+        decision.gain
+    } else {
+        1.0
+    };
+    let combined_gain =
+        overload_gain * gate.microphone_volume.gain() * VOICE_MIC_TRANSMIT_BOOST_GAIN;
+    transmit_stats.limited_samples += apply_voice_microphone_gain_and_limit(frame, combined_gain);
 }
 
 #[cfg(feature = "voice-playback")]
@@ -989,39 +991,17 @@ pub(super) fn voice_pcm_frame_reaches_sensitivity(
 }
 
 #[cfg(any(test, feature = "voice-playback"))]
-pub(super) fn apply_voice_volume_to_i16_frame(frame: &mut [i16], volume: VoiceVolumePercent) {
-    let gain = volume.gain();
-    if (gain - 1.0).abs() <= f32::EPSILON {
-        return;
-    }
-    for sample in frame {
-        *sample = (f32::from(*sample) * gain)
-            .round()
-            .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
-    }
-}
-
-#[cfg(any(test, feature = "voice-playback"))]
-pub(super) fn apply_voice_microphone_gain(frame: &mut [i16], gain: f32) {
-    if (gain - 1.0).abs() <= f32::EPSILON {
-        return;
-    }
-    for sample in frame {
-        *sample = (f32::from(*sample) * gain)
-            .round()
-            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
-    }
-}
-
-#[cfg(any(test, feature = "voice-playback"))]
-pub(super) fn protect_voice_microphone_frame(frame: &mut [i16]) -> u64 {
+pub(super) fn apply_voice_microphone_gain_and_limit(frame: &mut [i16], gain: f32) -> u64 {
     let mut limited = 0u64;
     for sample in frame {
-        let original = *sample;
-        *sample = soft_limit_voice_microphone_sample(original);
-        if *sample != original {
+        let amplified = f32::from(*sample) * gain;
+        if amplified.abs() > f32::from(i16::MAX) * VOICE_SOFT_LIMIT_THRESHOLD {
             limited += 1;
         }
+        let normalized = amplified / f32::from(i16::MAX);
+        *sample = (soft_limit_voice_sample(normalized) * f32::from(i16::MAX))
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
     }
     limited
 }
@@ -1127,26 +1107,6 @@ pub(super) fn voice_microphone_max_adjacent_delta(frame: &[i16]) -> i32 {
         .map(|samples| (i32::from(samples[1]) - i32::from(samples[0])).abs())
         .max()
         .unwrap_or(0)
-}
-
-#[cfg(any(test, feature = "voice-playback"))]
-pub(super) fn soft_limit_voice_microphone_sample(sample: i16) -> i16 {
-    let normalized = (f32::from(sample) / f32::from(i16::MAX)).clamp(-1.0, 1.0);
-    let magnitude = normalized.abs();
-    if magnitude <= VOICE_MIC_SOFT_LIMIT_THRESHOLD {
-        return sample;
-    }
-
-    let excess =
-        (magnitude - VOICE_MIC_SOFT_LIMIT_THRESHOLD) / (1.0 - VOICE_MIC_SOFT_LIMIT_THRESHOLD);
-    let shaped = VOICE_MIC_SOFT_LIMIT_THRESHOLD
-        + (VOICE_MIC_SOFT_LIMIT_CEILING - VOICE_MIC_SOFT_LIMIT_THRESHOLD)
-            * (1.0 - 1.0 / (1.0 + VOICE_MIC_SOFT_LIMIT_CURVE * excess));
-    let limited = normalized.signum() * shaped.min(VOICE_MIC_SOFT_LIMIT_CEILING);
-
-    (limited * f32::from(i16::MAX))
-        .round()
-        .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
 }
 
 #[cfg(any(test, feature = "voice-playback"))]

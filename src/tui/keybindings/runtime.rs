@@ -605,30 +605,39 @@ impl KeyBindings {
         if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
             return Some(OptionsPopupAction::Select(action));
         }
-        match key.code {
-            KeyCode::Char(shortcut @ ('d' | 'D' | 'c' | 'C' | 'n' | 'N' | 'v' | 'V'))
-                if is_shortcut_key(key) && category_picker_open =>
-            {
-                self.options_category_shortcut(shortcut)
-                    .map(OptionsPopupAction::OpenCategory)
-            }
-            KeyCode::Char('h') | KeyCode::Char('H') if is_shortcut_key(key) => Some(
-                OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('H') {
-                    -10
-                } else {
-                    -1
-                }),
-            ),
-            KeyCode::Char('l') | KeyCode::Char('L') if is_shortcut_key(key) => Some(
-                OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('L') {
-                    10
-                } else {
-                    1
-                }),
-            ),
-            code if is_confirm_key(code) => Some(OptionsPopupAction::ToggleSelected),
-            _ => None,
+        if category_picker_open
+            && let KeyCode::Char(shortcut @ ('d' | 'D' | 'c' | 'C' | 'n' | 'N' | 'v' | 'V')) =
+                key.code
+            && is_shortcut_key(key)
+        {
+            return self
+                .options_category_shortcut(shortcut)
+                .map(OptionsPopupAction::OpenCategory);
         }
+        if let Some(delta) = self.horizontal_adjustment_delta(key) {
+            return Some(OptionsPopupAction::AdjustSelected(delta));
+        }
+        if is_confirm_key(key.code) {
+            Some(OptionsPopupAction::ToggleSelected)
+        } else {
+            None
+        }
+    }
+
+    pub(in crate::tui) fn voice_participant_audio_popup_action(
+        &self,
+        key: KeyEvent,
+    ) -> Option<VoiceParticipantAudioPopupAction> {
+        if self.is_popup_close_key(key) {
+            return Some(VoiceParticipantAudioPopupAction::Close);
+        }
+        if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
+            return Some(VoiceParticipantAudioPopupAction::Select(action));
+        }
+        if let Some(delta) = self.horizontal_adjustment_delta(key) {
+            return Some(VoiceParticipantAudioPopupAction::AdjustVolume(delta));
+        }
+        is_confirm_key(key.code).then_some(VoiceParticipantAudioPopupAction::ToggleMuted)
     }
 
     pub(in crate::tui) fn composer_action(&self, key: KeyEvent) -> ComposerAction {
@@ -793,27 +802,47 @@ impl KeyBindings {
             })
     }
 
-    /// `Next` is right, `Previous` is left, honouring the configured horizontal
-    /// navigation keys plus the arrows.
-    pub(in crate::tui) fn horizontal_selection_action(
-        &self,
-        key: KeyEvent,
-    ) -> Option<SelectionAction> {
+    pub(in crate::tui) fn horizontal_adjustment_delta(&self, key: KeyEvent) -> Option<i8> {
         match key.code {
-            KeyCode::Right => Some(SelectionAction::Next),
-            KeyCode::Left => Some(SelectionAction::Previous),
+            KeyCode::Right => Some(1),
+            KeyCode::Left => Some(-1),
             _ => self
                 .keymap_single_key_shortcuts(UiAction::ScrollHorizontalRight)
                 .iter()
                 .any(|shortcut| shortcut.matches(key))
-                .then_some(SelectionAction::Next)
+                .then_some(10)
                 .or_else(|| {
                     self.keymap_single_key_shortcuts(UiAction::ScrollHorizontalLeft)
                         .iter()
                         .any(|shortcut| shortcut.matches(key))
-                        .then_some(SelectionAction::Previous)
+                        .then_some(-10)
+                })
+                .or_else(|| {
+                    matches!(key.code, KeyCode::Char('l'))
+                        .then_some(1)
+                        .filter(|_| key.modifiers.is_empty())
+                })
+                .or_else(|| {
+                    matches!(key.code, KeyCode::Char('h'))
+                        .then_some(-1)
+                        .filter(|_| key.modifiers.is_empty())
                 }),
         }
+    }
+
+    /// `Next` is right and `Previous` is left, using the same horizontal keys
+    /// as numeric popup adjustments.
+    pub(in crate::tui) fn horizontal_selection_action(
+        &self,
+        key: KeyEvent,
+    ) -> Option<SelectionAction> {
+        self.horizontal_adjustment_delta(key).map(|delta| {
+            if delta.is_positive() {
+                SelectionAction::Next
+            } else {
+                SelectionAction::Previous
+            }
+        })
     }
 
     pub(in crate::tui) fn scroll_action(&self, key: KeyEvent) -> Option<ScrollAction> {
@@ -917,24 +946,41 @@ impl KeyBindings {
         }
     }
 
-    define_action_menu_scope!(
-        channel,
-        ChannelActionItem,
-        channel_action_shortcuts,
-        channel_action_label,
-        default_channel_action_shortcut,
-        channel_action_shortcut_label
-    );
+    pub fn channel_action_shortcuts(
+        &self,
+        actions: &[ChannelActionItem],
+        index: usize,
+    ) -> Vec<KeyChord> {
+        scoped_action_shortcuts(
+            index,
+            actions.iter().map(|item| item.kind),
+            &self.action_shortcuts.channel,
+            |kind| self.default_channel_action_shortcut(kind),
+        )
+    }
+
+    pub fn channel_action_label(&self, action: &ChannelActionItem) -> String {
+        action_label(&self.action_shortcuts.channel, action.kind, &action.label)
+    }
+
+    pub fn channel_action_shortcut_label(
+        &self,
+        actions: &[ChannelActionItem],
+        index: usize,
+    ) -> String {
+        key_chord_list_label(&self.channel_action_shortcuts(actions, index))
+    }
 
     fn default_channel_action_shortcut(&self, kind: ChannelActionKind) -> Vec<KeyChord> {
-        vec![char_chord(match kind {
-            ChannelActionKind::JoinVoice => 'e',
-            ChannelActionKind::LeaveVoice => 'l',
-            ChannelActionKind::ShowPinnedMessages => 'p',
-            ChannelActionKind::ShowThreads => 't',
-            ChannelActionKind::MarkAsRead => 'm',
-            ChannelActionKind::ToggleMute => 'u',
-        })]
+        match kind {
+            ChannelActionKind::JoinVoice => vec![char_chord('e')],
+            ChannelActionKind::LeaveVoice => vec![char_chord('l')],
+            ChannelActionKind::ShowPinnedMessages => vec![char_chord('p')],
+            ChannelActionKind::ShowThreads => vec![char_chord('t')],
+            ChannelActionKind::MarkAsRead => vec![char_chord('m')],
+            ChannelActionKind::ToggleMute => vec![char_chord('u')],
+            ChannelActionKind::ParticipantAudioSettings => vec![char_chord('a')],
+        }
     }
 
     define_action_menu_scope!(

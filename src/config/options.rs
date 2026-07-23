@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, de};
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker},
+    marker::{ChannelMarker, GuildMarker, UserMarker},
 };
 use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
 
@@ -503,6 +503,13 @@ pub(super) struct UiStateFileOptions {
     pub(super) ui_state: UiStateOptions,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct VoiceParticipantPlaybackOption {
+    pub user_id: Id<UserMarker>,
+    #[serde(flatten)]
+    pub settings: crate::discord::VoiceParticipantPlaybackSettings,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct UiStateOptions {
@@ -525,6 +532,7 @@ pub struct UiStateOptions {
     /// user. This avoids reclassifying an established conversation when those
     /// messages later fall outside the latest 50-message window.
     pub established_dms: Vec<Id<ChannelMarker>>,
+    pub voice_participant_playback: Vec<VoiceParticipantPlaybackOption>,
 }
 
 impl Default for UiStateOptions {
@@ -540,6 +548,7 @@ impl Default for UiStateOptions {
             collapsed_server_folder_ids: Vec::new(),
             collapsed_server_folder_guilds: Vec::new(),
             established_dms: Vec::new(),
+            voice_participant_playback: Vec::new(),
         }
     }
 }

@@ -10,7 +10,7 @@ use super::{
     PresenceOptions, ThemeOptions, VoiceOptions, load_keymap_options_from_path,
     load_options_from_path, parse_app_options, parse_theme_options, save_options_to_path,
 };
-use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
+use crate::discord::{MicrophoneSensitivityDb, VoiceParticipantVolumePercent, VoiceVolumePercent};
 
 #[test]
 fn display_options_default_to_all_media_enabled() {
@@ -613,12 +613,37 @@ fn ui_state_invalid_value_is_skipped_without_discarding_the_rest() {
 }
 
 #[test]
+fn ui_state_parses_persisted_voice_participant_playback_settings() {
+    let (ui_state, warnings) = super::parse_ui_state_options(
+        r#"
+[ui_state]
+[[ui_state.voice_participant_playback]]
+user_id = "42"
+volume = 250
+muted = true
+"#,
+    )
+    .expect("participant playback state should parse");
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(ui_state.voice_participant_playback.len(), 1);
+    let option = ui_state.voice_participant_playback[0];
+    assert_eq!(option.user_id, crate::discord::ids::Id::new(42));
+    assert_eq!(
+        option.settings.volume,
+        VoiceParticipantVolumePercent::new(200),
+        "persisted volume is clamped at the domain boundary"
+    );
+    assert!(option.settings.muted);
+}
+
+#[test]
 fn voice_volume_config_values_are_clamped() {
     let config: AppOptions =
-        toml::from_str("[voice]\nmicrophone_volume = 150\nvoice_output_volume = -10\n")
+        toml::from_str("[voice]\nmicrophone_volume = 250\nvoice_output_volume = -10\n")
             .expect("voice volume config should parse");
 
-    assert_eq!(config.voice.microphone_volume, VoiceVolumePercent::new(100));
+    assert_eq!(config.voice.microphone_volume, VoiceVolumePercent::new(200));
     assert_eq!(config.voice.voice_output_volume, VoiceVolumePercent::new(0));
 }
 

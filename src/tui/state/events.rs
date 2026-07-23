@@ -10,7 +10,8 @@ use crate::discord::{
 use crate::logging;
 
 use super::{
-    ActiveGuildScope, DashboardState, MINIMUM_ESTABLISHED_DM_MESSAGES, VoiceConnectionUiState,
+    ActiveGuildScope, ChannelPaneCursor, DashboardState, MINIMUM_ESTABLISHED_DM_MESSAGES,
+    VoiceConnectionUiState,
 };
 
 struct EventViewportContext {
@@ -20,7 +21,7 @@ struct EventViewportContext {
     active_new_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
     selected_message_id: Option<Id<MessageMarker>>,
     scroll_message_id: Option<Id<MessageMarker>>,
-    channel_cursor_id: Option<Id<ChannelMarker>>,
+    channel_cursor: Option<ChannelPaneCursor>,
 }
 
 impl EventViewportContext {
@@ -69,13 +70,13 @@ impl EventViewportContext {
                         .map(|message| message.id)
                 })
                 .flatten(),
-            channel_cursor_id: state.selected_channel_cursor_id(),
+            channel_cursor: state.selected_channel_cursor(),
         }
     }
 
     fn repair_after_event(self, state: &mut DashboardState, event: &AppEvent) {
         state.clamp_active_selection();
-        state.restore_channel_cursor(self.channel_cursor_id);
+        state.restore_channel_pane_cursor(self.channel_cursor);
         state.clamp_selection_indices();
         state.clear_missing_new_messages_marker();
 
@@ -133,7 +134,7 @@ impl DashboardState {
     pub(super) fn push_event_inner(&mut self, event: AppEvent, apply_discord: bool) {
         let mut viewport = EventViewportContext::capture(self, &event);
 
-        self.apply_event_ui_effects(&event, &mut viewport.channel_cursor_id);
+        self.apply_event_ui_effects(&event, &mut viewport.channel_cursor);
         if apply_discord {
             self.apply_event_to_discord_cache(&event);
         }
@@ -145,7 +146,7 @@ impl DashboardState {
     fn apply_event_ui_effects(
         &mut self,
         event: &AppEvent,
-        channel_cursor_id: &mut Option<Id<ChannelMarker>>,
+        channel_cursor: &mut Option<ChannelPaneCursor>,
     ) {
         match event {
             AppEvent::Ready { user, user_id } => {
@@ -377,7 +378,7 @@ impl DashboardState {
                 self.record_user_profile_update_failed(*user_id, *guild_id, message);
             }
             AppEvent::ActivateChannel { channel_id } => {
-                self.activate_event_channel(*channel_id, channel_cursor_id);
+                self.activate_event_channel(*channel_id, channel_cursor);
             }
             AppEvent::VoiceConnectionStatusChanged {
                 scope,
@@ -464,7 +465,7 @@ impl DashboardState {
     fn activate_event_channel(
         &mut self,
         channel_id: Id<ChannelMarker>,
-        channel_cursor_id: &mut Option<Id<ChannelMarker>>,
+        channel_cursor: &mut Option<ChannelPaneCursor>,
     ) {
         let scope = self
             .discord
@@ -478,7 +479,7 @@ impl DashboardState {
             self.activate_guild(scope);
             self.activate_channel(channel_id);
             self.navigation.channels.list.keep_selection_visible();
-            *channel_cursor_id = Some(channel_id);
+            *channel_cursor = Some(ChannelPaneCursor::Channel(channel_id));
         }
     }
 

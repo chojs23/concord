@@ -20,7 +20,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ImagePreview, ImagePreviewState, MESSAGE_AVATAR_OFFSET, MemberEntry,
+    DisplayOptionGauge, ImagePreview, ImagePreviewState, MESSAGE_AVATAR_OFFSET, MemberEntry,
     attachment_viewer_image_area, attachment_viewer_popup, background_media_occlusion_areas,
     centered_viewer_preview_area, channel_action_menu_lines_for_test, channel_prefix,
     channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,

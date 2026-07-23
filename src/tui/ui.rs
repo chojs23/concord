@@ -13,7 +13,7 @@ use ratatui_image::{Image as RatatuiImage, Resize, StatefulImage};
 use unicode_width::UnicodeWidthStr;
 
 #[cfg(test)]
-use super::state::MemberEntry;
+use super::state::{DisplayOptionGauge, MemberEntry};
 use super::{
     message::format::{
         EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, ReactionLayout, embed_color,
@@ -84,8 +84,9 @@ use self::popups::{
     render_options_popup, render_poll_vote_picker, render_quit_confirmation,
     render_reaction_users_popup, render_search_popup, render_thread_action_menu,
     render_thread_delete_confirmation, render_thread_edit, render_thread_edit_tag_picker,
-    render_toast, render_user_profile_popup, search_popup_visible_items, thread_edit_metrics,
-    thread_edit_popup_area, thread_edit_tag_picker_visible_items, user_profile_popup_has_avatar,
+    render_toast, render_user_profile_popup, render_voice_participant_audio_popup,
+    search_popup_visible_items, thread_edit_metrics, thread_edit_popup_area,
+    thread_edit_tag_picker_visible_items, user_profile_popup_has_avatar,
     user_profile_popup_text_geometry, user_profile_popup_total_lines,
 };
 pub use self::types::{
@@ -337,6 +338,7 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     render_thread_delete_confirmation(frame, popup_area, state);
     render_folder_settings_popup(frame, popup_area, state);
     render_options_popup(frame, popup_area, state);
+    render_voice_participant_audio_popup(frame, popup_area, state);
     render_poll_vote_picker(frame, popup_area, state);
     render_user_profile_popup(frame, popup_area, state, profile_avatar, &emoji_images);
     render_emoji_reaction_picker(frame, popup_area, state, &emoji_images);

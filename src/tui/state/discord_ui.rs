@@ -13,7 +13,7 @@ use crate::discord::{
     SnapshotAreas, SnapshotRevision,
 };
 
-use super::{DashboardState, DesktopNotification, message_notification_body};
+use super::{ChannelPaneCursor, DashboardState, DesktopNotification, message_notification_body};
 
 #[derive(Debug, Default)]
 pub(super) struct DiscordUiState {
@@ -125,13 +125,13 @@ impl DashboardState {
                     .map(|message| message.id)
             })
             .flatten();
-        let channel_cursor_id = self.selected_channel_cursor_id();
+        let channel_cursor = self.selected_channel_cursor();
 
         restore(&mut self.discord.cache);
         self.reconcile_pending_messages_with_cache();
         self.clear_message_row_content_metrics_cache();
         if areas.navigation {
-            self.repair_navigation_after_discord_restore(channel_cursor_id);
+            self.repair_navigation_after_discord_restore(channel_cursor);
         }
 
         let in_message_view = self.message_pane_supports_auto_follow();
@@ -151,7 +151,7 @@ impl DashboardState {
 
     fn repair_navigation_after_discord_restore(
         &mut self,
-        channel_cursor_id: Option<Id<ChannelMarker>>,
+        channel_cursor: Option<ChannelPaneCursor>,
     ) {
         if let Some(user) = self.discord.current_user() {
             self.discord.current_user = Some(user.to_owned());
@@ -162,7 +162,7 @@ impl DashboardState {
         self.refresh_composer_emoji_candidates_for_current_query();
 
         self.clamp_active_selection();
-        self.restore_channel_cursor(channel_cursor_id);
+        self.restore_channel_pane_cursor(channel_cursor);
         self.navigation.guilds.list.selected = self.selected_guild();
         self.navigation.channels.list.selected = self.selected_channel();
         self.navigation.members.list.selected = self.selected_member();

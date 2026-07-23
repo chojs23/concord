@@ -523,6 +523,10 @@ pub enum AppCommand {
         microphone_sensitivity: crate::discord::MicrophoneSensitivityDb,
         microphone_volume: crate::discord::VoiceVolumePercent,
         voice_output_volume: crate::discord::VoiceVolumePercent,
+        participant_playback_settings: Vec<(
+            Id<UserMarker>,
+            crate::discord::VoiceParticipantPlaybackSettings,
+        )>,
     },
     UpdateVoiceState {
         scope: VoiceScope,
@@ -537,6 +541,10 @@ pub enum AppCommand {
         microphone_sensitivity: crate::discord::MicrophoneSensitivityDb,
         microphone_volume: crate::discord::VoiceVolumePercent,
         voice_output_volume: crate::discord::VoiceVolumePercent,
+    },
+    UpdateVoiceParticipantPlayback {
+        user_id: Id<UserMarker>,
+        settings: crate::discord::VoiceParticipantPlaybackSettings,
     },
     LeaveVoiceChannel {
         scope: VoiceScope,
