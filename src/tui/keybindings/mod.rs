@@ -26,7 +26,7 @@ pub(in crate::tui) use actions::{
     LoginTextInputAction, NotificationInboxAction, NotificationInboxActionKind, OptionsPopupAction,
     PaneFilterAction, PollVotePickerAction, PopupListAction, ProfilePopupAction,
     ProfilePopupTabAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction,
-    SelectionAction, SelectionKeySet, UiAction,
+    SelectionAction, SelectionKeySet, UiAction, VoiceParticipantAudioPopupAction,
 };
 pub(in crate::tui) use chord::KeyChord;
 #[cfg(test)]
@@ -759,6 +759,7 @@ impl ChannelActionKind {
             "ShowThreads" => Some(Self::ShowThreads),
             "MarkAsRead" => Some(Self::MarkAsRead),
             "ToggleMute" => Some(Self::ToggleMute),
+            "VoiceParticipantAudio" => Some(Self::ParticipantAudioSettings),
             _ => None,
         }
     }
@@ -771,6 +772,7 @@ impl ChannelActionKind {
             Self::ShowThreads => "ShowThreads",
             Self::MarkAsRead => "MarkAsRead",
             Self::ToggleMute => "ToggleMute",
+            Self::ParticipantAudioSettings => "VoiceParticipantAudio",
         }
     }
 }

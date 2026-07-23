@@ -9,7 +9,10 @@ use crate::discord::{ChannelState, ChannelUnreadState, TypingUserState, VoicePar
 use super::{ActiveGuildScope, DashboardState, MessagePaneSource, ThreadReturnTarget};
 use super::{
     channel_tree,
-    model::{AppliedForumTag, ChannelBranch, ChannelPaneEntry, ChannelThreadItem, FocusPane},
+    model::{
+        AppliedForumTag, ChannelBranch, ChannelPaneCursor, ChannelPaneEntry, ChannelThreadItem,
+        FocusPane,
+    },
     presentation::{is_direct_message_channel, sort_direct_message_channels},
     scroll::{clamp_selected_index, toggle_collapsed_key},
 };
@@ -541,6 +544,7 @@ impl DashboardState {
                     .voice_participants_for_private_channel(state.id);
                 entries.extend(participants.into_iter().map(|participant| {
                     ChannelPaneEntry::VoiceParticipant {
+                        channel_id: state.id,
                         participant,
                         parent_branch: ChannelBranch::None,
                     }
@@ -658,6 +662,7 @@ impl DashboardState {
         };
         entries.extend(participants.iter().cloned().map(|participant| {
             ChannelPaneEntry::VoiceParticipant {
+                channel_id: state.id,
                 participant,
                 parent_branch: branch,
             }
@@ -818,10 +823,10 @@ impl DashboardState {
             selectable_channel_index_near(&entries, index, prefer_forward).unwrap_or(0);
     }
 
-    pub(super) fn selected_channel_cursor_id(&self) -> Option<Id<ChannelMarker>> {
+    pub(super) fn selected_channel_cursor(&self) -> Option<ChannelPaneCursor> {
         self.channel_pane_entries()
             .get(self.selected_channel())
-            .and_then(ChannelPaneEntry::channel_id)
+            .map(ChannelPaneEntry::cursor)
     }
 
     pub fn channel_scroll(&self) -> usize {
@@ -846,13 +851,17 @@ impl DashboardState {
     }
 
     pub(super) fn restore_channel_cursor(&mut self, channel_id: Option<Id<ChannelMarker>>) {
-        let Some(channel_id) = channel_id else {
+        self.restore_channel_pane_cursor(channel_id.map(ChannelPaneCursor::Channel));
+    }
+
+    pub(super) fn restore_channel_pane_cursor(&mut self, cursor: Option<ChannelPaneCursor>) {
+        let Some(cursor) = cursor else {
             return;
         };
         if let Some(index) = self
             .channel_pane_entries()
             .iter()
-            .position(|entry| entry.channel_id() == Some(channel_id))
+            .position(|entry| entry.cursor() == cursor)
         {
             self.navigation.channels.list.selected = index;
         }
@@ -1031,15 +1040,38 @@ impl DashboardState {
     }
 
     pub fn confirm_selected_channel_command(&mut self) -> Option<AppCommand> {
-        match self.channel_pane_entries().get(self.selected_channel()) {
-            Some(ChannelPaneEntry::CategoryHeader { .. }) => {
+        enum SelectedChannelPaneEntry {
+            Category,
+            Channel(Id<ChannelMarker>),
+            VoiceParticipant,
+        }
+
+        let selected = self
+            .channel_pane_entries()
+            .get(self.selected_channel())
+            .map(|entry| match entry {
+                ChannelPaneEntry::CategoryHeader { .. } => SelectedChannelPaneEntry::Category,
+                ChannelPaneEntry::Channel { state, .. }
+                | ChannelPaneEntry::Thread { state, .. } => {
+                    SelectedChannelPaneEntry::Channel(state.id)
+                }
+                ChannelPaneEntry::VoiceParticipant { .. } => {
+                    SelectedChannelPaneEntry::VoiceParticipant
+                }
+            });
+
+        match selected {
+            Some(SelectedChannelPaneEntry::Category) => {
                 self.toggle_selected_channel_category();
                 None
             }
-            Some(
-                ChannelPaneEntry::Channel { state, .. } | ChannelPaneEntry::Thread { state, .. },
-            ) => self.activate_channel_command(state.id),
-            Some(ChannelPaneEntry::VoiceParticipant { .. }) => None,
+            Some(SelectedChannelPaneEntry::Channel(channel_id)) => {
+                self.activate_channel_command(channel_id)
+            }
+            Some(SelectedChannelPaneEntry::VoiceParticipant) => {
+                self.open_selected_channel_actions();
+                None
+            }
             None => None,
         }
     }

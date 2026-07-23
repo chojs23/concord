@@ -1,5 +1,7 @@
 use super::*;
 
+const OPTIONS_GAUGE_X_OFFSET: u16 = 12;
+
 pub(in crate::tui::ui) fn render_options_popup(
     frame: &mut Frame,
     area: Rect,
@@ -37,10 +39,7 @@ pub(in crate::tui::ui) fn options_popup_visible_items(area: Rect, state: &Dashbo
 
 pub(in crate::tui::ui) fn options_popup_area(area: Rect, state: &DashboardState) -> Rect {
     let items = state.display_option_items();
-    let detail_lines = items
-        .iter()
-        .filter(|item| item.gauge_percent.is_some())
-        .count() as u16;
+    let detail_lines = items.iter().filter(|item| item.gauge.is_some()).count() as u16;
     centered_rect(
         area,
         66,
@@ -95,28 +94,22 @@ pub(in crate::tui::ui) fn options_popup_lines(
                 ]),
                 selected,
             );
-            let gauge_line = item.gauge_percent.map(|_| {
+            let gauge_line = item.gauge.map(|gauge| {
                 let (min_label, max_label) = if item
                     .value
                     .as_deref()
                     .is_some_and(|value| value.ends_with('%'))
                 {
-                    ("0%", "100%")
+                    ("0%".to_owned(), format!("{}%", gauge.maximum()))
                 } else {
-                    ("-100 dB", "0 dB")
+                    ("-100 dB".to_owned(), "0 dB".to_owned())
                 };
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(
-                        format!("  {min_label} "),
-                        theme::current().style(theme::HighlightGroup::Description),
-                    ),
-                    Span::styled(" ".repeat(28), Style::default()),
-                    Span::styled(
-                        format!(" {max_label}"),
-                        theme::current().style(theme::HighlightGroup::Description),
-                    ),
-                ])
+                popup_gauge_line(
+                    OPTIONS_GAUGE_X_OFFSET,
+                    &min_label,
+                    max_label,
+                    theme::current().style(theme::HighlightGroup::Description),
+                )
             });
             std::iter::once(row).chain(gauge_line)
         })
@@ -137,27 +130,26 @@ fn render_option_gauges(
     let mut y = inner.y;
     for item in items.iter().skip(start).take(visible_items) {
         y = y.saturating_add(1);
-        let Some(percent) = item.gauge_percent else {
+        let Some(gauge) = item.gauge else {
             continue;
         };
         if y >= inner.y.saturating_add(inner.height) {
             break;
         }
-        let gauge_width = inner.width.saturating_sub(19).min(28);
-        if gauge_width == 0 {
-            y = y.saturating_add(1);
-            continue;
-        }
-        let gauge_area = Rect::new(inner.x.saturating_add(12), y, gauge_width, 1);
-        frame.render_widget(
-            Gauge::default()
-                .ratio((f64::from(percent) / 100.0).clamp(0.0, 1.0))
-                .label("")
-                .gauge_style(theme::current().apply(
+        render_popup_gauge(
+            frame,
+            inner,
+            PopupGauge {
+                x_offset: OPTIONS_GAUGE_X_OFFSET,
+                width_margin: 19,
+                y,
+                value: gauge.value(),
+                maximum: gauge.maximum(),
+                style: theme::current().apply(
                     theme::HighlightGroup::GaugeFill,
                     theme::current().style(theme::HighlightGroup::Normal),
-                )),
-            gauge_area,
+                ),
+            },
         );
         y = y.saturating_add(1);
     }

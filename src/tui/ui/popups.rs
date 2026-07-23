@@ -23,6 +23,9 @@ mod search;
 mod thread_edit;
 mod toast;
 mod url_picker;
+mod voice_participant_audio;
+
+const POPUP_GAUGE_WIDTH: usize = 28;
 
 pub(super) use action_menu::{
     action_menu_area, leader_popup_area_for_state, render_channel_action_menu,
@@ -113,6 +116,63 @@ pub(super) use toast::{render_toast, toast_area};
 #[cfg(test)]
 pub(super) use url_picker::message_url_picker_lines_for_width;
 pub(super) use url_picker::{message_url_picker_popup_area, render_message_url_picker};
+pub(super) use voice_participant_audio::{
+    render_voice_participant_audio_popup, voice_participant_audio_popup_area,
+};
+
+fn popup_gauge_spacer() -> Span<'static> {
+    Span::raw(" ".repeat(POPUP_GAUGE_WIDTH))
+}
+
+fn popup_gauge_line(
+    x_offset: u16,
+    min_label: &str,
+    max_label: String,
+    style: Style,
+) -> Line<'static> {
+    let leading_space = usize::from(x_offset).saturating_sub(min_label.len().saturating_add(1));
+    Line::from(vec![
+        Span::styled(format!("{}{min_label} ", " ".repeat(leading_space)), style),
+        popup_gauge_spacer(),
+        Span::styled(format!(" {max_label}"), style),
+    ])
+}
+
+struct PopupGauge {
+    x_offset: u16,
+    width_margin: u16,
+    y: u16,
+    value: u16,
+    maximum: u16,
+    style: Style,
+}
+
+fn render_popup_gauge(frame: &mut Frame, inner: Rect, gauge: PopupGauge) {
+    let gauge_width = inner
+        .width
+        .saturating_sub(gauge.width_margin)
+        .min(POPUP_GAUGE_WIDTH as u16);
+    if gauge_width == 0 {
+        return;
+    }
+    let ratio = if gauge.maximum == 0 {
+        0.0
+    } else {
+        f64::from(gauge.value) / f64::from(gauge.maximum)
+    };
+    frame.render_widget(
+        Gauge::default()
+            .ratio(ratio.clamp(0.0, 1.0))
+            .label("")
+            .gauge_style(gauge.style),
+        Rect::new(
+            inner.x.saturating_add(gauge.x_offset),
+            gauge.y,
+            gauge_width,
+            1,
+        ),
+    );
+}
 
 pub(super) fn background_media_occlusion_areas(
     frame_area: Rect,
@@ -201,6 +261,9 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
         ActiveModalPopupKind::ThreadActionMenu => {
             let count = state.thread_action_row_count();
             (count > 0).then(|| action_menu_area(frame_area, count))
+        }
+        ActiveModalPopupKind::VoiceParticipantAudio => {
+            Some(voice_participant_audio_popup_area(frame_area))
         }
     }
 }

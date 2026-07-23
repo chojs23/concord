@@ -366,15 +366,34 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
         encrypted_extension_body_len: 0,
         payload_offset: 12,
     };
+    let mapped_user_id = Id::new(41);
 
     assert_eq!(
-        voice_playback_frame(&VoiceMediaPayload::Plain(b"opus".to_vec()), &header),
+        voice_playback_frame(
+            &VoiceMediaPayload::Plain(b"opus".to_vec()),
+            &header,
+            Some(mapped_user_id),
+        ),
+        Some(VoicePlaybackFrame {
+            ssrc: 9,
+            user_id: Some(mapped_user_id),
+            sequence: 7,
+            timestamp: 8,
+            opus: b"opus".to_vec(),
+        })
+    );
+    assert_eq!(
+        voice_playback_frame(
+            &VoiceMediaPayload::Plain(b"unmapped-opus".to_vec()),
+            &header,
+            None,
+        ),
         Some(VoicePlaybackFrame {
             ssrc: 9,
             user_id: None,
             sequence: 7,
             timestamp: 8,
-            opus: b"opus".to_vec(),
+            opus: b"unmapped-opus".to_vec(),
         })
     );
     assert_eq!(
@@ -384,10 +403,11 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
                 opus: b"dave-opus".to_vec(),
             },
             &header,
+            Some(mapped_user_id),
         ),
         Some(VoicePlaybackFrame {
             ssrc: 9,
-            user_id: Some(42),
+            user_id: Some(Id::new(42)),
             sequence: 7,
             timestamp: 8,
             opus: b"dave-opus".to_vec(),
@@ -397,6 +417,7 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
         voice_playback_frame(
             &VoiceMediaPayload::DaveUnexpectedPlain { payload_len: 4 },
             &header,
+            Some(mapped_user_id),
         ),
         None
     );
@@ -404,6 +425,7 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
         voice_playback_frame(
             &VoiceMediaPayload::DaveMissingUser { payload_len: 4 },
             &header,
+            Some(mapped_user_id),
         ),
         None
     );
@@ -426,7 +448,7 @@ fn test_playback_frame_with_timestamp(
 ) -> VoicePlaybackFrame {
     VoicePlaybackFrame {
         ssrc,
-        user_id,
+        user_id: user_id.map(Id::new),
         sequence,
         timestamp,
         opus: vec![sequence as u8],
@@ -569,7 +591,7 @@ fn voice_playout_buffer_emits_packet_loss_for_missing_sequence() {
         buffer.next_frame(playout_start + VOICE_PLAYBACK_FRAME_DURATION),
         Some(VoicePlayoutFrame::PacketLoss {
             ssrc: 9,
-            user_id: Some(42),
+            user_id: Some(Id::new(42)),
             sequence: 11,
             timestamp_step: DISCORD_OPUS_TIMESTAMP_INCREMENT,
         })
@@ -613,7 +635,7 @@ fn voice_playout_buffer_uses_10ms_step_for_packet_loss() {
         buffer.next_frame(playout_start + Duration::from_millis(10)),
         Some(VoicePlayoutFrame::PacketLoss {
             ssrc: 9,
-            user_id: Some(42),
+            user_id: Some(Id::new(42)),
             sequence: 11,
             timestamp_step: 480,
         })
@@ -689,11 +711,45 @@ fn voice_decode_state_outputs_one_poll_quantum_per_mix() {
 }
 
 #[test]
-fn voice_decoded_samples_clamp_mixed_peaks() {
-    let mixed = mix_voice_decoded_samples(&[vec![1.0, 1.0], vec![1.0, 1.0]])
-        .expect("same-tick decoded frames should mix");
+fn voice_decode_state_applies_participant_settings_before_final_output_limit() {
+    let mut state = VoicePlaybackDecodeState::default();
+    let poll_samples =
+        VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS);
+    state.replace_participant_playback_settings(HashMap::from([
+        (
+            Id::new(10),
+            VoiceParticipantPlaybackSettings {
+                volume: VoiceParticipantVolumePercent::new(200),
+                muted: false,
+            },
+        ),
+        (
+            Id::new(11),
+            VoiceParticipantPlaybackSettings {
+                muted: true,
+                ..VoiceParticipantPlaybackSettings::default()
+            },
+        ),
+    ]));
+    state.push_decoded_samples_for_user(1, Some(Id::new(10)), vec![0.75; poll_samples]);
+    state.push_decoded_samples_for_user(2, Some(Id::new(11)), vec![1.0; poll_samples]);
 
-    assert_eq!(mixed, vec![1.0, 1.0]);
+    let mixed = state
+        .next_pending_mix()
+        .expect("audible participant should produce a mix");
+
+    assert!(mixed.iter().all(|sample| (*sample - 1.5).abs() < 0.0001));
+
+    #[cfg(feature = "voice-playback")]
+    {
+        let reduced_after_participant_boost = apply_voice_playback_gain_and_limit(mixed[0], 0.5);
+        assert_voice_sample_near(reduced_after_participant_boost, 0.75);
+
+        let boosted_quieter_peak = apply_voice_playback_gain_and_limit(0.75, 2.0);
+        let boosted_louder_peak = apply_voice_playback_gain_and_limit(1.0, 2.0);
+        assert!(boosted_quieter_peak < boosted_louder_peak);
+        assert!(boosted_louder_peak <= VOICE_SOFT_LIMIT_CEILING);
+    }
 }
 
 #[test]
@@ -712,22 +768,35 @@ fn voice_post_process_reduces_alternating_high_frequency_noise() {
 #[test]
 fn extra_output_channels_use_converted_silence() {
     let mut u8_output = [0u8; 4];
-    write_voice_output_frame(&mut u8_output, 1.0, -1.0, f32_sample_to_u8);
+    write_voice_output_frame(&mut u8_output, 0.5, -0.5, 1.0, f32_sample_to_u8);
     assert_eq!(
         u8_output,
-        [255, 0, f32_sample_to_u8(0.0), f32_sample_to_u8(0.0)]
+        [
+            f32_sample_to_u8(0.5),
+            f32_sample_to_u8(-0.5),
+            f32_sample_to_u8(0.0),
+            f32_sample_to_u8(0.0)
+        ]
     );
 
     let mut u16_output = [0u16; 4];
-    write_voice_output_frame(&mut u16_output, 1.0, -1.0, f32_sample_to_u16);
+    write_voice_output_frame(&mut u16_output, 0.5, -0.5, 1.0, f32_sample_to_u16);
     assert_eq!(
         u16_output,
-        [u16::MAX, 0, f32_sample_to_u16(0.0), f32_sample_to_u16(0.0),]
+        [
+            f32_sample_to_u16(0.5),
+            f32_sample_to_u16(-0.5),
+            f32_sample_to_u16(0.0),
+            f32_sample_to_u16(0.0),
+        ]
     );
 
     let mut i16_output = [1i16; 4];
-    write_voice_output_frame(&mut i16_output, 1.0, -1.0, f32_sample_to_i16);
-    assert_eq!(i16_output, [i16::MAX, i16::MIN + 1, 0, 0]);
+    write_voice_output_frame(&mut i16_output, 0.5, -0.5, 1.0, f32_sample_to_i16);
+    assert_eq!(
+        i16_output,
+        [f32_sample_to_i16(0.5), f32_sample_to_i16(-0.5), 0, 0]
+    );
 }
 
 fn assert_voice_sample_near(actual: f32, expected: f32) {
@@ -902,32 +971,71 @@ fn microphone_gate_hangover_keeps_short_quiet_gaps_open() {
 fn voice_volume_scales_i16_pcm_frame() {
     let mut frame = vec![1000, -1000, i16::MAX, i16::MIN];
 
-    apply_voice_volume_to_i16_frame(&mut frame, VoiceVolumePercent::new(50));
+    let limited =
+        apply_voice_microphone_gain_and_limit(&mut frame, VoiceVolumePercent::new(50).gain());
 
     assert_eq!(frame, vec![500, -500, 16384, -16384]);
+    assert_eq!(limited, 0);
+
+    let mut boosted = vec![1000, -1000, 20_000, -20_000];
+    let limited =
+        apply_voice_microphone_gain_and_limit(&mut boosted, VoiceVolumePercent::new(200).gain());
+
+    assert_eq!(boosted[0..2], [2000, -2000]);
+    assert!(boosted[2] < i16::MAX);
+    assert!(boosted[3] > i16::MIN);
+    assert_eq!(boosted[2], -boosted[3]);
+    assert_eq!(limited, 2);
 }
 
 #[test]
 fn voice_microphone_transmit_boost_increases_pcm_by_half() {
     let mut frame = vec![1000, -1000];
 
-    apply_voice_microphone_gain(&mut frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
+    let limited = apply_voice_microphone_gain_and_limit(&mut frame, VOICE_MIC_TRANSMIT_BOOST_GAIN);
 
     assert_eq!(frame, vec![1500, -1500]);
+    assert_eq!(limited, 0);
 }
 
 #[test]
 fn voice_microphone_protection_soft_limits_extreme_samples() {
     let mut frame = vec![1000, -1000, i16::MAX, i16::MIN];
 
-    let limited = protect_voice_microphone_frame(&mut frame);
+    let limited = apply_voice_microphone_gain_and_limit(&mut frame, 1.0);
 
     assert_eq!(frame[0], 1000);
     assert_eq!(frame[1], -1000);
     assert!(frame[2] < i16::MAX);
     assert!(frame[3] > i16::MIN);
-    assert_eq!(frame[2], -frame[3]);
+    assert!((i32::from(frame[2]) + i32::from(frame[3])).abs() <= 1);
     assert_eq!(limited, 2);
+}
+
+#[cfg(feature = "voice-playback")]
+#[test]
+fn voice_microphone_conditioning_combines_gain_before_soft_limiting() {
+    let mut frame = vec![1000, 12_000, 20_000, -12_000, -20_000];
+    let mut microphone_gate = VoiceMicrophoneGateState::default();
+    let mut transmit_stats = VoiceUdpTransmitStats::default();
+
+    condition_voice_microphone_frame(
+        &mut frame,
+        VoiceCaptureGate {
+            enabled: true,
+            microphone_sensitivity: MicrophoneSensitivityDb::default(),
+            microphone_volume: VoiceVolumePercent::new(200),
+        },
+        &mut microphone_gate,
+        &mut transmit_stats,
+    );
+
+    assert_eq!(frame[0], 3000);
+    assert!(frame[1] < frame[2]);
+    assert!(frame[2] < i16::MAX);
+    assert_eq!(frame[1], -frame[3]);
+    assert_eq!(frame[2], -frame[4]);
+    assert_eq!(transmit_stats.limited_samples, 4);
 }
 
 #[test]
@@ -1054,7 +1162,7 @@ fn voice_microphone_overload_gain_keeps_shouted_frame_audible() {
 
     let gain = voice_microphone_overload_gain(&shouted)
         .expect("clipped shouted frame should be gain-reduced");
-    apply_voice_microphone_gain(&mut shouted, gain);
+    apply_voice_microphone_gain_and_limit(&mut shouted, gain);
 
     assert_eq!(gain, VOICE_MIC_OVERLOAD_ATTENUATION_GAIN);
     assert!(shouted.iter().any(|sample| *sample > 0));

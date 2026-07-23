@@ -75,6 +75,7 @@ impl CommandDispatcher {
             command @ (AppCommand::JoinVoiceChannel { .. }
             | AppCommand::UpdateVoiceState { .. }
             | AppCommand::UpdateVoiceCapturePermission { .. }
+            | AppCommand::UpdateVoiceParticipantPlayback { .. }
             | AppCommand::LeaveVoiceChannel { .. }) => {
                 voice_commands::handle(self.client.clone(), command).await;
             }
@@ -146,13 +147,20 @@ fn runs_inline(command: &AppCommand) -> bool {
         command,
         AppCommand::SetSelectedGuild { .. }
             | AppCommand::SetSelectedMessageChannel { .. }
+            | AppCommand::JoinVoiceChannel { .. }
+            | AppCommand::UpdateVoiceState { .. }
             | AppCommand::UpdateVoiceCapturePermission { .. }
+            | AppCommand::UpdateVoiceParticipantPlayback { .. }
+            | AppCommand::LeaveVoiceChannel { .. }
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::discord::{MicrophoneSensitivityDb, VoiceScope, VoiceVolumePercent, ids::Id};
+    use crate::discord::{
+        MicrophoneSensitivityDb, VoiceParticipantPlaybackSettings, VoiceScope, VoiceVolumePercent,
+        ids::Id,
+    };
 
     use super::*;
 
@@ -171,6 +179,32 @@ mod tests {
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
             microphone_volume: VoiceVolumePercent::default(),
             voice_output_volume: VoiceVolumePercent::default(),
+        }));
+        assert!(runs_inline(&AppCommand::UpdateVoiceParticipantPlayback {
+            user_id: Id::new(3),
+            settings: VoiceParticipantPlaybackSettings::default(),
+        }));
+        assert!(runs_inline(&AppCommand::JoinVoiceChannel {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Id::new(2),
+            self_mute: false,
+            self_deaf: false,
+            allow_microphone_transmit: true,
+            microphone_sensitivity: MicrophoneSensitivityDb::default(),
+            microphone_volume: VoiceVolumePercent::default(),
+            voice_output_volume: VoiceVolumePercent::default(),
+            participant_playback_settings: Vec::new(),
+        }));
+        assert!(runs_inline(&AppCommand::UpdateVoiceState {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Id::new(2),
+            self_mute: true,
+            self_deaf: false,
+        }));
+        assert!(runs_inline(&AppCommand::LeaveVoiceChannel {
+            scope: VoiceScope::Guild(Id::new(1)),
+            self_mute: false,
+            self_deaf: false,
         }));
 
         assert!(!runs_inline(&AppCommand::LoadMessageHistory {

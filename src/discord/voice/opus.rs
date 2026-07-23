@@ -25,15 +25,16 @@ use super::audio_buffer::VoiceAudioOutputStats;
 use super::playback::VoiceAudioOutput;
 use super::playback::{
     VoicePlaybackFrame, VoicePlaybackGate, VoicePlaybackPlayoutBuffers, VoicePlaybackPostProcess,
-    VoicePlayoutFrame, clamp_voice_sample,
+    VoicePlayoutFrame,
 };
 use super::{
     DISCORD_OPUS_20MS_STEREO_SAMPLES, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL,
     DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE, OPUS_MAX_ENCODED_FRAME_BYTES,
     OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL, VOICE_OUTPUT_STATS_LOG_INTERVAL,
     VOICE_PLAYBACK_FRAME_QUEUE, VOICE_PLAYBACK_POLL_DURATION,
-    VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL,
+    VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL, VoiceParticipantPlaybackSettings,
 };
+use crate::discord::ids::{Id, marker::UserMarker};
 use crate::logging;
 
 #[allow(dead_code)]
@@ -62,13 +63,23 @@ struct VoiceDecodedAudio {
 #[derive(Default)]
 pub(super) struct VoicePlaybackDecodeState {
     decoders: HashMap<u32, OpusDecoder>,
-    pending_samples: HashMap<u32, VecDeque<f32>>,
+    pending_samples: HashMap<u32, PendingVoiceSamples>,
+    participant_playback_settings: HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
+}
+
+#[derive(Default)]
+struct PendingVoiceSamples {
+    user_id: Option<Id<UserMarker>>,
+    samples: VecDeque<f32>,
 }
 
 impl VoiceOpusDecode {
     #[cfg(not(feature = "voice-playback"))]
     pub(super) fn start(
         playback_gate: VoicePlaybackGate,
+        participant_playback_rx: tokio::sync::watch::Receiver<
+            HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
+        >,
         audio_handle: &tokio::runtime::Handle,
     ) -> Self {
         let _ = playback_gate;
@@ -76,6 +87,7 @@ impl VoiceOpusDecode {
         let task = audio_handle.spawn(run_voice_playback_decode(
             frames_rx,
             VoiceDecodedAudio::decode_only(),
+            participant_playback_rx,
         ));
         logging::debug(
             "voice",
@@ -87,6 +99,9 @@ impl VoiceOpusDecode {
     #[cfg(feature = "voice-playback")]
     pub(super) fn start(
         playback_gate: VoicePlaybackGate,
+        participant_playback_rx: tokio::sync::watch::Receiver<
+            HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
+        >,
         audio_handle: &tokio::runtime::Handle,
     ) -> Self {
         let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
@@ -98,7 +113,11 @@ impl VoiceOpusDecode {
                     audio_output.samples_tx.clone(),
                     Arc::clone(&audio_output.stats),
                 );
-                let task = audio_handle.spawn(run_voice_playback_decode(frames_rx, decoded_audio));
+                let task = audio_handle.spawn(run_voice_playback_decode(
+                    frames_rx,
+                    decoded_audio,
+                    participant_playback_rx,
+                ));
                 logging::debug(
                     "voice",
                     "voice Opus playback worker started with audio output",
@@ -119,6 +138,7 @@ impl VoiceOpusDecode {
                 let task = audio_handle.spawn(run_voice_playback_decode(
                     frames_rx,
                     VoiceDecodedAudio::decode_only(),
+                    participant_playback_rx,
                 ));
                 Self {
                     frames_tx,
@@ -239,8 +259,14 @@ impl VoiceOpusEncode {
 async fn run_voice_playback_decode(
     mut frames_rx: mpsc::Receiver<VoicePlaybackFrame>,
     decoded_audio: VoiceDecodedAudio,
+    mut participant_playback_rx: tokio::sync::watch::Receiver<
+        HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
+    >,
 ) {
     let mut decode_state = VoicePlaybackDecodeState::default();
+    decode_state
+        .replace_participant_playback_settings(participant_playback_rx.borrow_and_update().clone());
+    let mut participant_playback_open = true;
     let mut playout_buffers = VoicePlaybackPlayoutBuffers::default();
     let mut post_process = VoicePlaybackPostProcess::default();
     let mut playout_tick = interval(VOICE_PLAYBACK_POLL_DURATION);
@@ -256,6 +282,14 @@ async fn run_voice_playback_decode(
                     break;
                 };
                 playout_buffers.push(frame, Instant::now());
+            }
+            changed = participant_playback_rx.changed(), if participant_playback_open => {
+                match changed {
+                    Ok(()) => decode_state.replace_participant_playback_settings(
+                        participant_playback_rx.borrow_and_update().clone(),
+                    ),
+                    Err(_) => participant_playback_open = false,
+                }
             }
             _ = playout_tick.tick() => {
                 let frames = playout_buffers.next_frames(Instant::now());
@@ -281,36 +315,73 @@ async fn run_voice_playback_decode(
 }
 
 impl VoicePlaybackDecodeState {
+    pub(super) fn replace_participant_playback_settings(
+        &mut self,
+        settings: HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
+    ) {
+        self.participant_playback_settings = settings;
+    }
+
     pub(super) fn next_mixed_samples(
         &mut self,
         frames: Vec<VoicePlayoutFrame>,
     ) -> Option<Vec<f32>> {
         for frame in frames {
             let ssrc = frame.ssrc();
+            let user_id = frame.user_id();
             if let Some(samples) = decode_voice_playout_frame(frame, &mut self.decoders) {
-                self.push_decoded_samples(ssrc, samples);
+                self.push_decoded_samples_for_user(ssrc, user_id, samples);
             }
         }
         self.next_pending_mix()
     }
 
+    #[cfg(test)]
     pub(super) fn push_decoded_samples(&mut self, ssrc: u32, samples: Vec<f32>) {
-        self.pending_samples
-            .entry(ssrc)
-            .or_default()
-            .extend(samples);
+        self.push_decoded_samples_for_user(ssrc, None, samples);
+    }
+
+    pub(super) fn push_decoded_samples_for_user(
+        &mut self,
+        ssrc: u32,
+        user_id: Option<Id<UserMarker>>,
+        samples: Vec<f32>,
+    ) {
+        let pending = self.pending_samples.entry(ssrc).or_default();
+        if user_id.is_some() {
+            pending.user_id = user_id;
+        }
+        pending.samples.extend(samples);
     }
 
     pub(super) fn next_pending_mix(&mut self) -> Option<Vec<f32>> {
         let chunk_len =
             VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS);
+        let participant_playback_settings = &self.participant_playback_settings;
         let chunks: Vec<Vec<f32>> = self
             .pending_samples
             .values_mut()
-            .filter_map(|samples| drain_voice_pending_chunk(samples, chunk_len))
+            .filter_map(|pending| {
+                let mut chunk = drain_voice_pending_chunk(&mut pending.samples, chunk_len)?;
+                let settings = pending
+                    .user_id
+                    .and_then(|user_id| participant_playback_settings.get(&user_id))
+                    .copied()
+                    .unwrap_or_default();
+                if settings.muted || settings.volume.value() == 0 {
+                    return None;
+                }
+                let gain = settings.volume.gain();
+                if gain != 1.0 {
+                    for sample in &mut chunk {
+                        *sample *= gain;
+                    }
+                }
+                Some(chunk)
+            })
             .collect();
         self.pending_samples
-            .retain(|_, samples| !samples.is_empty());
+            .retain(|_, pending| !pending.samples.is_empty());
         mix_voice_decoded_samples(&chunks)
     }
 }
@@ -402,7 +473,7 @@ pub(super) fn mix_voice_decoded_samples(decoded_frames: &[Vec<f32>]) -> Option<V
 
     let gain = voice_mix_gain(decoded_frames.len());
     for sample in &mut mixed {
-        *sample = clamp_voice_sample(*sample * gain);
+        *sample *= gain;
     }
     Some(mixed)
 }

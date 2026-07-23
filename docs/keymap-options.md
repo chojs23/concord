@@ -22,7 +22,8 @@ VoiceLeave = "<leader>vl"
 LeaveServer = { keys = ["l"], description = "leave server" }
 
 [keymap.channel_actions]
-MuteChannel = { keys = ["x"], description = "mute channel" }
+ToggleMute = { keys = ["x"], description = "mute channel" }
+VoiceParticipantAudio = { keys = ["v"], description = "participant audio" }
 
 [keymap.message_actions]
 OpenThread = { keys = ["t"], description = "open thread" }
@@ -83,7 +84,7 @@ by direct `[keymap]` actions, not by `[keymap.guild_actions]`,
 
 ```toml
 [keymap.channel_actions]
-MuteChannel = { keys = ["u", "<C-u>"], description = "mute channel" }
+ToggleMute = { keys = ["u", "<C-u>"], description = "mute channel" }
 
 [keymap.message_actions]
 GoToReferencedMessage = { keys = ["g"], description = "go to referenced message" }
@@ -134,8 +135,8 @@ Navigation and app actions:
 | `ScrollViewportUp`      | `"K"`                      | Scroll the focused pane viewport up.                                       |
 | `JumpTop`               | `"gg"`                     | Jump to the top.                                                           |
 | `JumpBottom`            | `"G"`                      | Jump to the bottom.                                                        |
-| `ScrollHorizontalLeft`  | `"H"`                      | Scroll focused pane horizontally left.                                     |
-| `ScrollHorizontalRight` | `"L"`                      | Scroll focused pane horizontally right.                                    |
+| `ScrollHorizontalLeft`  | `"H"`                      | Scroll left.                                                               |
+| `ScrollHorizontalRight` | `"L"`                      | Scroll right.                                                              |
 | `ResizePaneLeft`        | `["<A-h>", "<A-left>"]`    | Shrink the focused pane width.                                             |
 | `ResizePaneRight`       | `["<A-l>", "<A-right>"]`   | Grow the focused pane width.                                               |
 | `Quit`                  | `"q"`                      | Quit Concord.                                                              |
@@ -252,17 +253,17 @@ Server pane actions:
 ```toml
 [keymap.guild_actions]
 MarkAsRead = { keys = ["m"], description = "mark server as read" }
-MuteServer = { keys = ["u"], description = "mute server" }
+ToggleMute = { keys = ["u"], description = "mute server" }
 LeaveServer = { keys = ["l"], description = "leave server" }
 FolderSettings = { keys = ["r"], description = "folder settings" }
 ```
 
-| Scoped action    | Default | Action                                                                     |
-| ---------------- | ------- | -------------------------------------------------------------------------- |
-| `MarkAsRead`     | `m`     | Mark all unread viewable channels in the selected server read.             |
-| `MuteServer`     | `u`     | Mute or unmute the selected server. Also accepts `ToggleMute` as an alias. |
-| `LeaveServer`    | `l`     | Open confirmation to leave the selected server.                            |
-| `FolderSettings` | `r`     | Edit the selected server folder name and color.                            |
+| Scoped action    | Default | Action                                                         |
+| ---------------- | ------- | -------------------------------------------------------------- |
+| `MarkAsRead`     | `m`     | Mark all unread viewable channels in the selected server read. |
+| `ToggleMute`     | `u`     | Mute or unmute the selected server.                            |
+| `LeaveServer`    | `l`     | Open confirmation to leave the selected server.                |
+| `FolderSettings` | `r`     | Edit the selected server folder name and color.                |
 
 Channel pane actions:
 
@@ -270,20 +271,22 @@ Channel pane actions:
 [keymap.channel_actions]
 JoinVoice = { keys = ["e"], description = "join voice" }
 LeaveVoice = { keys = ["l"], description = "leave voice" }
+VoiceParticipantAudio = { keys = ["a"], description = "participant audio" }
 ShowPinnedMessages = { keys = ["p"], description = "show pinned messages" }
 ShowThreads = { keys = ["t"], description = "show threads" }
 MarkAsRead = { keys = ["m"], description = "mark as read" }
-MuteChannel = { keys = ["u"], description = "mute channel" }
+ToggleMute = { keys = ["u"], description = "mute channel" }
 ```
 
-| Scoped action        | Default | Action                                                                                      |
-| -------------------- | ------- | ------------------------------------------------------------------------------------------- |
-| `JoinVoice`          | `e`     | Join the selected voice channel.                                                            |
-| `LeaveVoice`         | `l`     | Leave the current Concord voice channel.                                                    |
-| `ShowPinnedMessages` | `p`     | Open the selected channel's pinned messages. Also accepts `LoadPinnedMessages` as an alias. |
-| `ShowThreads`        | `t`     | List threads for the selected channel.                                                      |
-| `MarkAsRead`         | `m`     | Mark the selected channel read.                                                             |
-| `MuteChannel`        | `u`     | Mute or unmute the selected channel or category. Also accepts `ToggleMute` as an alias.     |
+| Scoped action           | Default | Action                                                                  |
+| ----------------------- | ------- | ----------------------------------------------------------------------- |
+| `JoinVoice`             | `e`     | Join the selected voice channel.                                        |
+| `LeaveVoice`            | `l`     | Leave the current Concord voice channel.                                |
+| `VoiceParticipantAudio` | `a`     | Open local volume and mute controls for the selected voice participant. |
+| `ShowPinnedMessages`    | `p`     | Open the selected channel's pinned messages.                            |
+| `ShowThreads`           | `t`     | List threads for the selected channel.                                  |
+| `MarkAsRead`            | `m`     | Mark the selected channel read.                                         |
+| `ToggleMute`            | `u`     | Mute or unmute the selected channel or category.                        |
 
 Member pane actions:
 

@@ -4,21 +4,9 @@ pub(super) async fn run_voice_gateway_session(
     session: VoiceGatewaySession,
     events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
     status_publisher: VoiceStatusPublisher,
-    initial_capture_gate: VoiceCaptureGate,
-    capture_gate_rx: mpsc::UnboundedReceiver<VoiceCaptureGate>,
-    initial_playback_gate: VoicePlaybackGate,
-    playback_gate_rx: mpsc::UnboundedReceiver<VoicePlaybackGate>,
+    controls: VoiceGatewayControls,
 ) {
-    match connect_voice_gateway(
-        &session,
-        &status_publisher,
-        initial_capture_gate,
-        capture_gate_rx,
-        initial_playback_gate,
-        playback_gate_rx,
-    )
-    .await
-    {
+    match connect_voice_gateway(&session, &status_publisher, controls).await {
         Ok(()) => {
             status_publisher
                 .publish(
@@ -41,11 +29,15 @@ pub(super) async fn run_voice_gateway_session(
 pub(super) async fn connect_voice_gateway(
     session: &VoiceGatewaySession,
     status_publisher: &VoiceStatusPublisher,
-    initial_capture_gate: VoiceCaptureGate,
-    mut capture_gate_rx: mpsc::UnboundedReceiver<VoiceCaptureGate>,
-    initial_playback_gate: VoicePlaybackGate,
-    mut playback_gate_rx: mpsc::UnboundedReceiver<VoicePlaybackGate>,
+    controls: VoiceGatewayControls,
 ) -> Result<(), String> {
+    let VoiceGatewayControls {
+        initial_capture_gate,
+        mut capture_gate_rx,
+        initial_playback_gate,
+        mut playback_gate_rx,
+        participant_playback_rx,
+    } = controls;
     let url = voice_gateway_url(&session.endpoint)?;
     logging::debug("voice", format!("connecting voice websocket: {url}"));
     let connect_started = Instant::now();
@@ -217,6 +209,7 @@ pub(super) async fn connect_voice_gateway(
                                     dave_state: &dave_state,
                                     remote_speaking_tx: &remote_speaking_tx,
                                     current_playback_gate,
+                                    participant_playback_rx: participant_playback_rx.clone(),
                                     #[cfg(feature = "voice-playback")]
                                     voice_ready: voice_ready.as_ref(),
                                     #[cfg(feature = "voice-playback")]
@@ -361,6 +354,8 @@ struct VoiceSessionAudio<'a> {
     dave_state: &'a Arc<Mutex<VoiceDaveState>>,
     remote_speaking_tx: &'a mpsc::UnboundedSender<Id<UserMarker>>,
     current_playback_gate: VoicePlaybackGate,
+    participant_playback_rx:
+        watch::Receiver<HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>>,
     #[cfg(feature = "voice-playback")]
     voice_ready: Option<&'a VoiceTransportSession>,
     #[cfg(feature = "voice-playback")]
@@ -375,7 +370,11 @@ async fn start_voice_session_audio(
     audio: VoiceSessionAudio<'_>,
 ) {
     logging::debug("voice", "starting voice UDP receive task");
-    let opus_decode = VoiceOpusDecode::start(audio.current_playback_gate, audio.audio_handle);
+    let opus_decode = VoiceOpusDecode::start(
+        audio.current_playback_gate,
+        audio.participant_playback_rx,
+        audio.audio_handle,
+    );
     let playback_tx = Some(opus_decode.frames_tx.clone());
     child_tasks.replace_opus_decode(opus_decode);
     child_tasks.set_voice_playback_gate(audio.current_playback_gate);
@@ -705,7 +704,8 @@ pub(super) async fn run_voice_udp_receive(
                                         ),
                                     );
                                 }
-                                if let Some(frame) = voice_playback_frame(&media, &header)
+                                if let Some(frame) =
+                                    voice_playback_frame(&media, &header, remote_user_id)
                                     && let Some(tx) = playback_tx.as_ref()
                                 {
                                     let _ = tx.try_send(frame);
@@ -1036,10 +1036,13 @@ pub(super) fn parse_voice_binary_frame(payload: &[u8]) -> Result<VoiceBinaryFram
 pub(super) fn voice_playback_frame(
     media: &VoiceMediaPayload,
     header: &RtpHeader,
+    remote_user_id: Option<Id<UserMarker>>,
 ) -> Option<VoicePlaybackFrame> {
     let (user_id, opus) = match media {
-        VoiceMediaPayload::Plain(opus) => (None, opus.clone()),
-        VoiceMediaPayload::DaveDecrypted { user_id, opus } => (Some(*user_id), opus.clone()),
+        VoiceMediaPayload::Plain(opus) => (remote_user_id, opus.clone()),
+        VoiceMediaPayload::DaveDecrypted { user_id, opus } => {
+            (Id::new_checked(*user_id), opus.clone())
+        }
         VoiceMediaPayload::DaveUnexpectedPlain { .. }
         | VoiceMediaPayload::DaveMissingUser { .. }
         | VoiceMediaPayload::DaveNotReady { .. }

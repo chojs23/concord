@@ -6,6 +6,7 @@ use crate::tui::keybindings::{
     EmojiReactionPickerAction, KeyChord, NotificationInboxAction, OptionsPopupAction,
     PollVotePickerAction, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
     ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
+    VoiceParticipantAudioPopupAction,
 };
 use crate::tui::state::{ActiveModalPopupKind, ConfirmationButton, DashboardState};
 
@@ -71,6 +72,9 @@ pub(super) fn handle_popup_key(
         ActiveModalPopupKind::MessageActionMenu => handle_message_action_menu_key(state, key),
         ActiveModalPopupKind::AttachmentViewer => handle_attachment_viewer_key(state, key),
         ActiveModalPopupKind::UserProfile => handle_user_profile_popup_key(state, key),
+        ActiveModalPopupKind::VoiceParticipantAudio => {
+            handle_voice_participant_audio_popup_key(state, key)
+        }
     })
 }
 
@@ -85,7 +89,8 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::GuildLeaveConfirmation
         | ActiveModalPopupKind::ThreadDeleteConfirmation
         | ActiveModalPopupKind::PollVotePicker
-        | ActiveModalPopupKind::EmojiReactionPicker => PopupKeyPhase::Priority,
+        | ActiveModalPopupKind::EmojiReactionPicker
+        | ActiveModalPopupKind::VoiceParticipantAudio => PopupKeyPhase::Priority,
         ActiveModalPopupKind::MessageActionMenu
         | ActiveModalPopupKind::GuildActionMenu
         | ActiveModalPopupKind::ChannelActionMenu
@@ -100,6 +105,31 @@ fn popup_key_phase(kind: ActiveModalPopupKind) -> PopupKeyPhase {
         | ActiveModalPopupKind::ForumPostComposer
         | ActiveModalPopupKind::ThreadEdit
         | ActiveModalPopupKind::ThreadActionMenu => PopupKeyPhase::Deferred,
+    }
+}
+
+fn handle_voice_participant_audio_popup_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match state
+        .key_bindings()
+        .voice_participant_audio_popup_action(key)?
+    {
+        VoiceParticipantAudioPopupAction::Close => {
+            state.close_voice_participant_audio_popup();
+            None
+        }
+        VoiceParticipantAudioPopupAction::Select(action) => {
+            state.move_voice_participant_audio_selection(action);
+            None
+        }
+        VoiceParticipantAudioPopupAction::AdjustVolume(delta) => {
+            state.adjust_voice_participant_audio_volume(delta)
+        }
+        VoiceParticipantAudioPopupAction::ToggleMuted => {
+            state.activate_voice_participant_audio_field()
+        }
     }
 }
 

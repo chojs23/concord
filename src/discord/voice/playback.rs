@@ -19,12 +19,17 @@ use super::VOICE_AUDIO_OUTPUT_QUEUE;
 use super::audio_buffer::{VoiceAudioBuffer, VoiceAudioOutputStats};
 #[cfg(all(feature = "voice-playback", target_os = "linux"))]
 use super::log_captured_alsa_errors;
+#[cfg(feature = "voice-playback")]
+use super::soft_limit_voice_sample;
 use super::{
     DISCORD_OPUS_TIMESTAMP_INCREMENT, DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE,
     VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ, VOICE_PLAYBACK_JITTER_BUFFER_DELAY,
     VOICE_PLAYBACK_MAX_BUFFERED_FRAMES_PER_SSRC, VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES,
 };
-use crate::discord::VoiceVolumePercent;
+use crate::discord::{
+    VoiceVolumePercent,
+    ids::{Id, marker::UserMarker},
+};
 #[cfg(feature = "voice-playback")]
 use crate::logging;
 #[cfg(feature = "voice-playback")]
@@ -33,7 +38,7 @@ use crate::support::audio_output::{self, F32OutputSource};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct VoicePlaybackFrame {
     pub(super) ssrc: u32,
-    pub(super) user_id: Option<u64>,
+    pub(super) user_id: Option<Id<UserMarker>>,
     pub(super) sequence: u16,
     pub(super) timestamp: u32,
     pub(super) opus: Vec<u8>,
@@ -44,7 +49,7 @@ pub(super) enum VoicePlayoutFrame {
     Audio(VoicePlaybackFrame),
     PacketLoss {
         ssrc: u32,
-        user_id: Option<u64>,
+        user_id: Option<Id<UserMarker>>,
         sequence: u16,
         timestamp_step: u32,
     },
@@ -75,7 +80,7 @@ pub(super) struct VoicePlaybackPlayoutBuffer {
     next_playout_at: Option<Instant>,
     first_buffered_at: Option<Instant>,
     started: bool,
-    last_user_id: Option<u64>,
+    last_user_id: Option<Id<UserMarker>>,
     last_timestamp_step: Option<u32>,
     consecutive_missing: usize,
 }
@@ -101,7 +106,7 @@ impl VoicePlayoutFrame {
         }
     }
 
-    pub(super) fn user_id(&self) -> Option<u64> {
+    pub(super) fn user_id(&self) -> Option<Id<UserMarker>> {
         match self {
             Self::Audio(frame) => frame.user_id,
             Self::PacketLoss { user_id, .. } => *user_id,
@@ -570,17 +575,22 @@ impl F32OutputSource for VoiceOutputSource {
         if !self.playback_enabled.load(Ordering::Relaxed) {
             self.buffer.clear_pending();
             for frame in output.chunks_mut(channels) {
-                write_voice_output_frame(frame, 0.0, 0.0, convert);
+                write_voice_output_frame(frame, 0.0, 0.0, 1.0, convert);
             }
             return;
         }
         self.buffer.begin_output(callback_frames);
-        let gain = f32::from(self.playback_volume.load(Ordering::Relaxed).min(100)) / 100.0;
+        let gain = VoiceVolumePercent::new(self.playback_volume.load(Ordering::Relaxed)).gain();
         for frame in output.chunks_mut(channels) {
             let [left, right] = self.buffer.next_stereo_frame().unwrap_or([0.0, 0.0]);
-            write_voice_output_frame(frame, left * gain, right * gain, convert);
+            write_voice_output_frame(frame, left, right, gain, convert);
         }
     }
+}
+
+#[cfg(feature = "voice-playback")]
+pub(super) fn apply_voice_playback_gain_and_limit(sample: f32, gain: f32) -> f32 {
+    soft_limit_voice_sample(sample * gain)
 }
 
 #[cfg(feature = "voice-playback")]
@@ -588,25 +598,27 @@ pub(super) fn write_voice_output_frame<T>(
     output: &mut [T],
     left: f32,
     right: f32,
+    gain: f32,
     convert: fn(f32) -> T,
 ) where
     T: Default + Copy,
 {
     match output {
         [] => {}
-        [mono] => *mono = convert((left + right) * 0.5),
+        [mono] => {
+            *mono = convert(apply_voice_playback_gain_and_limit(
+                (left + right) * 0.5,
+                gain,
+            ));
+        }
         [first, second, rest @ ..] => {
-            *first = convert(left);
-            *second = convert(right);
+            *first = convert(apply_voice_playback_gain_and_limit(left, gain));
+            *second = convert(apply_voice_playback_gain_and_limit(right, gain));
             for sample in rest {
                 *sample = convert(0.0);
             }
         }
     }
-}
-
-pub(super) fn clamp_voice_sample(sample: f32) -> f32 {
-    sample.clamp(-1.0, 1.0)
 }
 
 #[cfg(feature = "voice-playback")]

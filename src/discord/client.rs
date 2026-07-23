@@ -11,7 +11,9 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
+use crate::discord::{
+    MicrophoneSensitivityDb, VoiceParticipantPlaybackSettings, VoiceVolumePercent,
+};
 use reqwest::header::HeaderValue;
 use tokio::{
     sync::{Mutex as AsyncMutex, mpsc, watch},
@@ -487,6 +489,27 @@ impl DiscordClient {
             .voice_events_tx
             .send(VoiceRuntimeEvent::Requested(Some(voice)));
         Ok(())
+    }
+
+    pub fn replace_voice_participant_playback_settings(
+        &self,
+        settings: Vec<(Id<UserMarker>, VoiceParticipantPlaybackSettings)>,
+    ) {
+        let _ = self
+            .voice_events_tx
+            .send(VoiceRuntimeEvent::ReplaceParticipantPlaybackSettings(
+                settings,
+            ));
+    }
+
+    pub fn update_voice_participant_playback_settings(
+        &self,
+        user_id: Id<UserMarker>,
+        settings: VoiceParticipantPlaybackSettings,
+    ) {
+        let _ = self
+            .voice_events_tx
+            .send(VoiceRuntimeEvent::UpdateParticipantPlaybackSettings { user_id, settings });
     }
 
     pub async fn update_presence_status(

@@ -25,10 +25,18 @@ fn options_popup_lines_show_selected_toggle_state() {
         DisplayOptionItem {
             enabled: true,
             value: Some("balanced".to_owned()),
-            gauge_percent: Some(55),
+            gauge: Some(DisplayOptionGauge::new(55, 100)),
             effective: true,
             description: "Attachment and embed previews.",
             ..DisplayOptionItem::test("Image preview quality")
+        },
+        DisplayOptionItem {
+            enabled: true,
+            value: Some("150%".to_owned()),
+            gauge: Some(DisplayOptionGauge::new(150, 200)),
+            effective: true,
+            description: "Received voice level.",
+            ..DisplayOptionItem::test("Voice volume")
         },
     ];
 
@@ -41,6 +49,12 @@ fn options_popup_lines_show_selected_toggle_state() {
     );
     theme::with_test_theme(custom, || {
         let lines = options_popup_lines(&items, 1, items.len(), 0, 120);
+        let text = |line: &ratatui::text::Line<'_>| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        };
 
         assert_eq!(lines[0].spans[1].content, "[ ] ");
         assert_eq!(lines[0].spans[4].style.bg, Some(description_background));
@@ -48,9 +62,12 @@ fn options_popup_lines_show_selected_toggle_state() {
         assert_eq!(lines[1].spans[1].content, "[x] ");
         assert_eq!(lines[1].spans[4].style.bg, Some(description_background));
         assert_eq!(lines[2].spans[1].content, "[balanced] ");
-        assert!(lines[3].spans[1].content.contains("-100 dB"));
-        assert!(lines[3].spans[3].content.contains("0 dB"));
-        assert_eq!(lines.len(), 4);
+        assert!(lines[3].spans[0].content.contains("-100 dB"));
+        assert!(lines[3].spans[2].content.contains("0 dB"));
+        assert!(lines[5].spans[0].content.contains("0%"));
+        assert!(lines[5].spans[2].content.contains("200%"));
+        assert_eq!(text(&lines[5]).find("200%"), Some(41));
+        assert_eq!(lines.len(), 6);
     });
 }
 

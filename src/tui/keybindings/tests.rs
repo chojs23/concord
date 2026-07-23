@@ -259,9 +259,18 @@ fn scoped_action_keymaps_override_pane_action_shortcuts_and_labels() {
         )]
         .into_iter()
         .collect(),
-        channel_actions: [("ToggleMute".to_owned(), KeymapBinding::one("x"))]
-            .into_iter()
-            .collect(),
+        channel_actions: [
+            ("ToggleMute".to_owned(), KeymapBinding::one("x")),
+            (
+                "VoiceParticipantAudio".to_owned(),
+                KeymapBinding {
+                    keys: vec!["v".to_owned()],
+                    description: Some("participant audio".to_owned()),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
         message_actions: [("GoToReferencedMessage".to_owned(), KeymapBinding::one("g"))]
             .into_iter()
             .collect(),
@@ -304,6 +313,19 @@ fn scoped_action_keymaps_override_pane_action_shortcuts_and_labels() {
     assert_eq!(
         key_bindings.channel_action_shortcuts(&channel_actions, 0),
         char_chords(&['x'])
+    );
+    let participant_actions = [ChannelActionItem::new(
+        ChannelActionKind::ParticipantAudioSettings,
+        "Audio settings",
+        ActionAvailability::Enabled,
+    )];
+    assert_eq!(
+        key_bindings.channel_action_shortcuts(&participant_actions, 0),
+        char_chords(&['v'])
+    );
+    assert_eq!(
+        key_bindings.channel_action_label(&participant_actions[0]),
+        "participant audio"
     );
 
     let message_actions = [MessageActionItem::new(

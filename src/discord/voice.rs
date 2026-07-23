@@ -64,11 +64,11 @@ use dave::{VoiceSpeakingState, looks_like_dave_media_frame};
 use playback::VoiceAudioOutput;
 #[cfg(test)]
 use playback::VoicePlaybackPlayoutBuffer;
-#[cfg(all(test, feature = "voice-playback"))]
-use playback::write_voice_output_frame;
 use playback::{VoicePlaybackFrame, VoicePlaybackGate};
 #[cfg(test)]
 use playback::{VoicePlaybackPostProcess, VoicePlayoutFrame};
+#[cfg(all(test, feature = "voice-playback"))]
+use playback::{apply_voice_playback_gain_and_limit, write_voice_output_frame};
 #[cfg(any(test, feature = "voice-playback"))]
 use rtp::VoiceOutboundRtpState;
 #[cfg(test)]
@@ -108,7 +108,10 @@ use crate::discord::{
     },
 };
 use crate::logging;
-pub use levels::{MicrophoneSensitivityDb, VoiceVolumePercent};
+pub use levels::{
+    MicrophoneSensitivityDb, VoiceParticipantPlaybackSettings, VoiceParticipantVolumePercent,
+    VoiceVolumePercent,
+};
 
 use super::{client::publish_app_event, events::AppEvent};
 
@@ -186,11 +189,11 @@ const VOICE_MIC_OVERLOAD_RECOVERY_START_GAIN: f32 = 0.15;
 #[cfg(any(test, feature = "voice-playback"))]
 const VOICE_MIC_TRANSMIT_BOOST_GAIN: f32 = 1.5;
 #[cfg(any(test, feature = "voice-playback"))]
-const VOICE_MIC_SOFT_LIMIT_THRESHOLD: f32 = 0.85;
+const VOICE_SOFT_LIMIT_THRESHOLD: f32 = 0.85;
 #[cfg(any(test, feature = "voice-playback"))]
-const VOICE_MIC_SOFT_LIMIT_CEILING: f32 = 0.95;
+const VOICE_SOFT_LIMIT_CEILING: f32 = 0.95;
 #[cfg(any(test, feature = "voice-playback"))]
-const VOICE_MIC_SOFT_LIMIT_CURVE: f32 = 4.0;
+const VOICE_SOFT_LIMIT_CURVE: f32 = 4.0;
 const OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL: usize = 5760;
 const VOICE_PLAYBACK_FRAME_QUEUE: usize = 256;
 #[cfg(any(test, feature = "voice-playback"))]
@@ -205,6 +208,23 @@ const VOICE_PLAYBACK_MAX_BUFFERED_FRAMES_PER_SSRC: usize = 32;
 const VOICE_PLAYBACK_MAX_CONSECUTIVE_PLC_FRAMES: usize = 5;
 #[cfg(feature = "voice-playback")]
 const VOICE_OUTPUT_UNDERRUN_FADE_MILLIS: u32 = 5;
+
+/// Keeps boosted capture and playback samples bounded without flattening every
+/// peak to the same hard-clipped value.
+#[cfg(any(test, feature = "voice-playback"))]
+fn soft_limit_voice_sample(sample: f32) -> f32 {
+    let magnitude = sample.abs();
+    if magnitude <= VOICE_SOFT_LIMIT_THRESHOLD {
+        return sample;
+    }
+
+    let excess = (magnitude - VOICE_SOFT_LIMIT_THRESHOLD) / (1.0 - VOICE_SOFT_LIMIT_THRESHOLD);
+    let shaped = VOICE_SOFT_LIMIT_THRESHOLD
+        + (VOICE_SOFT_LIMIT_CEILING - VOICE_SOFT_LIMIT_THRESHOLD)
+            * (1.0 - 1.0 / (1.0 + VOICE_SOFT_LIMIT_CURVE * excess));
+    sample.signum() * shaped.min(VOICE_SOFT_LIMIT_CEILING)
+}
+
 const VOICE_OUTPUT_LOW_PASS_CUTOFF_HZ: f32 = 8_000.0;
 #[cfg(feature = "voice-playback")]
 const VOICE_AUDIO_OUTPUT_QUEUE: usize = 64;
@@ -245,6 +265,11 @@ type VoiceWriter = Arc<Mutex<futures::stream::SplitSink<VoiceGatewayStream, WsMe
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum VoiceRuntimeEvent {
     Requested(Option<CurrentVoiceConnectionState>),
+    ReplaceParticipantPlaybackSettings(Vec<(Id<UserMarker>, VoiceParticipantPlaybackSettings)>),
+    UpdateParticipantPlaybackSettings {
+        user_id: Id<UserMarker>,
+        settings: VoiceParticipantPlaybackSettings,
+    },
     CurrentUserReady(Option<Id<UserMarker>>),
     VoiceState(VoiceStateInfo),
     VoiceServer(VoiceServerInfo),
@@ -558,6 +583,15 @@ struct VoiceCaptureGate {
     enabled: bool,
     microphone_sensitivity: MicrophoneSensitivityDb,
     microphone_volume: VoiceVolumePercent,
+}
+
+struct VoiceGatewayControls {
+    initial_capture_gate: VoiceCaptureGate,
+    capture_gate_rx: mpsc::UnboundedReceiver<VoiceCaptureGate>,
+    initial_playback_gate: VoicePlaybackGate,
+    playback_gate_rx: mpsc::UnboundedReceiver<VoicePlaybackGate>,
+    participant_playback_rx:
+        watch::Receiver<HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>>,
 }
 
 #[cfg(feature = "voice-playback")]
