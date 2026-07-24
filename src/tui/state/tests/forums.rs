@@ -1864,16 +1864,30 @@ fn thread_notification_settings_submenu_emits_command() {
 
 #[test]
 fn thread_notification_settings_marks_current_level_after_update() {
-    // After a ThreadNotificationLevelUpdate event, the row matching the new
-    // flags should have the [x] prefix and others should have [ ].
+    // Discord preserves HAS_INTERACTED alongside the notification level. A
+    // local level change must keep that bit while the menu interprets only the
+    // notification bits.
     let mut state = thread_action_menu_state();
     follow_selected_forum_post(&mut state);
 
-    // Simulate the optimistic update setting flags to 2 (All messages).
+    state.push_event(AppEvent::ThreadMemberUpdate {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(31),
+        flags: Some(9),
+    });
     state.push_event(AppEvent::ThreadNotificationLevelUpdate {
         channel_id: Id::new(31),
         flags: 2,
     });
+
+    assert_eq!(
+        state
+            .discord
+            .cache
+            .channel(Id::new(31))
+            .and_then(|channel| channel.current_user_thread_notification_flags),
+        Some(3)
+    );
 
     state.open_selected_thread_actions();
     for _ in 0..7 {

@@ -9,6 +9,8 @@ use crate::discord::{
 
 use crate::discord::state::DiscordState;
 
+const THREAD_NOTIFICATION_FLAGS_MASK: u64 = (1 << 1) | (1 << 2) | (1 << 3);
+
 pub(crate) fn is_thread_kind(kind: &str) -> bool {
     matches!(
         kind,
@@ -44,8 +46,8 @@ pub struct ChannelState {
     pub available_tags: Vec<ForumTagInfo>,
     pub applied_tags: Vec<Id<ForumTagMarker>>,
     pub current_user_joined_thread: bool,
-    /// Current user's notification level for this thread (2=all, 4=mentions,
-    /// 8=none). Optimistic only; `None` is unknown (treated as 4).
+    /// Discord's raw current-user thread member flags. Notification settings
+    /// use bits 1 through 3, while other bits remain preserved.
     pub current_user_thread_notification_flags: Option<u64>,
     pub recipients: Vec<ChannelRecipientState>,
     /// Channel-level permission overrides used by `can_view_channel`. Threads
@@ -134,6 +136,12 @@ impl ChannelState {
 
     pub fn thread_pinned(&self) -> Option<bool> {
         self.flags.map(|flags| flags & (1 << 1) != 0)
+    }
+
+    pub fn thread_notification_level_flags(&self) -> Option<u64> {
+        self.current_user_thread_notification_flags
+            .map(|flags| flags & THREAD_NOTIFICATION_FLAGS_MASK)
+            .filter(|flags| *flags != 0)
     }
 
     pub fn requires_forum_tag(&self) -> bool {
@@ -369,10 +377,12 @@ impl DiscordState {
                 available_tags: channel.available_tags.clone(),
                 applied_tags: channel.applied_tags.clone(),
                 current_user_joined_thread,
-                // Never comes from the gateway; preserved across upserts so an
-                // optimistic update from the command handler is not lost.
-                current_user_thread_notification_flags: existing
-                    .and_then(|e| e.current_user_thread_notification_flags),
+                current_user_thread_notification_flags: channel
+                    .current_user_thread_notification_flags
+                    .or_else(|| {
+                        existing
+                            .and_then(|existing| existing.current_user_thread_notification_flags)
+                    }),
                 recipients,
                 permission_overwrites,
                 // Preserve across upserts: a partial CHANNEL_UPDATE that omits
@@ -394,6 +404,20 @@ impl DiscordState {
     ) {
         if let Some(channel) = self.navigation.channels.get_mut(&channel_id) {
             channel.current_user_thread_notification_flags = Some(flags);
+        }
+    }
+
+    pub(in crate::discord) fn set_thread_notification_level(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        flags: u64,
+    ) {
+        if let Some(channel) = self.navigation.channels.get_mut(&channel_id) {
+            let current_flags = channel.current_user_thread_notification_flags.unwrap_or(0);
+            channel.current_user_thread_notification_flags = Some(
+                (current_flags & !THREAD_NOTIFICATION_FLAGS_MASK)
+                    | (flags & THREAD_NOTIFICATION_FLAGS_MASK),
+            );
         }
     }
 

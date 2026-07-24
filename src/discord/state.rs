@@ -328,8 +328,13 @@ impl DiscordState {
                     self.set_current_user_thread_membership(update.channel_id, false);
                 }
             }
-            AppEvent::ThreadMemberUpdate { channel_id, .. } => {
+            AppEvent::ThreadMemberUpdate {
+                channel_id, flags, ..
+            } => {
                 self.set_current_user_thread_membership(*channel_id, true);
+                if let Some(flags) = flags {
+                    self.set_thread_notification_flags(*channel_id, *flags);
+                }
             }
             AppEvent::ForumPostsLoaded {
                 threads,
@@ -692,7 +697,7 @@ impl DiscordState {
                 self.upsert_notification_settings(&settings.notification_settings);
             }
             AppEvent::ThreadNotificationLevelUpdate { channel_id, flags } => {
-                self.set_thread_notification_flags(*channel_id, *flags);
+                self.set_thread_notification_level(*channel_id, *flags);
             }
             AppEvent::GatewayDispatchReceived { .. }
             | AppEvent::GatewayError { .. }

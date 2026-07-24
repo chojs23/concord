@@ -240,6 +240,7 @@ pub enum AppEvent {
     ThreadMemberUpdate {
         guild_id: Option<Id<GuildMarker>>,
         channel_id: Id<ChannelMarker>,
+        flags: Option<u64>,
     },
     MessageCreate {
         message: MessageInfo,
@@ -1611,16 +1612,13 @@ impl AppEventKind {
             AppEventKind::GuildCreate
             | AppEventKind::GuildUpdate
             | AppEventKind::GuildOnboardingUpdate
-            | AppEventKind::GuildDelete
             | AppEventKind::ThreadListSync
             | AppEventKind::ThreadMembersUpdateDispatch
-            | AppEventKind::ThreadMemberUpdate
             | AppEventKind::ChannelUpsert
-            | AppEventKind::ChannelDelete
-            | AppEventKind::Ready => AppEventMetadata::mutating(SnapshotAreas::all()),
+            | AppEventKind::Ready => AppEventMetadata::mutating(SnapshotAreas::navigation()),
 
             AppEventKind::ForumPostsLoaded => {
-                AppEventMetadata::mutating_effect(SnapshotAreas::all())
+                AppEventMetadata::mutating_effect(SnapshotAreas::navigation_and_message())
             }
 
             AppEventKind::MessageCreate => {
@@ -1660,12 +1658,17 @@ impl AppEventKind {
                 AppEventMetadata::mutating_effect(SnapshotAreas::navigation_and_message())
             }
 
-            AppEventKind::GuildMemberAdd
+            AppEventKind::GuildDelete
+            | AppEventKind::ChannelDelete
+            | AppEventKind::GuildMemberListUpdate
+            | AppEventKind::GuildMembersChunk
+            | AppEventKind::GuildMemberAdd
             | AppEventKind::GuildMemberUpsert
             | AppEventKind::RelationshipsLoaded
             | AppEventKind::RelationshipUpsert
             | AppEventKind::UserIdentityUpdate
-            | AppEventKind::RelationshipRemove => {
+            | AppEventKind::RelationshipRemove
+            | AppEventKind::VoiceStateUpdate => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation_and_message())
             }
 
@@ -1674,11 +1677,8 @@ impl AppEventKind {
             | AppEventKind::GuildRoleUpsert
             | AppEventKind::GuildRoleDelete
             | AppEventKind::GuildEmojisUpdate
-            | AppEventKind::GuildMemberListUpdate
-            | AppEventKind::GuildMembersChunk
             | AppEventKind::GuildMemberRemove
             | AppEventKind::PresenceUpdate
-            | AppEventKind::VoiceStateUpdate
             | AppEventKind::VoiceSpeakingUpdate
             | AppEventKind::CallDelete
             | AppEventKind::TypingStart
@@ -1686,7 +1686,8 @@ impl AppEventKind {
             | AppEventKind::UserNoteLoaded
             | AppEventKind::CurrentUserVerification
             | AppEventKind::UserGuildSettingsInit
-            | AppEventKind::UserGuildSettingsUpdate => {
+            | AppEventKind::UserGuildSettingsUpdate
+            | AppEventKind::ThreadMemberUpdate => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation())
             }
 
@@ -1754,7 +1755,7 @@ impl AppEvent {
     pub(crate) fn metadata(&self) -> AppEventMetadata {
         match self {
             AppEvent::ChannelUpsert(channel) if channel_upsert_needs_effect_delivery(channel) => {
-                AppEventMetadata::mutating_effect(SnapshotAreas::all())
+                AppEventMetadata::mutating_effect(SnapshotAreas::navigation())
             }
             _ => self.kind().metadata(),
         }

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use crate::discord::{
@@ -94,7 +96,10 @@ pub(crate) fn parse_channel_info(
                 .collect()
         })
         .unwrap_or_default();
-    let current_user_joined_thread = parse_current_user_thread_membership(value, &kind);
+    let current_user_thread_member = parse_current_user_thread_member(value, &kind);
+    let current_user_joined_thread = current_user_thread_member.map(|_| true);
+    let current_user_thread_notification_flags =
+        current_user_thread_member.and_then(|member| member.get("flags").and_then(Value::as_u64));
 
     Some(ChannelInfo {
         guild_id,
@@ -114,6 +119,7 @@ pub(crate) fn parse_channel_info(
         available_tags: parse_forum_tags(value.get("available_tags")),
         applied_tags: parse_id_array(value.get("applied_tags")),
         current_user_joined_thread,
+        current_user_thread_notification_flags,
         recipients,
         permission_overwrites,
         is_message_request: value.get("is_message_request").and_then(Value::as_bool),
@@ -144,18 +150,14 @@ fn parse_forum_tag(value: &Value) -> Option<ForumTagInfo> {
     })
 }
 
-fn parse_current_user_thread_membership(value: &Value, kind: &str) -> Option<bool> {
+fn parse_current_user_thread_member<'a>(value: &'a Value, kind: &str) -> Option<&'a Value> {
     if !matches!(
         kind,
         "GuildNewsThread" | "GuildPublicThread" | "GuildPrivateThread"
     ) {
         return None;
     }
-    if value.get("member").is_some() || value.get("thread_member").is_some() {
-        Some(true)
-    } else {
-        None
-    }
+    value.get("member").or_else(|| value.get("thread_member"))
 }
 
 fn parse_thread_metadata(value: &Value) -> Option<ThreadMetadataInfo> {
@@ -269,7 +271,16 @@ pub(super) fn parse_channel_delete(data: &Value) -> Option<AppEvent> {
 
 pub(super) fn parse_thread_list_sync(data: &Value) -> Vec<AppEvent> {
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
-    let threads: Vec<ChannelInfo> = data
+    let thread_members = clone_array(data.get("members"));
+    let current_user_members: BTreeMap<Id<ChannelMarker>, Option<u64>> = thread_members
+        .iter()
+        .filter_map(|member| {
+            let channel_id = member.get("id").and_then(parse_id::<ChannelMarker>)?;
+            let flags = member.get("flags").and_then(Value::as_u64);
+            Some((channel_id, flags))
+        })
+        .collect();
+    let mut threads: Vec<ChannelInfo> = data
         .get("threads")
         .and_then(Value::as_array)
         .map(|threads| {
@@ -279,6 +290,14 @@ pub(super) fn parse_thread_list_sync(data: &Value) -> Vec<AppEvent> {
                 .collect()
         })
         .unwrap_or_default();
+    for thread in &mut threads {
+        if let Some(flags) = current_user_members.get(&thread.channel_id) {
+            thread.current_user_joined_thread = Some(true);
+            if let Some(flags) = flags {
+                thread.current_user_thread_notification_flags = Some(*flags);
+            }
+        }
+    }
     if threads.is_empty() {
         return Vec::new();
     }
@@ -287,7 +306,7 @@ pub(super) fn parse_thread_list_sync(data: &Value) -> Vec<AppEvent> {
             guild_id,
             channel_ids: parse_id_array(data.get("channel_ids")),
             threads,
-            thread_members: clone_array(data.get("members")),
+            thread_members,
             extra_fields: extra_fields(data, &["guild_id", "channel_ids", "threads", "members"]),
         },
     }]
@@ -304,6 +323,7 @@ pub(super) fn parse_thread_member_update(data: &Value) -> Vec<AppEvent> {
     vec![AppEvent::ThreadMemberUpdate {
         guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
         channel_id,
+        flags: data.get("flags").and_then(Value::as_u64),
     }]
 }
 

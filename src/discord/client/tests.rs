@@ -55,6 +55,84 @@ async fn publish_event_sends_matching_snapshot_and_effect_revisions() {
     assert_eq!(effect.revision, 1);
     assert_eq!(state_snapshot.revision.global, 1);
     assert_eq!(state_snapshot.revision.message, 1);
+
+    client
+        .publish_event(AppEvent::ThreadMemberUpdate {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            flags: Some(9),
+        })
+        .await;
+
+    snapshots.changed().await.expect("snapshot is published");
+    let snapshot = *snapshots.borrow_and_update();
+
+    assert_eq!(snapshot.global, 2);
+    assert_eq!(snapshot.navigation, 2);
+    assert_eq!(snapshot.message, 1);
+    assert_eq!(snapshot.detail, 0);
+
+    client
+        .publish_event(AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(Id::new(10)),
+        })
+        .await;
+
+    snapshots.changed().await.expect("snapshot is published");
+    let snapshot = *snapshots.borrow_and_update();
+
+    assert_eq!(snapshot.global, 3);
+    assert_eq!(snapshot.navigation, 3);
+    assert_eq!(snapshot.message, 1);
+    assert_eq!(snapshot.detail, 0);
+
+    client
+        .publish_event(AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo::test(Id::new(1), Some(Id::new(2)), Id::new(99)),
+        })
+        .await;
+
+    snapshots.changed().await.expect("snapshot is published");
+    let snapshot = *snapshots.borrow_and_update();
+
+    assert_eq!(snapshot.global, 4);
+    assert_eq!(snapshot.navigation, 4);
+    assert_eq!(snapshot.message, 4);
+    assert_eq!(snapshot.detail, 0);
+
+    client
+        .publish_event(AppEvent::ChannelDelete {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+        })
+        .await;
+
+    snapshots.changed().await.expect("snapshot is published");
+    let snapshot = *snapshots.borrow_and_update();
+
+    assert_eq!(snapshot.global, 5);
+    assert_eq!(snapshot.navigation, 5);
+    assert_eq!(snapshot.message, 5);
+    assert_eq!(snapshot.detail, 0);
+
+    client
+        .publish_event(AppEvent::ChannelUpsert(ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            parent_id: Some(Id::new(2)),
+            ..ChannelInfo::test(Id::new(3), "GuildPublicThread")
+        }))
+        .await;
+
+    snapshots.changed().await.expect("snapshot is published");
+    let snapshot = *snapshots.borrow_and_update();
+    let effect = effects.recv().await.expect("effect is published");
+
+    assert_eq!(snapshot.global, 6);
+    assert_eq!(snapshot.navigation, 6);
+    assert_eq!(snapshot.message, 5);
+    assert_eq!(snapshot.detail, 0);
+    assert_eq!(effect.revision, 6);
 }
 
 #[tokio::test]
@@ -171,8 +249,8 @@ async fn normal_channel_upsert_updates_snapshot_without_effect_delivery() {
 
     assert_eq!(snapshot.global, 1);
     assert_eq!(snapshot.navigation, 1);
-    assert_eq!(snapshot.message, 1);
-    assert_eq!(snapshot.detail, 1);
+    assert_eq!(snapshot.message, 0);
+    assert_eq!(snapshot.detail, 0);
     assert!(matches!(
         effects.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -194,8 +272,8 @@ async fn thread_channel_upsert_is_delivered_as_effect_for_tui_derived_state() {
 
     assert_eq!(snapshot.global, 1);
     assert_eq!(snapshot.navigation, 1);
-    assert_eq!(snapshot.message, 1);
-    assert_eq!(snapshot.detail, 1);
+    assert_eq!(snapshot.message, 0);
+    assert_eq!(snapshot.detail, 0);
     assert_eq!(effect.revision, 1);
     assert!(matches!(effect.event, AppEvent::ChannelUpsert(_)));
 }

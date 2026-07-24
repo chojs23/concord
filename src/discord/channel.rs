@@ -48,6 +48,9 @@ pub struct ChannelInfo {
     /// Whether Discord included a current-user thread membership object for
     /// this thread. `None` means the payload did not say either way.
     pub current_user_joined_thread: Option<bool>,
+    /// Discord's raw current-user thread member `flags` bitfield. This keeps
+    /// non-notification bits such as `HAS_INTERACTED` intact.
+    pub current_user_thread_notification_flags: Option<u64>,
     pub recipients: Option<Vec<ChannelRecipientInfo>>,
     /// Channel-level permission overrides. The empty default means a
     /// gateway/REST payload that omitted the field is treated as "no
@@ -133,6 +136,7 @@ impl ChannelInfo {
             available_tags: Vec::new(),
             applied_tags: Vec::new(),
             current_user_joined_thread: None,
+            current_user_thread_notification_flags: None,
             recipients: None,
             permission_overwrites: Vec::new(),
             is_message_request: None,

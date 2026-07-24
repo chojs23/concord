@@ -1523,7 +1523,7 @@ fn thread_channel_parser_marks_current_user_joined_when_member_is_present() {
             "parent_id": "2",
             "type": 11,
             "name": "release notes",
-            "member": { "id": "10", "user_id": "99" },
+            "member": { "id": "10", "user_id": "99", "flags": 9 },
             "thread_metadata": { "archived": false, "locked": false }
         }),
         None,
@@ -1531,10 +1531,11 @@ fn thread_channel_parser_marks_current_user_joined_when_member_is_present() {
     .expect("thread channel should parse");
 
     assert_eq!(channel.current_user_joined_thread, Some(true));
+    assert_eq!(channel.current_user_thread_notification_flags, Some(9));
 }
 
 #[test]
-fn raw_thread_members_update_carries_member_delta_ids() {
+fn raw_thread_member_updates_keep_current_user_state() {
     let joined = parse_user_account_event(
         &json!({
             "t": "THREAD_MEMBERS_UPDATE",
@@ -1557,6 +1558,18 @@ fn raw_thread_members_update_carries_member_delta_ids() {
         })
         .to_string(),
     );
+    let current_user = parse_user_account_event(
+        &json!({
+            "t": "THREAD_MEMBER_UPDATE",
+            "d": {
+                "id": "10",
+                "guild_id": "1",
+                "user_id": "99",
+                "flags": 9
+            }
+        })
+        .to_string(),
+    );
 
     assert!(matches!(
         joined.as_slice(),
@@ -1573,6 +1586,28 @@ fn raw_thread_members_update_carries_member_delta_ids() {
                 && update.added_user_ids.is_empty()
                 && update.removed_user_ids == vec![Id::new(99)]
     ));
+    assert!(matches!(
+        current_user.as_slice(),
+        [AppEvent::ThreadMemberUpdate {
+            guild_id,
+            channel_id,
+            flags: Some(9),
+        }] if *guild_id == Some(Id::new(1)) && *channel_id == Id::new(10)
+    ));
+
+    let mut state = DiscordState::default();
+    let thread = parse_channel_info(&thread_payload(10, "release notes"), None)
+        .expect("thread channel should parse");
+    state.apply_event(&AppEvent::ChannelUpsert(thread));
+    for event in &current_user {
+        state.apply_event(event);
+    }
+
+    let thread = state
+        .channel(Id::new(10))
+        .expect("thread should stay cached");
+    assert!(thread.current_user_joined_thread);
+    assert_eq!(thread.current_user_thread_notification_flags, Some(9));
 }
 
 #[test]
@@ -1653,7 +1688,10 @@ fn raw_thread_list_sync_upserts_all_threads() {
                     thread_payload(10, "release notes"),
                     thread_payload(11, "bug reports")
                 ],
-                "members": []
+                "members": [
+                    { "id": "10", "user_id": "99", "flags": 3 },
+                    { "id": "11", "user_id": "99", "flags": 8 }
+                ]
             }
         })
         .to_string(),
@@ -1666,8 +1704,16 @@ fn raw_thread_list_sync_upserts_all_threads() {
             assert_eq!(sync.threads.len(), 2);
             assert_eq!(sync.threads[0].channel_id, Id::new(10));
             assert_eq!(sync.threads[0].name, "release notes");
+            assert_eq!(
+                sync.threads[0].current_user_thread_notification_flags,
+                Some(3)
+            );
             assert_eq!(sync.threads[1].channel_id, Id::new(11));
             assert_eq!(sync.threads[1].name, "bug reports");
+            assert_eq!(
+                sync.threads[1].current_user_thread_notification_flags,
+                Some(8)
+            );
         }
         other => panic!("expected one ThreadListSync, got {other:?}"),
     }

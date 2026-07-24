@@ -347,7 +347,7 @@ impl DashboardState {
             .discord
             .cache
             .channel(channel_id)
-            .and_then(|ch| ch.current_user_thread_notification_flags)
+            .and_then(|channel| channel.thread_notification_level_flags())
             .unwrap_or(4);
         vec![
             ThreadNotificationItem::new("All messages", 2, current_flags),
