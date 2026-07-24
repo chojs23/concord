@@ -293,6 +293,20 @@ pub(super) fn parse_thread_list_sync(data: &Value) -> Vec<AppEvent> {
     }]
 }
 
+pub(super) fn parse_thread_member_update(data: &Value) -> Vec<AppEvent> {
+    let channel_id = data
+        .get("id")
+        .and_then(parse_id::<ChannelMarker>)
+        .or_else(|| data.get("channel_id").and_then(parse_id::<ChannelMarker>));
+    let Some(channel_id) = channel_id else {
+        return Vec::new();
+    };
+    vec![AppEvent::ThreadMemberUpdate {
+        guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
+        channel_id,
+    }]
+}
+
 pub(super) fn parse_thread_members_update(data: &Value) -> Vec<AppEvent> {
     let Some(channel_id) = data.get("id").and_then(parse_id::<ChannelMarker>) else {
         return Vec::new();

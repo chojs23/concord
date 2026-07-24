@@ -328,6 +328,9 @@ impl DiscordState {
                     self.set_current_user_thread_membership(update.channel_id, false);
                 }
             }
+            AppEvent::ThreadMemberUpdate { channel_id, .. } => {
+                self.set_current_user_thread_membership(*channel_id, true);
+            }
             AppEvent::ForumPostsLoaded {
                 threads,
                 first_messages,
