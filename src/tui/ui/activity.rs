@@ -1,7 +1,11 @@
-use crate::discord::{ActivityInfo, ActivityKind};
-use crate::tui::text::sanitize_for_display_width;
+use ratatui::text::{Line, Span};
 
-use super::types::EmojiImage;
+use crate::discord::{ActivityInfo, ActivityKind};
+use crate::tui::text::{sanitize_for_display_width, truncate_display_width_from};
+
+use super::{theme, types::EmojiImage};
+
+const ACTIVITY_IMAGE_WIDTH: usize = 2;
 
 /// Glyph rendered at the start of an activity primary line.
 #[derive(Clone, Debug)]
@@ -31,13 +35,89 @@ impl ActivityRender {
 
     #[cfg(test)]
     pub(super) fn to_display_string(&self) -> String {
-        match &self.leading {
-            ActivityLeading::None => self.body.clone(),
-            ActivityLeading::Icon(c) if self.body.is_empty() => c.to_string(),
-            ActivityLeading::Icon(c) => format!("{c} {}", self.body),
-            ActivityLeading::Image(_) if self.body.is_empty() => "  ".to_owned(),
-            ActivityLeading::Image(_) => format!("   {}", self.body),
+        compact_activity_line(self.clone(), 0, usize::MAX, 0)
+            .line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+}
+
+pub(super) struct ActivityImagePlacement {
+    pub(super) column: usize,
+    pub(super) url: String,
+}
+
+pub(super) struct CompactActivityLine {
+    pub(super) line: Line<'static>,
+    pub(super) image: Option<ActivityImagePlacement>,
+}
+
+/// Builds the compact activity row shared by list panes.
+///
+/// Each pane owns the columns before the activity and passes that value as
+/// `leading_width`. This function owns the layout after that boundary so icon
+/// spacing, the two-cell image placeholder, truncation, and image placement
+/// cannot drift between panes.
+pub(super) fn compact_activity_line(
+    render: ActivityRender,
+    leading_width: usize,
+    available_width: usize,
+    horizontal_scroll: usize,
+) -> CompactActivityLine {
+    let has_body = !render.body.is_empty();
+    let content_prefix_width = match &render.leading {
+        ActivityLeading::None => 0,
+        ActivityLeading::Icon(_) => 1 + usize::from(has_body),
+        ActivityLeading::Image(_) => ACTIVITY_IMAGE_WIDTH,
+    };
+    let body = truncate_display_width_from(
+        &render.body,
+        horizontal_scroll,
+        available_width
+            .saturating_sub(leading_width)
+            .saturating_sub(content_prefix_width),
+    );
+    let leading = Span::raw(" ".repeat(leading_width));
+    let body = Span::styled(
+        body,
+        theme::current().style(theme::HighlightGroup::Activity),
+    );
+
+    match render.leading {
+        ActivityLeading::Image(url) => CompactActivityLine {
+            line: Line::from(vec![
+                leading,
+                Span::raw(" ".repeat(ACTIVITY_IMAGE_WIDTH)),
+                body,
+            ]),
+            image: Some(ActivityImagePlacement {
+                column: leading_width,
+                url,
+            }),
+        },
+        ActivityLeading::Icon(icon) => {
+            let mut spans = vec![
+                leading,
+                Span::styled(
+                    icon.to_string(),
+                    theme::current().style(theme::HighlightGroup::PresenceOnline),
+                ),
+            ];
+            if has_body {
+                spans.push(Span::raw(" "));
+            }
+            spans.push(body);
+            CompactActivityLine {
+                line: Line::from(spans),
+                image: None,
+            }
         }
+        ActivityLeading::None => CompactActivityLine {
+            line: Line::from(vec![leading, body]),
+            image: None,
+        },
     }
 }
 
@@ -135,5 +215,47 @@ fn build_custom(activity: &ActivityInfo, emoji_images: &[EmojiImage<'_>]) -> Act
     ActivityRender {
         leading: ActivityLeading::None,
         body,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_activity_line_aligns_custom_image_with_icon() {
+        let leading_width = 4;
+        let available_width = 20;
+        let image = compact_activity_line(
+            ActivityRender {
+                leading: ActivityLeading::Image("https://example.com/emoji.png".to_owned()),
+                body: "status".to_owned(),
+            },
+            leading_width,
+            available_width,
+            0,
+        );
+        let icon = compact_activity_line(
+            ActivityRender {
+                leading: ActivityLeading::Icon('▶'),
+                body: "status".to_owned(),
+            },
+            leading_width,
+            available_width,
+            0,
+        );
+
+        let image_placement = image.image.expect("custom image placement");
+        assert_eq!(image_placement.column, leading_width);
+        assert_eq!(
+            image_placement.url,
+            "https://example.com/emoji.png".to_owned()
+        );
+        assert_eq!(image.line.spans[0].content, icon.line.spans[0].content);
+        assert_eq!(image.line.spans[1].content.as_ref(), "  ");
+        assert_eq!(image.line.spans[2].content.as_ref(), "status");
+        assert_eq!(icon.line.spans[1].content.as_ref(), "▶");
+        assert_eq!(icon.line.spans[2].content.as_ref(), " ");
+        assert_eq!(icon.line.spans[3].content.as_ref(), "status");
     }
 }

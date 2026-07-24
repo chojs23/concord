@@ -787,20 +787,6 @@ impl DashboardState {
         self.clamp_channel_viewport();
     }
 
-    pub(super) fn move_channel_selection_down_by(&mut self, distance: usize) {
-        let selected = self.selected_channel();
-        self.select_channel_entry_near(selected.saturating_add(distance), true);
-        self.navigation.channels.list.keep_selection_visible();
-        self.clamp_channel_viewport();
-    }
-
-    pub(super) fn move_channel_selection_up_by(&mut self, distance: usize) {
-        let selected = self.selected_channel();
-        self.select_channel_entry_near(selected.saturating_sub(distance), false);
-        self.navigation.channels.list.keep_selection_visible();
-        self.clamp_channel_viewport();
-    }
-
     pub(super) fn jump_channel_selection_top(&mut self) {
         self.select_channel_entry_near(0, true);
         self.navigation.channels.list.keep_selection_visible();
@@ -829,25 +815,27 @@ impl DashboardState {
             .map(ChannelPaneEntry::cursor)
     }
 
-    pub fn channel_scroll(&self) -> usize {
-        self.navigation.channels.list.scroll
-    }
-
+    #[cfg(test)]
     pub fn visible_channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
-        self.channel_pane_filtered_entries()
-            .into_iter()
-            .skip(self.navigation.channels.list.scroll)
-            .take(self.navigation.channels.list.content_height())
-            .collect()
+        let mut result = Vec::new();
+        let mut previous_entry_index = None;
+        for row in self.visible_channel_pane_rows() {
+            let entry_index = row.entry_index();
+            if previous_entry_index != Some(entry_index) {
+                result.push(row.entry().clone());
+                previous_entry_index = Some(entry_index);
+            }
+        }
+        result
     }
 
     pub fn set_channel_view_height(&mut self, height: usize) {
-        let len = self.channel_pane_filtered_entries().len();
-        let selected = self.navigation.channels.list.selected;
+        let selected_line = self.selected_channel_line_from_entries();
+        let len = self.count_channel_lines();
         self.navigation
             .channels
             .list
-            .set_view_height_and_clamp(height, selected, len);
+            .set_view_height_and_clamp(height, selected_line, len);
     }
 
     pub(super) fn restore_channel_cursor(&mut self, channel_id: Option<Id<ChannelMarker>>) {

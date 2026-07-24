@@ -5,6 +5,7 @@ use crate::discord::ids::marker::{GuildMarker, UserMarker};
 use crate::discord::{
     AppCommand, AppEvent, ForumPostArchiveState, MentionInfo, MessageSnapshotInfo,
 };
+mod channel_rows;
 mod channel_tree;
 mod channels;
 mod composer;
@@ -57,6 +58,7 @@ use scroll::clamp_selected_index;
 
 pub(in crate::tui) const MINIMUM_ESTABLISHED_DM_MESSAGES: usize = 5;
 
+pub(in crate::tui) use channel_rows::ChannelPaneRow;
 pub use composer::{
     CommandPickerEntry, ComposerLock, EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE,
     MentionPickerEntry, MentionPickerTarget,
@@ -91,6 +93,7 @@ pub use popups::{
     PollVotePickerState, ReactionUsersEntry, ReactionUsersPopupState, UserProfileSettingsField,
     UserProfileSettingsTab,
 };
+pub(in crate::tui) use presentation::primary_compact_activity;
 pub use presentation::{
     apply_discord_foreground, discord_role_mention_background, folder_style, normal_text_style,
     presence_marker, presence_style,

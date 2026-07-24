@@ -679,22 +679,6 @@ fn push_activity_lines(
     }
 }
 
-/// Profile-popup ordering. Intentionally differs from
-/// `panes::activity_priority`: the popup has the vertical space to lead with
-/// the user's Custom Status, while the member-list row uses one line per
-/// member and prefers game-at-a-glance signals.
-fn activity_priority(kind: ActivityKind) -> u8 {
-    match kind {
-        ActivityKind::Custom => 0,
-        ActivityKind::Streaming => 1,
-        ActivityKind::Playing => 2,
-        ActivityKind::Listening => 3,
-        ActivityKind::Watching => 4,
-        ActivityKind::Competing => 5,
-        ActivityKind::Unknown => 6,
-    }
-}
-
 fn activity_secondary_line(activity: &ActivityInfo) -> Option<String> {
     match activity.kind {
         ActivityKind::Custom => None,
@@ -722,5 +706,20 @@ fn push_wrapped_paragraph(lines: &mut Vec<Line<'static>>, text: &str, width: usi
         } else {
             push_wrapped_styled_popup_text(lines, trimmed, width, Style::default());
         }
+    }
+}
+
+/// Profile-popup ordering intentionally differs from the compact sidebar
+/// ordering. The popup has room to lead with Custom Status, while sidebar rows
+/// prefer game-at-a-glance signals.
+fn activity_priority(kind: ActivityKind) -> u8 {
+    match kind {
+        ActivityKind::Custom => 0,
+        ActivityKind::Streaming => 1,
+        ActivityKind::Playing => 2,
+        ActivityKind::Listening => 3,
+        ActivityKind::Watching => 4,
+        ActivityKind::Competing => 5,
+        ActivityKind::Unknown => 6,
     }
 }

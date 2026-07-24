@@ -56,14 +56,15 @@ use crate::{
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, ApplicationCommandInfo,
         ApplicationCommandOptionInfo, AttachmentDownloadId, AttachmentInfo, ChannelInfo,
-        ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
-        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildBoostTier, GuildFolder,
-        GuildMemberListUpdateInfo, GuildMemberState, GuildNotificationSettingsInfo, MemberInfo,
-        MentionInfo, MessageAttachmentUpload, MessageInfo, MessageInteractionInfo, MessageKind,
-        MessageSearchPage, MessageSearchQuery, MessageSnapshotInfo, MessageState, MutualGuildInfo,
-        NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo,
-        ReactionUserInfo, ReadStateInfo, ReplyInfo, RoleInfo, UserGuildSettingsInfo,
-        UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceStateInfo,
+        ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelRecipientState, ChannelState,
+        ChannelUnreadState, ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildBoostTier,
+        GuildFolder, GuildMemberListUpdateInfo, GuildMemberState, GuildNotificationSettingsInfo,
+        MemberInfo, MentionInfo, MessageAttachmentUpload, MessageInfo, MessageInteractionInfo,
+        MessageKind, MessageSearchPage, MessageSearchQuery, MessageSnapshotInfo, MessageState,
+        MutualGuildInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceStatus,
+        ReactionEmoji, ReactionInfo, ReactionUserInfo, ReadStateInfo, ReplyInfo, RoleInfo,
+        UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus,
+        VoiceStateInfo,
     },
     tui::{
         message::format::{

@@ -13,7 +13,8 @@ use super::scroll::{
     move_index_up, move_index_up_by, pane_content_height, scroll_list_down, scroll_list_up,
 };
 use super::{
-    ChannelPaneEntry, DashboardState, FocusPane, MemberEntry, MemberGroup, PaneFilterState,
+    ChannelPaneEntry, ChannelPaneRow, DashboardState, FocusPane, MemberEntry, MemberGroup,
+    PaneFilterState,
 };
 use crate::tui::text_input::TextInputState;
 
@@ -39,6 +40,12 @@ enum FocusedNavigationAction {
     ScrollViewportUp,
     ScrollHorizontalRight,
     ScrollHorizontalLeft,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChannelLineDirection {
+    Forward,
+    Backward,
 }
 
 #[derive(Debug)]
@@ -352,6 +359,16 @@ impl DashboardState {
 }
 
 impl DashboardState {
+    pub fn focused_channel_selection_line(
+        &self,
+        entries: &[ChannelPaneEntry<'_>],
+    ) -> Option<usize> {
+        if self.navigation.focus != FocusPane::Channels {
+            return None;
+        }
+        self.selected_channel_line(entries)
+    }
+
     pub fn selected_member(&self) -> usize {
         clamp_selected_index(
             self.navigation.members.list.selected,
@@ -382,6 +399,10 @@ impl DashboardState {
         }
     }
 
+    pub fn channel_scroll(&self) -> usize {
+        self.navigation.channels.list.scroll
+    }
+
     pub fn member_scroll(&self) -> usize {
         self.navigation.members.list.scroll
     }
@@ -396,6 +417,10 @@ impl DashboardState {
 
     pub fn member_horizontal_scroll(&self) -> usize {
         self.navigation.members.list.horizontal_scroll
+    }
+
+    pub fn channel_content_height(&self) -> usize {
+        self.navigation.channels.list.content_height()
     }
 
     pub fn member_content_height(&self) -> usize {
@@ -526,14 +551,26 @@ impl DashboardState {
             FocusedNavigationAction::JumpBottom => self.jump_channel_selection_bottom(),
             FocusedNavigationAction::HalfPageDown => {
                 let distance = self.navigation.channels.list.content_height() / 2;
-                self.move_channel_selection_down_by(distance.max(1));
+                let selected_line = self.selected_channel_line_from_entries();
+                self.select_channel_near_line(
+                    selected_line.saturating_add(distance.max(1)),
+                    ChannelLineDirection::Forward,
+                );
+                self.navigation.channels.list.keep_selection_visible();
+                self.clamp_channel_viewport();
             }
             FocusedNavigationAction::HalfPageUp => {
                 let distance = self.navigation.channels.list.content_height() / 2;
-                self.move_channel_selection_up_by(distance.max(1));
+                let selected_line = self.selected_channel_line_from_entries();
+                self.select_channel_near_line(
+                    selected_line.saturating_sub(distance.max(1)),
+                    ChannelLineDirection::Backward,
+                );
+                self.navigation.channels.list.keep_selection_visible();
+                self.clamp_channel_viewport();
             }
             FocusedNavigationAction::ScrollViewportDown => {
-                let len = self.channel_pane_filtered_entries().len();
+                let len = self.count_channel_lines();
                 self.navigation.channels.list.scroll_down(len);
             }
             FocusedNavigationAction::ScrollViewportUp => self.navigation.channels.list.scroll_up(),
@@ -733,15 +770,16 @@ impl DashboardState {
     }
 
     fn select_visible_channel_row(&mut self, row: usize) -> bool {
-        let index = self.navigation.channels.list.scroll.saturating_add(row);
-        let entries = self.channel_pane_filtered_entries();
-        if !entries
-            .get(index)
-            .is_some_and(ChannelPaneEntry::is_selectable)
-        {
+        let target_line = self.navigation.channels.list.scroll.saturating_add(row);
+        let rows = self.channel_pane_rows();
+        let Some(ChannelPaneRow::Entry { entry_index, entry }) = rows.get(target_line) else {
+            return false;
+        };
+        if !entry.is_selectable() {
             return false;
         }
-        self.navigation.channels.list.selected = index;
+
+        self.navigation.channels.list.selected = *entry_index;
         self.navigation.channels.list.keep_selection_visible();
         true
     }
@@ -836,12 +874,20 @@ impl DashboardState {
 
     pub(super) fn clamp_channel_viewport(&mut self) {
         let entries_len = self.channel_pane_filtered_entries().len();
-        self.navigation.channels.list.clamp_selected(entries_len);
-        let selected = self.navigation.channels.list.selected;
+        if entries_len == 0 {
+            self.navigation.channels.list.selected = 0;
+            self.navigation.channels.list.scroll = 0;
+            return;
+        }
+
+        self.navigation.channels.list.selected =
+            self.navigation.channels.list.selected.min(entries_len - 1);
+        let selected_line = self.selected_channel_line_from_entries();
+        let len = self.count_channel_lines();
         self.navigation
             .channels
             .list
-            .clamp_viewport(selected, entries_len);
+            .clamp_viewport(selected_line, len);
     }
 
     pub(super) fn clamp_member_viewport(&mut self) {
@@ -860,6 +906,52 @@ impl DashboardState {
             .members
             .list
             .clamp_viewport(selected_line, len);
+    }
+
+    pub(super) fn selected_channel_line(&self, entries: &[ChannelPaneEntry<'_>]) -> Option<usize> {
+        let selected_channel = self
+            .navigation
+            .channels
+            .list
+            .selected
+            .min(entries.len().saturating_sub(1));
+        self.channel_pane_rows_from_entries(entries)
+            .iter()
+            .position(|row| row.is_entry() && row.entry_index() == selected_channel)
+    }
+
+    pub(super) fn selected_channel_line_from_entries(&self) -> usize {
+        let entries = self.channel_pane_filtered_entries();
+        self.selected_channel_line(&entries).unwrap_or_default()
+    }
+
+    pub(super) fn count_channel_lines(&self) -> usize {
+        self.channel_pane_rows().len()
+    }
+
+    fn select_channel_near_line(&mut self, target_line: usize, direction: ChannelLineDirection) {
+        let rows = self.channel_pane_rows();
+        let candidate = match direction {
+            ChannelLineDirection::Forward => rows
+                .iter()
+                .skip(target_line)
+                .find(|row| row.is_entry() && row.entry().is_selectable())
+                .or_else(|| {
+                    rows.iter()
+                        .rev()
+                        .find(|row| row.is_entry() && row.entry().is_selectable())
+                }),
+            ChannelLineDirection::Backward => rows
+                .iter()
+                .take(target_line.saturating_add(1))
+                .rev()
+                .find(|row| row.entry().is_selectable()),
+        };
+
+        if let Some(row) = candidate {
+            let entry_index = row.entry_index();
+            self.navigation.channels.list.selected = entry_index;
+        }
     }
 
     pub(super) fn selected_member_line(&self) -> usize {

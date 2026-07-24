@@ -12,8 +12,9 @@ use crate::{
     config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo,
-        ChannelInfo, CustomEmojiInfo, EmbedInfo, MessageInfo, MessageSnapshotInfo,
-        PresenceEventFields, ProfileAvatarUpload, ReactionEmoji, ReactionInfo, UserProfileInfo,
+        ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedInfo, MessageInfo,
+        MessageSnapshotInfo, PresenceEventFields, PresenceStatus, ProfileAvatarUpload,
+        ReactionEmoji, ReactionInfo, UserProfileInfo,
     },
     tui::{
         message::time::test_message_id_for_unix_millis,
@@ -1692,6 +1693,54 @@ fn emoji_image_targets_keep_profile_popup_activity_emoji_while_modal_is_open() {
         targets,
         vec![EmojiImageTarget {
             url: "https://cdn.discordapp.com/emojis/60.png".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn emoji_image_targets_include_visible_non_selected_dm_activity() {
+    let alice = Id::new(10);
+    let bob = Id::new(20);
+    let mut state = DashboardState::new();
+    for (channel_id, user_id, name, last_message_id) in [
+        (Id::new(100), alice, "alice", Id::new(200)),
+        (Id::new(101), bob, "bob", Id::new(100)),
+    ] {
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            last_message_id: Some(last_message_id),
+            recipients: Some(vec![ChannelRecipientInfo {
+                status: Some(PresenceStatus::Online),
+                ..ChannelRecipientInfo::test(user_id, name)
+            }]),
+            ..ChannelInfo::test(channel_id, "dm")
+        }));
+    }
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: PresenceEventFields {
+            user_id: bob,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo {
+                emoji: Some(ActivityEmoji {
+                    name: "coffee".to_owned(),
+                    id: Some(Id::new(70)),
+                    animated: false,
+                }),
+                state: Some("Taking a break".to_owned()),
+                ..ActivityInfo::test(ActivityKind::Custom, "Custom Status")
+            }],
+        },
+    });
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.set_channel_view_height(10);
+
+    let targets = visible_emoji_image_targets(&state);
+
+    assert_eq!(
+        targets,
+        vec![EmojiImageTarget {
+            url: "https://cdn.discordapp.com/emojis/70.png".to_owned(),
         }]
     );
 }

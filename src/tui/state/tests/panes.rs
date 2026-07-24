@@ -145,6 +145,198 @@ fn channel_scroll_uses_scrolloff() {
     assert_eq!(state.channel_scroll(), 1);
 }
 
+fn dm_channel_with_recipient(
+    channel_id: Id<ChannelMarker>,
+    name: &str,
+    recipient_id: Id<UserMarker>,
+    recipient_name: &str,
+    last_message_id: u64,
+) -> ChannelInfo {
+    ChannelInfo {
+        last_message_id: Some(Id::new(last_message_id)),
+        recipients: Some(vec![ChannelRecipientInfo {
+            status: Some(PresenceStatus::Online),
+            ..ChannelRecipientInfo::test(recipient_id, recipient_name)
+        }]),
+        ..dm_channel_info(channel_id, name)
+    }
+}
+
+#[test]
+fn channel_navigation_skips_over_activity_subrows() {
+    let mut state = DashboardState::new();
+    let alice = Id::new(10);
+    let bob = Id::new(20);
+    let charlie = Id::new(30);
+
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        1,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(101),
+        "bob",
+        bob,
+        "bob",
+        2,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(102),
+        "charlie",
+        charlie,
+        "charlie",
+        3,
+    )));
+
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: bob,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Playing, "Concord")],
+        },
+    });
+
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(20);
+
+    // DMs sorted by last_message_id desc: charlie(3), bob(2), alice(1).
+    // Entries: 0 charlie, 1 bob (+activity), 2 alice.
+    // Lines: 0 charlie, 1 bob, 2 activity, 3 alice.
+    assert_eq!(state.selected_channel(), 0);
+    assert_eq!(state.count_channel_lines(), 4);
+
+    state.move_down();
+    assert_eq!(state.selected_channel(), 1);
+
+    state.move_down();
+    assert_eq!(state.selected_channel(), 2);
+}
+
+#[test]
+fn channel_half_page_scrolls_by_rendered_lines() {
+    let mut state = DashboardState::new();
+    let mut recipient_ids = Vec::new();
+    for id in 1u64..=4 {
+        let user_id: Id<UserMarker> = Id::new(id + 10);
+        recipient_ids.push(user_id);
+        state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+            Id::new(id + 100),
+            &format!("dm {id}"),
+            user_id,
+            &format!("user {id}"),
+            id,
+        )));
+    }
+
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: recipient_ids[1],
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Playing, "Game")],
+        },
+    });
+
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(5);
+
+    // DMs sorted by last_message_id desc: dm4, dm3, dm2(+activity), dm1.
+    // Lines: 0 dm4, 1 dm3, 2 dm2, 3 activity, 4 dm1.
+    assert_eq!(state.selected_channel(), 0);
+
+    state.half_page_down();
+    assert_eq!(state.selected_channel(), 2);
+}
+
+#[test]
+fn channel_half_page_up_resolves_activity_row_to_parent_dm() {
+    let mut state = DashboardState::new();
+    let alice = Id::new(10);
+    let bob = Id::new(20);
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        2,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(101),
+        "bob",
+        bob,
+        "bob",
+        1,
+    )));
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: alice,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Playing, "Game")],
+        },
+    });
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(2);
+    state.move_down();
+    assert_eq!(state.selected_channel(), 1);
+
+    state.half_page_up();
+
+    assert_eq!(state.selected_channel(), 0);
+}
+
+#[test]
+fn empty_custom_activity_does_not_reserve_channel_row() {
+    let mut state = DashboardState::new();
+    let alice = Id::new(10);
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        1,
+    )));
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: alice,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Custom, "Custom Status")],
+        },
+    });
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+
+    assert_eq!(state.count_channel_lines(), 1);
+}
+
+#[test]
+fn channel_focused_selection_line_accounts_for_scroll_offset() {
+    let mut state = state_with_many_channels(8);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(3);
+
+    for _ in 0..4 {
+        state.move_down();
+    }
+    assert_eq!(state.selected_channel(), 4);
+
+    let scroll = state.channel_scroll();
+    let entries = state.channel_pane_filtered_entries();
+    let focused = state.focused_channel_selection_line(&entries);
+    assert!(focused.is_some());
+    let absolute = state.selected_channel_line(&entries).unwrap();
+    assert_eq!(focused, Some(absolute));
+    assert!(absolute >= scroll);
+    assert!(absolute < scroll + 3);
+}
+
 #[test]
 fn member_scroll_uses_scrolloff() {
     let mut state = state_with_members(8);
