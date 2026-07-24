@@ -1,6 +1,8 @@
 use super::*;
 use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
+const MEMBER_ACTIVITY_LEADING_WIDTH: usize = 4;
+
 pub(in crate::tui::ui) fn render_members(
     frame: &mut Frame,
     area: Rect,
@@ -17,8 +19,8 @@ pub(in crate::tui::ui) fn render_members(
     let content_height = state.member_content_height();
     let visible_end = scroll.saturating_add(content_height);
     let mut lines: Vec<Line<'static>> = Vec::new();
-    // (absolute_line_index, cdn_url) for activity rows that have a loaded emoji image.
-    let mut emoji_line_urls: Vec<(usize, String)> = Vec::new();
+    // (absolute_line_index, relative_column, cdn_url) for loaded activity emoji images.
+    let mut emoji_line_urls: Vec<(usize, usize, String)> = Vec::new();
     let content_width = (area.width as usize).saturating_sub(2);
     let max_name_width = (area.width as usize).saturating_sub(7).max(8);
     let selected_line = state
@@ -106,58 +108,16 @@ pub(in crate::tui::ui) fn render_members(
                         && line_index < visible_end
                         && let Some(render) = primary_activity_summary(activities, emoji_images)
                     {
-                        let line = match render.leading {
-                            ActivityLeading::Image(url) => {
-                                let body = truncate_display_width_from(
-                                    &render.body,
-                                    h_scroll,
-                                    max_name_width.saturating_sub(3),
-                                );
-                                emoji_line_urls.push((line_index, url));
-                                Line::from(vec![
-                                    Span::raw("      "),
-                                    Span::styled(
-                                        body,
-                                        theme::current().style(theme::HighlightGroup::Activity),
-                                    ),
-                                ])
-                            }
-                            ActivityLeading::Icon(icon) => {
-                                let body = truncate_display_width_from(
-                                    &render.body,
-                                    h_scroll,
-                                    max_name_width.saturating_sub(2),
-                                );
-                                Line::from(vec![
-                                    Span::raw("    "),
-                                    Span::styled(
-                                        icon.to_string(),
-                                        theme::current()
-                                            .style(theme::HighlightGroup::PresenceOnline),
-                                    ),
-                                    Span::raw(" "),
-                                    Span::styled(
-                                        body,
-                                        theme::current().style(theme::HighlightGroup::Activity),
-                                    ),
-                                ])
-                            }
-                            ActivityLeading::None => {
-                                let body = truncate_display_width_from(
-                                    &render.body,
-                                    h_scroll,
-                                    max_name_width,
-                                );
-                                Line::from(vec![
-                                    Span::raw("    "),
-                                    Span::styled(
-                                        body,
-                                        theme::current().style(theme::HighlightGroup::Activity),
-                                    ),
-                                ])
-                            }
-                        };
-                        lines.push(line);
+                        let activity_line = compact_activity_line(
+                            render,
+                            MEMBER_ACTIVITY_LEADING_WIDTH,
+                            MEMBER_ACTIVITY_LEADING_WIDTH.saturating_add(max_name_width),
+                            h_scroll,
+                        );
+                        if let Some(image) = activity_line.image {
+                            emoji_line_urls.push((line_index, image.column, image.url));
+                        }
+                        lines.push(activity_line.line);
                     }
                     line_index += 1;
                 }
@@ -179,12 +139,14 @@ pub(in crate::tui::ui) fn render_members(
             list,
             emoji_images,
             &[],
-            emoji_line_urls.iter().map(|(line_idx, url)| EmojiSlot {
-                row_in_list: *line_idx as isize - scroll as isize,
-                col: content_area.x as isize + 4,
-                max_width: u16::MAX,
-                url: url.clone(),
-            }),
+            emoji_line_urls
+                .iter()
+                .map(|(line_idx, column, url)| EmojiSlot {
+                    row_in_list: *line_idx as isize - scroll as isize,
+                    col: content_area.x as isize + *column as isize,
+                    max_width: u16::MAX,
+                    url: url.clone(),
+                }),
         );
     }
 
@@ -270,38 +232,12 @@ pub(in crate::tui::ui) fn member_display_label(
     )
 }
 
-/// Priority: Custom > Streaming > Listening > Playing > Watching > Competing > Unknown.
-/// Returns `(display_text, Option<cdn_url>)`. When the cdn_url is `Some`, the
-/// text contains a 2-space placeholder at the start for the image overlay.
+/// Compact ordering prefers live game signals before a custom status:
+/// Streaming > Playing > Listening > Watching > Competing > Custom > Unknown.
 pub(in crate::tui::ui) fn primary_activity_summary(
     activities: &[ActivityInfo],
     emoji_images: &[EmojiImage<'_>],
 ) -> Option<ActivityRender> {
-    let mut sorted: Vec<&ActivityInfo> = activities.iter().collect();
-    sorted.sort_by_key(|a| activity_priority(a.kind));
-    let mut image_only_fallback: Option<ActivityRender> = None;
-    for activity in sorted {
-        let render = build_activity_render(activity, emoji_images, true);
-        if !render.body.trim().is_empty() {
-            return Some(render);
-        }
-        if matches!(render.leading, ActivityLeading::Image(_)) && image_only_fallback.is_none() {
-            image_only_fallback = Some(render);
-        }
-    }
-    image_only_fallback
-}
-
-/// Member-list ordering. Intentionally differs from
-/// `popups::activity_priority`: see [`primary_activity_summary`].
-fn activity_priority(kind: ActivityKind) -> u8 {
-    match kind {
-        ActivityKind::Streaming => 0,
-        ActivityKind::Playing => 1,
-        ActivityKind::Listening => 2,
-        ActivityKind::Watching => 3,
-        ActivityKind::Competing => 4,
-        ActivityKind::Custom => 5,
-        ActivityKind::Unknown => 6,
-    }
+    primary_compact_activity(activities)
+        .map(|activity| build_activity_render(activity, emoji_images, true))
 }

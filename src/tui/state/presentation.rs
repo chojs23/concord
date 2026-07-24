@@ -1,7 +1,8 @@
 use ratatui::style::{Color, Style};
 
 use crate::discord::{
-    ChannelRecipientState, ChannelState, GuildMemberState, PresenceStatus, RoleState,
+    ActivityInfo, ActivityKind, ChannelRecipientState, ChannelState, GuildMemberState,
+    PresenceStatus, RoleState,
 };
 use crate::tui::theme;
 
@@ -76,6 +77,53 @@ pub(super) fn is_online_status(status: PresenceStatus) -> bool {
         status,
         PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb
     )
+}
+
+/// Selects the single activity used by compact member and DM sidebar rows.
+///
+/// The predicate is media-independent so loading an emoji image can change the
+/// leading glyph without adding or removing a visual row.
+pub(in crate::tui) fn primary_compact_activity(
+    activities: &[ActivityInfo],
+) -> Option<&ActivityInfo> {
+    activities
+        .iter()
+        .filter(|activity| compact_activity_has_visible_content(activity))
+        .min_by_key(|activity| compact_activity_priority(activity.kind))
+}
+
+fn compact_activity_has_visible_content(activity: &ActivityInfo) -> bool {
+    let has_text = |value: Option<&str>| value.is_some_and(|value| !value.trim().is_empty());
+
+    match activity.kind {
+        ActivityKind::Custom => {
+            has_text(activity.state.as_deref())
+                || activity
+                    .emoji
+                    .as_ref()
+                    .is_some_and(|emoji| emoji.id.is_some() || !emoji.name.trim().is_empty())
+        }
+        ActivityKind::Listening => {
+            !activity.name.trim().is_empty() || has_text(activity.details.as_deref())
+        }
+        ActivityKind::Competing => true,
+        ActivityKind::Playing
+        | ActivityKind::Streaming
+        | ActivityKind::Watching
+        | ActivityKind::Unknown => !activity.name.trim().is_empty(),
+    }
+}
+
+fn compact_activity_priority(kind: ActivityKind) -> u8 {
+    match kind {
+        ActivityKind::Streaming => 0,
+        ActivityKind::Playing => 1,
+        ActivityKind::Listening => 2,
+        ActivityKind::Watching => 3,
+        ActivityKind::Competing => 4,
+        ActivityKind::Custom => 5,
+        ActivityKind::Unknown => 6,
+    }
 }
 
 pub(super) fn sorted_hoisted_roles<'a>(roles: &'a [&'a RoleState]) -> Vec<&'a RoleState> {

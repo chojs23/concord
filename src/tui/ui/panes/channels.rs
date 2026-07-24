@@ -1,4 +1,3 @@
-use super::members::primary_activity_summary;
 use super::*;
 use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
@@ -49,7 +48,8 @@ pub(in crate::tui::ui) fn render_channels(
     let (list_area, filter_area) = split_pane_filter_area(channels_area, filter_query.is_some());
 
     let channel_entries = state.channel_pane_filtered_entries();
-    let channel_line_count = state.channel_entry_line_count(&channel_entries);
+    let channel_rows = state.channel_pane_rows_from_entries(&channel_entries);
+    let channel_line_count = channel_rows.len();
     let all_channel_entries;
     let populated_channel_entries = if state.channel_pane_filter_query().is_some() {
         all_channel_entries = state.channel_pane_entries();
@@ -71,15 +71,8 @@ pub(in crate::tui::ui) fn render_channels(
     let channel_scroll = state.channel_scroll();
     let content_height = state.channel_content_height();
     let selected_line = state.focused_channel_selection_line(&channel_entries);
-    let entries: Vec<_> = channel_entries
+    let entries: Vec<_> = channel_rows
         .iter()
-        .flat_map(|entry| {
-            std::iter::once((entry, false)).chain(
-                state
-                    .channel_entry_has_activity_row(entry)
-                    .then_some((entry, true)),
-            )
-        })
         .enumerate()
         .skip(channel_scroll)
         .take(content_height)
@@ -89,77 +82,50 @@ pub(in crate::tui::ui) fn render_channels(
         list_area.height as usize,
         channel_line_count,
     ));
-    let max_width = (list_area.width as usize)
-        .saturating_sub(selection_marker(false).content.width())
-        .saturating_sub(scrollbar_width);
+    let available_width = (list_area.width as usize).saturating_sub(scrollbar_width);
+    let selection_marker_width = selection_marker(false).content.width();
+    let max_width = available_width.saturating_sub(selection_marker_width);
     let horizontal_scroll = state.channel_horizontal_scroll();
-    let mut emoji_line_urls: Vec<(usize, String)> = Vec::new();
+    let mut emoji_line_urls: Vec<(usize, usize, String)> = Vec::new();
     let items: Vec<ListItem> = entries
         .iter()
-        .filter_map(|(line_index, (entry, is_activity_row))| {
-            if *is_activity_row {
+        .map(|(line_index, row)| {
+            if let ChannelPaneRow::Activity {
+                entry, activity, ..
+            } = row
+            {
                 let ChannelPaneEntry::Channel {
                     state: channel,
                     branch,
-                    ..
                 } = entry
                 else {
-                    return None;
+                    unreachable!("only DM channel entries have activity rows");
                 };
-                let recipient = channel.recipients.first()?;
-                let activities = state.user_activities(recipient.user_id);
-                let render = primary_activity_summary(activities, emoji_images)?;
+                let render = build_activity_render(activity, emoji_images, true);
                 let dm_prefix_width = dm_presence_dot_span(channel).map_or_else(
                     || channel_prefix(&channel.kind).width(),
                     |span| span.content.width(),
                 );
-                let leading_width = branch.prefix().width() + dm_prefix_width + 2;
-                let body_width = max_width.saturating_sub(leading_width);
-                let body = truncate_display_width_from(
-                    &render.body,
+                let branch_width = branch.prefix().width();
+                let leading_width = selection_marker_width + branch_width + dm_prefix_width;
+                let activity_line = compact_activity_line(
+                    render,
+                    leading_width,
+                    available_width,
                     horizontal_scroll,
-                    body_width.saturating_sub(
-                        usize::from(matches!(render.leading, ActivityLeading::Icon(_))) * 2,
-                    ),
                 );
-                let leading = " ".repeat(leading_width);
-                let line = match render.leading {
-                    ActivityLeading::Image(url) => {
-                        emoji_line_urls.push((*line_index, url));
-                        Line::from(vec![
-                            Span::raw(leading),
-                            Span::styled(
-                                body,
-                                theme::current().style(theme::HighlightGroup::Activity),
-                            ),
-                        ])
-                    }
-                    ActivityLeading::Icon(icon) => Line::from(vec![
-                        Span::raw(leading),
-                        Span::styled(
-                            icon.to_string(),
-                            theme::current().style(theme::HighlightGroup::PresenceOnline),
-                        ),
-                        Span::raw(" "),
-                        Span::styled(
-                            body,
-                            theme::current().style(theme::HighlightGroup::Activity),
-                        ),
-                    ]),
-                    ActivityLeading::None => Line::from(vec![
-                        Span::raw(leading),
-                        Span::styled(
-                            body,
-                            theme::current().style(theme::HighlightGroup::Activity),
-                        ),
-                    ]),
-                };
-                return Some(ListItem::new(line));
+                if let Some(image) = activity_line.image {
+                    emoji_line_urls.push((*line_index, image.column, image.url));
+                }
+                return ListItem::new(activity_line.line);
             }
 
+            let ChannelPaneRow::Entry { entry, .. } = row else {
+                unreachable!("activity rows return before entry rendering");
+            };
             let is_selected = selected_line == Some(*line_index);
             let is_active = dashboard.is_active_channel_entry(entry);
-            Some(styled_list_item(
+            styled_list_item(
                 match entry {
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
                         let arrow = if *collapsed { "▶ " } else { "▼ " };
@@ -375,7 +341,7 @@ pub(in crate::tui::ui) fn render_channels(
                     }
                 },
                 is_selected,
-            ))
+            )
         })
         .collect();
 
@@ -388,12 +354,14 @@ pub(in crate::tui::ui) fn render_channels(
             list_area,
             emoji_images,
             &[],
-            emoji_line_urls.iter().map(|(line_index, url)| EmojiSlot {
-                row_in_list: *line_index as isize - channel_scroll as isize,
-                col: list_area.x as isize + 2,
-                max_width: u16::MAX,
-                url: url.clone(),
-            }),
+            emoji_line_urls
+                .iter()
+                .map(|(line_index, column, url)| EmojiSlot {
+                    row_in_list: *line_index as isize - channel_scroll as isize,
+                    col: list_area.x as isize + *column as isize,
+                    max_width: u16::MAX,
+                    url: url.clone(),
+                }),
         );
     }
 

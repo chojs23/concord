@@ -255,6 +255,68 @@ fn channel_half_page_scrolls_by_rendered_lines() {
 }
 
 #[test]
+fn channel_half_page_up_resolves_activity_row_to_parent_dm() {
+    let mut state = DashboardState::new();
+    let alice = Id::new(10);
+    let bob = Id::new(20);
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        2,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(101),
+        "bob",
+        bob,
+        "bob",
+        1,
+    )));
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: alice,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Playing, "Game")],
+        },
+    });
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(2);
+    state.move_down();
+    assert_eq!(state.selected_channel(), 1);
+
+    state.half_page_up();
+
+    assert_eq!(state.selected_channel(), 0);
+}
+
+#[test]
+fn empty_custom_activity_does_not_reserve_channel_row() {
+    let mut state = DashboardState::new();
+    let alice = Id::new(10);
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        1,
+    )));
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: alice,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Custom, "Custom Status")],
+        },
+    });
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+
+    assert_eq!(state.count_channel_lines(), 1);
+}
+
+#[test]
 fn channel_focused_selection_line_accounts_for_scroll_offset() {
     let mut state = state_with_many_channels(8);
     state.focus_pane(FocusPane::Channels);

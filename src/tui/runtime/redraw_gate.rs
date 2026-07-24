@@ -18,7 +18,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt::{self, Write as _};
 use std::hash::{Hash as _, Hasher as _};
 
-use crate::tui::state::{DashboardState, NotificationInboxTab};
+use crate::tui::state::{ChannelPaneRow, DashboardState, NotificationInboxTab};
 
 /// Hash a value's `Debug` output into the running hasher. Lets us fingerprint
 /// view state without requiring every involved type to implement `Hash`.
@@ -68,13 +68,25 @@ pub(super) fn view_signature(state: &DashboardState) -> u64 {
     }
 
     // Channel sidebar with its unread badges.
-    for entry in state.visible_channel_pane_entries() {
-        hash_dbg(&mut hasher, &entry);
-        if let Some(channel) = entry.channel_state() {
-            hash_dbg(&mut hasher, &state.channel_unread(channel.id));
-            state
-                .channel_unread_message_count(channel.id)
-                .hash(&mut hasher);
+    for row in state.visible_channel_pane_rows() {
+        match row {
+            ChannelPaneRow::Entry { entry, .. } => {
+                hash_dbg(&mut hasher, &entry);
+                if let Some(channel) = entry.channel_state() {
+                    hash_dbg(&mut hasher, &state.channel_unread(channel.id));
+                    state
+                        .channel_unread_message_count(channel.id)
+                        .hash(&mut hasher);
+                }
+            }
+            ChannelPaneRow::Activity {
+                owner_entry_index,
+                recipient_id,
+                activity,
+                ..
+            } => {
+                hash_dbg(&mut hasher, &(owner_entry_index, recipient_id, activity));
+            }
         }
     }
 
@@ -140,7 +152,10 @@ pub(super) fn view_signature(state: &DashboardState) -> u64 {
 mod tests {
     use super::view_signature;
     use crate::discord::ids::Id;
-    use crate::discord::{AppEvent, ChannelInfo, MessageHistoryLoadTarget};
+    use crate::discord::{
+        ActivityInfo, ActivityKind, AppEvent, ChannelInfo, ChannelRecipientInfo,
+        MessageHistoryLoadTarget, PresenceEventFields, PresenceStatus,
+    };
     use crate::tui::state::DashboardState;
 
     #[test]
@@ -184,5 +199,41 @@ mod tests {
             message: "offline".to_owned(),
         });
         assert_ne!(loaded, view_signature(&state));
+    }
+
+    #[test]
+    fn view_signature_tracks_visible_dm_activity_changes() {
+        let user_id = Id::new(10);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            recipients: Some(vec![ChannelRecipientInfo {
+                status: Some(PresenceStatus::Online),
+                ..ChannelRecipientInfo::test(user_id, "alice")
+            }]),
+            ..ChannelInfo::test(Id::new(20), "dm")
+        }));
+        state.confirm_selected_guild();
+        state.set_channel_view_height(4);
+
+        state.push_event(AppEvent::PresenceUpdate {
+            guild_id: None,
+            presence: PresenceEventFields {
+                user_id,
+                status: PresenceStatus::Online,
+                activities: vec![ActivityInfo::test(ActivityKind::Playing, "Game A")],
+            },
+        });
+        let game_a = view_signature(&state);
+
+        state.push_event(AppEvent::PresenceUpdate {
+            guild_id: None,
+            presence: PresenceEventFields {
+                user_id,
+                status: PresenceStatus::Online,
+                activities: vec![ActivityInfo::test(ActivityKind::Playing, "Game B")],
+            },
+        });
+
+        assert_ne!(game_a, view_signature(&state));
     }
 }

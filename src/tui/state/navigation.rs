@@ -13,7 +13,8 @@ use super::scroll::{
     move_index_up, move_index_up_by, pane_content_height, scroll_list_down, scroll_list_up,
 };
 use super::{
-    ChannelPaneEntry, DashboardState, FocusPane, MemberEntry, MemberGroup, PaneFilterState,
+    ChannelPaneEntry, ChannelPaneRow, DashboardState, FocusPane, MemberEntry, MemberGroup,
+    PaneFilterState,
 };
 use crate::tui::text_input::TextInputState;
 
@@ -39,6 +40,12 @@ enum FocusedNavigationAction {
     ScrollViewportUp,
     ScrollHorizontalRight,
     ScrollHorizontalLeft,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChannelLineDirection {
+    Forward,
+    Backward,
 }
 
 #[derive(Debug)]
@@ -545,14 +552,20 @@ impl DashboardState {
             FocusedNavigationAction::HalfPageDown => {
                 let distance = self.navigation.channels.list.content_height() / 2;
                 let selected_line = self.selected_channel_line_from_entries();
-                self.select_channel_near_line(selected_line.saturating_add(distance.max(1)));
+                self.select_channel_near_line(
+                    selected_line.saturating_add(distance.max(1)),
+                    ChannelLineDirection::Forward,
+                );
                 self.navigation.channels.list.keep_selection_visible();
                 self.clamp_channel_viewport();
             }
             FocusedNavigationAction::HalfPageUp => {
                 let distance = self.navigation.channels.list.content_height() / 2;
                 let selected_line = self.selected_channel_line_from_entries();
-                self.select_channel_near_line(selected_line.saturating_sub(distance.max(1)));
+                self.select_channel_near_line(
+                    selected_line.saturating_sub(distance.max(1)),
+                    ChannelLineDirection::Backward,
+                );
                 self.navigation.channels.list.keep_selection_visible();
                 self.clamp_channel_viewport();
             }
@@ -758,21 +771,17 @@ impl DashboardState {
 
     fn select_visible_channel_row(&mut self, row: usize) -> bool {
         let target_line = self.navigation.channels.list.scroll.saturating_add(row);
-        let entries = self.channel_pane_filtered_entries();
-        for (entry_index, line_index) in self.channel_line_indices() {
-            if line_index == target_line {
-                if entries
-                    .get(entry_index)
-                    .is_some_and(ChannelPaneEntry::is_selectable)
-                {
-                    self.navigation.channels.list.selected = entry_index;
-                    self.navigation.channels.list.keep_selection_visible();
-                    return true;
-                }
-                return false;
-            }
+        let rows = self.channel_pane_rows();
+        let Some(ChannelPaneRow::Entry { entry_index, entry }) = rows.get(target_line) else {
+            return false;
+        };
+        if !entry.is_selectable() {
+            return false;
         }
-        false
+
+        self.navigation.channels.list.selected = *entry_index;
+        self.navigation.channels.list.keep_selection_visible();
+        true
     }
 
     fn select_visible_member_line(&mut self, row: usize) -> bool {
@@ -899,21 +908,6 @@ impl DashboardState {
             .clamp_viewport(selected_line, len);
     }
 
-    pub fn channel_entry_has_activity_row(&self, entry: &ChannelPaneEntry<'_>) -> bool {
-        match entry {
-            ChannelPaneEntry::Channel { state, .. }
-                if state.is_dm() && !state.recipients.is_empty() =>
-            {
-                let recipient = &state.recipients[0];
-                !matches!(
-                    recipient.status,
-                    PresenceStatus::Offline | PresenceStatus::Unknown
-                ) && !self.user_activities(recipient.user_id).is_empty()
-            }
-            _ => false,
-        }
-    }
-
     pub(super) fn selected_channel_line(&self, entries: &[ChannelPaneEntry<'_>]) -> Option<usize> {
         let selected_channel = self
             .navigation
@@ -921,17 +915,9 @@ impl DashboardState {
             .list
             .selected
             .min(entries.len().saturating_sub(1));
-        let mut line_index = 0usize;
-        for (channel_index, entry) in entries.iter().enumerate() {
-            if channel_index == selected_channel {
-                return Some(line_index);
-            }
-            line_index += 1;
-            if self.channel_entry_has_activity_row(entry) {
-                line_index += 1;
-            }
-        }
-        None
+        self.channel_pane_rows_from_entries(entries)
+            .iter()
+            .position(|row| row.is_entry() && row.entry_index() == selected_channel)
     }
 
     pub(super) fn selected_channel_line_from_entries(&self) -> usize {
@@ -939,55 +925,31 @@ impl DashboardState {
         self.selected_channel_line(&entries).unwrap_or_default()
     }
 
-    pub fn channel_entry_line_count(&self, entries: &[ChannelPaneEntry<'_>]) -> usize {
-        entries
-            .iter()
-            .map(|e| 1 + usize::from(self.channel_entry_has_activity_row(e)))
-            .sum()
-    }
-
     pub(super) fn count_channel_lines(&self) -> usize {
-        self.channel_pane_filtered_entries()
-            .iter()
-            .map(|e| 1 + usize::from(self.channel_entry_has_activity_row(e)))
-            .sum()
+        self.channel_pane_rows().len()
     }
 
-    fn channel_line_indices(&self) -> Vec<(usize, usize)> {
-        let entries = self.channel_pane_filtered_entries();
-        let mut indices = Vec::new();
-        let mut line_index = 0usize;
-        for (entry_index, entry) in entries.iter().enumerate() {
-            indices.push((entry_index, line_index));
-            line_index += 1;
-            if self.channel_entry_has_activity_row(entry) {
-                line_index += 1;
-            }
-        }
-        indices
-    }
+    fn select_channel_near_line(&mut self, target_line: usize, direction: ChannelLineDirection) {
+        let rows = self.channel_pane_rows();
+        let candidate = match direction {
+            ChannelLineDirection::Forward => rows
+                .iter()
+                .skip(target_line)
+                .find(|row| row.is_entry() && row.entry().is_selectable())
+                .or_else(|| {
+                    rows.iter()
+                        .rev()
+                        .find(|row| row.is_entry() && row.entry().is_selectable())
+                }),
+            ChannelLineDirection::Backward => rows
+                .iter()
+                .take(target_line.saturating_add(1))
+                .rev()
+                .find(|row| row.entry().is_selectable()),
+        };
 
-    fn select_channel_near_line(&mut self, target_line: usize) {
-        let entries = self.channel_pane_filtered_entries();
-        let mut last_selectable_entry = None;
-        for (entry_index, line_index) in self.channel_line_indices() {
-            if line_index >= target_line {
-                if entries
-                    .get(entry_index)
-                    .is_some_and(ChannelPaneEntry::is_selectable)
-                {
-                    self.navigation.channels.list.selected = entry_index;
-                }
-                return;
-            }
-            if entries
-                .get(entry_index)
-                .is_some_and(ChannelPaneEntry::is_selectable)
-            {
-                last_selectable_entry = Some(entry_index);
-            }
-        }
-        if let Some(entry_index) = last_selectable_entry {
+        if let Some(row) = candidate {
+            let entry_index = row.entry_index();
             self.navigation.channels.list.selected = entry_index;
         }
     }

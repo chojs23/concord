@@ -486,6 +486,50 @@ fn dm_channel_pane_shows_loaded_unread_message_count_badge() {
 }
 
 #[test]
+fn dm_activity_uses_the_full_channel_row_width() {
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        recipients: Some(vec![ChannelRecipientInfo {
+            status: Some(PresenceStatus::Online),
+            ..ChannelRecipientInfo::test(user_id, "alice")
+        }]),
+        name: "alice".to_owned(),
+        ..ChannelInfo::test(Id::new(20), "dm")
+    }));
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Unknown, "abcdefghijklmn")],
+        },
+    });
+    state.confirm_selected_guild();
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(2);
+    let backend = TestBackend::new(20, 5);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+
+    let rows = (0..terminal.backend().buffer().area.height)
+        .map(|row| {
+            (0..terminal.backend().buffer().area.width)
+                .map(|col| terminal.backend().buffer()[(col, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|row| row.contains("abcdefghijklmn")),
+        "{}",
+        rows.join("\n")
+    );
+}
+
+#[test]
 fn channel_pane_shows_voice_participants_under_voice_channel() {
     let guild_id = Id::new(1);
     let text_id = Id::new(9);

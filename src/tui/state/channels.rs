@@ -815,22 +815,16 @@ impl DashboardState {
             .map(ChannelPaneEntry::cursor)
     }
 
+    #[cfg(test)]
     pub fn visible_channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
-        let scroll = self.navigation.channels.list.scroll;
-        let height = self.navigation.channels.list.content_height();
-        let visible_end = scroll.saturating_add(height);
-        let entries = self.channel_pane_filtered_entries();
         let mut result = Vec::new();
-        let mut line_index = 0usize;
-        for entry in entries {
-            let entry_lines = 1 + usize::from(self.channel_entry_has_activity_row(&entry));
-            if line_index >= visible_end {
-                break;
+        let mut previous_entry_index = None;
+        for row in self.visible_channel_pane_rows() {
+            let entry_index = row.entry_index();
+            if previous_entry_index != Some(entry_index) {
+                result.push(row.entry().clone());
+                previous_entry_index = Some(entry_index);
             }
-            if line_index + entry_lines > scroll {
-                result.push(entry);
-            }
-            line_index += entry_lines;
         }
         result
     }

@@ -709,10 +709,9 @@ fn push_wrapped_paragraph(lines: &mut Vec<Line<'static>>, text: &str, width: usi
     }
 }
 
-/// Profile-popup ordering. Intentionally differs from
-/// `panes::activity_priority`: the popup has the vertical space to lead with
-/// the user's Custom Status, while the member-list row uses one line per
-/// member and prefers game-at-a-glance signals.
+/// Profile-popup ordering intentionally differs from the compact sidebar
+/// ordering. The popup has room to lead with Custom Status, while sidebar rows
+/// prefer game-at-a-glance signals.
 fn activity_priority(kind: ActivityKind) -> u8 {
     match kind {
         ActivityKind::Custom => 0,

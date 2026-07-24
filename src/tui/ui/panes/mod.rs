@@ -11,17 +11,18 @@ use ratatui_image::Image as RatatuiImage;
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{
-    ActivityInfo, ActivityKind, ChannelUnreadState, GuildParticipationBlock,
-    GuildParticipationRestriction, MessageState, PresenceStatus,
+    ActivityInfo, ChannelUnreadState, GuildParticipationBlock, GuildParticipationRestriction,
+    MessageState, PresenceStatus,
 };
 
 use super::super::{
     message::format::{EMOJI_REACTION_IMAGE_WIDTH, format_attachment_summary, wrap_text_lines},
     state::{
-        ChannelPaneEntry, CommandPickerEntry, ComposerLock, DashboardState, EmojiPickerEntry,
-        FocusPane, GuildPaneEntry, LocalUploadPreviewView, MAX_MENTION_PICKER_VISIBLE, MemberEntry,
-        MemberGroup, MentionPickerEntry, MentionPickerTarget, apply_discord_foreground,
-        folder_style, normal_text_style, presence_marker,
+        ChannelPaneEntry, ChannelPaneRow, CommandPickerEntry, ComposerLock, DashboardState,
+        EmojiPickerEntry, FocusPane, GuildPaneEntry, LocalUploadPreviewView,
+        MAX_MENTION_PICKER_VISIBLE, MemberEntry, MemberGroup, MentionPickerEntry,
+        MentionPickerTarget, apply_discord_foreground, folder_style, normal_text_style,
+        presence_marker, primary_compact_activity,
     },
     text::{
         format_byte_size, sanitize_for_display_width, truncate_display_width,
@@ -30,7 +31,7 @@ use super::super::{
 };
 use super::{
     LOCAL_UPLOAD_PREVIEW_HEIGHT, LOCAL_UPLOAD_PREVIEW_WIDTH, active_text_style,
-    activity::{ActivityLeading, ActivityRender, build_activity_render},
+    activity::{ActivityRender, build_activity_render, compact_activity_line},
     channel_prefix, channel_unread_decoration, clear_area, dm_presence_dot_span,
     layout::{
         composer_inner_width, composer_rows_before_input, composer_upload_preview_line_count,

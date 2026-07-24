@@ -730,6 +730,11 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
             &mut targets,
         );
     }
+    for row in state.visible_channel_pane_rows() {
+        if let Some(activity) = row.activity() {
+            push_activity_emoji_targets(std::iter::once(activity), &mut seen, &mut targets);
+        }
+    }
 
     targets
 }
