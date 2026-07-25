@@ -288,19 +288,23 @@ fn options_popup_render_keeps_selected_row_visible_when_short() {
 }
 
 #[test]
-fn attachment_viewer_render_shows_download_hint_inside_popup() {
+fn attachment_viewer_render_shows_url_and_actions_inside_popup() {
     let mut state = state_with_file_attachment_message();
     assert!(state.open_attachment_viewer_for_selected_message());
 
-    let dump = render_dashboard_dump(100, 25, &mut state);
+    let dump = render_dashboard_dump(140, 25, &mut state);
     let rendered = dump.join("\n");
     let hint_row = dump
         .iter()
-        .find(|row| row.contains("[x] play") && row.contains("[d] download"))
+        .find(|row| row.contains("[o] open") && row.contains("[y] copy URL"))
         .expect("attachment viewer hint should render");
 
     assert!(rendered.contains("File: notes.txt"), "{rendered}");
     assert!(rendered.contains("Size: 42 B"), "{rendered}");
+    assert!(
+        rendered.contains("URL: https://cdn.discordapp.com/notes.txt"),
+        "{rendered}"
+    );
     assert!(hint_row.contains('│'), "{rendered}");
 }
 

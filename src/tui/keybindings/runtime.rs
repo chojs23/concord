@@ -397,6 +397,10 @@ impl KeyBindings {
         match key.code {
             code if is_left_key(code) => Some(AttachmentViewerAction::Previous),
             code if is_right_key(code) => Some(AttachmentViewerAction::Next),
+            KeyCode::Char('o') if is_shortcut_key(key) => {
+                Some(AttachmentViewerAction::OpenSelected)
+            }
+            KeyCode::Char('y') if is_shortcut_key(key) => Some(AttachmentViewerAction::CopyUrl),
             KeyCode::Char('x') if is_shortcut_key(key) => {
                 Some(AttachmentViewerAction::PlaySelected)
             }

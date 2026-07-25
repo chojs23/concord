@@ -880,6 +880,11 @@ fn message_urls(message: &MessageState) -> Vec<String> {
         urls.extend(detected_urls(content));
     }
     urls.extend(embed_urls(&message.embeds));
+    urls.extend(
+        message
+            .attachments_in_display_order()
+            .filter_map(|attachment| attachment.preferred_url().map(str::to_owned)),
+    );
     // URLs in a reply quote or a forwarded message are shown to the user too.
     if let Some(reply) = &message.reply
         && let Some(content) = &reply.content

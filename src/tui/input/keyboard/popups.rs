@@ -858,6 +858,12 @@ pub(super) fn handle_attachment_viewer_key(
         Some(AttachmentViewerAction::Close) => state.close_attachment_viewer(),
         Some(AttachmentViewerAction::Previous) => state.move_attachment_viewer_previous(),
         Some(AttachmentViewerAction::Next) => state.move_attachment_viewer_next(),
+        Some(AttachmentViewerAction::OpenSelected) => {
+            return state.open_selected_attachment_viewer_attachment();
+        }
+        Some(AttachmentViewerAction::CopyUrl) => {
+            state.copy_selected_attachment_viewer_url();
+        }
         Some(AttachmentViewerAction::PlaySelected) => {
             return state.play_selected_attachment_viewer_attachment();
         }

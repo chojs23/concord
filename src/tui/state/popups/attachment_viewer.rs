@@ -112,6 +112,21 @@ impl DashboardState {
         Some((selected.message_id, selected.index, preview))
     }
 
+    pub fn open_selected_attachment_viewer_attachment(&self) -> Option<AppCommand> {
+        let url = self.selected_attachment_viewer_item()?.url?;
+        Some(AppCommand::OpenUrl { url })
+    }
+
+    pub fn copy_selected_attachment_viewer_url(&mut self) {
+        let Some(url) = self
+            .selected_attachment_viewer_item()
+            .and_then(|item| item.url)
+        else {
+            return;
+        };
+        self.runtime.copy_text_requested = Some((url, "Attachment URL copied"));
+    }
+
     pub fn download_selected_attachment_viewer_attachment(&mut self) -> Option<AppCommand> {
         let item = self.selected_attachment_viewer_item()?;
         let url = item.url?;

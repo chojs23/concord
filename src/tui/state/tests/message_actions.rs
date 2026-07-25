@@ -715,6 +715,28 @@ fn direct_message_url_opens_single_url_from_message_content() {
 }
 
 #[test]
+fn direct_message_url_opens_attachment_url() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            content: Some(String::new()),
+            attachments: vec![image_attachment(10)],
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    assert_eq!(
+        state.direct_open_selected_message_url(),
+        Some(AppCommand::OpenUrl {
+            url: "https://cdn.discordapp.com/image-10.png".to_owned(),
+        })
+    );
+    assert!(!state.is_message_action_menu_active());
+}
+
+#[test]
 fn direct_message_url_opens_url_picker_for_multiple_urls() {
     let mut state = state_with_messages(1);
     state.push_event(latest_history_loaded(

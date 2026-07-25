@@ -906,6 +906,40 @@ fn attachment_viewer_d_shortcut_downloads_attachment() {
 }
 
 #[test]
+fn attachment_viewer_o_shortcut_opens_selected_attachment_url() {
+    let mut state = state_with_image_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('v'));
+
+    let command = handle_key(&mut state, char_key('o'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::OpenUrl {
+            url: "https://cdn.discordapp.com/cat.png".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn attachment_viewer_y_shortcut_requests_selected_attachment_url_copy() {
+    let mut state = state_with_image_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('v'));
+
+    let command = handle_key(&mut state, char_key('y'));
+
+    assert_eq!(command, None);
+    assert_eq!(
+        state.take_copy_text_request(),
+        Some((
+            "https://cdn.discordapp.com/cat.png".to_owned(),
+            "Attachment URL copied",
+        ))
+    );
+}
+
+#[test]
 fn attachment_viewer_x_shortcut_plays_video_attachment() {
     let mut state = state_with_messages_from_state(
         DashboardState::new_with_display_options(DisplayOptions {

@@ -292,6 +292,8 @@ pub(in crate::tui) enum AttachmentViewerAction {
     Close,
     Previous,
     Next,
+    OpenSelected,
+    CopyUrl,
     PlaySelected,
     DownloadSelected,
     ToggleZoom,

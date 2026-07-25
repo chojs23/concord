@@ -59,6 +59,8 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
     if let Some(hint_area) = hint_area {
         let hint = truncate_display_width(
             &popup_shortcut_help_text(&[
+                ("o", "open"),
+                ("y", "copy URL"),
                 ("x", "play"),
                 ("d", "download"),
                 ("z", "zoom"),
@@ -97,7 +99,7 @@ pub(in crate::tui::ui) fn centered_viewer_preview_area(
 }
 
 fn render_attachment_details(frame: &mut Frame, area: Rect, item: &AttachmentViewerItem) {
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled(
                 "File: ",
@@ -113,6 +115,15 @@ fn render_attachment_details(frame: &mut Frame, area: Rect, item: &AttachmentVie
             Span::raw(format_byte_size(item.size_bytes)),
         ]),
     ];
+    if let Some(url) = &item.url {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "URL: ",
+                theme::current().style(theme::HighlightGroup::FieldLabel),
+            ),
+            Span::raw(url.clone()),
+        ]));
+    }
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
