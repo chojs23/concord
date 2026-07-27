@@ -1786,11 +1786,11 @@ fn microphone_pcm_frames_resample_44100_to_48000() {
         .try_recv()
         .expect("resampled 20 ms frame should be queued");
 
-    assert_eq!(frame.len(), DISCORD_OPUS_20MS_STEREO_SAMPLES);
-    assert_eq!(frame[0], 0);
-    assert_eq!(frame[1], 0);
-    assert!(frame[frame.len() - 2] > 870);
-    assert!(frame[frame.len() - 1] < -870);
+    assert_eq!(frame.samples.len(), DISCORD_OPUS_20MS_STEREO_SAMPLES);
+    assert_eq!(frame.samples[0], 0);
+    assert_eq!(frame.samples[1], 0);
+    assert!(frame.samples[frame.samples.len() - 2] > 870);
+    assert!(frame.samples[frame.samples.len() - 1] < -870);
     assert!(rx.try_recv().is_err());
     assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 1);
     assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 0);
@@ -1808,7 +1808,10 @@ fn microphone_pcm_frames_count_full_queue_drops() {
     frames.push_stereo_samples(&samples);
 
     assert_eq!(
-        rx.try_recv().expect("first frame should queue").len(),
+        rx.try_recv()
+            .expect("first frame should queue")
+            .samples
+            .len(),
         DISCORD_OPUS_20MS_STEREO_SAMPLES
     );
     assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 1);
@@ -1834,6 +1837,83 @@ fn voice_transmit_pacer_delays_queued_frames_to_20ms_slots() {
         pacer.delay_before_send(start + VOICE_PLAYBACK_FRAME_DURATION * 4),
         None
     );
+}
+
+#[cfg(feature = "voice-playback")]
+#[test]
+fn microphone_stale_backlog_advances_to_fresh_audio() {
+    let now = Instant::now();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
+    let initial = VoiceMicrophoneFrame {
+        samples: vec![0],
+        captured_at: now - Duration::from_millis(320),
+    };
+    for index in 1u8..=15 {
+        tx.try_send(VoiceMicrophoneFrame {
+            samples: vec![i16::from(index)],
+            captured_at: now - Duration::from_millis(u64::from(15 - index) * 20),
+        })
+        .expect("backlog frame should queue");
+    }
+
+    let (selected, dropped) = select_fresh_voice_microphone_frame(initial, &mut rx, now);
+    let selected = selected.expect("a fresh frame should remain");
+
+    assert_eq!(selected.samples, vec![12]);
+    assert_eq!(dropped, 12);
+    assert_eq!(rx.len(), VOICE_MIC_MAX_PRE_PACE_BACKLOG_FRAMES);
+    assert!(
+        now.saturating_duration_since(selected.captured_at) <= VOICE_MIC_MAX_PRE_PACE_FRAME_AGE
+    );
+
+    let (_tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let stale = VoiceMicrophoneFrame {
+        samples: vec![99],
+        captured_at: now - Duration::from_millis(100),
+    };
+    let (selected, dropped) = select_fresh_voice_microphone_frame(stale, &mut rx, now);
+
+    assert!(selected.is_none());
+    assert_eq!(dropped, 1);
+}
+
+#[cfg(feature = "voice-playback")]
+#[test]
+fn microphone_clock_drift_does_not_accumulate_latency() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
+    let start = Instant::now();
+    let end = start + Duration::from_secs(15 * 60);
+    let capture_interval = Duration::from_micros(19_990);
+    let mut next_capture_at = start;
+    let mut next_transmit_at = start;
+    let mut dropped = 0u64;
+    let mut max_selected_age = Duration::ZERO;
+
+    while next_transmit_at <= end {
+        while next_capture_at <= next_transmit_at {
+            tx.try_send(VoiceMicrophoneFrame {
+                samples: vec![0],
+                captured_at: next_capture_at,
+            })
+            .expect("bounded latency should keep the microphone queue below capacity");
+            next_capture_at += capture_interval;
+        }
+
+        if let Ok(frame) = rx.try_recv() {
+            let (selected, stale_frames_dropped) =
+                select_fresh_voice_microphone_frame(frame, &mut rx, next_transmit_at);
+            dropped = dropped.saturating_add(stale_frames_dropped);
+            if let Some(selected) = selected {
+                max_selected_age = max_selected_age
+                    .max(next_transmit_at.saturating_duration_since(selected.captured_at));
+            }
+        }
+        next_transmit_at += VOICE_PLAYBACK_FRAME_DURATION;
+    }
+
+    assert!(dropped > 0);
+    assert!(max_selected_age <= VOICE_MIC_MAX_PRE_PACE_FRAME_AGE);
+    assert!(rx.len() <= VOICE_MIC_MAX_PRE_PACE_BACKLOG_FRAMES);
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1947,9 +2027,18 @@ async fn voice_runtime_stops_connection_task_by_closing_gate_channels() {
 #[test]
 fn microphone_pcm_drain_clears_backlog_before_reenable() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
+    let now = Instant::now();
 
-    tx.try_send(vec![10]).expect("first frame should queue");
-    tx.try_send(vec![20]).expect("second frame should queue");
+    tx.try_send(VoiceMicrophoneFrame {
+        samples: vec![10],
+        captured_at: now,
+    })
+    .expect("first frame should queue");
+    tx.try_send(VoiceMicrophoneFrame {
+        samples: vec![20],
+        captured_at: now,
+    })
+    .expect("second frame should queue");
 
     drain_voice_microphone_pcm_queue(&mut rx);
 

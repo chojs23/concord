@@ -154,6 +154,14 @@ const OPUS_MAX_ENCODED_FRAME_BYTES: usize = 4000;
 #[cfg(feature = "voice-playback")]
 const VOICE_MIC_PCM_FRAME_QUEUE: usize = 16;
 #[cfg(feature = "voice-playback")]
+const VOICE_MIC_MAX_PRE_PACE_BACKLOG_FRAMES: usize = 3;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_MAX_TRANSMIT_BACKLOG_FRAMES: usize = 4;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_MAX_PRE_PACE_FRAME_AGE: Duration = Duration::from_millis(60);
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_MAX_TRANSMIT_FRAME_AGE: Duration = Duration::from_millis(80);
+#[cfg(feature = "voice-playback")]
 const VOICE_TRANSMIT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(feature = "voice-playback")]
 const VOICE_MIC_PREFERRED_BUFFER_FRAMES: u32 = 480;
@@ -527,7 +535,7 @@ struct VoiceChildTasks {
     #[cfg(feature = "voice-playback")]
     playback_volume: Option<Arc<AtomicU8>>,
     #[cfg(feature = "voice-playback")]
-    microphone_pcm_tx: Option<mpsc::Sender<Vec<i16>>>,
+    microphone_pcm_tx: Option<mpsc::Sender<VoiceMicrophoneFrame>>,
     opus_decode: ManagedTask,
     #[cfg(feature = "voice-playback")]
     audio_output: Option<VoiceAudioOutput>,
@@ -626,12 +634,19 @@ struct VoiceMicrophoneCapture {
 
 #[cfg(feature = "voice-playback")]
 struct VoiceMicrophonePcmFrames {
-    frames_tx: mpsc::Sender<Vec<i16>>,
+    frames_tx: mpsc::Sender<VoiceMicrophoneFrame>,
     stats: Arc<VoiceMicrophoneCaptureStats>,
     source_sample_rate: u32,
     source_pending: Vec<i16>,
     output_pending: Vec<i16>,
     next_source_frame: f64,
+}
+
+#[cfg(feature = "voice-playback")]
+#[derive(Debug)]
+struct VoiceMicrophoneFrame {
+    samples: Vec<i16>,
+    captured_at: Instant,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -650,8 +665,11 @@ struct VoiceMicrophoneCaptureStats {
 #[derive(Default)]
 struct VoiceUdpTransmitStats {
     sent_packets: u64,
+    stale_microphone_frames_dropped: u64,
     overload_smoothed_frames: u64,
     limited_samples: u64,
+    max_microphone_queue_depth: usize,
+    max_microphone_frame_age_ms: u128,
     max_frame_gap_ms: u128,
     last_frame_at: Option<Instant>,
 }
@@ -720,7 +738,7 @@ impl VoiceChildTasks {
         &mut self,
         task: JoinHandle<()>,
         gate: watch::Sender<VoiceCaptureGate>,
-        microphone_pcm_tx: mpsc::Sender<Vec<i16>>,
+        microphone_pcm_tx: mpsc::Sender<VoiceMicrophoneFrame>,
     ) {
         if self.udp_transmit.is_some() {
             self.stop_udp_transmit_gracefully("stopping previous voice UDP transmit task")
