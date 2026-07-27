@@ -1820,29 +1820,11 @@ fn microphone_pcm_frames_count_full_queue_drops() {
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn voice_transmit_pacer_delays_queued_frames_to_20ms_slots() {
-    let mut pacer = VoiceTransmitPacer::default();
-    let start = Instant::now();
-
-    assert_eq!(pacer.delay_before_send(start), None);
-    assert_eq!(
-        pacer.delay_before_send(start),
-        Some(VOICE_PLAYBACK_FRAME_DURATION)
-    );
-    assert_eq!(
-        pacer.delay_before_send(start + VOICE_PLAYBACK_FRAME_DURATION),
-        Some(VOICE_PLAYBACK_FRAME_DURATION)
-    );
-    assert_eq!(
-        pacer.delay_before_send(start + VOICE_PLAYBACK_FRAME_DURATION * 4),
-        None
-    );
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_stale_backlog_advances_to_fresh_audio() {
+fn microphone_freshness_policy_bounds_queue_depth_and_frame_age() {
     let now = Instant::now();
+
+    // A full stored queue catches up to the newest three live frames instead
+    // of preserving hundreds of milliseconds of old speech.
     let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
     let initial = VoiceMicrophoneFrame {
         samples: vec![0],
@@ -1859,122 +1841,37 @@ fn microphone_stale_backlog_advances_to_fresh_audio() {
     let (selected, dropped) = select_fresh_voice_microphone_frame(initial, &mut rx, now);
     let selected = selected.expect("a fresh frame should remain");
 
-    assert_eq!(selected.samples, vec![12]);
-    assert_eq!(dropped, 12);
-    assert_eq!(rx.len(), VOICE_MIC_MAX_PRE_PACE_BACKLOG_FRAMES);
-    assert!(
-        now.saturating_duration_since(selected.captured_at) <= VOICE_MIC_MAX_PRE_PACE_FRAME_AGE
-    );
+    assert_eq!(selected.samples, vec![13]);
+    assert_eq!(dropped, 13);
+    assert_eq!(rx.len().saturating_add(1), VOICE_MIC_MAX_LIVE_FRAMES);
+    assert!(now.saturating_duration_since(selected.captured_at) <= VOICE_MIC_MAX_FRAME_AGE);
 
+    // A frame exactly on the age boundary remains live when it is the only
+    // available audio.
+    let (_tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let boundary = VoiceMicrophoneFrame {
+        samples: vec![50],
+        captured_at: now - VOICE_MIC_MAX_FRAME_AGE,
+    };
+    let (selected, dropped) = select_fresh_voice_microphone_frame(boundary, &mut rx, now);
+
+    assert_eq!(
+        selected.expect("boundary frame should remain live").samples,
+        vec![50]
+    );
+    assert_eq!(dropped, 0);
+
+    // Once the age budget is exceeded, transmitting silence or waiting for a
+    // new live frame is better than sending stale speech.
     let (_tx, mut rx) = tokio::sync::mpsc::channel(1);
     let stale = VoiceMicrophoneFrame {
         samples: vec![99],
-        captured_at: now - Duration::from_millis(100),
+        captured_at: now - VOICE_MIC_MAX_FRAME_AGE - Duration::from_millis(1),
     };
     let (selected, dropped) = select_fresh_voice_microphone_frame(stale, &mut rx, now);
 
     assert!(selected.is_none());
     assert_eq!(dropped, 1);
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_clock_drift_does_not_accumulate_latency() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-    let start = Instant::now();
-    let end = start + Duration::from_secs(15 * 60);
-    let capture_interval = Duration::from_micros(19_990);
-    let mut next_capture_at = start;
-    let mut next_transmit_at = start;
-    let mut dropped = 0u64;
-    let mut max_selected_age = Duration::ZERO;
-
-    while next_transmit_at <= end {
-        while next_capture_at <= next_transmit_at {
-            tx.try_send(VoiceMicrophoneFrame {
-                samples: vec![0],
-                captured_at: next_capture_at,
-            })
-            .expect("bounded latency should keep the microphone queue below capacity");
-            next_capture_at += capture_interval;
-        }
-
-        if let Ok(frame) = rx.try_recv() {
-            let (selected, stale_frames_dropped) =
-                select_fresh_voice_microphone_frame(frame, &mut rx, next_transmit_at);
-            dropped = dropped.saturating_add(stale_frames_dropped);
-            if let Some(selected) = selected {
-                max_selected_age = max_selected_age
-                    .max(next_transmit_at.saturating_duration_since(selected.captured_at));
-            }
-        }
-        next_transmit_at += VOICE_PLAYBACK_FRAME_DURATION;
-    }
-
-    assert!(dropped > 0);
-    assert!(max_selected_age <= VOICE_MIC_MAX_PRE_PACE_FRAME_AGE);
-    assert!(rx.len() <= VOICE_MIC_MAX_PRE_PACE_BACKLOG_FRAMES);
-}
-
-#[cfg(feature = "voice-playback")]
-#[tokio::test]
-async fn voice_transmit_pacer_delay_stops_when_gate_disables() {
-    let (gate_tx, mut gate_rx) = watch::channel(VoiceCaptureGate {
-        enabled: true,
-        microphone_sensitivity: MicrophoneSensitivityDb::default(),
-        microphone_volume: VoiceVolumePercent::default(),
-    });
-    let wait = tokio::spawn(async move {
-        wait_voice_transmit_pacer_delay(Duration::from_secs(60), &mut gate_rx).await
-    });
-
-    gate_tx
-        .send(VoiceCaptureGate {
-            enabled: false,
-            microphone_sensitivity: MicrophoneSensitivityDb::default(),
-            microphone_volume: VoiceVolumePercent::default(),
-        })
-        .expect("gate receiver should still be alive");
-
-    let outcome = timeout(Duration::from_millis(100), wait)
-        .await
-        .expect("gate disable should interrupt pacer delay")
-        .expect("pacer wait task should finish");
-    assert_eq!(outcome, VoiceTransmitPacerDelayOutcome::GateChanged);
-}
-
-#[cfg(feature = "voice-playback")]
-#[tokio::test]
-async fn voice_transmit_pacer_delay_drops_frame_on_disable_then_reenable() {
-    let (gate_tx, mut gate_rx) = watch::channel(VoiceCaptureGate {
-        enabled: true,
-        microphone_sensitivity: MicrophoneSensitivityDb::default(),
-        microphone_volume: VoiceVolumePercent::default(),
-    });
-
-    gate_tx
-        .send(VoiceCaptureGate {
-            enabled: false,
-            microphone_sensitivity: MicrophoneSensitivityDb::default(),
-            microphone_volume: VoiceVolumePercent::default(),
-        })
-        .expect("gate receiver should still be alive");
-    gate_tx
-        .send(VoiceCaptureGate {
-            enabled: true,
-            microphone_sensitivity: MicrophoneSensitivityDb::default(),
-            microphone_volume: VoiceVolumePercent::default(),
-        })
-        .expect("gate receiver should still be alive");
-
-    let outcome = timeout(
-        Duration::from_millis(100),
-        wait_voice_transmit_pacer_delay(Duration::from_secs(60), &mut gate_rx),
-    )
-    .await
-    .expect("any gate change should interrupt pacer delay");
-    assert_eq!(outcome, VoiceTransmitPacerDelayOutcome::GateChanged);
-    assert!(gate_rx.borrow().enabled);
 }
 
 #[cfg(feature = "voice-playback")]

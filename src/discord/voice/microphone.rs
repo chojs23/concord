@@ -562,60 +562,6 @@ pub(super) fn log_captured_alsa_errors(
     logging::error("voice", format!("captured ALSA diagnostics: {message}"));
 }
 
-#[cfg(feature = "voice-playback")]
-#[derive(Default)]
-pub(super) struct VoiceTransmitPacer {
-    next_send_at: Option<Instant>,
-}
-
-#[cfg(feature = "voice-playback")]
-impl VoiceTransmitPacer {
-    pub(super) fn delay_before_send(&mut self, now: Instant) -> Option<Duration> {
-        let delay = self
-            .next_send_at
-            .and_then(|next_send_at| next_send_at.checked_duration_since(now));
-        self.next_send_at = Some(match self.next_send_at {
-            Some(next_send_at) if next_send_at > now => {
-                next_send_at + VOICE_PLAYBACK_FRAME_DURATION
-            }
-            _ => now + VOICE_PLAYBACK_FRAME_DURATION,
-        });
-        delay
-    }
-
-    pub(super) fn reset(&mut self) {
-        self.next_send_at = None;
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-#[derive(Debug, Eq, PartialEq)]
-pub(super) enum VoiceTransmitPacerDelayOutcome {
-    Elapsed,
-    GateChanged,
-    Closed,
-}
-
-#[cfg(feature = "voice-playback")]
-pub(super) async fn wait_voice_transmit_pacer_delay(
-    delay: Duration,
-    gate_rx: &mut watch::Receiver<VoiceCaptureGate>,
-) -> VoiceTransmitPacerDelayOutcome {
-    let deadline = tokio::time::Instant::now() + delay;
-    tokio::select! {
-        _ = tokio::time::sleep_until(deadline) => {
-            VoiceTransmitPacerDelayOutcome::Elapsed
-        }
-        changed = gate_rx.changed() => {
-            if changed.is_err() {
-                VoiceTransmitPacerDelayOutcome::Closed
-            } else {
-                VoiceTransmitPacerDelayOutcome::GateChanged
-            }
-        }
-    }
-}
-
 /// Flushes a stop-speaking notice through the outbound sender, logging
 /// instead of propagating failures since the transmit loop keeps running.
 #[cfg(feature = "voice-playback")]
@@ -682,8 +628,8 @@ pub(super) fn condition_voice_microphone_frame(
     transmit_stats.limited_samples += apply_voice_microphone_gain_and_limit(frame, combined_gain);
 }
 
-/// Advances past old microphone audio until the remaining frame is close
-/// enough to real time for one final pacing slot.
+/// Advances past old microphone audio until no more than the live latency
+/// budget remains.
 #[cfg(feature = "voice-playback")]
 pub(super) fn select_fresh_voice_microphone_frame(
     mut frame: VoiceMicrophoneFrame,
@@ -691,8 +637,8 @@ pub(super) fn select_fresh_voice_microphone_frame(
     now: Instant,
 ) -> (Option<VoiceMicrophoneFrame>, u64) {
     let mut dropped = 0u64;
-    while now.saturating_duration_since(frame.captured_at) > VOICE_MIC_MAX_PRE_PACE_FRAME_AGE
-        || pcm_rx.len() > VOICE_MIC_MAX_PRE_PACE_BACKLOG_FRAMES
+    while now.saturating_duration_since(frame.captured_at) > VOICE_MIC_MAX_FRAME_AGE
+        || pcm_rx.len().saturating_add(1) > VOICE_MIC_MAX_LIVE_FRAMES
     {
         dropped = dropped.saturating_add(1);
         let Ok(next) = pcm_rx.try_recv() else {
@@ -738,7 +684,6 @@ pub(super) async fn run_voice_udp_transmit(
     let transmit_started_at = Instant::now();
     let mut transmit_stats = VoiceUdpTransmitStats::default();
     let mut microphone_gate = VoiceMicrophoneGateState::default();
-    let mut transmit_pacer = VoiceTransmitPacer::default();
     let mut next_stats_log_at = transmit_started_at + VOICE_TRANSMIT_STATS_LOG_INTERVAL;
 
     loop {
@@ -754,13 +699,11 @@ pub(super) async fn run_voice_udp_transmit(
                 if !(gate.enabled && was_enabled) {
                     drain_voice_microphone_pcm_queue(&mut pcm_rx);
                     microphone_gate.reset();
-                    transmit_pacer.reset();
                 }
                 if !gate.enabled {
                     stop_voice_transmission(&context, &mut sender, &mut transmit_stats).await;
                     let _ = context.local_speaking_tx.send(false);
                     microphone_gate.reset();
-                    transmit_pacer.reset();
                 }
                 sender.set_capture_gate(gate.enabled, false);
             }
@@ -783,7 +726,6 @@ pub(super) async fn run_voice_udp_transmit(
                     .saturating_add(stale_frames_dropped);
                 if stale_frames_dropped > 0 {
                     microphone_gate.reset();
-                    transmit_pacer.reset();
                 }
                 let Some(mut frame) = frame else {
                     continue;
@@ -791,7 +733,6 @@ pub(super) async fn run_voice_udp_transmit(
                 let gate = *gate_rx.borrow();
                 if !gate.enabled {
                     microphone_gate.reset();
-                    transmit_pacer.reset();
                     continue;
                 }
                 if !microphone_gate.allows_frame(&frame.samples, gate.microphone_sensitivity) {
@@ -811,45 +752,19 @@ pub(super) async fn run_voice_udp_transmit(
                         continue;
                     }
                 };
-                if let Some(delay) = transmit_pacer.delay_before_send(Instant::now()) {
-                    match wait_voice_transmit_pacer_delay(delay, &mut gate_rx).await {
-                        VoiceTransmitPacerDelayOutcome::Elapsed => {}
-                        VoiceTransmitPacerDelayOutcome::GateChanged => {
-                            if !gate_rx.borrow().enabled {
-                                silence_voice_transmission(
-                                    &context,
-                                    &mut sender,
-                                    &mut transmit_stats,
-                                )
-                                .await;
-                            }
-                            microphone_gate.reset();
-                            transmit_pacer.reset();
-                            continue;
-                        }
-                        VoiceTransmitPacerDelayOutcome::Closed => {
-                            drain_voice_microphone_pcm_queue(&mut pcm_rx);
-                            silence_voice_transmission(&context, &mut sender, &mut transmit_stats)
-                                .await;
-                            microphone_gate.reset();
-                            break;
-                        }
-                    }
-                }
                 let mut dave_state = context.dave_state.lock().await;
                 let now = Instant::now();
                 let frame_age = now.saturating_duration_since(frame.captured_at);
                 transmit_stats.max_microphone_queue_depth = transmit_stats
                     .max_microphone_queue_depth
                     .max(pcm_rx.len().saturating_add(1));
-                if frame_age > VOICE_MIC_MAX_TRANSMIT_FRAME_AGE
-                    || pcm_rx.len() > VOICE_MIC_MAX_TRANSMIT_BACKLOG_FRAMES
+                if frame_age > VOICE_MIC_MAX_FRAME_AGE
+                    || pcm_rx.len().saturating_add(1) > VOICE_MIC_MAX_LIVE_FRAMES
                 {
                     transmit_stats.stale_microphone_frames_dropped = transmit_stats
                         .stale_microphone_frames_dropped
                         .saturating_add(1);
                     microphone_gate.reset();
-                    transmit_pacer.reset();
                     continue;
                 }
                 transmit_stats.max_microphone_frame_age_ms = transmit_stats
