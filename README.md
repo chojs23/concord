@@ -141,6 +141,26 @@ Or add the flake as an input in your own `flake.nix`:
 }
 ```
 
+### Gentoo
+
+Install the `darwincereska` overlay:
+
+```sh
+eselect repository add darwincereska git https://codeberg.org/darwincereska/gentoo-overlay.git
+```
+
+Sync the overlay:
+
+```sh
+emaint sync -r darwincereska
+```
+
+Install the package:
+
+```sh
+emerge -av net-im/concord
+```
+
 ### GitHub Release installer
 
 Install the latest release with the cargo-dist shell installer:
