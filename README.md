@@ -158,6 +158,26 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/chojs23/concord/re
 The installer places `concord` under `$CARGO_HOME/bin`, which is usually
 `~/.cargo/bin` on Unix and `%USERPROFILE%\.cargo\bin` on Windows.
 
+### Gentoo
+
+Install the `darwincereska` overlay:
+
+```sh
+eselect repository add darwincereska git https://codeberg.org/darwincereska/gentoo-overlay.git
+```
+
+Sync the overlay:
+
+```sh
+emaint sync -r darwincereska
+```
+
+Install the package:
+
+```sh
+emerge -av net-im/concord
+```
+
 ### Build from source
 
 You need the Rust stable toolchain, Cargo, and the native dependencies listed in
