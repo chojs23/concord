@@ -1,0 +1,6 @@
+diff --git a/build.rs b/build.rs
+--- a/build.rs
++++ b/build.rs
+@@ -31 +31 @@ fn main() {
+-        .clang_macro_fallback();
++        .clang_macro_fallback().clang_macro_fallback_build_dir(PathBuf::from(env::var("OUT_DIR").unwrap()));

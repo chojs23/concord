@@ -17,7 +17,7 @@
 }:
 
 let
-  commonArgs = {
+  baseArgs = {
     inherit pname version src;
 
     cargoExtraArgs = "--locked";
@@ -49,16 +49,47 @@ let
     # inside `nix develop` for the full test suite.
     doCheck = false;
 
-    postFixup = lib.optionalString stdenv.isLinux ''
-      wrapProgram "$out/bin/concord" \
-        --set-default PIPEWIRE_CONFIG_DIR "${pipewire}/share/pipewire"
-    '';
+  };
+
+  # PipeWire's sys crates ask bindgen to evaluate cast macros such as
+  # SPA_ID_INVALID and PW_ID_ANY. Bindgen otherwise writes its fallback files
+  # beside the vendored crate, which crane keeps in the immutable Nix store.
+  # TODO: Remove these patches after the sys crates set a fallback build directory.
+  cargoVendorDir = craneLib.vendorCargoDeps (baseArgs // {
+    overrideVendorCargoPackage = package: crate:
+      if package.name == "libspa-sys" && package.version == "0.10.0" then
+        crate.overrideAttrs
+          (old: {
+            patches = (old.patches or [ ]) ++ [
+              ./patches/libspa-sys-0.10.0-bindgen-out-dir.patch
+            ];
+          })
+      else if package.name == "pipewire-sys" && package.version == "0.10.0" then
+        crate.overrideAttrs
+          (old: {
+            patches = (old.patches or [ ]) ++ [
+              ./patches/pipewire-sys-0.10.0-bindgen-out-dir.patch
+            ];
+          })
+      else
+        crate;
+  });
+
+  commonArgs = baseArgs // {
+    inherit cargoVendorDir;
   };
 
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 in
 craneLib.buildPackage (commonArgs // {
   inherit cargoArtifacts;
+
+  # buildDepsOnly has no installed binary, so apply the runtime wrapper only
+  # to the final package output.
+  postFixup = lib.optionalString stdenv.isLinux ''
+    wrapProgram "$out/bin/concord" \
+      --set-default PIPEWIRE_CONFIG_DIR "${pipewire}/share/pipewire"
+  '';
 
   meta = {
     inherit description homepage;
