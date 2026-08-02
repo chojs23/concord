@@ -32,6 +32,9 @@ const STREAM_STARTUP_REPLAY_FRAME_TICKS: u32 = 90;
 const STREAM_PLAYER_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const OPUS_RTP_CLOCK_RATE: u32 = 48_000;
 const VIDEO_RTP_CLOCK_RATE: u32 = 90_000;
+// Allow normal packet jitter and short Opus duration changes, but do not carry
+// multi-second source clock resets into mpv's local playback timeline.
+const STREAM_AUDIO_CLOCK_DRIFT_TOLERANCE_TICKS: u32 = DISCORD_OPUS_TIMESTAMP_INCREMENT * 6;
 const STREAM_KEYFRAME_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 const STREAM_VIDEO_NACK_INTERVAL: Duration = Duration::from_millis(100);
 const STREAM_VIDEO_GAP_TIMEOUT: Duration = Duration::from_millis(500);
@@ -1074,7 +1077,7 @@ async fn run_stream_media(
     let mut local_video = LocalStreamVideoForwarder::default();
     let mut rtcp_feedback_nonce = 0u32;
     let media_started_at = Instant::now();
-    let mut local_audio_clock = LocalRtpClock::default();
+    let mut local_audio_clock = LocalStreamAudioClock::default();
     let mut logged_first_audio = false;
     let mut logged_first_video_frame = false;
     let mut logged_video_before_player_ready = false;
@@ -1112,11 +1115,14 @@ async fn run_stream_media(
                 let source = *video_source_rx.borrow();
                 let unix_time = current_unix_time();
                 let mut sent_report = false;
-                if source.audio_ssrc != 0 && local_audio_packets != 0 {
+                if source.audio_ssrc != 0
+                    && local_audio_packets != 0
+                    && let Some(audio_timestamp) = local_audio_clock.timestamp_at(elapsed)
+                {
                     let report = build_rtcp_sender_report(
                         source.audio_ssrc,
                         unix_time,
-                        elapsed_rtp_timestamp(elapsed, OPUS_RTP_CLOCK_RATE),
+                        audio_timestamp,
                         local_audio_packets,
                         local_audio_octets,
                     );
@@ -1298,11 +1304,20 @@ async fn run_stream_media(
                         _ => continue,
                     };
                     let real_audio_at = media_started_at.elapsed();
-                    let local_timestamp = local_audio_clock.rebase(
-                        header.timestamp,
-                        real_audio_at,
-                        OPUS_RTP_CLOCK_RATE,
-                    );
+                    let audio_timestamp =
+                        local_audio_clock.rebase(header.timestamp, real_audio_at);
+                    let local_timestamp = audio_timestamp.local_timestamp;
+                    if let Some(discontinuity) = audio_timestamp.discontinuity {
+                        logging::debug(
+                            "stream",
+                            format!(
+                                "stream audio RTP clock re-anchored: source_timestamp={} source_delta_ticks={} elapsed_delta_ticks={} local_timestamp={local_timestamp}",
+                                header.timestamp,
+                                discontinuity.source_delta_ticks,
+                                discontinuity.elapsed_delta_ticks,
+                            ),
+                        );
+                    }
                     let packet = build_local_rtp_packet(
                         LOCAL_STREAM_AUDIO_PAYLOAD_TYPE,
                         header.marker,
@@ -1520,6 +1535,92 @@ fn stream_player_command(sdp_path: &Path, display_name: &str) -> Command {
     player
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StreamAudioClockDiscontinuity {
+    source_delta_ticks: i32,
+    elapsed_delta_ticks: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StreamAudioTimestamp {
+    local_timestamp: u32,
+    discontinuity: Option<StreamAudioClockDiscontinuity>,
+}
+
+#[derive(Default)]
+struct LocalStreamAudioClock {
+    last_source_timestamp: Option<u32>,
+    last_local_timestamp: Option<u32>,
+    last_elapsed: Option<Duration>,
+}
+
+impl LocalStreamAudioClock {
+    // Discord can replay an old packet or restart an audio clock when a stream
+    // subscription settles. Valid source deltas retain their media timing. A
+    // discontinuity starts a new source epoch on the existing local timeline.
+    fn rebase(&mut self, source_timestamp: u32, elapsed: Duration) -> StreamAudioTimestamp {
+        let Some(last_source_timestamp) = self.last_source_timestamp else {
+            let local_timestamp = elapsed_rtp_timestamp(elapsed, OPUS_RTP_CLOCK_RATE);
+            self.record(source_timestamp, local_timestamp, elapsed);
+            return StreamAudioTimestamp {
+                local_timestamp,
+                discontinuity: None,
+            };
+        };
+        let last_local_timestamp = self
+            .last_local_timestamp
+            .expect("an anchored audio clock has a local timestamp");
+        let last_elapsed = self
+            .last_elapsed
+            .expect("an anchored audio clock has an elapsed timestamp");
+        let elapsed_delta_ticks =
+            elapsed_rtp_timestamp(elapsed.saturating_sub(last_elapsed), OPUS_RTP_CLOCK_RATE);
+        let source_delta_ticks = source_timestamp.wrapping_sub(last_source_timestamp) as i32;
+        let drift_ticks = i64::from(source_delta_ticks).abs_diff(i64::from(elapsed_delta_ticks));
+        let source_is_continuous = source_delta_ticks > 0
+            && drift_ticks <= u64::from(STREAM_AUDIO_CLOCK_DRIFT_TOLERANCE_TICKS);
+
+        let (local_timestamp, discontinuity) = if source_is_continuous {
+            (
+                last_local_timestamp.wrapping_add(source_delta_ticks as u32),
+                None,
+            )
+        } else {
+            let elapsed_timestamp = elapsed_rtp_timestamp(elapsed, OPUS_RTP_CLOCK_RATE);
+            let minimum_timestamp =
+                last_local_timestamp.wrapping_add(DISCORD_OPUS_TIMESTAMP_INCREMENT);
+            (
+                later_rtp_timestamp(elapsed_timestamp, minimum_timestamp),
+                Some(StreamAudioClockDiscontinuity {
+                    source_delta_ticks,
+                    elapsed_delta_ticks,
+                }),
+            )
+        };
+
+        self.record(source_timestamp, local_timestamp, elapsed);
+        StreamAudioTimestamp {
+            local_timestamp,
+            discontinuity,
+        }
+    }
+
+    fn timestamp_at(&self, elapsed: Duration) -> Option<u32> {
+        let last_local_timestamp = self.last_local_timestamp?;
+        let last_elapsed = self.last_elapsed?;
+        Some(last_local_timestamp.wrapping_add(elapsed_rtp_timestamp(
+            elapsed.saturating_sub(last_elapsed),
+            OPUS_RTP_CLOCK_RATE,
+        )))
+    }
+
+    fn record(&mut self, source_timestamp: u32, local_timestamp: u32, elapsed: Duration) {
+        self.last_source_timestamp = Some(source_timestamp);
+        self.last_local_timestamp = Some(local_timestamp);
+        self.last_elapsed = Some(elapsed);
+    }
+}
+
 #[derive(Default)]
 struct LocalRtpClock {
     source_origin: Option<u32>,
@@ -1650,6 +1751,14 @@ fn elapsed_rtp_timestamp(elapsed: Duration, clock_rate: u32) -> u32 {
     let fractional =
         u64::from(elapsed.subsec_nanos()).wrapping_mul(u64::from(clock_rate)) / 1_000_000_000;
     whole.wrapping_add(fractional) as u32
+}
+
+fn later_rtp_timestamp(left: u32, right: u32) -> u32 {
+    if left.wrapping_sub(right) as i32 >= 0 {
+        left
+    } else {
+        right
+    }
 }
 
 fn build_rtcp_pli(sender_ssrc: u32, media_ssrc: u32) -> [u8; 12] {
@@ -3035,11 +3144,13 @@ mod tests {
 
     #[test]
     fn local_rtp_clocks_share_live_time_without_source_clock_offsets() {
-        let mut audio = LocalRtpClock::default();
+        let mut audio = LocalStreamAudioClock::default();
         let mut video = LocalRtpClock::default();
 
         assert_eq!(
-            audio.rebase(3_000_000, Duration::from_millis(100), OPUS_RTP_CLOCK_RATE),
+            audio
+                .rebase(3_000_000, Duration::from_millis(100))
+                .local_timestamp,
             4_800
         );
         assert_eq!(
@@ -3047,12 +3158,57 @@ mod tests {
             11_250
         );
         assert_eq!(
-            audio.rebase(3_000_960, Duration::from_millis(120), OPUS_RTP_CLOCK_RATE),
+            audio
+                .rebase(3_000_960, Duration::from_millis(120))
+                .local_timestamp,
             5_760
         );
         assert_eq!(
             video.rebase(90_003_000, Duration::from_millis(158), VIDEO_RTP_CLOCK_RATE),
             14_250
         );
+    }
+
+    #[test]
+    fn stream_audio_clock_reanchors_a_backward_source_timestamp() {
+        let mut clock = LocalStreamAudioClock::default();
+
+        let first = clock.rebase(3_181_287_385, Duration::ZERO);
+        assert_eq!(first.local_timestamp, 0);
+        assert!(first.discontinuity.is_none());
+
+        let before_reset = clock.rebase(3_181_475_545, Duration::from_millis(3_920));
+        assert_eq!(before_reset.local_timestamp, 188_160);
+        assert!(before_reset.discontinuity.is_none());
+
+        let reset = clock.rebase(3_181_114_584, Duration::from_millis(3_940));
+        assert_eq!(reset.local_timestamp, 189_120);
+        assert_eq!(
+            reset.discontinuity,
+            Some(StreamAudioClockDiscontinuity {
+                source_delta_ticks: -360_961,
+                elapsed_delta_ticks: 960,
+            })
+        );
+
+        let after_reset = clock.rebase(3_181_115_544, Duration::from_millis(3_960));
+        assert_eq!(after_reset.local_timestamp, 190_080);
+        assert!(after_reset.discontinuity.is_none());
+        assert_eq!(
+            clock.timestamp_at(Duration::from_millis(3_980)),
+            Some(191_040)
+        );
+    }
+
+    #[test]
+    fn stream_audio_clock_preserves_a_source_timestamp_wrap() {
+        let mut clock = LocalStreamAudioClock::default();
+
+        let before_wrap = clock.rebase(u32::MAX - 479, Duration::from_millis(100));
+        let after_wrap = clock.rebase(480, Duration::from_millis(120));
+
+        assert_eq!(before_wrap.local_timestamp, 4_800);
+        assert_eq!(after_wrap.local_timestamp, 5_760);
+        assert!(after_wrap.discontinuity.is_none());
     }
 }
