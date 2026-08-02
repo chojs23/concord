@@ -6,7 +6,7 @@ use crate::config::{
     VoiceParticipantPlaybackOption,
 };
 use crate::discord::ids::{Id, marker::UserMarker};
-use crate::discord::{AppCommand, VoiceParticipantPlaybackSettings};
+use crate::discord::{AppCommand, VoiceAudioSourceOptions, VoiceParticipantPlaybackSettings};
 use crate::tui::keybindings::KeyBindings;
 
 use super::{DashboardState, FocusPane, FolderKey};
@@ -63,6 +63,9 @@ pub(super) struct SettingsState {
     pub(super) credential_options: CredentialOptions,
     pub(super) notification_options: NotificationOptions,
     pub(super) voice_options: VoiceOptions,
+    pub(super) voice_audio_source_options: VoiceAudioSourceOptions,
+    pub(super) voice_audio_sources_request_id: Option<u64>,
+    pub(super) next_voice_audio_sources_request_id: u64,
     // Not editable in the TUI: kept only so saving unrelated options round-trips
     // the user's Rich Presence choice instead of resetting it to the default.
     pub(super) presence_options: PresenceOptions,

@@ -4,11 +4,11 @@ use std::{
 };
 
 #[cfg(feature = "voice-playback")]
-use std::sync::Arc;
-#[cfg(feature = "voice-playback")]
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 #[cfg(feature = "voice-playback")]
 use std::sync::mpsc::{SyncSender, TrySendError};
+#[cfg(feature = "voice-playback")]
+use std::sync::{Arc, Mutex};
 
 use ::opus::{
     Application as OpusApplication, Bitrate as OpusBitrate, Channels, Decoder as OpusDecoder,
@@ -49,6 +49,8 @@ pub(super) struct VoiceOpusDecode {
     #[cfg(feature = "voice-playback")]
     pub(super) audio_output: Option<VoiceAudioOutput>,
     #[cfg(feature = "voice-playback")]
+    pub(super) decoded_audio_output: VoiceDecodedAudioOutput,
+    #[cfg(feature = "voice-playback")]
     pub(super) playback_enabled: Arc<AtomicBool>,
     #[cfg(feature = "voice-playback")]
     pub(super) playback_volume: Arc<AtomicU8>,
@@ -56,9 +58,19 @@ pub(super) struct VoiceOpusDecode {
 
 struct VoiceDecodedAudio {
     #[cfg(feature = "voice-playback")]
-    samples_tx: Option<SyncSender<Vec<f32>>>,
-    #[cfg(feature = "voice-playback")]
-    stats: Option<Arc<VoiceAudioOutputStats>>,
+    output: VoiceDecodedAudioOutput,
+}
+
+#[cfg(feature = "voice-playback")]
+#[derive(Clone, Default)]
+pub(super) struct VoiceDecodedAudioOutput {
+    sink: Arc<Mutex<Option<VoiceDecodedAudioSink>>>,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceDecodedAudioSink {
+    samples_tx: SyncSender<Vec<f32>>,
+    stats: Arc<VoiceAudioOutputStats>,
 }
 
 #[derive(Default)]
@@ -82,6 +94,7 @@ impl VoiceOpusDecode {
             HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
         >,
         audio_handle: &tokio::runtime::Handle,
+        _output_source: Option<&str>,
     ) -> Self {
         let _ = playback_gate;
         let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
@@ -104,95 +117,66 @@ impl VoiceOpusDecode {
             HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
         >,
         audio_handle: &tokio::runtime::Handle,
+        output_source: Option<&str>,
     ) -> Self {
         let (frames_tx, frames_rx) = mpsc::channel(VOICE_PLAYBACK_FRAME_QUEUE);
         let playback_enabled = Arc::new(AtomicBool::new(playback_gate.enabled));
         let playback_volume = Arc::new(AtomicU8::new(playback_gate.volume.value()));
-        match VoiceAudioOutput::start(Arc::clone(&playback_enabled), Arc::clone(&playback_volume)) {
+        let decoded_audio_output = VoiceDecodedAudioOutput::default();
+        let audio_output = match VoiceAudioOutput::start(
+            Arc::clone(&playback_enabled),
+            Arc::clone(&playback_volume),
+            output_source,
+        ) {
             Ok(audio_output) => {
-                let decoded_audio = VoiceDecodedAudio::output(
-                    audio_output.samples_tx.clone(),
-                    Arc::clone(&audio_output.stats),
-                );
-                let task = audio_handle.spawn(run_voice_playback_decode(
-                    frames_rx,
-                    decoded_audio,
-                    participant_playback_rx,
-                ));
                 logging::debug(
                     "voice",
                     "voice Opus playback worker started with audio output",
                 );
-                Self {
-                    frames_tx,
-                    task,
-                    audio_output: Some(audio_output),
-                    playback_enabled,
-                    playback_volume,
-                }
+                Some(audio_output)
             }
             Err(error) => {
                 logging::error(
                     "voice",
                     format!("voice audio output unavailable, falling back to decode-only: {error}"),
                 );
-                let task = audio_handle.spawn(run_voice_playback_decode(
-                    frames_rx,
-                    VoiceDecodedAudio::decode_only(),
-                    participant_playback_rx,
-                ));
-                Self {
-                    frames_tx,
-                    task,
-                    audio_output: None,
-                    playback_enabled,
-                    playback_volume,
-                }
+                None
             }
+        };
+        decoded_audio_output.replace(audio_output.as_ref());
+        let task = audio_handle.spawn(run_voice_playback_decode(
+            frames_rx,
+            VoiceDecodedAudio::output(decoded_audio_output.clone()),
+            participant_playback_rx,
+        ));
+        Self {
+            frames_tx,
+            task,
+            audio_output,
+            decoded_audio_output,
+            playback_enabled,
+            playback_volume,
         }
     }
 }
 
 impl VoiceDecodedAudio {
+    #[cfg(not(feature = "voice-playback"))]
     fn decode_only() -> Self {
         Self {
             #[cfg(feature = "voice-playback")]
-            samples_tx: None,
-            #[cfg(feature = "voice-playback")]
-            stats: None,
+            output: VoiceDecodedAudioOutput::default(),
         }
     }
 
     #[cfg(feature = "voice-playback")]
-    fn output(samples_tx: SyncSender<Vec<f32>>, stats: Arc<VoiceAudioOutputStats>) -> Self {
-        Self {
-            samples_tx: Some(samples_tx),
-            stats: Some(stats),
-        }
+    fn output(output: VoiceDecodedAudioOutput) -> Self {
+        Self { output }
     }
 
     fn try_send(&self, samples: Vec<f32>) {
         #[cfg(feature = "voice-playback")]
-        if let (Some(samples_tx), Some(stats)) = (self.samples_tx.as_ref(), self.stats.as_ref()) {
-            let frames = samples.len() / usize::from(DISCORD_VOICE_CHANNELS);
-            stats
-                .queued_frames
-                .fetch_add(frames as u64, Ordering::Relaxed);
-            match samples_tx.try_send(samples) {
-                Ok(()) => stats.record_pcm_enqueue(frames),
-                Err(TrySendError::Full(_)) => {
-                    stats
-                        .queued_frames
-                        .fetch_sub(frames as u64, Ordering::Relaxed);
-                    stats.queue_full_drops.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    stats
-                        .queued_frames
-                        .fetch_sub(frames as u64, Ordering::Relaxed);
-                }
-            }
-        }
+        self.output.try_send(samples);
         #[cfg(not(feature = "voice-playback"))]
         {
             let _ = samples;
@@ -201,7 +185,7 @@ impl VoiceDecodedAudio {
 
     fn log_output_stats(&self) {
         #[cfg(feature = "voice-playback")]
-        if let Some(stats) = self.stats.as_ref() {
+        if let Some(stats) = self.output.stats() {
             let callback_frames_min = stats.callback_frames_min.swap(u64::MAX, Ordering::Relaxed);
             logging::debug(
                 "voice",
@@ -228,6 +212,60 @@ impl VoiceDecodedAudio {
                 ),
             );
         }
+    }
+}
+
+#[cfg(feature = "voice-playback")]
+impl VoiceDecodedAudioOutput {
+    pub(super) fn replace(&self, output: Option<&VoiceAudioOutput>) {
+        let sink = output.map(|output| VoiceDecodedAudioSink {
+            samples_tx: output.samples_tx.clone(),
+            stats: Arc::clone(&output.stats),
+        });
+        self.replace_sink(sink);
+    }
+
+    fn replace_sink(&self, sink: Option<VoiceDecodedAudioSink>) {
+        *self
+            .sink
+            .lock()
+            .expect("voice decoded output mutex should not be poisoned") = sink;
+    }
+
+    fn snapshot(&self) -> Option<(SyncSender<Vec<f32>>, Arc<VoiceAudioOutputStats>)> {
+        self.sink
+            .lock()
+            .expect("voice decoded output mutex should not be poisoned")
+            .as_ref()
+            .map(|sink| (sink.samples_tx.clone(), Arc::clone(&sink.stats)))
+    }
+
+    fn try_send(&self, samples: Vec<f32>) {
+        let Some((samples_tx, stats)) = self.snapshot() else {
+            return;
+        };
+        let frames = samples.len() / usize::from(DISCORD_VOICE_CHANNELS);
+        stats
+            .queued_frames
+            .fetch_add(frames as u64, Ordering::Relaxed);
+        match samples_tx.try_send(samples) {
+            Ok(()) => stats.record_pcm_enqueue(frames),
+            Err(TrySendError::Full(_)) => {
+                stats
+                    .queued_frames
+                    .fetch_sub(frames as u64, Ordering::Relaxed);
+                stats.queue_full_drops.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                stats
+                    .queued_frames
+                    .fetch_sub(frames as u64, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn stats(&self) -> Option<Arc<VoiceAudioOutputStats>> {
+        self.snapshot().map(|(_, stats)| stats)
     }
 }
 
@@ -505,5 +543,45 @@ pub(super) fn voice_mix_gain(frame_count: usize) -> f32 {
         1.0
     } else {
         1.0 / (frame_count as f32).sqrt()
+    }
+}
+
+#[cfg(all(test, feature = "voice-playback"))]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::sync_channel;
+
+    #[test]
+    fn decoded_audio_can_switch_output_sink() {
+        let output = VoiceDecodedAudioOutput::default();
+        let decoded_audio = VoiceDecodedAudio::output(output.clone());
+        let (first_tx, first_rx) = sync_channel(1);
+        output.replace_sink(Some(VoiceDecodedAudioSink {
+            samples_tx: first_tx,
+            stats: Arc::new(VoiceAudioOutputStats::default()),
+        }));
+
+        decoded_audio.try_send(vec![0.25, -0.25]);
+        assert_eq!(
+            first_rx
+                .recv()
+                .expect("first output should receive decoded samples"),
+            vec![0.25, -0.25]
+        );
+
+        let (second_tx, second_rx) = sync_channel(1);
+        output.replace_sink(Some(VoiceDecodedAudioSink {
+            samples_tx: second_tx,
+            stats: Arc::new(VoiceAudioOutputStats::default()),
+        }));
+
+        decoded_audio.try_send(vec![0.5, -0.5]);
+        assert_eq!(
+            second_rx
+                .recv()
+                .expect("replacement output should receive decoded samples"),
+            vec![0.5, -0.5]
+        );
+        assert!(first_rx.try_recv().is_err());
     }
 }

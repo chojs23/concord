@@ -76,6 +76,10 @@ pub struct NotificationOptions {
 pub struct VoiceOptions {
     pub self_mute: bool,
     pub self_deaf: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_source: Option<String>,
     pub allow_microphone_transmit: bool,
     pub push_to_talk: bool,
     pub push_to_talk_shortcut: String,
@@ -90,6 +94,8 @@ impl Default for VoiceOptions {
         Self {
             self_mute: false,
             self_deaf: false,
+            input_source: None,
+            output_source: None,
             allow_microphone_transmit: false,
             push_to_talk: false,
             push_to_talk_shortcut: "F8".to_owned(),

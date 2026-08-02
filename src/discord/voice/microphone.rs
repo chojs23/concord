@@ -1,4 +1,6 @@
 #[cfg(feature = "voice-playback")]
+use super::devices;
+#[cfg(feature = "voice-playback")]
 use super::noise::VoiceNoiseSuppressor;
 use super::*;
 
@@ -6,11 +8,12 @@ use super::*;
 impl VoiceMicrophoneCapture {
     pub(super) fn start(
         samples_tx: Option<mpsc::Sender<VoiceMicrophoneFrame>>,
+        input_source: Option<&str>,
     ) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         let alsa_error_output = alsa::Output::local_error_handler().ok();
 
-        let result = Self::start_with_cpal(samples_tx);
+        let result = Self::start_with_cpal(samples_tx, input_source);
 
         #[cfg(target_os = "linux")]
         log_captured_alsa_errors(&alsa_error_output);
@@ -20,11 +23,10 @@ impl VoiceMicrophoneCapture {
 
     pub(super) fn start_with_cpal(
         samples_tx: Option<mpsc::Sender<VoiceMicrophoneFrame>>,
+        input_source: Option<&str>,
     ) -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| "no default microphone input device is available".to_owned())?;
+        let device = devices::resolve_input_device(&host, input_source)?;
         let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
         let (stream, stream_config, sample_format) =
             build_preferred_voice_input_stream(&device, Arc::clone(&stats), samples_tx.clone())

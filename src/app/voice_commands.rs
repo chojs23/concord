@@ -6,7 +6,8 @@ use crate::{
     DiscordClient,
     discord::{
         AppEvent, MicrophoneSensitivityDb, StreamCaptureTarget, VoiceAudioSettings,
-        VoiceConnectionStatus, VoiceParticipantPlaybackSettings, VoiceScope, VoiceVolumePercent,
+        VoiceAudioSources, VoiceConnectionStatus, VoiceParticipantPlaybackSettings, VoiceScope,
+        VoiceVolumePercent,
     },
     logging,
 };
@@ -18,6 +19,8 @@ pub(super) struct JoinRequest {
     pub channel_id: Id<ChannelMarker>,
     pub self_mute: bool,
     pub self_deaf: bool,
+    pub input_source: Option<String>,
+    pub output_source: Option<String>,
     pub allow_microphone_transmit: bool,
     pub noise_suppression: bool,
     pub microphone_sensitivity: MicrophoneSensitivityDb,
@@ -32,6 +35,8 @@ pub(super) async fn join_channel(client: DiscordClient, request: JoinRequest) {
         channel_id,
         self_mute,
         self_deaf,
+        input_source,
+        output_source,
         allow_microphone_transmit,
         noise_suppression,
         microphone_sensitivity,
@@ -48,6 +53,10 @@ pub(super) async fn join_channel(client: DiscordClient, request: JoinRequest) {
     };
 
     client.replace_voice_participant_playback_settings(participant_playback_settings);
+    client.update_voice_audio_sources(VoiceAudioSources {
+        input: input_source,
+        output: output_source,
+    });
     if let Err(message) = client.request_voice_join(scope, channel_id, self_mute, self_deaf) {
         logging::error("app", &message);
         client
@@ -84,6 +93,35 @@ pub(super) async fn join_channel(client: DiscordClient, request: JoinRequest) {
             channel_id: Some(channel_id),
             status: VoiceConnectionStatus::Connecting,
             message: Some("Voice join requested".to_owned()),
+        })
+        .await;
+}
+
+pub(super) fn update_audio_sources(client: &DiscordClient, sources: VoiceAudioSources) {
+    client.update_voice_audio_sources(sources);
+}
+
+pub(super) async fn load_voice_audio_sources(client: DiscordClient, request_id: u64) {
+    let result = tokio::task::spawn_blocking(crate::discord::list_voice_audio_sources)
+        .await
+        .map_err(|error| format!("voice audio source task failed: {error}"))
+        .and_then(|result| result);
+    let (inputs, outputs, error) = match result {
+        Ok(options) => {
+            let (inputs, outputs) = options.into_parts();
+            (inputs, outputs, None)
+        }
+        Err(error) => {
+            logging::error("voice", &error);
+            (Vec::new(), Vec::new(), Some(error))
+        }
+    };
+    client
+        .publish_event(AppEvent::VoiceAudioSourcesLoaded {
+            request_id,
+            inputs,
+            outputs,
+            error,
         })
         .await;
 }

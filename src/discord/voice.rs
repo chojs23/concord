@@ -17,6 +17,7 @@ mod capture;
 #[path = "voice/capture_disabled.rs"]
 mod capture;
 mod dave;
+mod devices;
 mod gateway;
 mod info;
 mod levels;
@@ -36,6 +37,7 @@ mod stream;
 mod system_audio;
 
 pub(crate) use capture::list_stream_capture_targets;
+pub(crate) use devices::{VoiceAudioSourceOptions, VoiceAudioSources, list_voice_audio_sources};
 #[cfg(all(feature = "voice-playback", not(test)))]
 use gateway::voice_speaking_payload;
 #[cfg(test)]
@@ -61,6 +63,8 @@ pub(in crate::discord) use state::StreamState;
 pub(in crate::discord) use state::VoiceState;
 pub use state::{CurrentVoiceConnectionState, VoiceAudioSettings, VoiceParticipantState};
 
+#[cfg(feature = "voice-playback")]
+use self::opus::VoiceDecodedAudioOutput;
 use self::opus::VoiceOpusDecode;
 #[cfg(any(test, feature = "voice-playback"))]
 use self::opus::VoiceOpusEncode;
@@ -101,7 +105,7 @@ use aes_gcm::{
 #[cfg(test)]
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 #[cfg(feature = "voice-playback")]
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 #[cfg(feature = "voice-playback")]
@@ -312,6 +316,14 @@ type VoiceReader = futures::stream::SplitStream<VoiceGatewayStream>;
 pub(crate) enum VoiceRuntimeEvent {
     Requested(Option<CurrentVoiceConnectionState>),
     ManualRetry(CurrentVoiceConnectionState),
+    AudioSourcesChanged(VoiceAudioSources),
+    AudioSourcesApplyFailed {
+        connection_id: u64,
+        generation: u64,
+        requested_sources: VoiceAudioSources,
+        active_sources: VoiceAudioSources,
+        message: String,
+    },
     #[cfg(feature = "voice-playback")]
     PushToTalkEnabledChanged(bool),
     #[cfg(feature = "voice-playback")]
@@ -382,6 +394,18 @@ pub(crate) enum VoiceRuntimeEvent {
         outcome: VoiceConnectionEnd,
     },
     Shutdown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VoiceAudioSourceSelection {
+    generation: u64,
+    sources: VoiceAudioSources,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct VoiceAudioSourcesApplyOutcome {
+    active_sources: VoiceAudioSources,
+    error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -463,6 +487,23 @@ impl VoiceStatusPublisher {
     async fn publish_error(&self, message: String) {
         self.events
             .publish(AppEvent::GatewayError { message })
+            .await;
+    }
+
+    async fn publish_audio_sources_apply_failed(
+        &self,
+        requested_sources: VoiceAudioSources,
+        active_sources: VoiceAudioSources,
+        message: String,
+    ) {
+        self.events
+            .publish(AppEvent::VoiceAudioSourcesApplyFailed {
+                requested_input_source: requested_sources.input,
+                requested_output_source: requested_sources.output,
+                active_input_source: active_sources.input,
+                active_output_source: active_sources.output,
+                message,
+            })
             .await;
     }
 
@@ -727,7 +768,13 @@ struct VoiceChildTasks {
     #[cfg(feature = "voice-playback")]
     audio_output: Option<VoiceAudioOutput>,
     #[cfg(feature = "voice-playback")]
+    decoded_audio_output: Option<VoiceDecodedAudioOutput>,
+    #[cfg(feature = "voice-playback")]
     microphone_capture: Option<VoiceMicrophoneCapture>,
+    #[cfg(feature = "voice-playback")]
+    microphone_source: Option<String>,
+    #[cfg(feature = "voice-playback")]
+    output_source: Option<String>,
     // Declared last so it is dropped after the task handles above — aborting
     // them before the runtime they ran on tears down.
     audio_runtime: Option<VoiceAudioRuntime>,
@@ -781,7 +828,13 @@ impl Default for VoiceChildTasks {
             #[cfg(feature = "voice-playback")]
             audio_output: None,
             #[cfg(feature = "voice-playback")]
+            decoded_audio_output: None,
+            #[cfg(feature = "voice-playback")]
             microphone_capture: None,
+            #[cfg(feature = "voice-playback")]
+            microphone_source: None,
+            #[cfg(feature = "voice-playback")]
+            output_source: None,
             audio_runtime: None,
         }
     }
@@ -798,6 +851,7 @@ struct VoiceCaptureGate {
 }
 
 struct VoiceGatewayControls {
+    audio_sources_rx: watch::Receiver<VoiceAudioSourceSelection>,
     initial_capture_gate: VoiceCaptureGate,
     capture_gate_rx: mpsc::UnboundedReceiver<VoiceCaptureGate>,
     initial_playback_gate: VoicePlaybackGate,
@@ -1007,7 +1061,11 @@ impl VoiceChildTasks {
     fn replace_opus_decode(&mut self, opus_decode: VoiceOpusDecode) {
         #[cfg(feature = "voice-playback")]
         {
+            if let Some(decoded_audio_output) = self.decoded_audio_output.take() {
+                decoded_audio_output.replace(None);
+            }
             self.audio_output = opus_decode.audio_output;
+            self.decoded_audio_output = Some(opus_decode.decoded_audio_output);
             self.playback_enabled = Some(opus_decode.playback_enabled);
             self.playback_volume = Some(opus_decode.playback_volume);
         }
@@ -1027,8 +1085,12 @@ impl VoiceChildTasks {
         self.opus_decode.abort();
         #[cfg(feature = "voice-playback")]
         {
+            if let Some(decoded_audio_output) = self.decoded_audio_output.take() {
+                decoded_audio_output.replace(None);
+            }
             self.audio_output = None;
             self.playback_enabled = None;
+            self.playback_volume = None;
             self.microphone_capture = None;
         }
     }
@@ -1047,7 +1109,10 @@ impl VoiceChildTasks {
         {
             match (enabled, self.microphone_capture.is_some()) {
                 (true, false) => {
-                    match VoiceMicrophoneCapture::start(self.microphone_pcm_tx.clone()) {
+                    match VoiceMicrophoneCapture::start(
+                        self.microphone_pcm_tx.clone(),
+                        self.microphone_source.as_deref(),
+                    ) {
                         Ok(capture) => self.microphone_capture = Some(capture),
                         Err(error) => logging::error(
                             "voice",
@@ -1098,6 +1163,88 @@ impl VoiceChildTasks {
         {
             let _ = playback_gate;
         }
+    }
+
+    fn set_voice_audio_sources(
+        &mut self,
+        sources: VoiceAudioSources,
+        capture_gate: VoiceCaptureGate,
+    ) -> VoiceAudioSourcesApplyOutcome {
+        #[cfg(feature = "voice-playback")]
+        {
+            let mut errors = Vec::new();
+            if self.microphone_source != sources.input {
+                let capture_should_run =
+                    capture_gate.capture_enabled && self.microphone_pcm_tx.is_some();
+                if self.microphone_capture.is_some() || capture_should_run {
+                    logging::debug(
+                        "voice",
+                        "starting replacement voice microphone capture for new source",
+                    );
+                    match VoiceMicrophoneCapture::start(
+                        self.microphone_pcm_tx.clone(),
+                        sources.input.as_deref(),
+                    ) {
+                        Ok(capture) => {
+                            self.microphone_capture = Some(capture);
+                            self.microphone_source = sources.input;
+                            logging::debug(
+                                "voice",
+                                "replaced voice microphone capture for new source",
+                            );
+                        }
+                        Err(error) => errors.push(format!(
+                            "Could not switch voice input source. The previous source remains active: {error}"
+                        )),
+                    }
+                } else {
+                    self.microphone_source = sources.input;
+                }
+            }
+            if self.output_source != sources.output {
+                if let Err(error) = self.replace_voice_audio_output(sources.output.as_deref()) {
+                    errors.push(format!(
+                        "Could not switch voice output source. The previous source remains active: {error}"
+                    ));
+                } else {
+                    self.output_source = sources.output;
+                }
+            }
+            VoiceAudioSourcesApplyOutcome {
+                active_sources: VoiceAudioSources {
+                    input: self.microphone_source.clone(),
+                    output: self.output_source.clone(),
+                },
+                error: (!errors.is_empty()).then(|| errors.join(" ")),
+            }
+        }
+        #[cfg(not(feature = "voice-playback"))]
+        {
+            let _ = capture_gate;
+            VoiceAudioSourcesApplyOutcome {
+                active_sources: sources,
+                error: None,
+            }
+        }
+    }
+
+    #[cfg(feature = "voice-playback")]
+    fn replace_voice_audio_output(&mut self, output_source: Option<&str>) -> Result<(), String> {
+        let Some(decoded_audio_output) = self.decoded_audio_output.clone() else {
+            return Ok(());
+        };
+        let (Some(playback_enabled), Some(playback_volume)) =
+            (self.playback_enabled.clone(), self.playback_volume.clone())
+        else {
+            return Ok(());
+        };
+
+        let audio_output =
+            VoiceAudioOutput::start(playback_enabled, playback_volume, output_source)?;
+        decoded_audio_output.replace(Some(&audio_output));
+        self.audio_output = Some(audio_output);
+        logging::debug("voice", "replaced voice audio output for new source");
+        Ok(())
     }
 }
 

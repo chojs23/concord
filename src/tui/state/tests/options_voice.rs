@@ -41,6 +41,29 @@ fn current_voice_stream_leader_label(state: &mut DashboardState) -> String {
         .label
 }
 
+fn complete_voice_audio_source_load(
+    state: &mut DashboardState,
+    inputs: &[(&str, &str)],
+    outputs: &[(&str, &str)],
+) {
+    let commands = state.drain_pending_commands();
+    let [AppCommand::LoadVoiceAudioSources { request_id }] = commands.as_slice() else {
+        panic!("opening voice options should request audio sources");
+    };
+    state.push_effect(AppEvent::VoiceAudioSourcesLoaded {
+        request_id: *request_id,
+        inputs: inputs
+            .iter()
+            .map(|(id, label)| ((*id).to_owned(), (*label).to_owned()))
+            .collect(),
+        outputs: outputs
+            .iter()
+            .map(|(id, label)| ((*id).to_owned(), (*label).to_owned()))
+            .collect(),
+        error: None,
+    });
+}
+
 #[test]
 fn voice_options_show_push_to_talk_toggle_and_shortcut() {
     let mut state = DashboardState::new_with_voice_options(VoiceOptions {
@@ -50,15 +73,61 @@ fn voice_options_show_push_to_talk_toggle_and_shortcut() {
         ..VoiceOptions::default()
     });
     state.open_options_category(OptionsCategory::Voice);
+    complete_voice_audio_source_load(
+        &mut state,
+        &[("mic-1", "Desk microphone")],
+        &[("speaker-1", "Headphones")],
+    );
 
     let items = state.display_option_items();
 
-    assert_eq!(items[3].label, "Push to talk");
-    assert!(items[3].enabled);
-    assert_eq!(items[3].value, None);
-    assert_eq!(items[4].value.as_deref(), Some("control+F8"));
-    assert!(items[4].effective);
-    assert!(!items[6].effective);
+    assert_eq!(items[2].label, "Input source");
+    assert_eq!(items[2].value.as_deref(), Some("System default"));
+    assert_eq!(items[3].label, "Output source");
+    assert_eq!(items[3].value.as_deref(), Some("System default"));
+    assert_eq!(items[5].label, "Push to talk");
+    assert!(items[5].enabled);
+    assert_eq!(items[5].value, None);
+    assert_eq!(items[6].value.as_deref(), Some("control+F8"));
+    assert!(items[6].effective);
+    assert!(!items[8].effective);
+}
+
+#[test]
+fn voice_source_options_cycle_and_queue_updates_while_disconnected() {
+    let mut state = DashboardState::new();
+    state.open_options_category(OptionsCategory::Voice);
+    complete_voice_audio_source_load(
+        &mut state,
+        &[("mic-1", "Desk microphone")],
+        &[("speaker-1", "Headphones")],
+    );
+    state.move_option_down();
+    state.move_option_down();
+
+    state.adjust_selected_display_option(1);
+    assert_eq!(state.voice_options().input_source.as_deref(), Some("mic-1"));
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceAudioSources {
+            input_source: Some("mic-1".to_owned()),
+            output_source: None,
+        }]
+    );
+
+    state.move_option_down();
+    state.toggle_selected_display_option();
+    assert_eq!(
+        state.voice_options().output_source.as_deref(),
+        Some("speaker-1")
+    );
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceAudioSources {
+            input_source: Some("mic-1".to_owned()),
+            output_source: Some("speaker-1".to_owned()),
+        }]
+    );
 }
 
 #[test]
@@ -74,6 +143,7 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
     ));
     state.open_options_category_picker();
     state.open_options_category_from_shortcut(OptionsCategoryShortcut::Voice);
+    complete_voice_audio_source_load(&mut state, &[], &[]);
 
     state.toggle_selected_display_option();
     assert_eq!(
@@ -98,6 +168,8 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
         }]
     );
 
+    state.move_option_down();
+    state.move_option_down();
     state.move_option_down();
     state.toggle_selected_display_option();
     assert!(state.voice_options().allow_microphone_transmit);
@@ -203,6 +275,108 @@ fn voice_option_toggles_queue_current_voice_state_update_when_joined() {
             voice_output_volume: VoiceVolumePercent::new(200),
         }]
     );
+}
+
+#[test]
+fn unavailable_saved_voice_sources_fall_back_to_system_default_while_disconnected() {
+    let mut state = DashboardState::new_with_voice_options(VoiceOptions {
+        input_source: Some("missing-mic".to_owned()),
+        output_source: Some("missing-speaker".to_owned()),
+        ..VoiceOptions::default()
+    });
+    state.open_options_category(OptionsCategory::Voice);
+    let loading_items = state.display_option_items();
+    assert_eq!(
+        loading_items[2].value.as_deref(),
+        Some("Loading sources...")
+    );
+    assert_eq!(
+        loading_items[3].value.as_deref(),
+        Some("Loading sources...")
+    );
+
+    complete_voice_audio_source_load(
+        &mut state,
+        &[("mic-1", "Desk microphone")],
+        &[("speaker-1", "Headphones")],
+    );
+
+    assert_eq!(state.voice_options().input_source, None);
+    assert_eq!(state.voice_options().output_source, None);
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::UpdateVoiceAudioSources {
+            input_source: None,
+            output_source: None,
+        }]
+    );
+    let saved = state
+        .take_options_save_request()
+        .expect("normalized voice sources should be saved");
+    assert_eq!(saved.voice.input_source, None);
+    assert_eq!(saved.voice.output_source, None);
+    let items = state.display_option_items();
+    assert_eq!(items[2].value.as_deref(), Some("System default"));
+    assert_eq!(items[3].value.as_deref(), Some("System default"));
+}
+
+#[test]
+fn failed_voice_source_change_restores_the_active_sources() {
+    let mut state = DashboardState::new_with_voice_options(VoiceOptions {
+        input_source: Some("new-mic".to_owned()),
+        output_source: Some("new-speaker".to_owned()),
+        ..VoiceOptions::default()
+    });
+
+    state.push_effect(AppEvent::VoiceAudioSourcesApplyFailed {
+        requested_input_source: Some("new-mic".to_owned()),
+        requested_output_source: Some("new-speaker".to_owned()),
+        active_input_source: Some("old-mic".to_owned()),
+        active_output_source: Some("old-speaker".to_owned()),
+        message: "Could not switch audio sources".to_owned(),
+    });
+
+    assert_eq!(
+        state.voice_options().input_source.as_deref(),
+        Some("old-mic")
+    );
+    assert_eq!(
+        state.voice_options().output_source.as_deref(),
+        Some("old-speaker")
+    );
+    let saved = state
+        .take_options_save_request()
+        .expect("restored active sources should be saved");
+    assert_eq!(saved.voice.input_source.as_deref(), Some("old-mic"));
+    assert_eq!(saved.voice.output_source.as_deref(), Some("old-speaker"));
+    assert!(state.drain_pending_commands().is_empty());
+}
+
+#[test]
+fn stale_voice_source_failure_does_not_replace_a_newer_selection() {
+    let mut state = DashboardState::new_with_voice_options(VoiceOptions {
+        input_source: Some("newer-mic".to_owned()),
+        output_source: Some("newer-speaker".to_owned()),
+        ..VoiceOptions::default()
+    });
+
+    state.push_effect(AppEvent::VoiceAudioSourcesApplyFailed {
+        requested_input_source: Some("failed-mic".to_owned()),
+        requested_output_source: Some("failed-speaker".to_owned()),
+        active_input_source: Some("old-mic".to_owned()),
+        active_output_source: Some("old-speaker".to_owned()),
+        message: "Could not switch audio sources".to_owned(),
+    });
+
+    assert_eq!(
+        state.voice_options().input_source.as_deref(),
+        Some("newer-mic")
+    );
+    assert_eq!(
+        state.voice_options().output_source.as_deref(),
+        Some("newer-speaker")
+    );
+    assert!(state.take_options_save_request().is_none());
 }
 
 #[test]
@@ -329,6 +503,8 @@ fn voice_channel_action_emits_join_then_leave_command() {
     let mut state = DashboardState::new_with_voice_options(VoiceOptions {
         self_mute: true,
         self_deaf: true,
+        input_source: None,
+        output_source: None,
         allow_microphone_transmit: false,
         push_to_talk: false,
         push_to_talk_shortcut: "F8".to_owned(),
@@ -352,6 +528,8 @@ fn voice_channel_action_emits_join_then_leave_command() {
             channel_id: Id::new(11),
             self_mute: true,
             self_deaf: true,
+            input_source: None,
+            output_source: None,
             allow_microphone_transmit: false,
             noise_suppression: true,
             microphone_sensitivity: Default::default(),
@@ -574,6 +752,8 @@ fn other_client_voice_state_shows_header_only() {
     let mut state = DashboardState::new_with_voice_options(VoiceOptions {
         self_mute: true,
         self_deaf: true,
+        input_source: None,
+        output_source: None,
         allow_microphone_transmit: false,
         push_to_talk: false,
         push_to_talk_shortcut: "F8".to_owned(),
@@ -663,6 +843,8 @@ fn voice_join_action_reflects_scope_permissions_and_participation() {
                 channel_id: Id::new(20),
                 self_mute: false,
                 self_deaf: false,
+                input_source: None,
+                output_source: None,
                 allow_microphone_transmit: false,
                 noise_suppression: true,
                 microphone_sensitivity: Default::default(),

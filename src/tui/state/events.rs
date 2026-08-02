@@ -5,7 +5,8 @@ use crate::discord::ids::{
     marker::{ChannelMarker, MessageMarker},
 };
 use crate::discord::{
-    AppEvent, MessageHistoryLoadTarget, MessageInfo, VoiceConnectionStatus, VoiceScope,
+    AppEvent, MessageHistoryLoadTarget, MessageInfo, VoiceAudioSourceOptions, VoiceAudioSources,
+    VoiceConnectionStatus, VoiceScope,
 };
 use crate::logging;
 
@@ -257,6 +258,52 @@ impl DashboardState {
                         },
                     ));
                 }
+            }
+            AppEvent::VoiceAudioSourcesLoaded {
+                request_id,
+                inputs,
+                outputs,
+                error,
+            } => {
+                if self.options.voice_audio_sources_request_id != Some(*request_id) {
+                    return;
+                }
+                self.options.voice_audio_sources_request_id = None;
+                if let Some(error) = error {
+                    self.show_error_toast(error, Instant::now());
+                } else {
+                    let options =
+                        VoiceAudioSourceOptions::from_parts(inputs.clone(), outputs.clone());
+                    let mut selected = VoiceAudioSources {
+                        input: self.options.voice_options.input_source.clone(),
+                        output: self.options.voice_options.output_source.clone(),
+                    };
+                    let normalized = options.normalize(&mut selected);
+                    self.options.voice_audio_source_options = options;
+                    if normalized {
+                        self.options.voice_options.input_source = selected.input;
+                        self.options.voice_options.output_source = selected.output;
+                        self.options.config_save_pending = true;
+                        self.queue_current_voice_audio_sources_update();
+                    }
+                }
+            }
+            AppEvent::VoiceAudioSourcesApplyFailed {
+                requested_input_source,
+                requested_output_source,
+                active_input_source,
+                active_output_source,
+                message,
+            } => {
+                let failed_request_is_current = self.options.voice_options.input_source
+                    == *requested_input_source
+                    && self.options.voice_options.output_source == *requested_output_source;
+                if failed_request_is_current {
+                    self.options.voice_options.input_source = active_input_source.clone();
+                    self.options.voice_options.output_source = active_output_source.clone();
+                    self.options.config_save_pending = true;
+                }
+                self.show_error_toast(message, Instant::now());
             }
             AppEvent::StreamBroadcastStarted { scope, channel_id } => {
                 self.clear_stream_broadcast_preparing(*scope, *channel_id);

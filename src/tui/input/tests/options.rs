@@ -65,7 +65,7 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('o'));
     handle_key(&mut state, char_key('v'));
-    for _ in 0..6 {
+    for _ in 0..8 {
         handle_key(&mut state, key(KeyCode::Down));
     }
 
@@ -230,7 +230,7 @@ fn voice_options_enable_push_to_talk_and_apply_shortcut_without_restart() {
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('o'));
     handle_key(&mut state, char_key('v'));
-    for _ in 0..3 {
+    for _ in 0..5 {
         handle_key(&mut state, key(KeyCode::Down));
     }
     handle_key(&mut state, key(KeyCode::Enter));
@@ -241,7 +241,7 @@ fn voice_options_enable_push_to_talk_and_apply_shortcut_without_restart() {
     handle_key(&mut state, key(KeyCode::Enter));
     assert!(state.is_capturing_push_to_talk_shortcut());
     assert_eq!(
-        state.display_option_items()[4].value.as_deref(),
+        state.display_option_items()[6].value.as_deref(),
         Some("Press shortcut (Esc cancels)")
     );
 
@@ -265,7 +265,7 @@ fn push_to_talk_shortcut_capture_keeps_the_previous_key_on_cancel_or_invalid_inp
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('o'));
     handle_key(&mut state, char_key('v'));
-    for _ in 0..4 {
+    for _ in 0..6 {
         handle_key(&mut state, key(KeyCode::Down));
     }
 

@@ -66,6 +66,50 @@ fn voice_runtime_assembles_local_voice_session() {
 }
 
 #[test]
+fn voice_runtime_restores_active_sources_only_for_the_latest_failed_selection() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    let connection_id = match state.apply(VoiceRuntimeEvent::VoiceServer(voice_server())) {
+        Some(VoiceRuntimeAction::Connect(session)) => session.connection_id,
+        action => panic!("voice server should start a connection, got {action:?}"),
+    };
+    let requested_sources = VoiceAudioSources {
+        input: Some("new-mic".to_owned()),
+        output: Some("new-speaker".to_owned()),
+    };
+    state.apply(VoiceRuntimeEvent::AudioSourcesChanged(
+        requested_sources.clone(),
+    ));
+    let selection = state.audio_source_selection();
+
+    state.apply(VoiceRuntimeEvent::AudioSourcesApplyFailed {
+        connection_id,
+        generation: selection.generation.saturating_sub(1),
+        requested_sources: requested_sources.clone(),
+        active_sources: VoiceAudioSources::default(),
+        message: "stale failure".to_owned(),
+    });
+    assert_eq!(state.audio_source_selection().sources, requested_sources);
+
+    state.apply(VoiceRuntimeEvent::AudioSourcesApplyFailed {
+        connection_id,
+        generation: selection.generation,
+        requested_sources: requested_sources.clone(),
+        active_sources: VoiceAudioSources::default(),
+        message: "current failure".to_owned(),
+    });
+    assert_eq!(
+        state.audio_source_selection().sources,
+        VoiceAudioSources::default()
+    );
+}
+
+#[test]
 fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     let mut state = VoiceRuntimeState::default();
     state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
@@ -2106,21 +2150,28 @@ fn voice_udp_transmit_reports_only_failures_to_the_gateway() {
 
 #[tokio::test]
 async fn voice_runtime_stops_connection_task_by_closing_gate_channels() {
+    let (audio_sources_tx, mut audio_sources_rx) = watch::channel(VoiceAudioSourceSelection {
+        generation: 0,
+        sources: VoiceAudioSources::default(),
+    });
     let (capture_gate_tx, mut capture_gate_rx) = mpsc::unbounded_channel();
     let (playback_gate_tx, mut playback_gate_rx) = mpsc::unbounded_channel();
     let (done_tx, done_rx) = tokio::sync::oneshot::channel();
     let mut connection_task = Some(tokio::spawn(async move {
+        assert!(audio_sources_rx.changed().await.is_err());
         assert!(capture_gate_rx.recv().await.is_none());
         assert!(playback_gate_rx.recv().await.is_none());
         let _ = done_tx.send(());
     }));
     let mut connection_session = None;
+    let mut audio_sources_tx = Some(audio_sources_tx);
     let mut capture_gate_tx = Some(capture_gate_tx);
     let mut playback_gate_tx = Some(playback_gate_tx);
 
     let stopped_session = stop_voice_connection_task(
         &mut connection_task,
         &mut connection_session,
+        &mut audio_sources_tx,
         &mut capture_gate_tx,
         &mut playback_gate_tx,
         "test voice connection stop",
@@ -2132,8 +2183,42 @@ async fn voice_runtime_stops_connection_task_by_closing_gate_channels() {
         .await
         .expect("connection task should finish after gate channels close");
     assert!(connection_task.is_none());
+    assert!(audio_sources_tx.is_none());
     assert!(capture_gate_tx.is_none());
     assert!(playback_gate_tx.is_none());
+}
+
+#[test]
+fn voice_audio_source_watch_retains_only_the_latest_selection() {
+    let (audio_sources_tx, audio_sources_rx) = watch::channel(VoiceAudioSourceSelection {
+        generation: 0,
+        sources: VoiceAudioSources::default(),
+    });
+    audio_sources_tx.send_replace(VoiceAudioSourceSelection {
+        generation: 1,
+        sources: VoiceAudioSources {
+            input: Some("mic-1".to_owned()),
+            output: None,
+        },
+    });
+    audio_sources_tx.send_replace(VoiceAudioSourceSelection {
+        generation: 2,
+        sources: VoiceAudioSources {
+            input: Some("mic-2".to_owned()),
+            output: Some("speaker-2".to_owned()),
+        },
+    });
+
+    assert_eq!(
+        audio_sources_rx.borrow().clone(),
+        VoiceAudioSourceSelection {
+            generation: 2,
+            sources: VoiceAudioSources {
+                input: Some("mic-2".to_owned()),
+                output: Some("speaker-2".to_owned()),
+            },
+        }
+    );
 }
 
 #[tokio::test]
@@ -2143,12 +2228,14 @@ async fn voice_runtime_requests_speaking_cleanup_after_connection_task_failure()
     }));
     let expected_session = test_voice_gateway_session();
     let mut connection_session = Some(expected_session.clone());
+    let mut audio_sources_tx = None;
     let mut capture_gate_tx = None;
     let mut playback_gate_tx = None;
 
     let stopped_session = stop_voice_connection_task(
         &mut connection_task,
         &mut connection_session,
+        &mut audio_sources_tx,
         &mut capture_gate_tx,
         &mut playback_gate_tx,
         "test failed voice connection stop",

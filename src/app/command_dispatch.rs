@@ -197,6 +197,8 @@ impl CommandDispatcher {
                 channel_id,
                 self_mute,
                 self_deaf,
+                input_source,
+                output_source,
                 allow_microphone_transmit,
                 noise_suppression,
                 microphone_sensitivity,
@@ -211,6 +213,8 @@ impl CommandDispatcher {
                         channel_id,
                         self_mute,
                         self_deaf,
+                        input_source,
+                        output_source,
                         allow_microphone_transmit,
                         noise_suppression,
                         microphone_sensitivity,
@@ -258,6 +262,21 @@ impl CommandDispatcher {
                     },
                 )
                 .await;
+            }
+            AppCommand::UpdateVoiceAudioSources {
+                input_source,
+                output_source,
+            } => {
+                voice_commands::update_audio_sources(
+                    &self.client,
+                    crate::discord::VoiceAudioSources {
+                        input: input_source,
+                        output: output_source,
+                    },
+                );
+            }
+            AppCommand::LoadVoiceAudioSources { request_id } => {
+                voice_commands::load_voice_audio_sources(self.client.clone(), request_id).await;
             }
             AppCommand::UpdateVoiceParticipantPlayback { user_id, settings } => {
                 voice_commands::update_participant_playback(&self.client, user_id, settings);
@@ -679,6 +698,7 @@ fn runs_inline(command: &AppCommand) -> bool {
             | AppCommand::JoinVoiceChannel { .. }
             | AppCommand::UpdateVoiceState { .. }
             | AppCommand::UpdateVoiceCapturePermission { .. }
+            | AppCommand::UpdateVoiceAudioSources { .. }
             | AppCommand::UpdateVoiceParticipantPlayback { .. }
             | AppCommand::WatchVoiceStream { .. }
             | AppCommand::StartVoiceStream { .. }
@@ -724,6 +744,8 @@ mod tests {
             channel_id: Id::new(2),
             self_mute: false,
             self_deaf: false,
+            input_source: None,
+            output_source: None,
             allow_microphone_transmit: true,
             noise_suppression: false,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
@@ -749,6 +771,9 @@ mod tests {
         }));
         assert!(!runs_inline(&AppCommand::LoadAttachmentPreview {
             url: "https://cdn.discordapp.com/avatar.png".to_owned(),
+        }));
+        assert!(!runs_inline(&AppCommand::LoadVoiceAudioSources {
+            request_id: 1,
         }));
     }
 

@@ -642,6 +642,26 @@ fn push_to_talk_defaults_to_disabled_and_can_be_enabled() {
 }
 
 #[test]
+fn voice_audio_sources_default_to_system_and_preserve_selected_device_ids() {
+    let defaults: AppOptions = toml::from_str("[voice]\n").expect("voice config should parse");
+    let selected: AppOptions = toml::from_str(
+        "[voice]\ninput_source = \"CoreAudio:input-id\"\noutput_source = \"CoreAudio:output-id\"\n",
+    )
+    .expect("voice source config should parse");
+
+    assert_eq!(defaults.voice.input_source, None);
+    assert_eq!(defaults.voice.output_source, None);
+    assert_eq!(
+        selected.voice.input_source.as_deref(),
+        Some("CoreAudio:input-id")
+    );
+    assert_eq!(
+        selected.voice.output_source.as_deref(),
+        Some("CoreAudio:output-id")
+    );
+}
+
+#[test]
 fn options_save_and_load_round_trip() {
     let path = test_config_path();
     let options = AppOptions {
@@ -673,6 +693,8 @@ fn options_save_and_load_round_trip() {
         voice: VoiceOptions {
             self_mute: true,
             self_deaf: true,
+            input_source: Some("CoreAudio:input-id".to_owned()),
+            output_source: Some("CoreAudio:output-id".to_owned()),
             allow_microphone_transmit: true,
             push_to_talk: true,
             push_to_talk_shortcut: "control+F8".to_owned(),

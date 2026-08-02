@@ -447,6 +447,19 @@ pub enum AppEvent {
         status: VoiceConnectionStatus,
         message: Option<String>,
     },
+    VoiceAudioSourcesLoaded {
+        request_id: u64,
+        inputs: Vec<(String, String)>,
+        outputs: Vec<(String, String)>,
+        error: Option<String>,
+    },
+    VoiceAudioSourcesApplyFailed {
+        requested_input_source: Option<String>,
+        requested_output_source: Option<String>,
+        active_input_source: Option<String>,
+        active_output_source: Option<String>,
+        message: String,
+    },
     VoiceSound {
         kind: VoiceSoundKind,
     },
@@ -777,6 +790,8 @@ define_app_event_kinds! {
     StreamServerUpdate: AppEvent::StreamServerUpdate { .. },
     StreamDelete: AppEvent::StreamDelete { .. },
     VoiceConnectionStatusChanged: AppEvent::VoiceConnectionStatusChanged { .. },
+    VoiceAudioSourcesLoaded: AppEvent::VoiceAudioSourcesLoaded { .. },
+    VoiceAudioSourcesApplyFailed: AppEvent::VoiceAudioSourcesApplyFailed { .. },
     VoiceSound: AppEvent::VoiceSound { .. },
     CallDelete: AppEvent::CallDelete { .. },
     TypingStart: AppEvent::TypingStart { .. },
@@ -1829,6 +1844,8 @@ impl AppEventKind {
             | AppEventKind::StreamPlaybackWindowReady
             | AppEventKind::StreamPlaybackEnded
             | AppEventKind::StreamCaptureTargetsLoaded
+            | AppEventKind::VoiceAudioSourcesLoaded
+            | AppEventKind::VoiceAudioSourcesApplyFailed
             | AppEventKind::StreamBroadcastStarted
             | AppEventKind::StreamBroadcastAudioUnavailable
             | AppEventKind::StreamBroadcastEnded

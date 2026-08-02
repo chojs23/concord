@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver as StdReceiver, SyncSender, sync_channel};
 
 #[cfg(feature = "voice-playback")]
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 
 #[cfg(feature = "voice-playback")]
 use super::VOICE_AUDIO_OUTPUT_QUEUE;
@@ -19,6 +19,8 @@ use super::VOICE_AUDIO_OUTPUT_QUEUE;
 use super::VOICE_PULSE_OUTPUT_BUFFER_FRAMES;
 #[cfg(feature = "voice-playback")]
 use super::audio_buffer::{VoiceAudioBuffer, VoiceAudioOutputStats};
+#[cfg(feature = "voice-playback")]
+use super::devices;
 #[cfg(all(feature = "voice-playback", target_os = "linux"))]
 use super::log_captured_alsa_errors;
 #[cfg(feature = "voice-playback")]
@@ -462,11 +464,12 @@ impl VoiceAudioOutput {
     pub(super) fn start(
         playback_enabled: Arc<AtomicBool>,
         playback_volume: Arc<AtomicU8>,
+        output_source: Option<&str>,
     ) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         let alsa_error_output = alsa::Output::local_error_handler().ok();
 
-        let result = Self::start_with_cpal(playback_enabled, playback_volume);
+        let result = Self::start_with_cpal(playback_enabled, playback_volume, output_source);
 
         #[cfg(target_os = "linux")]
         log_captured_alsa_errors(&alsa_error_output);
@@ -477,11 +480,10 @@ impl VoiceAudioOutput {
     fn start_with_cpal(
         playback_enabled: Arc<AtomicBool>,
         playback_volume: Arc<AtomicU8>,
+        output_source: Option<&str>,
     ) -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or_else(|| "no default audio output device is available".to_owned())?;
+        let device = devices::resolve_output_device(&host, output_source)?;
         let supported_config = device
             .default_output_config()
             .map_err(|error| format!("voice default audio output config failed: {error}"))?;

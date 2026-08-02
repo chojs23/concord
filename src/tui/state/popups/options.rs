@@ -8,7 +8,7 @@ use super::{ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState
 const DISPLAY_OPTION_COUNT: usize = 8;
 const COMPOSER_OPTION_COUNT: usize = 1;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
-const VOICE_OPTION_COUNT: usize = 9;
+const VOICE_OPTION_COUNT: usize = 11;
 const OPTION_CATEGORY_COUNT: usize = 4;
 
 impl DashboardState {
@@ -22,6 +22,16 @@ impl DashboardState {
     }
 
     pub fn open_options_category(&mut self, category: OptionsCategory) {
+        if category == OptionsCategory::Voice {
+            self.options.next_voice_audio_sources_request_id = self
+                .options
+                .next_voice_audio_sources_request_id
+                .wrapping_add(1)
+                .max(1);
+            let request_id = self.options.next_voice_audio_sources_request_id;
+            self.options.voice_audio_sources_request_id = Some(request_id);
+            self.enqueue_pending_command(AppCommand::LoadVoiceAudioSources { request_id });
+        }
         self.popups.modal = Some(ModalPopup::Options(OptionsPopupState {
             category: Some(category),
             ..OptionsPopupState::default()
@@ -103,7 +113,7 @@ impl DashboardState {
             return;
         }
         self.options.voice_options.push_to_talk_shortcut = shortcut;
-        self.after_display_option_changed(false, false);
+        self.after_display_option_changed(false, false, false);
     }
 
     pub(super) fn options_popup_item_count(&self) -> usize {
@@ -303,6 +313,34 @@ impl DashboardState {
                 description: "Set your Discord voice playback deaf state.",
             },
             DisplayOptionItem {
+                label: "Input source",
+                enabled: true,
+                value: Some(if self.options.voice_audio_sources_request_id.is_some() {
+                    "Loading sources...".to_owned()
+                } else {
+                    self.options
+                        .voice_audio_source_options
+                        .input_label(self.options.voice_options.input_source.as_deref())
+                }),
+                gauge: None,
+                effective: self.options.voice_options.allow_microphone_transmit,
+                description: "Microphone used for outgoing voice. Enter, left, and right cycle sources.",
+            },
+            DisplayOptionItem {
+                label: "Output source",
+                enabled: true,
+                value: Some(if self.options.voice_audio_sources_request_id.is_some() {
+                    "Loading sources...".to_owned()
+                } else {
+                    self.options
+                        .voice_audio_source_options
+                        .output_label(self.options.voice_options.output_source.as_deref())
+                }),
+                gauge: None,
+                effective: !self.options.voice_options.self_deaf,
+                description: "Device used for received voice. Enter, left, and right cycle sources.",
+            },
+            DisplayOptionItem {
                 label: "Allow microphone transmit",
                 enabled: self.options.voice_options.allow_microphone_transmit,
                 value: None,
@@ -446,21 +484,33 @@ impl DashboardState {
                 update_current_voice_state = true;
             }
             (OptionsCategory::Voice, 2) => {
+                if self.adjust_selected_voice_audio_source(1) {
+                    self.after_display_option_changed(false, false, true);
+                }
+                return;
+            }
+            (OptionsCategory::Voice, 3) => {
+                if self.adjust_selected_voice_audio_source(1) {
+                    self.after_display_option_changed(false, false, true);
+                }
+                return;
+            }
+            (OptionsCategory::Voice, 4) => {
                 self.options.voice_options.allow_microphone_transmit =
                     !self.options.voice_options.allow_microphone_transmit;
                 update_current_voice_capture_permission = true;
             }
-            (OptionsCategory::Voice, 3) => {
+            (OptionsCategory::Voice, 5) => {
                 self.options.voice_options.push_to_talk = !self.options.voice_options.push_to_talk;
                 update_current_voice_capture_permission = true;
             }
-            (OptionsCategory::Voice, 4) => {
+            (OptionsCategory::Voice, 6) => {
                 if let Some(popup) = self.popups.options_popup_mut() {
                     popup.capturing_push_to_talk_shortcut = true;
                 }
                 return;
             }
-            (OptionsCategory::Voice, 5) => {
+            (OptionsCategory::Voice, 7) => {
                 self.options.voice_options.noise_suppression =
                     !self.options.voice_options.noise_suppression;
                 update_current_voice_capture_permission = true;
@@ -473,6 +523,7 @@ impl DashboardState {
         self.after_display_option_changed(
             update_current_voice_state,
             update_current_voice_capture_permission,
+            false,
         );
     }
 
@@ -486,17 +537,18 @@ impl DashboardState {
             return;
         }
         let changed = match selected {
-            6 => {
+            2 | 3 => self.adjust_selected_voice_audio_source(delta),
+            8 => {
                 let previous = self.options.voice_options.microphone_sensitivity;
                 self.options.voice_options.microphone_sensitivity = previous.adjust(delta);
                 self.options.voice_options.microphone_sensitivity != previous
             }
-            7 => {
+            9 => {
                 let previous = self.options.voice_options.microphone_volume;
                 self.options.voice_options.microphone_volume = previous.adjust(delta);
                 self.options.voice_options.microphone_volume != previous
             }
-            8 => {
+            10 => {
                 let previous = self.options.voice_options.voice_output_volume;
                 self.options.voice_options.voice_output_volume = previous.adjust(delta);
                 self.options.voice_options.voice_output_volume != previous
@@ -504,7 +556,8 @@ impl DashboardState {
             _ => false,
         };
         if changed {
-            self.after_display_option_changed(false, true);
+            let audio_source_changed = matches!(selected, 2 | 3);
+            self.after_display_option_changed(false, !audio_source_changed, audio_source_changed);
         }
     }
 
@@ -537,6 +590,7 @@ impl DashboardState {
         &mut self,
         update_current_voice_state: bool,
         update_current_voice_capture_permission: bool,
+        update_current_voice_audio_sources: bool,
     ) {
         self.clear_message_row_content_metrics_cache();
         self.options.config_save_pending = true;
@@ -546,6 +600,33 @@ impl DashboardState {
         if update_current_voice_capture_permission {
             self.queue_current_voice_capture_permission_update();
         }
+        if update_current_voice_audio_sources {
+            self.queue_current_voice_audio_sources_update();
+        }
+    }
+
+    fn adjust_selected_voice_audio_source(&mut self, delta: i8) -> bool {
+        if self.options.voice_audio_sources_request_id.is_some() {
+            return false;
+        }
+        match self.selected_option_index() {
+            Some(2) => self
+                .options
+                .voice_audio_source_options
+                .adjust_input(&mut self.options.voice_options.input_source, delta),
+            Some(3) => self
+                .options
+                .voice_audio_source_options
+                .adjust_output(&mut self.options.voice_options.output_source, delta),
+            _ => false,
+        }
+    }
+
+    pub(in crate::tui) fn queue_current_voice_audio_sources_update(&mut self) {
+        self.enqueue_pending_command(AppCommand::UpdateVoiceAudioSources {
+            input_source: self.options.voice_options.input_source.clone(),
+            output_source: self.options.voice_options.output_source.clone(),
+        });
     }
 
     fn queue_current_voice_capture_permission_update(&mut self) {

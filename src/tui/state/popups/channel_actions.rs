@@ -360,6 +360,8 @@ impl DashboardState {
                                 channel_id,
                                 self_mute: self.options.voice_options.self_mute,
                                 self_deaf: self.options.voice_options.self_deaf,
+                                input_source: self.options.voice_options.input_source.clone(),
+                                output_source: self.options.voice_options.output_source.clone(),
                                 allow_microphone_transmit: self
                                     .options
                                     .voice_options

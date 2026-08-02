@@ -37,6 +37,7 @@ pub(super) async fn connect_voice_gateway(
     controls: VoiceGatewayControls,
 ) -> Result<VoiceConnectionEnd, String> {
     let VoiceGatewayControls {
+        mut audio_sources_rx,
         initial_capture_gate,
         mut capture_gate_rx,
         initial_playback_gate,
@@ -68,6 +69,20 @@ pub(super) async fn connect_voice_gateway(
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
     let mut child_tasks = VoiceChildTasks::default();
+    let initial_audio_sources = audio_sources_rx.borrow_and_update().clone();
+    let requested_audio_sources = initial_audio_sources.sources;
+    let initial_audio_sources_outcome =
+        child_tasks.set_voice_audio_sources(requested_audio_sources.clone(), initial_capture_gate);
+    let mut current_audio_sources = initial_audio_sources_outcome.active_sources;
+    if let Some(message) = initial_audio_sources_outcome.error {
+        let _ = events_tx.send(VoiceRuntimeEvent::AudioSourcesApplyFailed {
+            connection_id: session.connection_id,
+            generation: initial_audio_sources.generation,
+            requested_sources: requested_audio_sources,
+            active_sources: current_audio_sources.clone(),
+            message,
+        });
+    }
     let audio_runtime = VoiceAudioRuntime::start()?;
     let audio_handle = audio_runtime.handle().clone();
     child_tasks.audio_runtime = Some(audio_runtime);
@@ -108,6 +123,30 @@ pub(super) async fn connect_voice_gateway(
 
     loop {
         let frame = tokio::select! {
+            audio_sources = audio_sources_rx.changed() => {
+                match audio_sources {
+                    Ok(()) => {
+                        let selection = audio_sources_rx.borrow_and_update().clone();
+                        let requested_audio_sources = selection.sources;
+                        let outcome = child_tasks.set_voice_audio_sources(
+                            requested_audio_sources.clone(),
+                            current_capture_gate,
+                        );
+                        current_audio_sources = outcome.active_sources;
+                        if let Some(message) = outcome.error {
+                            let _ = events_tx.send(VoiceRuntimeEvent::AudioSourcesApplyFailed {
+                                connection_id: session.connection_id,
+                                generation: selection.generation,
+                                requested_sources: requested_audio_sources,
+                                active_sources: current_audio_sources.clone(),
+                                message,
+                            });
+                        }
+                        continue;
+                    }
+                    Err(_) => break,
+                }
+            }
             capture_gate = capture_gate_rx.recv() => {
                 match capture_gate {
                     Some(capture_gate) => {
@@ -362,6 +401,7 @@ pub(super) async fn connect_voice_gateway(
                                 remote_speaking_tx: &remote_speaking_tx,
                                 current_playback_gate,
                                 participant_playback_rx: participant_playback_rx.clone(),
+                                output_source: current_audio_sources.output.as_deref(),
                                 #[cfg(feature = "voice-playback")]
                                 voice_ready: voice_ready.as_ref(),
                                 #[cfg(feature = "voice-playback")]
@@ -729,6 +769,7 @@ struct VoiceSessionAudio<'a> {
     current_playback_gate: VoicePlaybackGate,
     participant_playback_rx:
         watch::Receiver<HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>>,
+    output_source: Option<&'a str>,
     #[cfg(feature = "voice-playback")]
     voice_ready: Option<&'a VoiceTransportSession>,
     #[cfg(feature = "voice-playback")]
@@ -749,6 +790,7 @@ fn start_voice_session_audio(
         audio.current_playback_gate,
         audio.participant_playback_rx,
         audio.audio_handle,
+        audio.output_source,
     );
     let playback_tx = Some(opus_decode.frames_tx.clone());
     child_tasks.replace_opus_decode(opus_decode);

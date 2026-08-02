@@ -521,6 +521,8 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         self_mute: bool,
         self_deaf: bool,
+        input_source: Option<String>,
+        output_source: Option<String>,
         allow_microphone_transmit: bool,
         noise_suppression: bool,
         microphone_sensitivity: crate::discord::MicrophoneSensitivityDb,
@@ -545,6 +547,13 @@ pub enum AppCommand {
         microphone_sensitivity: crate::discord::MicrophoneSensitivityDb,
         microphone_volume: crate::discord::VoiceVolumePercent,
         voice_output_volume: crate::discord::VoiceVolumePercent,
+    },
+    UpdateVoiceAudioSources {
+        input_source: Option<String>,
+        output_source: Option<String>,
+    },
+    LoadVoiceAudioSources {
+        request_id: u64,
     },
     UpdateVoiceParticipantPlayback {
         user_id: Id<UserMarker>,

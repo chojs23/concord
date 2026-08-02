@@ -40,8 +40,8 @@ use super::{
     rest::DiscordRest,
     state::{CurrentVoiceConnectionState, DiscordSnapshot, DiscordState, SnapshotRevision},
     voice::{
-        self, StreamBroadcastRequest, StreamCaptureTarget, VoiceAudioSettings, VoiceRuntimeEvent,
-        VoiceScope,
+        self, StreamBroadcastRequest, StreamCaptureTarget, VoiceAudioSettings, VoiceAudioSources,
+        VoiceRuntimeEvent, VoiceScope,
     },
 };
 
@@ -635,6 +635,12 @@ impl DiscordClient {
             .voice_events_tx
             .send(VoiceRuntimeEvent::Requested(Some(voice)));
         Ok(())
+    }
+
+    pub(crate) fn update_voice_audio_sources(&self, sources: VoiceAudioSources) {
+        let _ = self
+            .voice_events_tx
+            .send(VoiceRuntimeEvent::AudioSourcesChanged(sources));
     }
 
     #[cfg(feature = "voice-playback")]

@@ -556,6 +556,11 @@ self_mute = false
 # Join or update Discord voice with Concord self-deafened.
 self_deaf = false
 
+# Optional CPAL device IDs chosen from Voice Options. When omitted or no longer
+# available, Concord uses the current system default input or output device.
+# input_source = "CoreAudio:input-id"
+# output_source = "CoreAudio:output-id"
+
 # Allow microphone transmit while this session is joined and not self-muted.
 allow_microphone_transmit = false
 

@@ -350,6 +350,8 @@ pub(super) struct VoiceRuntimeState {
     reconnect_attempts: u8,
     push_to_talk: bool,
     push_to_talk_pressed: bool,
+    audio_sources: VoiceAudioSources,
+    audio_sources_generation: u64,
     participant_playback_settings: HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
     next_connection_id: u64,
 }
@@ -413,6 +415,40 @@ impl VoiceRuntimeState {
                 self.blocked = None;
                 self.reconnect_target = None;
                 self.reconnect_attempts = 0;
+            }
+            VoiceRuntimeEvent::AudioSourcesChanged(sources) => {
+                if self.audio_sources == sources {
+                    return VoiceRuntimeApplyResult {
+                        action: None,
+                        participant_playback_changed,
+                    };
+                }
+                self.audio_sources = sources;
+                self.audio_sources_generation =
+                    self.audio_sources_generation.wrapping_add(1).max(1);
+                return VoiceRuntimeApplyResult {
+                    action: None,
+                    participant_playback_changed,
+                };
+            }
+            VoiceRuntimeEvent::AudioSourcesApplyFailed {
+                connection_id,
+                generation,
+                active_sources,
+                ..
+            } => {
+                if self.audio_sources_generation == generation
+                    && self
+                        .active
+                        .as_ref()
+                        .is_some_and(|active| active.connection_id == connection_id)
+                {
+                    self.audio_sources = active_sources;
+                }
+                return VoiceRuntimeApplyResult {
+                    action: None,
+                    participant_playback_changed,
+                };
             }
             #[cfg(feature = "voice-playback")]
             VoiceRuntimeEvent::PushToTalkEnabledChanged(enabled) => {
@@ -666,6 +702,13 @@ impl VoiceRuntimeState {
             volume: requested.voice_output_volume,
         })
     }
+
+    pub(super) fn audio_source_selection(&self) -> VoiceAudioSourceSelection {
+        VoiceAudioSourceSelection {
+            generation: self.audio_sources_generation,
+            sources: self.audio_sources.clone(),
+        }
+    }
 }
 
 pub(crate) fn forward_app_event(
@@ -696,6 +739,7 @@ pub(crate) async fn run_voice_runtime(
     let mut broadcast_state = StreamBroadcastRuntimeState::default();
     let mut connection_task: Option<JoinHandle<()>> = None;
     let mut connection_session: Option<VoiceGatewaySession> = None;
+    let mut audio_sources_tx: Option<watch::Sender<VoiceAudioSourceSelection>> = None;
     let mut capture_gate_tx: Option<mpsc::UnboundedSender<VoiceCaptureGate>> = None;
     let mut playback_gate_tx: Option<mpsc::UnboundedSender<VoicePlaybackGate>> = None;
     let mut participant_playback_tx: Option<
@@ -726,6 +770,31 @@ pub(crate) async fn run_voice_runtime(
             } => Some((*request_id, stream_key.clone())),
             _ => None,
         };
+        let changed_audio_sources = matches!(
+            &event,
+            VoiceRuntimeEvent::AudioSourcesChanged(sources) if state.audio_sources != *sources
+        );
+        let audio_sources_apply_failure = match &event {
+            VoiceRuntimeEvent::AudioSourcesApplyFailed {
+                connection_id,
+                generation,
+                requested_sources,
+                active_sources,
+                message,
+            } if state.audio_sources_generation == *generation
+                && state
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.connection_id == *connection_id) =>
+            {
+                Some((
+                    requested_sources.clone(),
+                    active_sources.clone(),
+                    message.clone(),
+                ))
+            }
+            _ => None,
+        };
         let broadcast_started = broadcast_controller.connection_started(&event);
         let stream_update = stream_state.apply(&event);
         let broadcast_update = broadcast_state.apply(&event);
@@ -733,6 +802,11 @@ pub(crate) async fn run_voice_runtime(
             action,
             participant_playback_changed,
         } = state.apply_with_changes(event);
+        if let Some((requested_sources, active_sources, message)) = audio_sources_apply_failure {
+            status_publisher
+                .publish_audio_sources_apply_failed(requested_sources, active_sources, message)
+                .await;
+        }
         if let Some(error) = stream_update.error {
             status_publisher.publish_error(error).await;
         }
@@ -810,6 +884,7 @@ pub(crate) async fn run_voice_runtime(
                     if let Some(stopped_session) = stop_voice_connection_task(
                         &mut connection_task,
                         &mut connection_session,
+                        &mut audio_sources_tx,
                         &mut capture_gate_tx,
                         &mut playback_gate_tx,
                         "stopping previous voice connection task before reconnect",
@@ -822,10 +897,13 @@ pub(crate) async fn run_voice_runtime(
                     }
                     let (next_capture_gate_tx, capture_gate_rx) = mpsc::unbounded_channel();
                     let (next_playback_gate_tx, playback_gate_rx) = mpsc::unbounded_channel();
+                    let (next_audio_sources_tx, audio_sources_rx) =
+                        watch::channel(state.audio_source_selection());
                     let (next_participant_playback_tx, participant_playback_rx) =
                         watch::channel(state.participant_playback_settings.clone());
                     capture_gate_tx = Some(next_capture_gate_tx);
                     playback_gate_tx = Some(next_playback_gate_tx);
+                    audio_sources_tx = Some(next_audio_sources_tx);
                     participant_playback_tx = Some(next_participant_playback_tx);
                     let initial_capture_gate = state.capture_gate().unwrap_or(VoiceCaptureGate {
                         capture_enabled: false,
@@ -846,6 +924,7 @@ pub(crate) async fn run_voice_runtime(
                         events_tx.clone(),
                         status_publisher.clone(),
                         VoiceGatewayControls {
+                            audio_sources_rx,
                             initial_capture_gate,
                             capture_gate_rx,
                             initial_playback_gate,
@@ -858,6 +937,7 @@ pub(crate) async fn run_voice_runtime(
                     if let Some(stopped_session) = stop_voice_connection_task(
                         &mut connection_task,
                         &mut connection_session,
+                        &mut audio_sources_tx,
                         &mut capture_gate_tx,
                         &mut playback_gate_tx,
                         "stopping active voice connection task",
@@ -873,6 +953,7 @@ pub(crate) async fn run_voice_runtime(
             }
         }
         if state.active.is_none() {
+            audio_sources_tx = None;
             capture_gate_tx = None;
             playback_gate_tx = None;
             participant_playback_tx = None;
@@ -886,6 +967,12 @@ pub(crate) async fn run_voice_runtime(
             (playback_gate_tx.as_ref(), state.playback_gate())
         {
             let _ = playback_gate_tx.send(playback_gate);
+        }
+        if !connected_this_event
+            && changed_audio_sources
+            && let Some(audio_sources_tx) = audio_sources_tx.as_mut()
+        {
+            audio_sources_tx.send_replace(state.audio_source_selection());
         }
         if participant_playback_changed
             && !connected_this_event
@@ -901,6 +988,7 @@ pub(crate) async fn run_voice_runtime(
     if let Some(stopped_session) = stop_voice_connection_task(
         &mut connection_task,
         &mut connection_session,
+        &mut audio_sources_tx,
         &mut capture_gate_tx,
         &mut playback_gate_tx,
         "stopping voice connection task during voice runtime shutdown",
@@ -1079,10 +1167,12 @@ async fn reap_stream_broadcast_task(task: &mut JoinHandle<()>) {
 pub(super) async fn stop_voice_connection_task(
     connection_task: &mut Option<JoinHandle<()>>,
     connection_session: &mut Option<VoiceGatewaySession>,
+    audio_sources_tx: &mut Option<watch::Sender<VoiceAudioSourceSelection>>,
     capture_gate_tx: &mut Option<mpsc::UnboundedSender<VoiceCaptureGate>>,
     playback_gate_tx: &mut Option<mpsc::UnboundedSender<VoicePlaybackGate>>,
     label: &str,
 ) -> Option<VoiceGatewaySession> {
+    audio_sources_tx.take();
     capture_gate_tx.take();
     playback_gate_tx.take();
     let stopped_session = connection_session.take();
