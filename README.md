@@ -158,8 +158,9 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/chojs23/concord/re
 The installer places `concord` under `$CARGO_HOME/bin`, which is usually
 `~/.cargo/bin` on Unix and `%USERPROFILE%\.cargo\bin` on Windows.
 
-### Gentoo
+### Gentoo (community overlay)
 
+This package is maintained by a community contributor and is not yet available in Gentoo GURU.
 Install the `darwincereska` overlay:
 
 ```sh
