@@ -97,21 +97,48 @@ fn channel_switcher_includes_threads_and_forums_with_type_icons() {
 }
 
 #[test]
-fn channel_switcher_items_carry_unread_metadata() {
+fn channel_switcher_items_use_sidebar_unread_policy() {
+    let guild_id = Id::new(1);
+    let muted_channel_id = Id::new(11);
+    let unread_dm_id = Id::new(40);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         last_message_id: Some(Id::new(100)),
-        ..dm_channel_info(Id::new(40), "new")
+        ..dm_channel_info(unread_dm_id, "new")
     }));
     state.push_event(AppEvent::ReadStateInit {
-        entries: vec![read_state_info(Id::new(40), Some(Id::new(90)), 0)],
+        entries: vec![read_state_info(unread_dm_id, Some(Id::new(90)), 0)],
     });
+    state.push_event(guild_create_event(
+        guild_id,
+        "guild",
+        vec![ChannelInfo {
+            last_message_id: Some(Id::new(100)),
+            ..positioned_text_channel_info(guild_id, muted_channel_id, "muted", 0)
+        }],
+    ));
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
+            channel_overrides: vec![ChannelNotificationOverrideInfo {
+                muted: true,
+                ..ChannelNotificationOverrideInfo::test(muted_channel_id)
+            }],
+            ..GuildNotificationSettingsInfo::test(Some(guild_id))
+        },
+    ]));
+
     state.open_channel_switcher();
 
     let items = state.channel_switcher_items();
-
-    assert_eq!(items[0].channel_id, Id::new(40));
-    assert_eq!(items[0].unread, ChannelUnreadState::Unread);
+    let unread_for = |channel_id| {
+        items
+            .iter()
+            .find(|item| item.channel_id == channel_id)
+            .map(|item| item.unread)
+            .expect("channel remains searchable")
+    };
+    assert_eq!(unread_for(unread_dm_id), ChannelUnreadState::Unread);
+    assert_eq!(unread_for(muted_channel_id), ChannelUnreadState::Seen);
 }
 
 #[test]

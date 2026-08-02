@@ -352,6 +352,37 @@ fn explicit_channel_override_beats_a_muted_parent_category() {
 }
 
 #[test]
+fn thread_notification_settings_walk_the_full_channel_ancestry() {
+    let guild_id = Id::new(1);
+    let category_id = Id::new(2);
+    let channel_id = Id::new(3);
+    let thread_id = Id::new(4);
+    let mut settings = notification_settings(guild_id, NotificationLevel::AllMessages);
+    settings.flags = 1 << 14;
+    settings
+        .channel_overrides
+        .push(ChannelNotificationOverrideInfo {
+            muted: true,
+            flags: 1 << 12,
+            ..ChannelNotificationOverrideInfo::test(category_id)
+        });
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        guild_id,
+        channels: vec![
+            guild_category_channel(guild_id, category_id, "category", 0),
+            guild_child_text_channel(guild_id, channel_id, category_id, "general", 0),
+            guild_thread_channel(guild_id, thread_id, channel_id, "thread"),
+        ],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.apply_event(&user_guild_settings_init(vec![settings]));
+
+    assert!(state.channel_notification_muted(thread_id));
+    assert!(state.channel_visible_in_notification_settings(thread_id));
+}
+
+#[test]
 fn only_mentions_settings_use_resolved_mentions() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
@@ -473,38 +504,55 @@ fn private_all_messages_settings_show_numeric_badge() {
 }
 
 #[test]
-fn silenced_private_channel_override_suppresses_numeric_badge() {
+fn private_notification_settings_control_unread_surfaces() {
     let channel_id = Id::new(2);
     let current_user_id = Id::new(10);
     let author_id = Id::new(20);
 
-    // Both overrides drop the per-channel numeric badge, but only muting also
-    // clears the sidebar dot and the direct-message total. A no-messages
-    // channel still advertises that it moved.
-    for (name, channel_override, sidebar_unread, direct_message_unread) in [
+    for (
+        name,
+        scope_muted,
+        channel_override,
+        sidebar_unread,
+        inbox_unread,
+        direct_message_unread,
+    ) in [
         (
             "no-messages level",
-            ChannelNotificationOverrideInfo {
+            false,
+            Some(ChannelNotificationOverrideInfo {
                 message_notifications: Some(NotificationLevel::NoMessages),
                 ..ChannelNotificationOverrideInfo::test(channel_id)
-            },
+            }),
+            ChannelUnreadState::Unread,
             ChannelUnreadState::Unread,
             1,
         ),
         (
-            "muted",
-            ChannelNotificationOverrideInfo {
+            "muted channel",
+            false,
+            Some(ChannelNotificationOverrideInfo {
                 message_notifications: Some(NotificationLevel::AllMessages),
                 muted: true,
                 ..ChannelNotificationOverrideInfo::test(channel_id)
-            },
+            }),
+            ChannelUnreadState::Seen,
+            ChannelUnreadState::Seen,
+            0,
+        ),
+        (
+            "muted private scope",
+            true,
+            None,
+            ChannelUnreadState::Unread,
             ChannelUnreadState::Seen,
             0,
         ),
     ] {
         let mut state = DiscordState::default();
         let mut settings = private_notification_settings(NotificationLevel::AllMessages);
-        settings.channel_overrides.push(channel_override);
+        settings.muted = scope_muted;
+        settings.channel_overrides.extend(channel_override);
 
         state.apply_event(&AppEvent::Ready {
             user: "me".to_owned(),
@@ -531,6 +579,11 @@ fn silenced_private_channel_override_suppresses_numeric_badge() {
         assert_eq!(
             state.channel_sidebar_unread(channel_id),
             sidebar_unread,
+            "{name}"
+        );
+        assert_eq!(
+            state.channel_inbox_unread(channel_id),
+            inbox_unread,
             "{name}"
         );
         assert_eq!(

@@ -282,7 +282,7 @@ impl DashboardState {
                     channel,
                     depth: 0,
                     group_order,
-                    unread: self.channel_unread(channel.id),
+                    unread: self.sidebar_channel_unread(channel.id),
                     unread_message_count: self.channel_unread_message_count(channel.id),
                 },
             );
@@ -357,7 +357,7 @@ impl DashboardState {
                 channel,
                 depth,
                 group_order,
-                unread: self.channel_unread(channel.id),
+                unread: self.sidebar_channel_unread(channel.id),
                 unread_message_count: self.channel_unread_message_count(channel.id),
             },
         );
@@ -385,7 +385,7 @@ impl DashboardState {
                     channel: thread,
                     depth: depth.saturating_add(1),
                     group_order,
-                    unread: self.channel_unread(thread.id),
+                    unread: self.sidebar_channel_unread(thread.id),
                     unread_message_count: self.channel_unread_message_count(thread.id),
                 },
             );

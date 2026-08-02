@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::discord::{
     AppCommand, ChannelState, ChannelUnreadState, MessageInfo,
@@ -9,7 +9,10 @@ use crate::discord::{
 };
 use crate::tui::keybindings::SelectionAction;
 
-use super::super::{ActiveGuildScope, DashboardState, FocusPane};
+use super::super::{
+    ActiveGuildScope, DashboardState, FocusPane, channel_tree,
+    presentation::sort_direct_message_channels,
+};
 use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupState};
 
 const MAX_INBOX_MESSAGES_PER_CHANNEL: usize = 3;
@@ -734,26 +737,84 @@ impl DashboardState {
     }
 
     fn build_unread_inbox_items(&self) -> Vec<NotificationInboxUnreadItem> {
-        let mut channels: Vec<&ChannelState> = self.discord.cache.channels_for_guild(None);
-        for guild in self.discord.cache.guilds() {
-            channels.extend(
-                self.discord
-                    .cache
-                    .viewable_channels_for_guild(Some(guild.id)),
-            );
-        }
+        let channels = self.inbox_channels_in_display_order();
 
         channels
             .into_iter()
-            .filter(|channel| !channel.is_category())
-            .filter(|channel| !channel.is_thread() || channel.current_user_joined_thread)
-            .filter(|channel| self.channel_unread(channel.id) != ChannelUnreadState::Seen)
-            .filter(|channel| !self.channel_notification_muted(channel.id))
-            .map(|channel| self.inbox_channel_meta_from(channel))
+            // Discord tracks chat unread state for voice-like channels but does
+            // not surface those channel chats in the Unreads Inbox.
+            .filter(|channel| {
+                !matches!(
+                    channel.kind.as_str(),
+                    "voice" | "GuildVoice" | "stage" | "GuildStageVoice"
+                )
+            })
+            .filter_map(|channel| {
+                let unread = self.discord.cache.channel_inbox_unread(channel.id);
+                (unread != ChannelUnreadState::Seen)
+                    .then(|| self.inbox_channel_meta_from(channel, unread))
+            })
             .collect()
     }
 
-    fn inbox_channel_meta_from(&self, channel: &ChannelState) -> NotificationInboxUnreadItem {
+    fn inbox_channels_in_display_order(&self) -> Vec<&ChannelState> {
+        let mut ordered = self.discord.cache.channels_for_guild(None);
+        ordered.retain(|channel| !channel.is_thread() || channel.current_user_joined_thread);
+        sort_direct_message_channels(&mut ordered);
+
+        for guild in self.guilds_in_display_order() {
+            let channels = self
+                .discord
+                .cache
+                .viewable_channels_for_guild(Some(guild.id));
+            Self::extend_inbox_channels_in_tree_order(&mut ordered, &channels);
+        }
+
+        ordered
+    }
+
+    fn extend_inbox_channels_in_tree_order<'a>(
+        ordered: &mut Vec<&'a ChannelState>,
+        channels: &[&'a ChannelState],
+    ) {
+        let mut joined_threads_by_parent: BTreeMap<_, Vec<&ChannelState>> = BTreeMap::new();
+        for channel in channels {
+            if channel.is_thread()
+                && channel.current_user_joined_thread
+                && let Some(parent_id) = channel.parent_id
+            {
+                joined_threads_by_parent
+                    .entry(parent_id)
+                    .or_default()
+                    .push(*channel);
+            }
+        }
+        for threads in joined_threads_by_parent.values_mut() {
+            channel_tree::sort_thread_channels(threads);
+        }
+
+        let mut push_channel = |channel: &'a ChannelState| {
+            ordered.push(channel);
+            if let Some(threads) = joined_threads_by_parent.get(&channel.id) {
+                ordered.extend(threads.iter().copied());
+            }
+        };
+        for root in channel_tree::sorted_channel_tree_roots(channels) {
+            if root.is_category() {
+                for child in channel_tree::sorted_category_children(channels, root.id) {
+                    push_channel(child);
+                }
+            } else {
+                push_channel(root);
+            }
+        }
+    }
+
+    fn inbox_channel_meta_from(
+        &self,
+        channel: &ChannelState,
+        unread: ChannelUnreadState,
+    ) -> NotificationInboxUnreadItem {
         let context = channel.guild_id.map(|guild_id| {
             let guild = self
                 .guild_name(guild_id)
@@ -774,7 +835,7 @@ impl DashboardState {
             ack_target: self.discord.cache.channel_ack_target(channel.id),
             title: self.channel_label(channel.id),
             context,
-            unread: self.channel_unread(channel.id),
+            unread,
             messages: Vec::new(),
             load: NotificationInboxChannelLoad::Pending,
         }

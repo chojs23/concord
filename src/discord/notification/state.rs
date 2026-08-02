@@ -22,6 +22,8 @@ const GUILD_UNREADS_ALL_MESSAGES: u64 = 1 << 11;
 const GUILD_UNREADS_ONLY_MENTIONS: u64 = 1 << 12;
 const GUILD_OPT_IN_CHANNELS_OFF: u64 = 1 << 13;
 const GUILD_OPT_IN_CHANNELS_ON: u64 = 1 << 14;
+// Discord only nests a thread under a channel and a channel under a category.
+const MAX_CHANNEL_ANCESTRY_NODES: usize = 3;
 pub(in crate::discord) const READ_STATE_MENTION_LOW_IMPORTANCE: u64 = 1 << 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,10 +92,7 @@ impl DiscordState {
         let Some(channel) = self.navigation.channels.get(&channel_id) else {
             return true;
         };
-        let settings = match channel.guild_id {
-            Some(guild_id) => self.notifications.notification_settings.get(&guild_id),
-            None => self.notifications.private_notification_settings.as_ref(),
-        };
+        let settings = self.notification_settings_for_channel(channel_id);
         let Some(settings) = settings else {
             return true;
         };
@@ -108,16 +107,7 @@ impl DiscordState {
         {
             return true;
         }
-        settings
-            .channel_overrides
-            .get(&channel_id)
-            .is_some_and(|setting| setting.flags & CHANNEL_OPT_IN_ENABLED != 0)
-            || channel.parent_id.is_some_and(|parent_id| {
-                settings
-                    .channel_overrides
-                    .get(&parent_id)
-                    .is_some_and(|setting| setting.flags & CHANNEL_OPT_IN_ENABLED != 0)
-            })
+        self.channel_ancestry_has_override_flag(settings, channel_id, CHANNEL_OPT_IN_ENABLED)
     }
 
     pub fn channel_sidebar_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
@@ -192,21 +182,32 @@ impl DiscordState {
     }
 
     pub fn channel_notification_muted(&self, channel_id: Id<ChannelMarker>) -> bool {
-        match self.channel_guild_id(channel_id) {
-            Some(guild_id) => self
-                .notifications
-                .notification_settings
-                .get(&guild_id)
-                .is_some_and(|settings| {
-                    self.channel_notification_muted_in_settings(settings, channel_id)
-                }),
-            None => self
-                .notifications
-                .private_notification_settings
-                .as_ref()
-                .is_some_and(|settings| {
-                    self.channel_notification_muted_in_settings(settings, channel_id)
-                }),
+        self.notification_settings_for_channel(channel_id)
+            .is_some_and(|settings| {
+                self.channel_notification_muted_in_settings(settings, channel_id)
+            })
+    }
+
+    /// Inbox visibility uses the effective notification state for the whole
+    /// channel scope. Keep this separate from `channel_notification_muted`,
+    /// which represents only the channel override used by mute toggle actions.
+    pub fn channel_inbox_unread(&self, channel_id: Id<ChannelMarker>) -> ChannelUnreadState {
+        let Some(channel) = self.navigation.channels.get(&channel_id) else {
+            return ChannelUnreadState::Seen;
+        };
+        let scope_muted = self
+            .notification_settings_for_channel(channel_id)
+            .is_some_and(|settings| {
+                notification_setting_muted(settings.muted, settings.mute_end_time.as_deref())
+            });
+        if scope_muted
+            || !self.channel_visible_in_notification_settings(channel_id)
+            || channel.is_thread() && !channel.current_user_joined_thread
+            || self.channel_notification_muted(channel_id)
+        {
+            ChannelUnreadState::Seen
+        } else {
+            self.channel_unread(channel_id)
         }
     }
 
@@ -287,7 +288,7 @@ impl DiscordState {
     pub fn direct_message_unread_count(&self) -> usize {
         self.channels_for_guild(None)
             .into_iter()
-            .filter(|channel| self.channel_sidebar_unread(channel.id) != ChannelUnreadState::Seen)
+            .filter(|channel| self.channel_inbox_unread(channel.id) != ChannelUnreadState::Seen)
             .count()
     }
 
@@ -561,17 +562,67 @@ impl DiscordState {
         settings: &GuildNotificationSettingsState,
         channel_id: Id<ChannelMarker>,
     ) -> bool {
-        if let Some(setting) = settings.channel_overrides.get(&channel_id) {
-            return notification_setting_muted(setting.muted, setting.mute_end_time.as_deref());
-        }
-        self.navigation
-            .channels
-            .get(&channel_id)
-            .and_then(|channel| channel.parent_id)
-            .and_then(|parent_id| settings.channel_overrides.get(&parent_id))
+        self.first_channel_override_in_ancestry(settings, channel_id)
             .is_some_and(|setting| {
                 notification_setting_muted(setting.muted, setting.mute_end_time.as_deref())
             })
+    }
+
+    fn notification_settings_for_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> Option<&GuildNotificationSettingsState> {
+        match self.channel_guild_id(channel_id) {
+            Some(guild_id) => self.notifications.notification_settings.get(&guild_id),
+            None => self.notifications.private_notification_settings.as_ref(),
+        }
+    }
+
+    fn first_channel_override_in_ancestry<'a>(
+        &self,
+        settings: &'a GuildNotificationSettingsState,
+        channel_id: Id<ChannelMarker>,
+    ) -> Option<&'a ChannelNotificationSettingsState> {
+        let mut current_id = Some(channel_id);
+        for _ in 0..MAX_CHANNEL_ANCESTRY_NODES {
+            let id = current_id?;
+            if let Some(setting) = settings.channel_overrides.get(&id) {
+                return Some(setting);
+            }
+            current_id = self
+                .navigation
+                .channels
+                .get(&id)
+                .and_then(|channel| channel.parent_id);
+        }
+        None
+    }
+
+    fn channel_ancestry_has_override_flag(
+        &self,
+        settings: &GuildNotificationSettingsState,
+        channel_id: Id<ChannelMarker>,
+        flag: u64,
+    ) -> bool {
+        let mut current_id = Some(channel_id);
+        for _ in 0..MAX_CHANNEL_ANCESTRY_NODES {
+            let Some(id) = current_id else {
+                break;
+            };
+            if settings
+                .channel_overrides
+                .get(&id)
+                .is_some_and(|setting| setting.flags & flag != 0)
+            {
+                return true;
+            }
+            current_id = self
+                .navigation
+                .channels
+                .get(&id)
+                .and_then(|channel| channel.parent_id);
+        }
+        false
     }
 
     fn message_mentions_current_user(

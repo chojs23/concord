@@ -127,8 +127,8 @@ impl DashboardState {
         let Some(query) = query else {
             return self.guild_pane_entries();
         };
-        // Search directly over discord.guilds() so servers inside collapsed
-        // folders appear in results even when they're not normally visible.
+        // Search the full display order so servers inside collapsed folders
+        // remain discoverable without falling back to guild ID order.
         let mut scored: Vec<(FuzzyMatchQuality, FuzzyScore, usize, GuildPaneEntry<'_>)> =
             Vec::new();
         if let Some((quality, score)) =
@@ -136,7 +136,7 @@ impl DashboardState {
         {
             scored.push((quality, score, 0, GuildPaneEntry::DirectMessages));
         }
-        for (index, guild) in self.guild_pane_search_guilds().into_iter().enumerate() {
+        for (index, guild) in self.guilds_in_display_order().into_iter().enumerate() {
             if let Some((quality, score)) = best_fuzzy_name_match_score(&[&guild.name], &query) {
                 scored.push((
                     quality,
@@ -154,7 +154,10 @@ impl DashboardState {
         scored.into_iter().map(|(_, _, _, entry)| entry).collect()
     }
 
-    fn guild_pane_search_guilds(&self) -> Vec<&GuildState> {
+    /// Returns every guild in Discord's sidebar order without folder headers
+    /// or collapse state. Popups use this when they need the same ordering as
+    /// the guild pane but must still include guilds inside collapsed folders.
+    pub(super) fn guilds_in_display_order(&self) -> Vec<&GuildState> {
         let by_id: HashMap<Id<GuildMarker>, &GuildState> = self
             .discord
             .guilds()
