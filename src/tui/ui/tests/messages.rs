@@ -802,6 +802,25 @@ fn message_content_applies_supported_markdown_formatting() {
 }
 
 #[test]
+fn wrapped_markdown_bullets_use_indented_continuation_lines() {
+    let message = message_with_content(Some("- alpha beta\n* gamma delta".to_owned()));
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 7);
+
+    assert_eq!(
+        line_texts(&lines),
+        vec!["• alpha", "  beta", "• gamma", "  delta"]
+    );
+
+    for index in [0, 2] {
+        assert_eq!(lines[index].spans()[0].content.as_ref(), "• ");
+    }
+    for index in [1, 3] {
+        assert_eq!(lines[index].spans()[0].content.as_ref(), "  ");
+    }
+}
+
+#[test]
 fn markdown_colors_follow_theme_groups() {
     let message = message_with_content(Some(
         "# one\n## two\n### three\n> quote\n- bullet".to_owned(),

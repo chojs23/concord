@@ -17,6 +17,7 @@ use super::{
 
 const MARKDOWN_QUOTE_PREFIX: &str = "▎ ";
 const MARKDOWN_BULLET_PREFIX: &str = "• ";
+const MARKDOWN_BULLET_CONTINUATION_PREFIX: &str = "  ";
 
 struct InlineMarkdownText {
     rendered: RenderedText,
@@ -117,6 +118,7 @@ fn wrap_markdown_message_line(
             width,
             heading_style,
             &prefix,
+            &prefix,
             markdown_marker_style(),
         );
     }
@@ -127,6 +129,7 @@ fn wrap_markdown_message_line(
             content,
             width,
             theme::current().apply(theme::HighlightGroup::MarkdownQuote, style),
+            MARKDOWN_QUOTE_PREFIX,
             MARKDOWN_QUOTE_PREFIX,
             markdown_marker_style(),
         );
@@ -139,6 +142,7 @@ fn wrap_markdown_message_line(
             width,
             style,
             MARKDOWN_BULLET_PREFIX,
+            MARKDOWN_BULLET_CONTINUATION_PREFIX,
             markdown_marker_style(),
         );
     }
@@ -291,12 +295,21 @@ fn wrap_prefixed_markdown_line(
     width: usize,
     style: Style,
     prefix: &str,
+    continuation_prefix: &str,
     prefix_style: Style,
 ) -> Vec<MessageContentLine> {
     let body_width = width.saturating_sub(prefix.width()).max(1);
     wrap_markdown_inline_text_preserving_empty(rendered, body_width, style)
         .into_iter()
-        .map(|line| prefix_message_content_line_with_style(prefix, prefix_style, line))
+        .enumerate()
+        .map(|(index, line)| {
+            let line_prefix = if index == 0 {
+                prefix
+            } else {
+                continuation_prefix
+            };
+            prefix_message_content_line_with_style(line_prefix, prefix_style, line)
+        })
         .collect()
 }
 
