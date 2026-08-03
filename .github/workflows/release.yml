@@ -366,6 +366,35 @@ jobs:
           pattern: artifacts-*
           path: Formula/
           merge-multiple: true
+
+      # cargo-dist currently drops target filters from Homebrew runtime
+      # dependencies. Keep Linux audio libraries out of macOS installs while
+      # preserving the generated binary URLs and checksums.
+      - name: Scope Linux-only Homebrew dependencies
+        shell: ruby {0}
+        run: |
+          formula_path = "Formula/concord.rb"
+          generated_dependencies = [
+            '  depends_on "alsa-lib"',
+            '  depends_on "opus"',
+            '  depends_on "pipewire"',
+          ].join("\n")
+          scoped_dependencies = [
+            '  depends_on "opus"',
+            '',
+            '  on_linux do',
+            '    depends_on "alsa-lib"',
+            '    depends_on "pipewire"',
+            '  end',
+          ].join("\n")
+
+          formula = File.read(formula_path)
+          unless formula.scan(generated_dependencies).length == 1
+            abort "cargo-dist generated an unexpected Homebrew dependency block"
+          end
+
+          File.write(formula_path, formula.sub(generated_dependencies, scoped_dependencies))
+
       # This is extra complex because you can make your Formula name not match your app name
       # so we need to find releases with a *.rb file, and publish with that filename.
       - name: Commit formula files
