@@ -2503,6 +2503,28 @@ mod tests {
     }
 
     #[test]
+    fn capture_failure_reports_error_and_ends_the_preparing_broadcast() {
+        let request = request();
+        let mut state = StreamBroadcastRuntimeState::default();
+        state.apply(&VoiceRuntimeEvent::BroadcastStreamRequested(
+            request.clone(),
+        ));
+
+        let failed = state.apply(&VoiceRuntimeEvent::BroadcastStreamCaptureFailed {
+            request_id: 1,
+            stream_key: request.stream_key.clone(),
+            error: "PipeWire format negotiation failed".to_owned(),
+        });
+
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("Could not broadcast stream: PipeWire format negotiation failed")
+        );
+        assert_eq!(failed.broadcast_ended, Some(request));
+        assert!(state.requested.is_none());
+    }
+
+    #[test]
     fn broadcast_request_repairs_an_orphaned_active_session() {
         let active = session();
         let mut state = StreamBroadcastRuntimeState {

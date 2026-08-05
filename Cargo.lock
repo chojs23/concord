@@ -919,6 +919,7 @@ dependencies = [
  "image",
  "interprocess",
  "keyring",
+ "libc",
  "mime_guess",
  "nnnoiseless",
  "notify-rust",
