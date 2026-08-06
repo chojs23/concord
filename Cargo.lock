@@ -1150,9 +1150,9 @@ checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "cros-codecs-extended"
-version = "0.0.5-extended.1"
+version = "0.0.5-extended.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b8685c38a0117faeade2898b1f7e852f2b4ce81f95c864234fe75bbf1c07d34"
+checksum = "a5130a93260541c9418be3a57af40916c662e16d02f25727d8f7ad0738ebde1f"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -1168,9 +1168,9 @@ dependencies = [
 
 [[package]]
 name = "cros-libva-extended"
-version = "0.0.13-extended.1"
+version = "0.0.13-extended.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c1316d42a750b1a9c8f40e9b436cbd8ebed660617ac0e604d84d885d66d4f2"
+checksum = "a734fee2508191b121a756bd5eb35caf0aa096e7f20b7b6020e689a75edd92e5"
 dependencies = [
  "bindgen 0.70.1",
  "bitflags 2.13.0",
