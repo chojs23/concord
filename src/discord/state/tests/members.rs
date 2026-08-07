@@ -100,6 +100,184 @@ fn user_identity_update_preserves_guild_member_avatar() {
 }
 
 #[test]
+fn typing_start_merges_the_complete_member_into_shared_state() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let user_id = Id::new(10);
+    let role_id = Id::new(20);
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        channels: vec![channel_info(channel_id, "GuildText", Vec::new())],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+
+    state.apply_event(&AppEvent::TypingStart {
+        guild_id: Some(guild_id),
+        channel_id,
+        user_id,
+        member: Some(MemberInfo {
+            username: Some("typing-user".to_owned()),
+            role_ids: vec![role_id],
+            ..member_info(user_id, "Typing Nick")
+        }),
+    });
+
+    let member = state
+        .members_for_guild(guild_id)
+        .into_iter()
+        .find(|member| member.user_id == user_id)
+        .expect("typing member should enter the shared guild cache");
+    assert_eq!(member.display_name, "Typing Nick");
+    assert_eq!(member.username.as_deref(), Some("typing-user"));
+    assert_eq!(member.role_ids, vec![role_id]);
+    assert!(member.role_ids_known);
+}
+
+#[test]
+fn ready_user_directory_joins_identity_with_merged_member_roles() {
+    let guild_id = Id::new(1);
+    let user_id = Id::new(10);
+    let role_id = Id::new(20);
+    let avatar = "https://cdn.discordapp.com/avatars/10/ready.png";
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        members: vec![MemberInfo {
+            role_ids: vec![role_id],
+            role_ids_present: true,
+            ..member_info(user_id, "unknown")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+
+    state.apply_event(&AppEvent::ReadyUserDirectory {
+        users: vec![ChannelRecipientInfo {
+            username: Some("ready-user".to_owned()),
+            is_bot: true,
+            avatar_url: Some(avatar.to_owned()),
+            ..ChannelRecipientInfo::test(user_id, "Ready Name")
+        }],
+    });
+
+    let member = state
+        .members_for_guild(guild_id)
+        .into_iter()
+        .find(|member| member.user_id == user_id)
+        .expect("merged member should remain cached");
+    assert_eq!(member.display_name, "Ready Name");
+    assert_eq!(member.username.as_deref(), Some("ready-user"));
+    assert!(member.is_bot);
+    assert_eq!(member.avatar_url.as_deref(), Some(avatar));
+    assert_eq!(member.role_ids, vec![role_id]);
+    assert!(member.role_ids_known);
+}
+
+#[test]
+fn ready_user_directory_does_not_clear_a_known_bot_flag_by_omission() {
+    let guild_id = Id::new(1);
+    let user_id = Id::new(10);
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        members: vec![MemberInfo {
+            is_bot: true,
+            ..member_info(user_id, "unknown")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+
+    state.apply_event(&AppEvent::ReadyUserDirectory {
+        users: vec![ChannelRecipientInfo {
+            username: Some("known-bot".to_owned()),
+            is_bot: false,
+            ..ChannelRecipientInfo::test(user_id, "Known Bot")
+        }],
+    });
+
+    let member = state
+        .members_for_guild(guild_id)
+        .into_iter()
+        .find(|member| member.user_id == user_id)
+        .expect("bot member should remain cached");
+    assert!(member.is_bot);
+}
+
+#[test]
+fn partial_member_patch_preserves_fields_that_discord_omitted() {
+    let guild_id = Id::new(1);
+    let user_id = Id::new(10);
+    let role_id = Id::new(20);
+    let avatar = "https://cdn.discordapp.com/avatars/10/original.png";
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        members: vec![MemberInfo {
+            username: Some("original-user".to_owned()),
+            is_bot: true,
+            avatar_url: Some(avatar.to_owned()),
+            role_ids: vec![role_id],
+            ..member_info(user_id, "Original Name")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+
+    state.apply_event(&AppEvent::GuildMemberUpsert {
+        guild_id,
+        member: MemberInfo {
+            display_name: "New Nick".to_owned(),
+            username: None,
+            is_bot: false,
+            is_bot_present: false,
+            avatar_url: None,
+            avatar_url_present: false,
+            role_ids: Vec::new(),
+            role_ids_present: false,
+            ..member_info(user_id, "New Nick")
+        },
+    });
+
+    let member = state
+        .members_for_guild(guild_id)
+        .into_iter()
+        .find(|member| member.user_id == user_id)
+        .expect("member should remain cached");
+    assert_eq!(member.display_name, "New Nick");
+    assert_eq!(member.username.as_deref(), Some("original-user"));
+    assert!(member.is_bot);
+    assert_eq!(member.avatar_url.as_deref(), Some(avatar));
+    assert_eq!(member.role_ids, vec![role_id]);
+    assert!(member.role_ids_known);
+
+    state.apply_event(&AppEvent::GuildMemberUpsert {
+        guild_id,
+        member: MemberInfo {
+            role_ids: Vec::new(),
+            role_ids_present: true,
+            ..member_info(user_id, "New Nick")
+        },
+    });
+    let member = state
+        .members_for_guild(guild_id)
+        .into_iter()
+        .find(|member| member.user_id == user_id)
+        .expect("member should remain cached");
+    assert!(member.role_ids.is_empty());
+    assert!(member.role_ids_known);
+
+    state.apply_event(&AppEvent::GuildMemberUpsert {
+        guild_id,
+        member: MemberInfo {
+            avatar_url: None,
+            avatar_url_present: true,
+            ..member_info(user_id, "New Nick")
+        },
+    });
+    let member = state
+        .members_for_guild(guild_id)
+        .into_iter()
+        .find(|member| member.user_id == user_id)
+        .expect("member should remain cached");
+    assert!(member.avatar_url.is_none());
+}
+
+#[test]
 fn tracks_voice_participants_join_move_and_leave() {
     let guild_id = Id::new(1);
     let first_voice = Id::new(10);
@@ -282,6 +460,137 @@ fn tracks_dm_call_participants_resolving_names_from_recipients() {
     let participants = state.voice_participants_for_private_channel(dm_channel);
     assert_eq!(participants.len(), 1);
     assert_eq!(participants[0].user_id, me);
+}
+
+#[test]
+fn dm_voice_uses_ready_user_directory_when_recipients_are_missing() {
+    let dm_channel = Id::new(50);
+    let user_id = Id::new(21);
+    let mut state = DiscordState::default();
+    state.apply_event(&AppEvent::ReadyUserDirectory {
+        users: vec![ChannelRecipientInfo {
+            username: Some("ready-user".to_owned()),
+            ..ChannelRecipientInfo::test(user_id, "Ready User")
+        }],
+    });
+    state.apply_event(&AppEvent::ChannelUpsert(ChannelInfo {
+        kind: "dm".to_owned(),
+        ..channel_info(dm_channel, "dm", Vec::new())
+    }));
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: VoiceStateInfo {
+            guild_id: None,
+            ..voice_state(Id::new(1), Some(dm_channel), user_id)
+        },
+    });
+
+    assert_eq!(
+        state.voice_participants_for_private_channel(dm_channel)[0].display_name,
+        "Ready User"
+    );
+}
+
+#[test]
+fn observed_voice_and_typing_users_request_missing_member_data() {
+    let guild_id = Id::new(1);
+    let text_channel = Id::new(2);
+    let voice_channel = Id::new(3);
+    let voice_user = Id::new(20);
+    let typing_user = Id::new(21);
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                ..channel_info(text_channel, "GuildText", Vec::new())
+            },
+            guild_voice_channel(guild_id, voice_channel),
+        ],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: voice_state(guild_id, Some(voice_channel), voice_user),
+    });
+    state.apply_event(&AppEvent::TypingStart {
+        guild_id: Some(guild_id),
+        channel_id: text_channel,
+        user_id: typing_user,
+        member: None,
+    });
+
+    assert_eq!(
+        state.missing_member_hydration_requests(None, std::time::Instant::now()),
+        vec![(guild_id, vec![voice_user, typing_user])]
+    );
+
+    state.apply_event(&AppEvent::GuildMembersChunk {
+        chunk: GuildMembersChunkInfo {
+            guild_id,
+            members: vec![
+                member_with_roles(voice_user, "Voice Nick", vec![Id::new(30)]),
+                member_with_roles(typing_user, "Typing Nick", vec![Id::new(31)]),
+            ],
+            presences: Vec::new(),
+            chunk_index: Some(0),
+            chunk_count: Some(1),
+            nonce: Some("member-hydration".to_owned()),
+            not_found: Vec::new(),
+            extra_fields: BTreeMap::new(),
+        },
+    });
+
+    assert_eq!(
+        state.voice_participants_for_channel(guild_id, voice_channel)[0].display_name,
+        "Voice Nick"
+    );
+    assert!(
+        state
+            .missing_member_hydration_requests(None, std::time::Instant::now())
+            .is_empty()
+    );
+}
+
+#[test]
+fn member_cache_pruning_keeps_active_voice_participants() {
+    let guild_id = Id::new(1);
+    let voice_channel = Id::new(2);
+    let active_user = Id::new(20);
+    let inactive_user = Id::new(21);
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        channels: vec![guild_voice_channel(guild_id, voice_channel)],
+        members: vec![
+            member_with_username(active_user, "Active", "active"),
+            member_with_username(inactive_user, "Inactive", "inactive"),
+        ],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.record_selected_member_guild(Some(guild_id));
+    state.apply_event(&AppEvent::VoiceStateUpdate {
+        state: voice_state(guild_id, Some(voice_channel), active_user),
+    });
+
+    for guild_number in 2..=12 {
+        let other_guild = Id::new(guild_number);
+        let display_name = format!("User {guild_number}");
+        let username = format!("user-{guild_number}");
+        state.apply_event(&guild_create_event(GuildCreateFixture {
+            members: vec![member_with_username(
+                Id::new(100 + guild_number),
+                &display_name,
+                &username,
+            )],
+            ..GuildCreateFixture::new(other_guild)
+        }));
+        state.record_selected_member_guild(Some(other_guild));
+    }
+
+    let retained_ids = state
+        .members_for_guild(guild_id)
+        .into_iter()
+        .map(|member| member.user_id)
+        .collect::<Vec<_>>();
+    assert_eq!(retained_ids, vec![active_user]);
 }
 
 #[test]

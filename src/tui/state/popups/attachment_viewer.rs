@@ -25,11 +25,12 @@ impl DashboardState {
             return false;
         }
 
-        self.popups.modal = Some(ModalPopup::AttachmentViewer(AttachmentViewerState {
-            message_id: message.id,
-            selection: Default::default(),
-            zoom: AttachmentViewerZoom::default(),
-        }));
+        self.popups
+            .set_modal(ModalPopup::AttachmentViewer(AttachmentViewerState {
+                message_id: message.id,
+                selection: Default::default(),
+                zoom: AttachmentViewerZoom::default(),
+            }));
         true
     }
 

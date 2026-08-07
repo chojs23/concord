@@ -5,7 +5,7 @@ use super::{STREAM_BROADCAST_FEATURE_DISABLED, StreamCaptureTarget, preview::Str
 pub(super) const STREAM_CAPTURE_WIDTH: u32 = 1280;
 pub(super) const STREAM_CAPTURE_HEIGHT: u32 = 720;
 pub(super) const STREAM_CAPTURE_FPS: u32 = 30;
-pub(super) const STREAM_CAPTURE_BITRATE: u32 = 6_000_000;
+pub(super) const STREAM_TRANSPORT_BITRATE: u32 = 8_000_000;
 
 // Keep the broadcast runtime interface stable in reduced builds. Capture
 // startup always fails before either of these values can be constructed.

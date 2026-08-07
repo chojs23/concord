@@ -853,7 +853,7 @@ impl DiscordState {
             .get(&guild_id)
             .and_then(|members| members.get(&user_id))
         {
-            return member.username.is_some() || !member.role_ids.is_empty();
+            return member.role_ids_known;
         }
 
         self.profiles
@@ -885,6 +885,13 @@ impl DiscordState {
             .user_profiles
             .get(&UserProfileCacheKey::new(author_id, guild_id))
             .map(|profile| profile.display_name().to_owned())
+            .or_else(|| {
+                self.session
+                    .ready_users
+                    .get(&author_id)
+                    .map(|user| user.display_name.clone())
+                    .filter(|name| name != "unknown")
+            })
             .unwrap_or_else(|| fallback.to_owned())
     }
 

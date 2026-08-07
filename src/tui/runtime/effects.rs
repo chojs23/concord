@@ -93,6 +93,7 @@ pub(super) fn process_effect_event(
     push_dashboard_effect(event, ctx);
     enqueue_missing_message_author_requests(member_hydration_messages, ctx);
     enqueue_missing_thread_owner_requests(thread_owner_hydration_infos, ctx);
+    enqueue_observed_member_hydration_requests(ctx);
 
     outcome
 }
@@ -185,8 +186,8 @@ fn enqueue_missing_message_author_requests(
     let missing = ctx.state.missing_message_author_member_requests(&messages);
     let requests = ctx
         .client
-        .next_message_author_member_requests(missing, std::time::Instant::now());
-    ctx.state.enqueue_message_author_member_requests(requests);
+        .next_member_hydration_requests(missing, std::time::Instant::now());
+    ctx.state.enqueue_member_hydration_requests(requests);
 }
 
 fn enqueue_missing_thread_owner_requests(
@@ -199,8 +200,15 @@ fn enqueue_missing_thread_owner_requests(
     let missing = ctx.state.missing_thread_owner_member_requests(&threads);
     let requests = ctx
         .client
-        .next_message_author_member_requests(missing, std::time::Instant::now());
-    ctx.state.enqueue_message_author_member_requests(requests);
+        .next_member_hydration_requests(missing, std::time::Instant::now());
+    ctx.state.enqueue_member_hydration_requests(requests);
+}
+
+fn enqueue_observed_member_hydration_requests(ctx: &mut EffectContext<'_>) {
+    let now = std::time::Instant::now();
+    let missing = ctx.state.observed_member_hydration_requests(now);
+    let requests = ctx.client.next_member_hydration_requests(missing, now);
+    ctx.state.enqueue_guild_member_by_id_requests(requests);
 }
 
 fn dispatch_desktop_notification(notification: DesktopNotification, icon: Option<String>) {
@@ -431,8 +439,8 @@ mod tests {
         forum_posts_loaded_event, guild_create_event, message_history_loaded_event,
     };
     use crate::discord::{
-        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, MessageHistoryAfterMode,
-        MessageInfo, RoleInfo,
+        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo,
+        MessageHistoryAfterMode, MessageInfo, RoleInfo, VoiceStateInfo,
     };
 
     use super::*;
@@ -531,6 +539,45 @@ mod tests {
                 "{label}"
             );
         }
+    }
+
+    #[test]
+    fn voice_member_hydration_requests_only_unresolved_participants() {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(2);
+        let user_id = Id::new(99);
+        let voice_channel = || channel_info(guild_id, channel_id, None, "Lobby", "GuildVoice");
+
+        let mut missing_state = DashboardState::new();
+        push_guild_with_channel(&mut missing_state, guild_id, voice_channel());
+        let missing_event = AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo::test(guild_id, Some(channel_id), user_id),
+        };
+        missing_state.push_event(missing_event.clone());
+        process_effect_in_default_context(&mut missing_state, missing_event);
+        assert_eq!(
+            missing_state.drain_pending_commands(),
+            vec![AppCommand::LoadGuildMembersByIds {
+                guild_id,
+                user_ids: vec![user_id],
+            }]
+        );
+
+        let mut complete_state = DashboardState::new();
+        push_guild_with_channel(&mut complete_state, guild_id, voice_channel());
+        let complete_event = AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo {
+                member: Some(MemberInfo {
+                    username: Some("voice-user".to_owned()),
+                    role_ids: vec![Id::new(10)],
+                    ..MemberInfo::test(user_id, "Voice User")
+                }),
+                ..VoiceStateInfo::test(guild_id, Some(channel_id), user_id)
+            },
+        };
+        complete_state.push_event(complete_event.clone());
+        process_effect_in_default_context(&mut complete_state, complete_event);
+        assert!(complete_state.drain_pending_commands().is_empty());
     }
 
     #[test]

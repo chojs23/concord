@@ -9,7 +9,9 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker},
 };
 use crate::discord::member::onboarding_status_from_flags;
-use crate::discord::{ActivityInfo, MemberInfo, MemberOnboardingStatus, PresenceStatus, RoleInfo};
+use crate::discord::{
+    ActivityInfo, MemberInfo, MemberOnboardingStatus, PresenceStatus, RoleInfo, VoiceScope,
+};
 
 use crate::discord::state::{
     DiscordState, MAX_RECENT_MEMBER_GUILDS, TYPING_INDICATOR_TTL, is_fallback_identity,
@@ -19,7 +21,6 @@ use crate::discord::state::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypingUserState {
     pub user_id: Id<UserMarker>,
-    pub display_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,6 +33,10 @@ pub struct GuildMemberState {
     pub is_bot: bool,
     pub avatar_url: Option<String>,
     pub role_ids: Vec<Id<RoleMarker>>,
+    /// True when Discord supplied the member's role list, including an
+    /// explicitly empty list. Permission checks must not treat an omitted
+    /// partial field as "no roles".
+    pub role_ids_known: bool,
     pub joined_at: Option<DateTime<Utc>>,
     pub flags: Option<u64>,
     pub pending: Option<bool>,
@@ -58,6 +63,7 @@ impl GuildMemberState {
             is_bot: false,
             avatar_url: None,
             role_ids: Vec::new(),
+            role_ids_known: true,
             joined_at: None,
             flags: None,
             pending: None,
@@ -85,22 +91,17 @@ impl DiscordState {
         let Some(channel_typers) = self.presence.typing.get(&channel_id) else {
             return Vec::new();
         };
-        let mut fresh: Vec<(Id<UserMarker>, Instant, Option<String>)> = channel_typers
+        let mut fresh: Vec<(Id<UserMarker>, Instant)> = channel_typers
             .iter()
             .filter(|(_, indicator)| now.duration_since(indicator.started) <= TYPING_INDICATOR_TTL)
-            .map(|(user_id, indicator)| {
-                (*user_id, indicator.started, indicator.display_name.clone())
-            })
+            .map(|(user_id, indicator)| (*user_id, indicator.started))
             .collect();
         // Newest typer first so the "X is typing…" label tends to surface the
         // person who just hit a key.
-        fresh.sort_by_key(|(_, started, _)| std::cmp::Reverse(*started));
+        fresh.sort_by_key(|(_, started)| std::cmp::Reverse(*started));
         fresh
             .into_iter()
-            .map(|(user_id, _, display_name)| TypingUserState {
-                user_id,
-                display_name,
-            })
+            .map(|(user_id, _)| TypingUserState { user_id })
             .collect()
     }
 
@@ -207,8 +208,95 @@ impl DiscordState {
             .members
             .get(&guild_id)
             .and_then(|members| members.get(&user_id))
-            .map(|member| member.username.is_some())
+            .map(|member| !is_fallback_identity(member.username.as_deref(), &member.display_name))
             .unwrap_or(false)
+    }
+
+    pub fn member_needs_hydration(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> bool {
+        self.guild_details
+            .members
+            .get(&guild_id)
+            .and_then(|members| members.get(&user_id))
+            .map(|member| {
+                is_fallback_identity(member.username.as_deref(), &member.display_name)
+                    || !member.role_ids_known
+            })
+            .unwrap_or(true)
+    }
+
+    /// Collects persistent member demands from shared state. Event-specific
+    /// message loads add their own demand immediately, while this sweep makes
+    /// voice, typing, thread, and current-user permission data retryable after
+    /// reconnects or lost member chunks.
+    pub fn missing_member_hydration_requests(
+        &self,
+        selected_guild_id: Option<Id<GuildMarker>>,
+        now: Instant,
+    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
+        let mut by_guild: BTreeMap<Id<GuildMarker>, BTreeSet<Id<UserMarker>>> = BTreeMap::new();
+
+        let mut require = |guild_id: Id<GuildMarker>, user_id: Id<UserMarker>| {
+            if self.member_needs_hydration(guild_id, user_id) {
+                by_guild.entry(guild_id).or_default().insert(user_id);
+            }
+        };
+
+        if let Some(guild_id) = selected_guild_id {
+            if let Some(current_user_id) = self.session.current_user_id {
+                require(guild_id, current_user_id);
+            }
+            if let Some(members) = self.guild_details.members.get(&guild_id) {
+                for member in members.values().filter(|member| {
+                    is_fallback_identity(member.username.as_deref(), &member.display_name)
+                        || !member.role_ids_known
+                }) {
+                    require(guild_id, member.user_id);
+                }
+            }
+        }
+
+        for (scope, user_id) in self.voice.states.keys() {
+            if let VoiceScope::Guild(guild_id) = scope {
+                require(*guild_id, *user_id);
+            }
+        }
+        for stream in self.voice.streams.values() {
+            if let VoiceScope::Guild(guild_id) = stream.scope {
+                require(guild_id, stream.owner_id);
+                for user_id in &stream.viewer_ids {
+                    require(guild_id, *user_id);
+                }
+            }
+        }
+
+        for (channel_id, typers) in &self.presence.typing {
+            let Some(guild_id) = self
+                .channel(*channel_id)
+                .and_then(|channel| channel.guild_id)
+            else {
+                continue;
+            };
+            for (user_id, indicator) in typers {
+                if now.saturating_duration_since(indicator.started) <= TYPING_INDICATOR_TTL {
+                    require(guild_id, *user_id);
+                }
+            }
+        }
+
+        for creator in self.navigation.thread_creators.values() {
+            if let Some(guild_id) = creator.guild_id {
+                require(guild_id, creator.user_id);
+            }
+        }
+
+        by_guild
+            .into_iter()
+            .map(|(guild_id, user_ids)| (guild_id, user_ids.into_iter().collect()))
+            .collect()
     }
 
     pub(in crate::discord) fn update_user_activities(
@@ -275,18 +363,6 @@ impl DiscordState {
             .get(&guild_id)
             .and_then(|members| members.get(&member.user_id))
             .map(|member| member.status);
-        let preserve_current_user_roles = self.session.current_user_id == Some(member.user_id)
-            && member.role_ids.is_empty()
-            && is_fallback_identity(member.username.as_deref(), &member.display_name);
-        let protected_role_ids = preserve_current_user_roles
-            .then(|| {
-                self.guild_details
-                    .current_user_role_ids
-                    .get(&guild_id)
-                    .cloned()
-            })
-            .flatten();
-
         let Self {
             guild_details,
             session,
@@ -296,19 +372,14 @@ impl DiscordState {
         let entry = guild_details.members.entry(guild_id).or_default();
         upsert_member(entry, member, previous_status);
 
-        if session.current_user_id == Some(member.user_id) {
-            if let Some(cached_role_ids) = protected_role_ids {
-                if let Some(current_member) = entry.get_mut(&member.user_id) {
-                    current_member.role_ids = cached_role_ids.clone();
-                }
-                guild_details
-                    .current_user_role_ids
-                    .insert(guild_id, cached_role_ids);
-            } else if let Some(current_member) = entry.get(&member.user_id) {
-                guild_details
-                    .current_user_role_ids
-                    .insert(guild_id, current_member.role_ids.clone());
-            }
+        if session.current_user_id == Some(member.user_id)
+            && let Some(current_member) = entry
+                .get(&member.user_id)
+                .filter(|member| member.role_ids_known)
+        {
+            guild_details
+                .current_user_role_ids
+                .insert(guild_id, current_member.role_ids.clone());
         }
 
         was_known
@@ -320,7 +391,10 @@ impl DiscordState {
         };
         let guild_details = self.guild_details_mut();
         for (guild_id, members) in &guild_details.members {
-            if let Some(member) = members.get(&current_user_id) {
+            if let Some(member) = members
+                .get(&current_user_id)
+                .filter(|member| member.role_ids_known)
+            {
                 guild_details
                     .current_user_role_ids
                     .insert(*guild_id, member.role_ids.clone());
@@ -342,6 +416,7 @@ impl DiscordState {
                     .members
                     .get(&guild_id)
                     .and_then(|members| members.get(&current_user_id))
+                    .filter(|member| member.role_ids_known)
                     .map(|member| member.role_ids.as_slice())
             })
     }
@@ -377,6 +452,7 @@ impl DiscordState {
 
         let current_user_id = self.session.current_user_id;
         let message_authors = self.message_author_ids_by_guild();
+        let voice_participants = self.active_voice_member_ids_by_guild();
         self.guild_details_mut()
             .members
             .retain(|guild_id, members| {
@@ -388,6 +464,9 @@ impl DiscordState {
                         || message_authors
                             .get(guild_id)
                             .is_some_and(|authors| authors.contains(user_id))
+                        || voice_participants
+                            .get(guild_id)
+                            .is_some_and(|participants| participants.contains(user_id))
                 });
                 !members.is_empty()
             });
@@ -417,6 +496,25 @@ impl DiscordState {
             collect_nested_message_authors(&mut authors, message.guild_id, &message.reply);
         }
         authors
+    }
+
+    fn active_voice_member_ids_by_guild(
+        &self,
+    ) -> BTreeMap<Id<GuildMarker>, BTreeSet<Id<UserMarker>>> {
+        let mut participants: BTreeMap<Id<GuildMarker>, BTreeSet<Id<UserMarker>>> = BTreeMap::new();
+        for (scope, user_id) in self.voice.states.keys() {
+            if let VoiceScope::Guild(guild_id) = scope {
+                participants.entry(*guild_id).or_default().insert(*user_id);
+            }
+        }
+        for stream in self.voice.streams.values() {
+            if let VoiceScope::Guild(guild_id) = stream.scope {
+                participants.entry(guild_id).or_default().extend(
+                    std::iter::once(stream.owner_id).chain(stream.viewer_ids.iter().copied()),
+                );
+            }
+        }
+        participants
     }
 
     fn prune_presence_activity_cache(&mut self) {
@@ -489,23 +587,35 @@ pub(in crate::discord) fn upsert_member(
     let status = previous_status.unwrap_or(PresenceStatus::Unknown);
 
     let is_fallback = is_fallback_identity(member.username.as_deref(), &member.display_name);
-    let existing_complete = is_fallback
-        .then(|| map.get(&member.user_id))
-        .flatten()
-        .filter(|e| e.username.is_some());
-    let (display_name, username, avatar_url) = match existing_complete {
-        Some(existing) => (
-            existing.display_name.clone(),
-            existing.username.clone(),
-            existing.avatar_url.clone(),
-        ),
-        None => (
-            member.display_name.clone(),
-            member.username.clone(),
-            member.avatar_url.clone(),
-        ),
-    };
     let existing = map.get(&member.user_id);
+    let display_name = if is_fallback {
+        existing
+            .map(|member| member.display_name.clone())
+            .unwrap_or_else(|| member.display_name.clone())
+    } else {
+        member.display_name.clone()
+    };
+    let username = member
+        .username
+        .clone()
+        .or_else(|| existing.and_then(|member| member.username.clone()));
+    let is_bot = if member.is_bot_present {
+        member.is_bot
+    } else {
+        existing.is_some_and(|member| member.is_bot)
+    };
+    let avatar_url = if member.avatar_url_present {
+        member.avatar_url.clone()
+    } else {
+        existing.and_then(|member| member.avatar_url.clone())
+    };
+    let (role_ids, role_ids_known) = if member.role_ids_present {
+        (member.role_ids.clone(), true)
+    } else {
+        existing
+            .map(|member| (member.role_ids.clone(), member.role_ids_known))
+            .unwrap_or_default()
+    };
     let joined_at = member
         .joined_at
         .or_else(|| existing.and_then(|member| member.joined_at));
@@ -527,9 +637,10 @@ pub(in crate::discord) fn upsert_member(
             user_id: member.user_id,
             display_name,
             username,
-            is_bot: member.is_bot,
+            is_bot,
             avatar_url,
-            role_ids: member.role_ids.clone(),
+            role_ids,
+            role_ids_known,
             joined_at,
             flags,
             pending,

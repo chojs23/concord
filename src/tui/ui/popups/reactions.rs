@@ -31,7 +31,9 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
     let content = render_modal_frame(frame, popup, "Choose reaction");
     let visible_items =
         emoji_reaction_picker_visible_items_for_area(area, reactions.len(), filter.is_some());
-    let scroll = state.emoji_reaction_picker_scroll();
+    let scroll = state
+        .popup_list_scroll(SelectablePopupTarget::EmojiReactions)
+        .expect("emoji reactions have selection state");
     frame.render_widget(
         Paragraph::new(emoji_reaction_picker_lines_with_custom_emoji_images(
             reactions,
@@ -238,6 +240,28 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_popup_area_for_state(
     ))
 }
 
+pub(in crate::tui::ui) fn emoji_reaction_picker_list_layout(
+    area: Rect,
+    state: &DashboardState,
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
+    let has_filter = state.emoji_reaction_filter().is_some();
+    let popup = emoji_reaction_picker_popup_area(area, snapshot.item_count, has_filter);
+    let inner = panel_block("Choose reaction", true).inner(popup);
+    let filter_lines = u16::from(has_filter);
+    let list = Rect {
+        y: inner.y.saturating_add(filter_lines),
+        width: inner.width.saturating_sub(1).max(1),
+        height: inner.height.saturating_sub(filter_lines),
+        ..inner
+    };
+    SelectablePopupLayout::new(snapshot.target, popup, list, snapshot, |start, max_rows| {
+        (start..snapshot.item_count.min(start.saturating_add(max_rows)))
+            .map(Some)
+            .collect()
+    })
+}
+
 fn emoji_reaction_picker_visible_items(reaction_count: usize) -> usize {
     reaction_count.clamp(1, selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS)
 }
@@ -295,6 +319,27 @@ pub(in crate::tui::ui) fn reaction_users_popup_area_for_state(
         .len()
     };
     Some(reaction_users_popup_area(area, line_count))
+}
+
+pub(in crate::tui::ui) fn reaction_users_list_layout(
+    area: Rect,
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
+    let visible_items = snapshot
+        .item_count
+        .min(reaction_users_visible_line_count(area))
+        .max(1);
+    let popup = reaction_users_popup_area(area, visible_items);
+    let inner = panel_block("Reactions", true).inner(popup);
+    let list = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
+    SelectablePopupLayout::new(snapshot.target, popup, list, snapshot, |start, max_rows| {
+        (start..snapshot.item_count.min(start.saturating_add(max_rows)))
+            .map(Some)
+            .collect()
+    })
 }
 
 #[cfg(test)]

@@ -26,8 +26,8 @@ use super::{
         AttachmentViewerItem, ChannelSwitcherItem, ChannelThreadItem, DashboardState,
         DisplayOptionItem, EmojiReactionItem, FocusPane, MessageActionItem, MessageUrlItem,
         PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
-        ThreadActionItem, apply_discord_foreground, normal_text_style, presence_marker,
-        presence_style,
+        SelectablePopupSnapshot, SelectablePopupTarget, ThreadActionItem, apply_discord_foreground,
+        normal_text_style, presence_marker, presence_style,
     },
     text::truncate_display_width,
 };
@@ -50,7 +50,7 @@ mod panes;
 mod popups;
 mod types;
 
-pub(crate) use self::hit_test::{focus_pane_at, mouse_target_at, user_profile_popup_contains};
+pub(crate) use self::hit_test::{focus_pane_at, mouse_target_at};
 use self::layout::{
     attachment_viewer_image_area, attachment_viewer_popup, centered_rect, dashboard_areas,
     inline_image_preview_area, inline_image_preview_height, inline_image_preview_width,
@@ -71,24 +71,23 @@ use self::panes::{
     verification_composer_text,
 };
 use self::popups::{
-    channel_switcher_visible_items, emoji_reaction_picker_visible_items_for_area,
-    forum_post_composer_metrics, forum_post_composer_popup_area,
-    forum_post_tag_picker_visible_items, keymap_popup_text_area, keymap_popup_total_lines,
-    options_popup_visible_items, render_attachment_viewer, render_channel_action_menu,
-    render_channel_switcher_popup, render_debug_log_popup, render_downloads_popup,
-    render_emoji_reaction_picker, render_folder_settings_popup, render_forum_post_composer,
-    render_forum_post_tag_picker, render_guild_action_menu, render_guild_leave_confirmation,
-    render_keymap_help_popup, render_leader_popup, render_member_action_menu,
-    render_message_action_menu, render_message_confirmation, render_message_url_picker,
-    render_notification_inbox_mark_all_confirmation, render_notification_inbox_popup,
-    render_options_popup, render_poll_vote_picker, render_quit_confirmation,
-    render_reaction_users_popup, render_search_popup, render_stream_info,
+    active_selectable_popup_layout, forum_post_composer_metrics, forum_post_composer_popup_area,
+    keymap_popup_text_area, keymap_popup_total_lines, render_attachment_viewer,
+    render_channel_action_menu, render_channel_switcher_popup, render_debug_log_popup,
+    render_downloads_popup, render_emoji_reaction_picker, render_folder_settings_popup,
+    render_forum_post_composer, render_forum_post_tag_picker, render_guild_action_menu,
+    render_guild_leave_confirmation, render_key_sequence_hint, render_keymap_help_popup,
+    render_member_action_menu, render_message_action_menu, render_message_confirmation,
+    render_message_url_picker, render_notification_inbox_mark_all_confirmation,
+    render_notification_inbox_popup, render_options_popup, render_poll_vote_picker,
+    render_quit_confirmation, render_reaction_users_popup, render_search_popup, render_stream_info,
     render_thread_action_menu, render_thread_delete_confirmation, render_thread_edit,
     render_thread_edit_tag_picker, render_toast, render_user_profile_popup,
-    render_voice_participant_audio_popup, search_popup_visible_items, thread_edit_metrics,
-    thread_edit_popup_area, thread_edit_tag_picker_visible_items, user_profile_popup_has_avatar,
+    render_voice_participant_audio_popup, thread_edit_metrics, thread_edit_popup_area,
+    user_profile_popup_has_avatar, user_profile_popup_selected_picker_line,
     user_profile_popup_text_geometry, user_profile_popup_total_lines,
 };
+pub(crate) use self::types::MouseTarget;
 pub use self::types::{
     AvatarImage, EmojiImage, ImagePreview, ImagePreviewLayout, ImagePreviewState,
 };
@@ -96,7 +95,6 @@ use self::types::{
     EMBED_PREVIEW_GUTTER_PREFIX, MESSAGE_AVATAR_OFFSET, MESSAGE_AVATAR_PLACEHOLDER,
     MESSAGE_SELECTION_PREFIX_WIDTH, MessageViewportLayout, UserProfilePopupText,
 };
-pub(crate) use self::types::{MouseTarget, PopupListTarget};
 #[cfg(test)]
 use self::{
     forum::{forum_post_reaction_summary, forum_post_tag_rows_for_test, forum_post_viewport_lines},
@@ -158,28 +156,8 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         "Members",
         state.is_pane_visible(FocusPane::Members),
     ));
-    state.set_reaction_users_popup_view_height(reaction_users_visible_line_count(area));
-    if state.is_active_modal_popup(ActiveModalPopupKind::EmojiReactionPicker) {
-        let reaction_count = state
-            .filtered_emoji_reaction_items_slice()
-            .map(<[_]>::len)
-            .unwrap_or(0);
-        let has_filter = state.emoji_reaction_filter().is_some();
-        let visible_items =
-            emoji_reaction_picker_visible_items_for_area(area, reaction_count, has_filter);
-        state.set_emoji_reaction_picker_view_height(visible_items);
-    }
-    if state.is_active_modal_popup(ActiveModalPopupKind::Options) {
-        let visible_items = options_popup_visible_items(area, state);
-        state.set_options_popup_view_height(visible_items);
-    }
-    if state.is_active_modal_popup(ActiveModalPopupKind::ChannelSwitcher) {
-        state.set_channel_switcher_view_height(channel_switcher_visible_items(area));
-    }
-    if let Some(view) = state.search_popup_view() {
-        let visible_items = search_popup_visible_items(area, &view);
-        state.set_search_popup_view_height(visible_items);
-    }
+
+    state.set_reaction_users_document_view_height(reaction_users_visible_line_count(area));
     if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
         // The popup body shrinks when the avatar slot is in use, so use
         // the same has-avatar predicate the renderer uses to keep the
@@ -192,6 +170,9 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         let total_lines = user_profile_popup_total_lines(state, text_width);
         state.set_user_profile_popup_view_height(text_height as usize);
         state.set_user_profile_popup_total_lines(total_lines);
+        if let Some(row) = user_profile_popup_selected_picker_line(state, text_width) {
+            state.reveal_user_profile_popup_row(row);
+        }
     }
     if state.is_active_modal_popup(ActiveModalPopupKind::KeymapHelp) {
         let inner = keymap_popup_text_area(area);
@@ -212,10 +193,6 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         let metrics = forum_post_composer_metrics(&view, content_width, preview_count);
         state.set_forum_post_composer_metrics(viewport, metrics.total_lines);
         state.reveal_forum_post_composer_rows(metrics.reveal_start, metrics.reveal_end);
-        if state.is_forum_post_tag_picker_active() && !view.tags.is_empty() {
-            let visible_items = forum_post_tag_picker_visible_items(area, view.tags.len());
-            state.set_forum_post_tag_picker_view_height(visible_items);
-        }
     }
     if state.is_active_modal_popup(ActiveModalPopupKind::ThreadEdit)
         && let Some(view) = state.thread_edit_view()
@@ -229,10 +206,10 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
         let metrics = thread_edit_metrics(&view, content_width);
         state.set_thread_edit_metrics(viewport, metrics.total_lines);
         state.reveal_thread_edit_rows(metrics.reveal_start, metrics.reveal_end);
-        if state.is_thread_edit_tag_picker_active() && !view.tags.is_empty() {
-            let visible_items = thread_edit_tag_picker_visible_items(area, view.tags.len());
-            state.set_thread_edit_tag_picker_view_height(visible_items);
-        }
+    }
+
+    if let Some(layout) = active_selectable_popup_layout(area, state) {
+        state.set_active_popup_list_layout(layout.target, layout.scroll, layout.visible_items());
     }
 }
 
@@ -321,7 +298,6 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
         render_members(frame, areas.members, state, &emoji_images);
     }
     render_stream_info(frame, areas.members, state);
-    render_leader_popup(frame, popup_area, state);
     render_guild_action_menu(frame, popup_area, state);
     render_channel_action_menu(frame, popup_area, state);
     render_member_action_menu(frame, popup_area, state);
@@ -350,6 +326,7 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     render_forum_post_tag_picker(frame, popup_area, state, &emoji_images);
     render_thread_edit(frame, popup_area, state);
     render_thread_edit_tag_picker(frame, popup_area, state, &emoji_images);
+    render_key_sequence_hint(frame, popup_area, state);
     render_downloads_popup(frame, frame.area(), state);
     render_toast(frame, frame.area(), state);
 }

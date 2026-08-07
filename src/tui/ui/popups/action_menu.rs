@@ -2,9 +2,9 @@ use super::*;
 use crate::tui::keybindings::KeyBindings;
 use crate::tui::state::ActionItem;
 
-const LEADER_POPUP_MIN_WIDTH: u16 = 74;
-const LEADER_POPUP_ROWS: usize = 4;
-const LEADER_POPUP_COLUMN_GAP: usize = 4;
+const KEY_SEQUENCE_HINT_MIN_WIDTH: u16 = 74;
+const KEY_SEQUENCE_HINT_ROWS: usize = 4;
+const KEY_SEQUENCE_HINT_COLUMN_GAP: usize = 4;
 
 // ============================================================================
 // Shared action-menu family
@@ -93,10 +93,10 @@ fn render_action_menu(
     area: Rect,
     title: impl Into<String>,
     lines: Vec<Line<'static>>,
+    scroll: usize,
 ) {
     let popup = action_menu_area(area, lines.len());
-    let lines = truncate_popup_lines(lines, popup.width.saturating_sub(2).max(1) as usize);
-    render_modal_paragraph(frame, popup, title, lines);
+    render_selectable_popup_list(frame, popup, title, lines, scroll);
 }
 
 pub(in crate::tui::ui) fn action_menu_area(area: Rect, action_count: usize) -> Rect {
@@ -119,31 +119,30 @@ fn padded_shortcut_prefix(prefix: &str, width: usize) -> String {
 }
 
 // ============================================================================
-// Leader popup
+// Which Key sequence hint
 // ============================================================================
-// The leader popup is the bottom hint window listing the key bindings
-// reachable from the pressed prefix. The action menus it can lead into are
-// standalone modals rendered by the family renderers below.
+// The bottom hint lists key bindings reachable from the active dashboard or
+// popup prefix without replacing the modal that owns popup input.
 
-pub(in crate::tui::ui) fn render_leader_popup(
+pub(in crate::tui::ui) fn render_key_sequence_hint(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_leader_active() {
+    if !state.is_key_sequence_active() {
         return;
     }
 
-    let lines = leader_popup_lines(state, area.height.saturating_sub(2) as usize);
-    let popup = leader_popup_area(area, &lines);
+    let lines = key_sequence_hint_lines(state, area.height.saturating_sub(2) as usize);
+    let popup = key_sequence_hint_area(area, &lines);
     let lines = truncate_popup_lines(lines, popup.width.saturating_sub(2).max(1) as usize);
-    render_modal_paragraph(frame, popup, state.leader_keymap_title(), lines);
+    render_modal_paragraph(frame, popup, state.key_sequence_title(), lines);
 }
 
-pub(in crate::tui::ui) fn leader_popup_area(area: Rect, lines: &[Line<'_>]) -> Rect {
-    let content_width = lines.iter().map(leader_line_width).max().unwrap_or(0);
+pub(in crate::tui::ui) fn key_sequence_hint_area(area: Rect, lines: &[Line<'_>]) -> Rect {
+    let content_width = lines.iter().map(key_sequence_line_width).max().unwrap_or(0);
     let desired_width = content_width.saturating_add(2).min(u16::MAX as usize) as u16;
-    let width = LEADER_POPUP_MIN_WIDTH
+    let width = KEY_SEQUENCE_HINT_MIN_WIDTH
         .max(desired_width)
         .min(area.width)
         .max(1);
@@ -157,9 +156,12 @@ pub(in crate::tui::ui) fn leader_popup_area(area: Rect, lines: &[Line<'_>]) -> R
     }
 }
 
-pub(in crate::tui::ui) fn leader_popup_area_for_state(area: Rect, state: &DashboardState) -> Rect {
-    let lines = leader_popup_lines(state, area.height.saturating_sub(2) as usize);
-    leader_popup_area(area, &lines)
+pub(in crate::tui::ui) fn key_sequence_hint_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Rect {
+    let lines = key_sequence_hint_lines(state, area.height.saturating_sub(2) as usize);
+    key_sequence_hint_area(area, &lines)
 }
 
 // ============================================================================
@@ -177,7 +179,15 @@ pub(in crate::tui::ui) fn render_guild_action_menu(
     let Some((title, lines)) = guild_action_menu_content(state) else {
         return;
     };
-    render_action_menu(frame, area, title, lines);
+    render_action_menu(
+        frame,
+        area,
+        title,
+        lines,
+        state
+            .popup_list_scroll(SelectablePopupTarget::GuildActions)
+            .expect("guild actions have selection state"),
+    );
 }
 
 fn guild_action_menu_content(state: &DashboardState) -> Option<(&'static str, Vec<Line<'static>>)> {
@@ -218,7 +228,15 @@ pub(in crate::tui::ui) fn render_channel_action_menu(
     let Some((title, lines)) = channel_action_menu_content(state) else {
         return;
     };
-    render_action_menu(frame, area, title, lines);
+    render_action_menu(
+        frame,
+        area,
+        title,
+        lines,
+        state
+            .popup_list_scroll(SelectablePopupTarget::ChannelActions)
+            .expect("channel actions have selection state"),
+    );
 }
 
 fn channel_action_menu_content(
@@ -289,6 +307,9 @@ pub(in crate::tui::ui) fn render_member_action_menu(
         area,
         "Member actions",
         action_menu_lines(&rows, selected),
+        state
+            .popup_list_scroll(SelectablePopupTarget::MemberActions)
+            .expect("member actions have selection state"),
     );
 }
 
@@ -301,9 +322,9 @@ pub(in crate::tui::ui) fn channel_action_menu_lines_for_test(
         .unwrap_or_default()
 }
 
-fn leader_popup_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'static>> {
+fn key_sequence_hint_lines(state: &DashboardState, max_lines: usize) -> Vec<Line<'static>> {
     let lines = state
-        .leader_keymap_shortcuts()
+        .key_sequence_shortcuts()
         .into_iter()
         .map(|item| {
             let label = if item.has_children {
@@ -321,13 +342,16 @@ fn leader_shortcut_grid_lines(lines: Vec<Line<'static>>, max_lines: usize) -> Ve
     if lines.is_empty() {
         return lines;
     }
-    let row_count = lines.len().min(LEADER_POPUP_ROWS).min(max_lines.max(1));
+    let row_count = lines
+        .len()
+        .min(KEY_SEQUENCE_HINT_ROWS)
+        .min(max_lines.max(1));
     let column_count = lines.len().div_ceil(row_count);
     let column_widths: Vec<usize> = (0..column_count)
         .map(|column| {
             (0..row_count)
                 .filter_map(|row| lines.get(column * row_count + row))
-                .map(leader_line_width)
+                .map(key_sequence_line_width)
                 .max()
                 .unwrap_or(0)
         })
@@ -340,11 +364,11 @@ fn leader_shortcut_grid_lines(lines: Vec<Line<'static>>, max_lines: usize) -> Ve
                 let Some(line) = lines.get(column * row_count + row) else {
                     continue;
                 };
-                let line_width = leader_line_width(line);
+                let line_width = key_sequence_line_width(line);
                 spans.extend(line.spans.iter().cloned());
                 if column + 1 < column_count {
                     spans.push(Span::raw(" ".repeat(
-                        width.saturating_sub(line_width) + LEADER_POPUP_COLUMN_GAP,
+                        width.saturating_sub(line_width) + KEY_SEQUENCE_HINT_COLUMN_GAP,
                     )));
                 }
             }
@@ -353,7 +377,7 @@ fn leader_shortcut_grid_lines(lines: Vec<Line<'static>>, max_lines: usize) -> Ve
         .collect()
 }
 
-fn leader_line_width(line: &Line<'_>) -> usize {
+fn key_sequence_line_width(line: &Line<'_>) -> usize {
     line.spans.iter().map(|span| span.content.width()).sum()
 }
 
@@ -393,7 +417,15 @@ pub(in crate::tui::ui) fn render_message_action_menu(
     let selected = state.selected_message_action_index().unwrap_or(0);
     let lines =
         message_action_menu_lines_with_key_bindings(&actions, selected, state.key_bindings());
-    render_action_menu(frame, area, "Message actions", lines);
+    render_action_menu(
+        frame,
+        area,
+        "Message actions",
+        lines,
+        state
+            .popup_list_scroll(SelectablePopupTarget::MessageActions)
+            .expect("message actions have selection state"),
+    );
 }
 
 #[cfg(test)]
@@ -475,7 +507,15 @@ pub(in crate::tui::ui) fn render_thread_action_menu(
         let title = format!("{}{} actions", noun[..1].to_uppercase(), &noun[1..]);
         (title, lines)
     };
-    render_action_menu(frame, area, title, lines);
+    render_action_menu(
+        frame,
+        area,
+        title,
+        lines,
+        state
+            .popup_list_scroll(SelectablePopupTarget::ThreadActions)
+            .expect("thread actions have selection state"),
+    );
 }
 
 fn thread_action_menu_lines(

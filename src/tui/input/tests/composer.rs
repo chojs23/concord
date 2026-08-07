@@ -61,6 +61,65 @@ fn thread_edit_shortcuts_cycle_selectors_submit_and_cancel() {
 }
 
 #[test]
+fn page_keys_move_nested_tag_pickers_with_the_shared_list_viewport() {
+    {
+        let mut state = state_with_forum_channel_posts();
+        handle_key(&mut state, char_key('i'));
+        for _ in 0..3 {
+            handle_key(&mut state, key(KeyCode::Tab));
+        }
+        handle_key(&mut state, key(KeyCode::Enter));
+        crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
+
+        handle_key(&mut state, ctrl_key('d'));
+        handle_key(&mut state, ctrl_key('d'));
+        let view = state.forum_post_composer_view().expect("forum tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(10));
+        assert!(view.tag_scroll > 0);
+
+        handle_key(&mut state, ctrl_key('u'));
+        handle_key(&mut state, ctrl_key('u'));
+        let view = state.forum_post_composer_view().expect("forum tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(0));
+
+        handle_key(&mut state, char_key('G'));
+        let view = state.forum_post_composer_view().expect("forum tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(11));
+        handle_key(&mut state, char_key('g'));
+        handle_key(&mut state, char_key('g'));
+        let view = state.forum_post_composer_view().expect("forum tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(0));
+    }
+
+    {
+        let mut state = state_with_forum_channel_posts();
+        state.open_thread_edit(Id::new(31));
+        handle_key(&mut state, key(KeyCode::Tab));
+        handle_key(&mut state, key(KeyCode::Enter));
+        crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
+
+        handle_key(&mut state, ctrl_key('d'));
+        handle_key(&mut state, ctrl_key('d'));
+        let view = state.thread_edit_view().expect("thread tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(10));
+        assert!(view.tag_scroll > 0);
+
+        handle_key(&mut state, ctrl_key('u'));
+        handle_key(&mut state, ctrl_key('u'));
+        let view = state.thread_edit_view().expect("thread tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(0));
+
+        handle_key(&mut state, char_key('G'));
+        let view = state.thread_edit_view().expect("thread tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(11));
+        handle_key(&mut state, char_key('g'));
+        handle_key(&mut state, char_key('g'));
+        let view = state.thread_edit_view().expect("thread tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(0));
+    }
+}
+
+#[test]
 fn forum_parent_composer_key_opens_post_overlay() {
     let mut state = state_with_forum_channel_posts();
 

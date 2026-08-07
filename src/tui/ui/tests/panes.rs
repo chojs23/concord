@@ -319,15 +319,34 @@ fn mouse_target_at_maps_visible_message_action_rows() {
     assert_eq!(
         mouse_target_at(area, &state, 46, first_action_y),
         Some(MouseTarget::PopupRow {
-            target: PopupListTarget::MessageAction,
+            target: SelectablePopupTarget::MessageActions,
             row: 0,
         })
     );
     assert_eq!(
         mouse_target_at(area, &state, 46, first_action_y + last_row as u16),
         Some(MouseTarget::PopupRow {
-            target: PopupListTarget::MessageAction,
+            target: SelectablePopupTarget::MessageActions,
             row: last_row,
+        })
+    );
+
+    let short_area = Rect::new(0, 0, 120, 8);
+    sync_view_heights(short_area, &mut state);
+    assert!(state.page_active_popup_down());
+    assert!(state.page_active_popup_down());
+    let scroll = state
+        .active_selectable_popup_snapshot()
+        .expect("action list snapshot")
+        .scroll;
+    assert!(scroll > 0);
+    let popup_height = (action_count as u16 + 2).min(short_area.height.saturating_sub(2));
+    let first_visible_y = (short_area.height - popup_height) / 2 + 1;
+    assert_eq!(
+        mouse_target_at(short_area, &state, 46, first_visible_y),
+        Some(MouseTarget::PopupRow {
+            target: SelectablePopupTarget::MessageActions,
+            row: scroll,
         })
     );
 }
@@ -337,7 +356,7 @@ fn mouse_target_at_maps_guild_and_channel_action_menu_rows() {
     type MenuCase = (
         fn(&mut DashboardState),
         fn(&DashboardState) -> usize,
-        PopupListTarget,
+        SelectablePopupTarget,
     );
     let area = Rect::new(0, 0, 120, 20);
     let cases: [MenuCase; 2] = [
@@ -347,7 +366,7 @@ fn mouse_target_at_maps_guild_and_channel_action_menu_rows() {
                 state.open_selected_guild_actions();
             },
             DashboardState::guild_action_row_count,
-            PopupListTarget::GuildAction,
+            SelectablePopupTarget::GuildActions,
         ),
         (
             |state| {
@@ -355,7 +374,7 @@ fn mouse_target_at_maps_guild_and_channel_action_menu_rows() {
                 state.open_selected_channel_actions();
             },
             DashboardState::channel_action_row_count,
-            PopupListTarget::ChannelAction,
+            SelectablePopupTarget::ChannelActions,
         ),
     ];
 

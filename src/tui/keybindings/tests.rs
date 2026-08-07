@@ -210,6 +210,50 @@ fn close_popup_defaults_to_esc_and_q_and_can_be_remapped() {
 }
 
 #[test]
+fn popup_close_and_dashboard_sequences_remain_independent() {
+    let options = KeymapOptions {
+        mappings: [("ClosePopup".to_owned(), KeymapBinding::one("g"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+    for key_bindings in [
+        KeyBindings::try_from_options(&options).expect("close popup keymap parses"),
+        KeyBindings::from_options(&options),
+    ] {
+        assert!(key_bindings.is_popup_close_key(g));
+        assert_eq!(
+            key_bindings.keymap_lookup_root_key(g),
+            Some(KeyMapLookup::Pending)
+        );
+    }
+
+    let options = KeymapOptions {
+        mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("q d"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+    let d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
+    for key_bindings in [
+        KeyBindings::try_from_options(&options).expect("dashboard keymap parses"),
+        KeyBindings::from_options(&options),
+    ] {
+        assert!(key_bindings.is_popup_close_key(q));
+        assert_eq!(
+            key_bindings.keymap_lookup_root_key(q),
+            Some(KeyMapLookup::Pending)
+        );
+        assert_eq!(
+            key_bindings.keymap_lookup_with_key(&[key_bindings.keymap_chord_for_event(q)], d),
+            Some(KeyMapLookup::Action(UiAction::OpenDebugLog))
+        );
+    }
+}
+
+#[test]
 fn default_keymap_uses_g_prefix() {
     let key_bindings = KeyBindings::default();
     let prefix = [KeyChord::from_str("g").expect("g should parse")];

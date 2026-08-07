@@ -29,10 +29,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            cmake \
             libasound2-dev \
             libclang-dev \
-            libopus-dev \
             libpipewire-0.3-dev \
+            libva-dev \
             nasm \
             pkg-config
 
@@ -65,10 +66,46 @@ jobs:
       - name: dist config check
         run: cargo dist plan
 
+  platform-encoder-check:
+    name: native encoder (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-14
+          - name: Windows
+            os: windows-2022
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install macOS media dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake nasm pkg-config
+
+      - name: install Windows media dependencies
+        if: runner.os == 'Windows'
+        run: choco install cmake nasm --no-progress -y
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-encoder-${{ runner.os }}
+
+      - name: clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: encoder tests
+        run: cargo test --locked --all-features discord::voice::capture::encoder::tests
+
   release-cache-plan:
     name: plan release cache warm
-    needs: [check]
-    if: ${{ needs.check.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [check, platform-encoder-check]
+    if: ${{ needs.check.result == 'success' && needs.platform-encoder-check.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     continue-on-error: true
     runs-on: ubuntu-24.04
     outputs:
@@ -146,12 +183,6 @@ jobs:
       - name: Install dependencies
         run: |
           ${{ matrix.packages_install }}
-
-      - name: expose Homebrew Opus to pkg-config (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          echo "PKG_CONFIG_PATH=$(brew --prefix opus)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Build artifacts to warm cache
         run: |

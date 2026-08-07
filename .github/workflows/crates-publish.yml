@@ -47,10 +47,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            cmake \
             libasound2-dev \
             libclang-dev \
-            libopus-dev \
             libpipewire-0.3-dev \
+            libva-dev \
             nasm \
             pkg-config
 

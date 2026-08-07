@@ -1,6 +1,6 @@
 use super::*;
 
-const VOICE_PARTICIPANT_AUDIO_FIELD_COUNT: usize = 2;
+pub(super) const VOICE_PARTICIPANT_AUDIO_FIELD_COUNT: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum VoiceParticipantAudioField {
@@ -19,7 +19,7 @@ pub(in crate::tui) struct VoiceParticipantAudioPopupView {
 pub(in crate::tui::state) struct VoiceParticipantAudioPopupState {
     user_id: Id<UserMarker>,
     display_name: String,
-    selection: SelectablePopupState,
+    pub(super) selection: SelectablePopupState,
 }
 
 impl VoiceParticipantAudioPopupState {
@@ -40,7 +40,7 @@ impl DashboardState {
         user_id: Id<UserMarker>,
         display_name: String,
     ) {
-        self.popups.modal = Some(ModalPopup::VoiceParticipantAudio(
+        self.popups.set_modal(ModalPopup::VoiceParticipantAudio(
             VoiceParticipantAudioPopupState {
                 user_id,
                 display_name,
@@ -70,15 +70,7 @@ impl DashboardState {
         &mut self,
         action: SelectionAction,
     ) {
-        let Some(popup) = self.popups.voice_participant_audio_mut() else {
-            return;
-        };
-        match action {
-            SelectionAction::Next => popup
-                .selection
-                .move_down(VOICE_PARTICIPANT_AUDIO_FIELD_COUNT),
-            SelectionAction::Previous => popup.selection.move_up(),
-        }
+        self.move_selectable_popup(SelectablePopupTarget::VoiceParticipantAudio, action);
     }
 
     pub(in crate::tui) fn adjust_voice_participant_audio_volume(

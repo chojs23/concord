@@ -16,14 +16,6 @@ use fast_image_resize::{
     images::{CroppedImageMut, Image, ImageRef},
 };
 use image::RgbaImage;
-use openh264::{
-    OpenH264API,
-    encoder::{
-        BitRate, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, Level, Profile,
-        RateControlMode, UsageType, VuiConfig,
-    },
-    formats::YUVSlices,
-};
 use tokio::sync::mpsc;
 use yuv::{
     YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
@@ -35,6 +27,14 @@ use super::{
     preview::{StreamPreviewCadence, StreamPreviewFrame},
 };
 use crate::logging;
+
+#[path = "capture/encoder.rs"]
+mod encoder;
+use encoder::{I420Frame, StreamEncoder};
+
+#[path = "capture/conversion.rs"]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod conversion;
 
 #[cfg(target_os = "linux")]
 #[path = "capture/linux.rs"]
@@ -52,9 +52,12 @@ mod platform;
 pub(super) const STREAM_CAPTURE_WIDTH: u32 = 1280;
 pub(super) const STREAM_CAPTURE_HEIGHT: u32 = 720;
 pub(super) const STREAM_CAPTURE_FPS: u32 = 30;
-pub(super) const STREAM_CAPTURE_BITRATE: u32 = 8_000_000;
-// Explicit feedback can still request immediate recovery frames, so the
-// fallback GOP can avoid a large encoded-frame burst every second.
+pub(super) const STREAM_ENCODER_BITRATE: u32 = 6_000_000;
+// Keep headroom for RTP and DAVE overhead, plus short IDR bursts, instead of
+// making the encoder and transport pacer compete for the same bitrate limit.
+pub(super) const STREAM_TRANSPORT_BITRATE: u32 = 8_000_000;
+// Explicit feedback can still request immediate recovery frames, while this
+// fallback period bounds recovery latency without producing an IDR every second.
 const STREAM_INTRA_FRAME_PERIOD_FRAMES: u32 = STREAM_CAPTURE_FPS * 2;
 const STREAM_CAPTURE_FRAME_INTERVAL: Duration =
     Duration::from_nanos(1_000_000_000 / STREAM_CAPTURE_FPS as u64);
@@ -64,6 +67,7 @@ const STREAM_CAPTURE_PREPARATION_TIMEOUT: Duration = Duration::from_secs(60);
 const STREAM_CAPTURE_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const STREAM_CAPTURE_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CAPTURE_FRAME_BUFFER_POOL_CAPACITY: usize = 4;
+const ENCODED_STREAM_FRAME_QUEUE_CAPACITY: usize = 8;
 
 #[derive(Debug)]
 pub(super) struct EncodedStreamFrame {
@@ -568,22 +572,16 @@ impl StreamFrameProcessor {
         })
     }
 
-    fn yuv_source(&self) -> YUVSlices<'_> {
-        YUVSlices::new(
-            (
-                self.yuv.y_plane.borrow(),
-                self.yuv.u_plane.borrow(),
-                self.yuv.v_plane.borrow(),
-            ),
-            (
-                STREAM_CAPTURE_WIDTH as usize,
-                STREAM_CAPTURE_HEIGHT as usize,
-            ),
-            (
-                self.yuv.y_stride as usize,
-                self.yuv.u_stride as usize,
-                self.yuv.v_stride as usize,
-            ),
+    fn i420_source(&self) -> I420Frame<'_> {
+        I420Frame::new(
+            self.yuv.y_plane.borrow(),
+            self.yuv.u_plane.borrow(),
+            self.yuv.v_plane.borrow(),
+            STREAM_CAPTURE_WIDTH as usize,
+            STREAM_CAPTURE_HEIGHT as usize,
+            self.yuv.y_stride as usize,
+            self.yuv.u_stride as usize,
+            self.yuv.v_stride as usize,
         )
     }
 
@@ -606,6 +604,10 @@ fn fill_opaque_black(rgba: &mut [u8]) {
 
 impl Drop for CaptureSource {
     fn drop(&mut self) {
+        logging::debug(
+            "stream",
+            "stopping native capture backend because the capture source ended",
+        );
         if let Err(error) = self.session.stop() {
             logging::debug(
                 "stream",
@@ -617,6 +619,10 @@ impl Drop for CaptureSource {
 
 impl Drop for StreamCaptureHandle {
     fn drop(&mut self) {
+        logging::debug(
+            "stream",
+            "stream capture handle dropped; signaling the capture worker to stop",
+        );
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() {
             reap_capture_worker(worker);
@@ -699,7 +705,7 @@ pub(super) fn prepare_stream_capture(
     target: StreamCaptureTarget,
     cancellation: StreamCaptureCancellation,
 ) -> Result<PreparedStreamCapture, String> {
-    let (frames_tx, frames) = mpsc::channel(2);
+    let (frames_tx, frames) = mpsc::channel(ENCODED_STREAM_FRAME_QUEUE_CAPACITY);
     let (preview_frames_tx, preview_frames) = mpsc::channel(1);
     let (errors_tx, errors) = mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = sync_channel(1);
@@ -727,7 +733,16 @@ pub(super) fn prepare_stream_capture(
         worker: Some(worker),
     };
 
-    wait_for_capture_ready(&ready_rx, &handle.stop, STREAM_CAPTURE_PREPARATION_TIMEOUT)?;
+    if let Err(error) =
+        wait_for_capture_ready(&ready_rx, &handle.stop, STREAM_CAPTURE_PREPARATION_TIMEOUT)
+    {
+        logging::debug(
+            "stream",
+            format!("stream capture preparation failed while waiting for readiness: {error}"),
+        );
+        return Err(error);
+    }
+    logging::debug("stream", "stream capture encoder is ready");
     Ok(PreparedStreamCapture {
         handle,
         frames,
@@ -770,16 +785,35 @@ fn run_capture_worker(
     force_keyframe: Arc<AtomicBool>,
     ready_tx: SyncSender<Result<(), String>>,
 ) {
-    if let Err(error) = run_capture_loop(
+    let result = run_capture_loop(
         &target,
         &frames_tx,
         &preview_frames_tx,
         &stop,
         &force_keyframe,
         &ready_tx,
-    ) {
-        let _ = ready_tx.try_send(Err(error.clone()));
-        let _ = errors_tx.send(error);
+    );
+    match result {
+        Ok(()) => logging::debug(
+            "stream",
+            format!(
+                "stream capture worker stopped cleanly: target_kind={:?} cancelled={}",
+                target.kind,
+                stop.load(Ordering::Acquire),
+            ),
+        ),
+        Err(error) => {
+            logging::debug(
+                "stream",
+                format!(
+                    "stream capture worker failed: target_kind={:?} cancelled={} error={error}",
+                    target.kind,
+                    stop.load(Ordering::Acquire),
+                ),
+            );
+            let _ = ready_tx.try_send(Err(error.clone()));
+            let _ = errors_tx.send(error);
+        }
     }
 }
 
@@ -793,11 +827,26 @@ fn run_capture_loop(
 ) -> Result<(), String> {
     let source = resolve_capture_source(target, stop)?;
     let Some(mut image) = source.wait_for_initial_image(stop)? else {
+        logging::debug(
+            "stream",
+            "stream capture stopped before receiving an initial image",
+        );
         return Ok(());
     };
-    let mut encoder = Encoder::with_api_config(OpenH264API::from_source(), stream_encoder_config())
-        .map_err(|error| format!("H264 encoder creation failed: {error}"))?;
+    logging::debug(
+        "stream",
+        format!(
+            "stream capture received its initial image: width={} height={}",
+            image.image().width(),
+            image.image().height(),
+        ),
+    );
+    let mut encoder = StreamEncoder::new_auto()?;
     if ready_tx.send(Ok(())).is_err() {
+        logging::debug(
+            "stream",
+            "stream capture readiness receiver closed before encoder startup completed",
+        );
         return Ok(());
     }
     let started_at = Instant::now();
@@ -850,27 +899,21 @@ fn run_capture_loop(
         };
 
         let encode_started_at = Instant::now();
-        if force_keyframe.swap(false, Ordering::AcqRel) {
-            encoder.force_intra_frame();
-        }
-        let yuv = frame_processor.yuv_source();
-        let encoded = encoder
-            .encode(&yuv)
-            .map_err(|error| format!("H264 frame encoding failed: {error}"))?;
-        let is_keyframe = matches!(encoded.frame_type(), FrameType::IDR | FrameType::I);
-        let annex_b = encoded.to_vec();
+        let force_keyframe = force_keyframe.swap(false, Ordering::AcqRel);
+        let encoded = encoder.encode(frame_processor.i420_source(), force_keyframe)?;
         let encode_time = encode_started_at.elapsed();
-        let encoded_bytes = annex_b.len();
-        let outcome = if annex_b.is_empty() {
-            CaptureFrameOutcome::EncoderSkipped
-        } else {
-            let timestamp = stream_rtp_timestamp(started_at.elapsed());
-            frame_slot.send(Ok(EncodedStreamFrame {
-                timestamp,
-                annex_b,
-                is_keyframe,
-            }));
-            CaptureFrameOutcome::Queued
+        let (outcome, encoded_bytes) = match encoded {
+            Some(encoded) => {
+                let encoded_bytes = encoded.annex_b.len();
+                let timestamp = stream_rtp_timestamp(started_at.elapsed());
+                frame_slot.send(Ok(EncodedStreamFrame {
+                    timestamp,
+                    annex_b: encoded.annex_b,
+                    is_keyframe: encoded.is_keyframe,
+                }));
+                (CaptureFrameOutcome::Queued, encoded_bytes)
+            }
+            None => (CaptureFrameOutcome::EncoderSkipped, 0),
         };
         stats.record_frame(
             outcome,
@@ -899,25 +942,6 @@ fn try_reserve_encoded_frame_slot(
         Err(mpsc::error::TrySendError::Full(_)) => Err(CaptureFrameOutcome::QueueFull),
         Err(mpsc::error::TrySendError::Closed(_)) => Err(CaptureFrameOutcome::QueueClosed),
     }
-}
-
-fn stream_encoder_config() -> EncoderConfig {
-    // OpenH264 enables these camera-oriented tools by default, but its
-    // screen-content mode rejects them and writes warnings directly to stderr.
-    EncoderConfig::new()
-        .usage_type(UsageType::ScreenContentRealTime)
-        .skip_frames(true)
-        .adaptive_quantization(false)
-        .background_detection(false)
-        .rate_control_mode(RateControlMode::Bitrate)
-        .bitrate(BitRate::from_bps(STREAM_CAPTURE_BITRATE))
-        .max_frame_rate(FrameRate::from_hz(STREAM_CAPTURE_FPS as f32))
-        .profile(Profile::Baseline)
-        .level(Level::Level_3_1)
-        .intra_frame_period(IntraFramePeriod::from_num_frames(
-            STREAM_INTRA_FRAME_PERIOD_FRAMES,
-        ))
-        .vui(VuiConfig::bt709())
 }
 
 fn resolve_capture_source(
@@ -959,33 +983,6 @@ mod tests {
     fn test_capture_frame(image: RgbaImage, buffer_pool: &CaptureFrameBufferPool) -> CaptureFrame {
         let (width, height) = image.dimensions();
         CaptureFrame::new(width, height, image.into_raw(), buffer_pool.clone())
-    }
-
-    #[test]
-    fn screen_content_encoder_configuration_initializes_cleanly() {
-        let _encoder =
-            Encoder::with_api_config(OpenH264API::from_source(), stream_encoder_config())
-                .expect("screen content encoder configuration should initialize");
-    }
-
-    #[test]
-    fn screen_content_encoder_uses_a_two_second_intra_period() {
-        let config = format!("{:?}", stream_encoder_config());
-
-        assert!(
-            config.contains("intra_frame_period: IntraFramePeriod(60)"),
-            "unexpected stream encoder configuration: {config}"
-        );
-    }
-
-    #[test]
-    fn screen_content_encoder_targets_eight_megabits_per_second() {
-        let config = format!("{:?}", stream_encoder_config());
-
-        assert!(
-            config.contains("bitrate: BitRate(8000000)"),
-            "unexpected stream encoder configuration: {config}"
-        );
     }
 
     #[test]
@@ -1230,7 +1227,7 @@ mod tests {
         assert!(u.abs_diff(102) <= 1, "unexpected BT.709 limited red U: {u}");
         assert!(v.abs_diff(240) <= 1, "unexpected BT.709 limited red V: {v}");
 
-        let config = format!("{:?}", stream_encoder_config());
+        let config = format!("{:?}", encoder::openh264_encoder_config());
         assert!(
             config.contains("matrix_coefficients: Bt709") && config.contains("full_range: false"),
             "unexpected stream VUI configuration: {config}"

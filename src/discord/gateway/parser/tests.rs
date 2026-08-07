@@ -1235,6 +1235,9 @@ fn raw_ready_supplemental_aligns_merged_members_by_guild_index() {
             if *guild_id == Id::new(1)
                 && member.user_id == Id::new(10)
                 && member.role_ids == vec![Id::new(20)]
+                && member.role_ids_present
+                && !member.is_bot_present
+                && !member.avatar_url_present
     )));
     assert!(events.iter().any(|event| matches!(
         event,
@@ -1243,6 +1246,35 @@ fn raw_ready_supplemental_aligns_merged_members_by_guild_index() {
                 && member.user_id == Id::new(10)
                 && member.role_ids == vec![Id::new(30)]
     )));
+}
+
+#[test]
+fn partial_member_fields_only_replace_cached_data_when_their_types_are_valid() {
+    let events = parse_user_account_event(
+        &json!({
+            "t": "GUILD_MEMBER_UPDATE",
+            "d": {
+                "guild_id": "1",
+                "user_id": "10",
+                "avatar": null,
+                "roles": null,
+                "user": { "id": "10", "bot": null }
+            }
+        })
+        .to_string(),
+    );
+
+    assert!(matches!(
+        events.as_slice(),
+        [AppEvent::GuildMemberUpsert { guild_id, member }]
+            if *guild_id == Id::new(1)
+                && member.user_id == Id::new(10)
+                && member.avatar_url.as_deref()
+                    == Some("https://cdn.discordapp.com/embed/avatars/0.png")
+                && member.avatar_url_present
+                && !member.role_ids_present
+                && !member.is_bot_present
+    ));
 }
 
 #[test]
@@ -3154,10 +3186,11 @@ fn typing_start_extracts_channel_and_user_from_dm_payload() {
     );
     assert!(matches!(
         events.as_slice(),
-        [AppEvent::TypingStart { channel_id, user_id, display_name }]
+        [AppEvent::TypingStart { guild_id, channel_id, user_id, member }]
             if *channel_id == Id::new(12345)
                 && *user_id == Id::new(99)
-                && display_name.is_none()
+                && guild_id.is_none()
+                && member.is_none()
     ));
 }
 
@@ -3173,10 +3206,13 @@ fn typing_start_falls_back_to_member_user_id_when_top_level_missing() {
                 "guild_id": "77",
                 "member": {
                     "nick": "Live Nick",
+                    "roles": ["90"],
                     "user": {
                         "id": "42",
                         "username": "typing-user",
-                        "global_name": "Typing Global"
+                        "global_name": "Typing Global",
+                        "bot": true,
+                        "avatar": "typing-avatar"
                     }
                 },
                 "timestamp": 1_700_000_000
@@ -3186,10 +3222,17 @@ fn typing_start_falls_back_to_member_user_id_when_top_level_missing() {
     );
     assert!(matches!(
         events.as_slice(),
-        [AppEvent::TypingStart { channel_id, user_id, display_name }]
+        [AppEvent::TypingStart { guild_id, channel_id, user_id, member }]
             if *channel_id == Id::new(55)
                 && *user_id == Id::new(42)
-                && display_name.as_deref() == Some("Live Nick")
+                && *guild_id == Some(Id::new(77))
+                && member.as_ref().is_some_and(|member|
+                    member.display_name == "Live Nick"
+                        && member.username.as_deref() == Some("typing-user")
+                        && member.is_bot
+                        && member.role_ids == vec![Id::new(90)]
+                        && member.role_ids_present
+                )
     ));
 }
 

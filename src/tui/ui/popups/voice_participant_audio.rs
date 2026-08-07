@@ -16,31 +16,43 @@ pub(in crate::tui::ui) fn render_voice_participant_audio_popup(
     };
     let popup = voice_participant_audio_popup_area(area);
     let inner = render_modal_frame(frame, popup, format!("Audio: {}", view.display_name));
+    let scroll = state
+        .popup_list_scroll(SelectablePopupTarget::VoiceParticipantAudio)
+        .expect("participant audio has selection state");
+    let first_line = if scroll == 0 { 0 } else { 2 };
     frame.render_widget(
-        Paragraph::new(voice_participant_audio_popup_lines(
-            view.selected,
-            view.settings.volume.label(),
-            view.settings.muted,
-        )),
+        Paragraph::new(
+            voice_participant_audio_popup_lines(
+                view.selected,
+                view.settings.volume.label(),
+                view.settings.muted,
+            )
+            .into_iter()
+            .skip(first_line)
+            .take(usize::from(inner.height))
+            .collect::<Vec<_>>(),
+        ),
         inner,
     );
 
-    let gauge_style = theme::current().apply(
-        theme::HighlightGroup::GaugeFill,
-        theme::current().style(theme::HighlightGroup::Normal),
-    );
-    render_popup_gauge(
-        frame,
-        inner,
-        PopupGauge {
-            x_offset: VOICE_PARTICIPANT_AUDIO_GAUGE_X_OFFSET,
-            width_margin: 12,
-            y: inner.y.saturating_add(1),
-            value: view.settings.volume.value(),
-            maximum: VoiceParticipantVolumePercent::maximum(),
-            style: gauge_style,
-        },
-    );
+    if scroll == 0 && inner.height >= 2 {
+        let gauge_style = theme::current().apply(
+            theme::HighlightGroup::GaugeFill,
+            theme::current().style(theme::HighlightGroup::Normal),
+        );
+        render_popup_gauge(
+            frame,
+            inner,
+            PopupGauge {
+                x_offset: VOICE_PARTICIPANT_AUDIO_GAUGE_X_OFFSET,
+                width_margin: 12,
+                y: inner.y.saturating_add(1),
+                value: view.settings.volume.value(),
+                maximum: VoiceParticipantVolumePercent::maximum(),
+                style: gauge_style,
+            },
+        );
+    }
 }
 
 pub(in crate::tui::ui) fn voice_participant_audio_popup_area(area: Rect) -> Rect {
@@ -48,6 +60,25 @@ pub(in crate::tui::ui) fn voice_participant_audio_popup_area(area: Rect) -> Rect
         area,
         VOICE_PARTICIPANT_AUDIO_POPUP_WIDTH,
         VOICE_PARTICIPANT_AUDIO_POPUP_HEIGHT,
+    )
+}
+
+pub(in crate::tui::ui) fn voice_participant_audio_list_layout(
+    area: Rect,
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
+    let popup = voice_participant_audio_popup_area(area);
+    let inner = panel_block("", false).inner(popup);
+    SelectablePopupLayout::new(
+        snapshot.target,
+        popup,
+        inner,
+        snapshot,
+        |start, max_rows| {
+            let rows = [Some(0), Some(0), Some(1)];
+            let first_row = if start == 0 { 0 } else { 2 };
+            rows.into_iter().skip(first_row).take(max_rows).collect()
+        },
     )
 }
 

@@ -5,7 +5,7 @@ use crate::discord::ids::{
 use crate::discord::{
     AppCommand, ForumPostCreate, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload,
 };
-use crate::tui::keybindings::ScrollAction;
+use crate::tui::keybindings::{ScrollAction, SelectionAction};
 use crate::tui::text_input::TextEditAction;
 use ratatui_image::protocol::Protocol;
 
@@ -14,11 +14,11 @@ use super::super::local_upload_preview::{
     LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
     local_upload_preview_view,
 };
-use super::super::scroll::clamp_list_scroll;
 use super::super::{
     DashboardState, FocusPane, ForumPostComposerAttachmentView, ForumPostComposerField,
     ForumPostComposerTagView, ForumPostComposerView, LocalUploadPreviewView,
 };
+use super::SelectablePopupTarget;
 use super::{
     ActiveModalPopupKind, ForumPostComposerFieldState, ForumPostComposerState, ModalPopup,
 };
@@ -47,9 +47,10 @@ impl DashboardState {
         }
 
         self.cancel_composer();
-        self.popups.modal = Some(ModalPopup::ForumPostComposer(ForumPostComposerState::new(
-            channel_id,
-        )));
+        self.popups
+            .set_modal(ModalPopup::ForumPostComposer(ForumPostComposerState::new(
+                channel_id,
+            )));
         self.navigation.focus = FocusPane::Messages;
     }
 
@@ -188,7 +189,7 @@ impl DashboardState {
                     custom_emoji_url: emoji.custom_emoji_url,
                     custom_emoji_label: emoji.custom_emoji_label,
                     selected,
-                    active: editing_tags && index == popup.selected_tag_index,
+                    active: editing_tags && index == popup.tag_selection.selected(),
                     selectable: (selected || !cap_reached)
                         && (!tag.moderated || can_use_moderated_tags),
                 })
@@ -213,7 +214,7 @@ impl DashboardState {
             body_cursor: forum_post_text_field_cursor(popup, ForumPostComposerFieldState::Body),
             attachments,
             tags,
-            tag_scroll: popup.tag_scroll,
+            tag_scroll: popup.tag_selection.scroll(),
             requires_tag: channel.requires_forum_tag(),
             paste_pending: self.runtime.clipboard_paste_pending,
             status: popup.status.clone(),
@@ -334,10 +335,10 @@ impl DashboardState {
         };
         match editing {
             Some(ForumPostComposerFieldState::Tags) if tag_count > 0 => {
-                if let Some(popup) = self.popups.forum_post_composer_mut() {
-                    popup.selected_tag_index =
-                        (popup.selected_tag_index + 1).min(tag_count.saturating_sub(1));
-                }
+                self.move_selectable_popup(
+                    SelectablePopupTarget::ForumPostTags,
+                    SelectionAction::Next,
+                );
             }
             Some(_) => {}
             None => self.cycle_forum_post_field_next(),
@@ -351,20 +352,13 @@ impl DashboardState {
             .and_then(|popup| popup.editing)
         {
             Some(ForumPostComposerFieldState::Tags) => {
-                if let Some(popup) = self.popups.forum_post_composer_mut() {
-                    popup.selected_tag_index = popup.selected_tag_index.saturating_sub(1);
-                }
+                self.move_selectable_popup(
+                    SelectablePopupTarget::ForumPostTags,
+                    SelectionAction::Previous,
+                );
             }
             Some(_) => {}
             None => self.cycle_forum_post_field_previous(),
-        }
-    }
-
-    pub fn set_forum_post_tag_picker_view_height(&mut self, height: usize) {
-        if let Some(popup) = self.popups.forum_post_composer_mut() {
-            let len = popup.tag_order.len();
-            let cursor = popup.selected_tag_index.min(len.saturating_sub(1));
-            popup.tag_scroll = clamp_list_scroll(cursor, popup.tag_scroll, height.max(1), len);
         }
     }
 
@@ -372,7 +366,7 @@ impl DashboardState {
         let Some((channel_id, tag_id)) = self.popups.forum_post_composer().and_then(|popup| {
             popup
                 .tag_order
-                .get(popup.selected_tag_index)
+                .get(popup.tag_selection.selected_for_len(popup.tag_order.len()))
                 .copied()
                 .map(|tag_id| (popup.channel_id, tag_id))
         }) else {
@@ -686,7 +680,7 @@ impl DashboardState {
             return;
         }
         popup.tag_order = ordered;
-        popup.selected_tag_index = 0;
+        popup.tag_selection = Default::default();
         popup.editing = Some(ForumPostComposerFieldState::Tags);
         popup.edit_input.clear();
         popup.status = None;

@@ -314,6 +314,8 @@ fn navigation_selection_uses_configured_row_movement_keys() {
         mappings: [
             ("SelectNext".to_owned(), KeymapBinding::one("n")),
             ("SelectPrevious".to_owned(), KeymapBinding::one("p")),
+            ("JumpTop".to_owned(), KeymapBinding::one("z z")),
+            ("JumpBottom".to_owned(), KeymapBinding::one("Z")),
         ]
         .into_iter()
         .collect(),
@@ -334,6 +336,15 @@ fn navigation_selection_uses_configured_row_movement_keys() {
     assert_eq!(state.selected_option_index(), Some(1));
 
     handle_key(&mut state, ctrl_key('p'));
+    assert_eq!(state.selected_option_index(), Some(0));
+
+    let last = state.display_option_items().len().saturating_sub(1);
+    handle_key(&mut state, char_key('Z'));
+    assert_eq!(state.selected_option_index(), Some(last));
+
+    handle_key(&mut state, char_key('z'));
+    assert_eq!(state.selected_option_index(), Some(last));
+    handle_key(&mut state, char_key('z'));
     assert_eq!(state.selected_option_index(), Some(0));
 }
 

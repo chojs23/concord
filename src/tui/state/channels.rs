@@ -189,6 +189,25 @@ impl DashboardState {
         }
     }
 
+    /// Switch to the normal message history for `channel_id` only when it is
+    /// not already visible. Re-activating the active history resets its cursor
+    /// and viewport to the latest message while an around-message request is
+    /// still loading.
+    pub(super) fn activate_message_history_channel(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        scope: Option<ActiveGuildScope>,
+    ) {
+        if self.selected_message_history_channel_id() == Some(channel_id) {
+            return;
+        }
+        if let Some(scope) = scope {
+            self.activate_guild(scope);
+        }
+        self.restore_channel_cursor(Some(channel_id));
+        self.activate_channel(channel_id);
+    }
+
     pub fn selected_message_history_needs_reload(&self) -> bool {
         self.selected_message_history_channel_id()
             .is_some_and(|channel_id| {
@@ -364,15 +383,9 @@ impl DashboardState {
             .flatten();
         let deleted_starter_author_id = deleted_starter_creator.map(|creator| creator.user_id);
         let deleted_starter_author = deleted_starter_creator.map(|creator| {
-            creator
-                .guild_id
-                .or(channel.guild_id)
-                .and_then(|guild_id| {
-                    self.discord
-                        .cache
-                        .member_display_name(guild_id, creator.user_id)
-                })
-                .map(str::to_owned)
+            self.discord
+                .cache
+                .user_display_name_for_channel(channel.id, creator.user_id)
                 .unwrap_or_else(|| format!("user-{}", creator.user_id.get()))
         });
         let deleted_starter_author_color = deleted_starter_creator.and_then(|creator| {
@@ -868,14 +881,11 @@ impl DashboardState {
 
     /// Builds the "X is typing…" line for the currently selected channel, or
     /// `None` when nobody is typing (or the only typer is us). Resolution
-    /// order for each user: transient typing display name ->cached guild
-    /// member alias ->DM recipient display name ->`user-{id}` fallback. Caps
-    /// at three names and collapses to "Several people are typing…" beyond
-    /// that.
+    /// Names use the same channel-scoped identity resolver as voice. Caps at
+    /// three names and collapses to "Several people are typing…" beyond that.
     pub fn typing_footer_for_selected_channel(&self) -> Option<String> {
         let channel_id = self.selected_channel_id()?;
-        let channel = self.discord.cache.channel(channel_id)?;
-        let guild_id = channel.guild_id;
+        self.discord.cache.channel(channel_id)?;
         let typers: Vec<TypingUserState> = self
             .discord
             .typing_users(channel_id)
@@ -887,23 +897,11 @@ impl DashboardState {
         }
 
         let resolve_name = |typer: TypingUserState| -> String {
-            if let Some(name) = typer.display_name {
-                return name;
-            }
             let user_id = typer.user_id;
-            if let Some(name) = guild_id
-                .and_then(|guild_id| self.discord.cache.member_display_name(guild_id, user_id))
-            {
-                return name.to_owned();
-            }
-            if let Some(recipient) = channel
-                .recipients
-                .iter()
-                .find(|recipient| recipient.user_id == user_id)
-            {
-                return recipient.display_name.clone();
-            }
-            format!("user-{}", user_id.get())
+            self.discord
+                .cache
+                .user_display_name_for_channel(channel_id, user_id)
+                .unwrap_or_else(|| format!("user-{}", user_id.get()))
         };
 
         let total = typers.len();

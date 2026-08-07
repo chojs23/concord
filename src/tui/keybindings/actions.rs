@@ -69,6 +69,7 @@ define_ui_actions! {
     StartComposer => ("start composer", &[&[Char('i')]], Some(DashboardAction::StartComposer)),
     OpenPaneFilter => ("filter/search pane", &[&[Char('/')]], Some(DashboardAction::OpenFocusedPaneFilter)),
     ClosePopup => ("close popup", &[&[Char('q')]], None),
+    OpenDebugLog => ("open debug log", &[&[Char('`')]], None),
     FocusGuildPane => ("focus Servers", &[&[Char('1')]], Some(DashboardAction::FocusPane(FocusPane::Guilds))),
     FocusChannelPane => ("focus Channels", &[&[Char('2')]], Some(DashboardAction::FocusPane(FocusPane::Channels))),
     FocusMessagePane => ("focus Messages", &[&[Char('3')]], Some(DashboardAction::FocusPane(FocusPane::Messages))),
@@ -186,6 +187,60 @@ impl UiAction {
     }
 }
 
+/// Configurable navigation actions that are valid while a popup owns input.
+///
+/// Popup closing is matched directly at the input boundary because it is a
+/// single-key command, not a navigable key sequence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum PopupKeymapScope {
+    Selectable,
+    Scrollable,
+    Confirmation,
+}
+
+macro_rules! define_popup_actions {
+    ($($variant:ident => $ui_action:ident),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub(in crate::tui) enum PopupAction {
+            $($variant),+
+        }
+
+        impl PopupAction {
+            pub(in crate::tui) const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            pub(in crate::tui) const fn ui_action(self) -> UiAction {
+                match self {
+                    $(Self::$variant => UiAction::$ui_action),+
+                }
+            }
+        }
+    };
+}
+
+define_popup_actions! {
+    SelectNext => SelectNext,
+    SelectPrevious => SelectPrevious,
+    HalfPageDown => HalfPageDown,
+    HalfPageUp => HalfPageUp,
+    JumpTop => JumpTop,
+    JumpBottom => JumpBottom,
+}
+
+impl PopupAction {
+    pub(in crate::tui) const fn is_allowed_in(self, scope: PopupKeymapScope) -> bool {
+        match self {
+            Self::SelectNext | Self::SelectPrevious => true,
+            Self::HalfPageDown | Self::HalfPageUp => matches!(
+                scope,
+                PopupKeymapScope::Selectable | PopupKeymapScope::Scrollable
+            ),
+            Self::JumpTop | Self::JumpBottom => {
+                matches!(scope, PopupKeymapScope::Selectable)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum SelectionAction {
     Next,
@@ -202,11 +257,6 @@ pub(in crate::tui) enum SelectionKeySet {
 pub(in crate::tui) enum ScrollAction {
     Down,
     Up,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::tui) enum GlobalAction {
-    ToggleDebugLog,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -254,7 +304,6 @@ pub(in crate::tui) enum ChannelSwitcherAction {
 pub(in crate::tui) enum NotificationInboxAction {
     Select(SelectionAction),
     SwitchTab(SelectionAction),
-    Close,
     ActivateSelected,
     MarkSelectedRead,
     MarkAllRead,
@@ -282,7 +331,6 @@ pub(in crate::tui) enum SearchPopupAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum PopupListAction {
-    Close,
     Select(SelectionAction),
     ActivateSelected,
     ActivateShortcut(KeyChord),
@@ -290,7 +338,6 @@ pub(in crate::tui) enum PopupListAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum AttachmentViewerAction {
-    Close,
     Previous,
     Next,
     OpenSelected,
@@ -332,7 +379,6 @@ pub(in crate::tui) enum PaneFilterAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum EmojiReactionPickerAction {
     Select(SelectionAction),
-    Close,
     StartFilter,
     CommitFilter,
     DeleteFilterChar,
@@ -343,7 +389,6 @@ pub(in crate::tui) enum EmojiReactionPickerAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum PollVotePickerAction {
-    Close,
     Select(SelectionAction),
     ToggleSelected,
     Submit,
@@ -352,15 +397,9 @@ pub(in crate::tui) enum PollVotePickerAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum ReactionUsersPopupAction {
-    Close,
     Back,
     Activate,
     Navigate(SelectionAction),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::tui) enum DebugLogPopupAction {
-    Close,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -406,7 +445,6 @@ pub(in crate::tui) enum OptionsPopupAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum VoiceParticipantAudioPopupAction {
-    Close,
     Select(SelectionAction),
     AdjustVolume(i8),
     ToggleMuted,

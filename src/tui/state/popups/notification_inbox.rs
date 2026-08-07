@@ -1,7 +1,10 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    cmp::Reverse,
+    collections::{BTreeMap, VecDeque},
+};
 
 use crate::discord::{
-    AppCommand, ChannelState, ChannelUnreadState, MessageInfo,
+    AppCommand, ChannelInfo, ChannelState, ChannelUnreadState, ForumPostArchiveState, MessageInfo,
     ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
@@ -13,7 +16,9 @@ use super::super::{
     ActiveGuildScope, DashboardState, FocusPane, channel_tree,
     presentation::sort_direct_message_channels,
 };
-use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupState};
+use crate::tui::state::popups::{
+    ActiveModalPopupKind, ModalPopup, SelectablePopupState, SelectablePopupTarget,
+};
 
 const MAX_INBOX_MESSAGES_PER_CHANNEL: usize = 3;
 const UNREAD_PAGE_SIZE: usize = 4;
@@ -51,6 +56,8 @@ pub enum NotificationInboxChannelLoad {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NotificationInboxMessage {
+    pub channel_id: Id<ChannelMarker>,
+    pub message_id: Id<MessageMarker>,
     pub author_id: Id<UserMarker>,
     pub author: String,
     pub author_role_ids: Vec<Id<RoleMarker>>,
@@ -133,7 +140,7 @@ impl NotificationInboxState {
         }
     }
 
-    fn active_len(&self) -> usize {
+    pub(super) fn active_len(&self) -> usize {
         match self.tab {
             NotificationInboxTab::Unreads => self.unreads.len(),
             NotificationInboxTab::Mentions => self.mentions.len(),
@@ -157,14 +164,14 @@ impl NotificationInboxState {
         }
     }
 
-    fn selection(&self, tab: NotificationInboxTab) -> &SelectablePopupState {
+    pub(super) fn selection(&self, tab: NotificationInboxTab) -> &SelectablePopupState {
         match tab {
             NotificationInboxTab::Unreads => &self.unreads_selection,
             NotificationInboxTab::Mentions => &self.mentions_selection,
         }
     }
 
-    fn selection_mut(&mut self, tab: NotificationInboxTab) -> &mut SelectablePopupState {
+    pub(super) fn selection_mut(&mut self, tab: NotificationInboxTab) -> &mut SelectablePopupState {
         match tab {
             NotificationInboxTab::Unreads => &mut self.unreads_selection,
             NotificationInboxTab::Mentions => &mut self.mentions_selection,
@@ -290,9 +297,10 @@ impl DashboardState {
     pub fn open_notification_inbox(&mut self) {
         let request_id = self.next_inbox_request_id();
         let unreads = self.build_unread_inbox_items();
-        self.popups.modal = Some(ModalPopup::NotificationInbox(NotificationInboxState::new(
-            request_id, unreads,
-        )));
+        self.popups
+            .set_modal(ModalPopup::NotificationInbox(NotificationInboxState::new(
+                request_id, unreads,
+            )));
         self.enqueue_pending_command(AppCommand::LoadInboxMentions {
             request_id,
             before: None,
@@ -377,34 +385,17 @@ impl DashboardState {
     }
 
     pub fn move_notification_inbox_down(&mut self) {
-        let Some(inbox) = self.popups.notification_inbox() else {
-            return;
-        };
-        let (tab, len) = (inbox.tab, inbox.active_len());
-        if let Some(inbox) = self.popups.notification_inbox_mut() {
-            inbox.selection_mut(tab).move_down(len);
-        }
-        self.ensure_notification_inbox_requests();
+        self.move_selectable_popup(
+            SelectablePopupTarget::NotificationInbox,
+            SelectionAction::Next,
+        );
     }
 
     pub fn move_notification_inbox_up(&mut self) {
-        let Some(tab) = self.notification_inbox_tab() else {
-            return;
-        };
-        if let Some(inbox) = self.popups.notification_inbox_mut() {
-            inbox.selection_mut(tab).move_up();
-        }
-    }
-
-    pub(super) fn page_notification_inbox_selection(&mut self, action: SelectionAction) {
-        let Some(inbox) = self.popups.notification_inbox() else {
-            return;
-        };
-        let (tab, len) = (inbox.tab, inbox.active_len());
-        if let Some(inbox) = self.popups.notification_inbox_mut() {
-            inbox.selection_mut(tab).page(len, action);
-        }
-        self.ensure_notification_inbox_requests();
+        self.move_selectable_popup(
+            SelectablePopupTarget::NotificationInbox,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn switch_notification_inbox_tab(&mut self, _action: SelectionAction) {
@@ -636,13 +627,64 @@ impl DashboardState {
         self.ensure_unread_inbox_requests();
     }
 
+    pub(in crate::tui) fn apply_inbox_forum_posts_loaded(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        threads: &[ChannelInfo],
+        first_messages: &[MessageInfo],
+    ) {
+        let is_requested_forum = self
+            .popups
+            .notification_inbox()
+            .is_some_and(|inbox| inbox.unread_history_in_flight == Some(channel_id));
+        if !is_requested_forum {
+            return;
+        }
+
+        let previews = self.inbox_forum_post_previews(channel_id, threads, first_messages);
+        if let Some(inbox) = self.popups.notification_inbox_mut() {
+            inbox.finish_unread_history_request(channel_id);
+            if let Some(item) = inbox.unread_item_mut(channel_id) {
+                item.messages = previews;
+                item.fallback = item
+                    .messages
+                    .is_empty()
+                    .then(|| "No recent posts".to_owned());
+                item.load = NotificationInboxChannelLoad::Loaded;
+            }
+        }
+        self.ensure_unread_inbox_requests();
+    }
+
+    pub(in crate::tui) fn apply_inbox_forum_posts_load_failed(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+    ) {
+        let is_requested_forum = self
+            .popups
+            .notification_inbox()
+            .is_some_and(|inbox| inbox.unread_history_in_flight == Some(channel_id));
+        if !is_requested_forum {
+            return;
+        }
+
+        if let Some(inbox) = self.popups.notification_inbox_mut() {
+            inbox.finish_unread_history_request(channel_id);
+            if let Some(item) = inbox.unread_item_mut(channel_id) {
+                item.fallback = Some("Could not load recent posts".to_owned());
+                item.load = NotificationInboxChannelLoad::Loaded;
+            }
+        }
+        self.ensure_unread_inbox_requests();
+    }
+
     fn inbox_request_matches(&self, request_id: u64) -> bool {
         self.popups
             .notification_inbox()
             .is_some_and(|inbox| inbox.request_id == request_id)
     }
 
-    fn ensure_notification_inbox_requests(&mut self) {
+    pub(super) fn ensure_notification_inbox_requests(&mut self) {
         let Some(inbox) = self.popups.notification_inbox() else {
             return;
         };
@@ -661,10 +703,25 @@ impl DashboardState {
         let Some((request_id, channel_id)) = request else {
             return;
         };
-        self.enqueue_pending_command(AppCommand::LoadInboxChannelHistory {
-            channel_id,
-            request_id,
-        });
+        let command = self
+            .discord
+            .cache
+            .channel(channel_id)
+            .filter(|channel| channel.is_forum())
+            .and_then(|channel| channel.guild_id)
+            .map_or(
+                AppCommand::LoadInboxChannelHistory {
+                    channel_id,
+                    request_id,
+                },
+                |guild_id| AppCommand::LoadForumPosts {
+                    guild_id,
+                    channel_id,
+                    archive_state: ForumPostArchiveState::Active,
+                    offset: 0,
+                },
+            );
+        self.enqueue_pending_command(command);
     }
 
     fn ensure_mentions_inbox_request(&mut self) {
@@ -734,12 +791,11 @@ impl DashboardState {
                 .channel(channel_id)
                 .and_then(|channel| channel.guild_id)
         });
-        match guild_id {
-            Some(guild_id) => self.activate_guild(ActiveGuildScope::Guild(guild_id)),
-            None => self.activate_guild(ActiveGuildScope::DirectMessages),
-        }
-        self.restore_channel_cursor(Some(channel_id));
-        self.activate_channel(channel_id);
+        let scope = match guild_id {
+            Some(guild_id) => ActiveGuildScope::Guild(guild_id),
+            None => ActiveGuildScope::DirectMessages,
+        };
+        self.activate_message_history_channel(channel_id, Some(scope));
         self.focus_pane(FocusPane::Messages);
         Some(AppCommand::LoadMessageHistoryAround {
             channel_id,
@@ -916,15 +972,12 @@ impl DashboardState {
         eligible[start..]
             .iter()
             .map(|message| NotificationInboxMessage {
+                channel_id: message.channel_id,
+                message_id: message.id,
                 author_id: message.author_id,
                 author: message.author.clone(),
                 author_role_ids: Vec::new(),
-                author_role_color: self.inbox_author_role_color(
-                    message.guild_id,
-                    message.channel_id,
-                    message.author_id,
-                    &[],
-                ),
+                author_role_color: self.message_author_role_color(message),
                 content: self.inbox_preview_content(
                     message.guild_id,
                     &message.mentions,
@@ -933,6 +986,53 @@ impl DashboardState {
                     &message.sticker_names,
                     !message.embeds.is_empty(),
                 ),
+            })
+            .collect()
+    }
+
+    fn inbox_forum_post_previews(
+        &self,
+        forum_id: Id<ChannelMarker>,
+        threads: &[ChannelInfo],
+        first_messages: &[MessageInfo],
+    ) -> Vec<NotificationInboxMessage> {
+        let mut ordered = threads
+            .iter()
+            .filter(|thread| thread.parent_id == Some(forum_id))
+            .collect::<Vec<_>>();
+        ordered.sort_by_key(|thread| {
+            Reverse(
+                thread
+                    .last_message_id
+                    .map(Id::get)
+                    .unwrap_or_else(|| thread.channel_id.get()),
+            )
+        });
+
+        ordered
+            .into_iter()
+            .take(MAX_INBOX_MESSAGES_PER_CHANNEL)
+            .filter_map(|thread| {
+                if let Some(starter) = first_messages
+                    .iter()
+                    .find(|message| message.channel_id == thread.channel_id)
+                {
+                    let mut preview = self.inbox_message_preview(starter);
+                    preview.content = thread.name.clone();
+                    return Some(preview);
+                }
+
+                let channel = self.discord.cache.channel(thread.channel_id)?;
+                let post = self.forum_thread_item(channel, None, false);
+                Some(NotificationInboxMessage {
+                    channel_id: thread.channel_id,
+                    message_id: Id::new(thread.channel_id.get()),
+                    author_id: post.preview_author_id?,
+                    author: post.preview_author?,
+                    author_role_ids: Vec::new(),
+                    author_role_color: post.preview_author_color,
+                    content: post.label,
+                })
             })
             .collect()
     }
@@ -953,6 +1053,8 @@ impl DashboardState {
             !message.embeds.is_empty(),
         );
         NotificationInboxMessage {
+            channel_id: message.channel_id,
+            message_id: message.message_id,
             author_id: message.author_id,
             author: message.author.clone(),
             author_role_ids: message.author_role_ids.clone(),
@@ -989,12 +1091,8 @@ impl DashboardState {
         match item {
             NotificationInboxItem::Unread(item) => {
                 for message in &mut item.messages {
-                    message.author_role_color = self.inbox_author_role_color(
-                        item.guild_id,
-                        item.channel_id,
-                        message.author_id,
-                        &message.author_role_ids,
-                    );
+                    message.author_role_color =
+                        self.inbox_message_author_role_color(item.guild_id, message);
                 }
             }
             NotificationInboxItem::Mention(item) => {
@@ -1006,6 +1104,32 @@ impl DashboardState {
                 );
             }
         }
+    }
+
+    fn inbox_message_author_role_color(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+        message: &NotificationInboxMessage,
+    ) -> Option<u32> {
+        let guild_id = guild_id.or_else(|| {
+            self.discord
+                .cache
+                .channel(message.channel_id)
+                .and_then(|channel| channel.guild_id)
+        })?;
+        self.discord
+            .cache
+            .message_author_role_color(
+                guild_id,
+                message.channel_id,
+                message.message_id,
+                message.author_id,
+            )
+            .or_else(|| {
+                self.discord
+                    .cache
+                    .role_color_for_ids(guild_id, &message.author_role_ids)
+            })
     }
 
     fn inbox_author_role_color(
@@ -1066,10 +1190,12 @@ mod tests {
     fn unread_inbox_appends_the_next_page_after_its_previews_settle() {
         let request_id = 7;
         let mut state = DashboardState::new();
-        state.popups.modal = Some(ModalPopup::NotificationInbox(NotificationInboxState::new(
-            request_id,
-            (1..=6).map(unread_item).collect(),
-        )));
+        state
+            .popups
+            .set_modal(ModalPopup::NotificationInbox(NotificationInboxState::new(
+                request_id,
+                (1..=6).map(unread_item).collect(),
+            )));
         state.ensure_unread_inbox_requests();
 
         assert_eq!(state.notification_inbox_unread_count(), 6);

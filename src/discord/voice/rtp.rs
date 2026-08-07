@@ -40,6 +40,8 @@ pub(super) enum VoiceRtpEncryptor {
 pub(super) struct DecryptedRtpPayload {
     pub(super) media_payload: Vec<u8>,
     pub(super) encrypted_extension_body_len: usize,
+    pub(super) extension_profile: Option<u16>,
+    pub(super) extension_body: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,11 +110,26 @@ impl VoiceRtpDecryptor {
         if decrypted.len() < header.encrypted_extension_body_len {
             return Err("decrypted RTP payload is shorter than extension body".to_owned());
         }
+        let extension_profile = if header.encrypted_extension_body_len == 0 {
+            None
+        } else {
+            let profile_offset = header
+                .authenticated_header_len
+                .checked_sub(RTP_HEADER_EXTENSION_BYTES)
+                .ok_or_else(|| "RTP extension header offset underflowed".to_owned())?;
+            Some(u16::from_be_bytes([
+                packet[profile_offset],
+                packet[profile_offset + 1],
+            ]))
+        };
+        let extension_body = decrypted[..header.encrypted_extension_body_len].to_vec();
         let media_payload = &decrypted[header.encrypted_extension_body_len..];
         let media_payload = strip_rtp_padding(media_payload, header.has_padding)?;
         Ok(DecryptedRtpPayload {
             media_payload: media_payload.to_vec(),
             encrypted_extension_body_len: header.encrypted_extension_body_len,
+            extension_profile,
+            extension_body,
         })
     }
 

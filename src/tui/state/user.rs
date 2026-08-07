@@ -138,31 +138,16 @@ impl DashboardState {
             .collect()
     }
 
-    pub fn initial_unknown_member_requests(&self) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
-        let Some(guild_id) = self.selected_guild_id() else {
-            return Vec::new();
-        };
-        if !self.is_member_list_loading() {
-            return Vec::new();
-        }
-
-        let user_ids = self
-            .discord
-            .members_for_guild(guild_id)
-            .into_iter()
-            .filter(|member| member.username.is_none() && member.display_name == "unknown")
-            .map(|member| member.user_id)
-            .take(MAX_GUILD_MEMBER_BY_ID_REQUEST_USERS)
-            .collect::<Vec<_>>();
-
-        if user_ids.is_empty() {
-            Vec::new()
-        } else {
-            vec![(guild_id, user_ids)]
-        }
+    pub fn observed_member_hydration_requests(
+        &self,
+        now: std::time::Instant,
+    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
+        self.discord
+            .cache
+            .missing_member_hydration_requests(self.selected_guild_id(), now)
     }
 
-    pub fn enqueue_message_author_member_requests(
+    pub fn enqueue_member_hydration_requests(
         &mut self,
         requests: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
     ) {

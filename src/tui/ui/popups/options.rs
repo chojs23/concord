@@ -15,9 +15,15 @@ pub(in crate::tui::ui) fn render_options_popup(
     let selected = state.selected_option_index().unwrap_or(0);
     let popup = options_popup_area(area, state);
     let inner = render_modal_frame(frame, popup, state.options_popup_title());
-    let visible_items = usize::from(inner.height).max(1);
-    let inner_width = usize::from(inner.width).max(1);
-    let scroll = state.options_popup_scroll();
+    let scroll = state
+        .popup_list_scroll(SelectablePopupTarget::Options)
+        .expect("options have selection state");
+    let visible_items = options_visible_item_count(&items, scroll, usize::from(inner.height));
+    let content = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
+    let inner_width = usize::from(content.width).max(1);
     frame.render_widget(
         Paragraph::new(options_popup_lines(
             &items,
@@ -26,15 +32,27 @@ pub(in crate::tui::ui) fn render_options_popup(
             scroll,
             inner_width,
         )),
-        inner,
+        content,
     );
-    render_option_gauges(frame, inner, &items, visible_items, scroll);
+    render_option_gauges(frame, content, &items, visible_items, scroll);
+    render_vertical_scrollbar(frame, inner, scroll, visible_items, items.len());
 }
 
-pub(in crate::tui::ui) fn options_popup_visible_items(area: Rect, state: &DashboardState) -> usize {
+pub(in crate::tui::ui) fn options_popup_list_layout(
+    area: Rect,
+    state: &DashboardState,
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
     let popup = options_popup_area(area, state);
     let inner = panel_block(state.options_popup_title(), true).inner(popup);
-    usize::from(inner.height).max(1)
+    let list = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
+    let items = state.display_option_items();
+    SelectablePopupLayout::new(snapshot.target, popup, list, snapshot, |start, max_rows| {
+        options_row_items(&items, start, max_rows)
+    })
 }
 
 pub(in crate::tui::ui) fn options_popup_area(area: Rect, state: &DashboardState) -> Rect {
@@ -111,6 +129,52 @@ pub(in crate::tui::ui) fn options_popup_lines(
         .map(|line| truncate_line_to_display_width(line, width))
         .collect();
     lines
+}
+
+fn options_visible_item_count(
+    items: &[DisplayOptionItem],
+    scroll: usize,
+    available_rows: usize,
+) -> usize {
+    if items.is_empty() {
+        return 0;
+    }
+    let start = scroll.min(items.len() - 1);
+    let available_rows = available_rows.max(1);
+    let mut used_rows = 0usize;
+    let mut visible = 0usize;
+    for item in &items[start..] {
+        let item_height = 1 + usize::from(item.gauge.is_some());
+        if visible > 0 && used_rows.saturating_add(item_height) > available_rows {
+            break;
+        }
+        used_rows = used_rows.saturating_add(item_height);
+        visible += 1;
+        if used_rows >= available_rows {
+            break;
+        }
+    }
+    visible.max(1)
+}
+
+fn options_row_items(
+    items: &[DisplayOptionItem],
+    start: usize,
+    available_rows: usize,
+) -> Vec<Option<usize>> {
+    let mut rows = Vec::new();
+    for (index, item) in items.iter().enumerate().skip(start) {
+        let item_height = 1 + usize::from(item.gauge.is_some());
+        if !rows.is_empty() && rows.len().saturating_add(item_height) > available_rows {
+            break;
+        }
+        rows.extend(std::iter::repeat_n(Some(index), item_height));
+        if rows.len() >= available_rows {
+            break;
+        }
+    }
+    rows.truncate(available_rows.max(1));
+    rows
 }
 
 fn render_option_gauges(

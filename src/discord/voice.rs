@@ -75,7 +75,7 @@ use self::outbound::VoiceOutboundSendBlockReason;
 #[cfg(any(test, feature = "voice-playback"))]
 use self::outbound::{VoiceOutboundSendEvent, VoiceOutboundSendOutcome, VoiceOutboundSendState};
 #[cfg(test)]
-use ::opus::{Channels, Decoder as OpusDecoder};
+use ::opus::{Channels, Decoder as OpusDecoder, SampleRate as OpusSampleRate};
 #[cfg(all(test, feature = "voice-playback"))]
 use audio_buffer::{VoiceAudioBuffer, VoiceAudioOutputStats};
 use audio_runtime::VoiceAudioRuntime;

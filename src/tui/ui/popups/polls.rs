@@ -18,11 +18,14 @@ pub(in crate::tui::ui) fn render_poll_vote_picker(
 
     let selected = state.selected_poll_vote_picker_index().unwrap_or(0);
     let popup = poll_vote_picker_popup_area(area, answers.len());
-    render_modal_paragraph(
+    render_selectable_popup_list(
         frame,
         popup,
         "Choose poll votes",
         poll_vote_picker_lines(answers, selected),
+        state
+            .popup_list_scroll(SelectablePopupTarget::PollVotes)
+            .expect("poll votes have selection state"),
     );
 }
 

@@ -11,7 +11,9 @@ use crate::{
 use super::super::{
     message::{format::format_message_content_lines, layout::MessageViewportPlan},
     selection,
-    state::{ActiveModalPopupKind, DashboardState, MAX_MENTION_PICKER_VISIBLE},
+    state::{
+        ActiveModalPopupKind, DashboardState, MAX_MENTION_PICKER_VISIBLE, SelectablePopupTarget,
+    },
     ui::ImagePreviewLayout,
 };
 
@@ -650,7 +652,8 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
                 .len()
                 .clamp(1, selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
             let start = state
-                .emoji_reaction_picker_scroll()
+                .popup_list_scroll(SelectablePopupTarget::EmojiReactions)
+                .expect("emoji reactions have selection state")
                 .min(reactions.len().saturating_sub(visible_items));
             let end = (start + visible_items).min(reactions.len());
             for reaction in &reactions[start..end] {

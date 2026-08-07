@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.5] - 2026-08-06
+
+### Bug Fixes
+
+- Fix libva 2.24.1 compatible crates (#302) in [#302](https://github.com/chojs23/concord/pull/302) by @chojs23
+
+## [2.5.4] - 2026-08-06
+
+### Bug Fixes
+
+- _(stream)_ Handle capture failures and linear DMA-BUF negotiation (#299) in [#299](https://github.com/chojs23/concord/pull/299) by @chojs23
+- Enable windows OLE APIs for Media Foundation encoding by @chojs23
+- Preserve active DAVE media during MLS epoch preparation by @chojs23
+- _(stream)_ Smooth H.264 broadcast pacing by @chojs23
+- _(build)_ Replace audiopus_sys with opusic-c by @chojs23
+- _(linux)_ Use generic VA-API surfaces for H264 encoding by @chojs23
+- _(boradcast)_ Filter macOS capture targets and show loading feedback by @chojs23
+
+### Features
+
+- _(broadcast)_ Add hardware encoder by @chojs23
+- _(broadcast)_ Add one-way runtime fallback from hardware H264 encoders to OpenH264 by @chojs23
+- _(linux)_ Add 10-bit, multi-plane, and modifier-aware screen capture by @chojs23
+- _(stream)_ Improve cross-platform hardware encoding by @chojs23
+
+## [2.5.3] - 2026-08-04
+
+### Bug Fixes
+
+- _(stream)_ Start video-only broadcasts immediately by @chojs23
+- _(stream)_ Scale stream playback for high-resolution and high-frame-rate video by @chojs23
+- _(stream)_ Add UDP safeguards and recovery diagnostics by @chojs23
+- _(stream)_ Preserve manual mpv window resizing and disable pause by @chojs23
+- _(stream)_ Stabilize RTP recovery and live playback timing by @chojs23
+- _(broadcast)_ Fix Linux screen-share startup readiness and add lifecycle diagnostics by @chojs23
+
+### Miscellaneous Tasks
+
+- _(docs)_ Add debug mode instruction by @chojs23
+
+## [2.5.2] - 2026-08-03
+
+### Bug Fixes
+
+- _(tui)_ Align inbox, thread, and shortcut behavior by @chojs23
+- _(release)_ Scope Homebrew audio dependencies to Linux (#297) in [#297](https://github.com/chojs23/concord/pull/297) by @chojs23
+
+### Refactor
+
+- _(tui)_ Unify popup input and shortcut routing by @chojs23
+
 ## [2.5.1] - 2026-08-02
 
 ### Bug Fixes

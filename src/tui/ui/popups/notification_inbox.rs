@@ -19,18 +19,33 @@ pub(in crate::tui::ui) fn render_notification_inbox_popup(
     };
 
     let popup = notification_inbox_popup_area(area);
-    let inner_width = usize::from(popup.width.saturating_sub(2)).max(1);
-
     let inner = render_modal_frame(frame, popup, "Inbox");
-    frame.render_widget(
-        Paragraph::new(notification_inbox_lines(
-            state,
-            tab,
-            usize::from(inner.height),
-            inner_width,
-        )),
-        inner,
+    // Keep the rightmost column free so card borders and the scrollbar never
+    // overwrite each other. This matches the other scrollable popup layouts.
+    let content = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
+    let layout = notification_inbox_layout(
+        state,
+        tab,
+        usize::from(content.height),
+        usize::from(content.width).max(1),
     );
+    frame.render_widget(Paragraph::new(layout.lines), content);
+    if let Some(metrics) = layout.body_scroll {
+        render_vertical_scrollbar(
+            frame,
+            Rect {
+                y: inner.y.saturating_add(layout.body_start as u16),
+                height: metrics.viewport_len.min(u16::MAX as usize) as u16,
+                ..inner
+            },
+            metrics.position,
+            metrics.viewport_len,
+            metrics.content_len,
+        );
+    }
 }
 
 pub(in crate::tui::ui) fn notification_inbox_popup_area(area: Rect) -> Rect {
@@ -38,12 +53,64 @@ pub(in crate::tui::ui) fn notification_inbox_popup_area(area: Rect) -> Rect {
     centered_rect(area, NOTIFICATION_INBOX_POPUP_WIDTH, height)
 }
 
+#[cfg(test)]
 fn notification_inbox_lines(
     state: &DashboardState,
     tab: NotificationInboxTab,
     available_lines: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
+    notification_inbox_layout(state, tab, available_lines, width).lines
+}
+
+struct NotificationInboxLayout {
+    lines: Vec<Line<'static>>,
+    body_start: usize,
+    body_height: usize,
+    item_scroll: usize,
+    body_row_items: Vec<Option<usize>>,
+    body_scroll: Option<PopupScrollMetrics>,
+}
+
+pub(in crate::tui::ui) fn notification_inbox_list_layout(
+    area: Rect,
+    state: &DashboardState,
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
+    let popup = notification_inbox_popup_area(area);
+    let inner = panel_block("Inbox", true).inner(popup);
+    let content = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
+    let tab = state
+        .notification_inbox_tab()
+        .expect("selectable inbox has an active tab");
+    let layout = notification_inbox_layout(
+        state,
+        tab,
+        usize::from(content.height),
+        usize::from(content.width).max(1),
+    );
+    SelectablePopupLayout {
+        target: snapshot.target,
+        popup,
+        list: Rect {
+            y: content.y.saturating_add(layout.body_start as u16),
+            height: layout.body_height.min(u16::MAX as usize) as u16,
+            ..content
+        },
+        scroll: layout.item_scroll,
+        row_items: layout.body_row_items,
+    }
+}
+
+fn notification_inbox_layout(
+    state: &DashboardState,
+    tab: NotificationInboxTab,
+    available_lines: usize,
+    width: usize,
+) -> NotificationInboxLayout {
     let items = state.notification_inbox_items();
     let selected = state.selected_notification_inbox_index().unwrap_or(0);
     let help_lines = notification_inbox_help_lines(state, tab, width);
@@ -90,6 +157,10 @@ fn notification_inbox_lines(
         )),
     ];
 
+    let body_start = lines.len();
+    let mut body_scroll = None;
+    let mut body_row_items = Vec::new();
+    let mut resolved_item_scroll = 0;
     if status == Some(NotificationInboxLoad::Failed) {
         lines.push(notification_inbox_notice_line("Failed to load mentions."));
     } else if items.is_empty() && loading_indicator.is_none() {
@@ -99,9 +170,15 @@ fn notification_inbox_lines(
         }));
     } else {
         if !items.is_empty() {
-            lines.extend(notification_inbox_body_lines(
-                &items, selected, body_lines, width,
-            ));
+            let item_scroll = state
+                .popup_list_scroll(SelectablePopupTarget::NotificationInbox)
+                .expect("inbox has selection state");
+            let body =
+                notification_inbox_body_lines(&items, selected, item_scroll, body_lines, width);
+            body_scroll = Some(body.scroll);
+            lines.extend(body.lines.clone());
+            body_row_items = body.row_items;
+            resolved_item_scroll = body.item_scroll;
         }
         if let Some(loading_indicator) = loading_indicator {
             lines.extend(loading_indicator.lines(state.animation_frame()));
@@ -114,7 +191,14 @@ fn notification_inbox_lines(
     }
     lines.push(Line::from(Span::styled(String::new(), Style::default())));
     lines.extend(help_lines);
-    lines
+    NotificationInboxLayout {
+        lines,
+        body_start,
+        body_height: body_lines,
+        item_scroll: resolved_item_scroll,
+        body_row_items,
+        body_scroll,
+    }
 }
 
 fn notification_inbox_notice_line(text: &str) -> Line<'static> {
@@ -159,35 +243,67 @@ fn notification_inbox_tab_line(
 fn notification_inbox_body_lines(
     items: &[NotificationInboxItem],
     selected: usize,
+    item_scroll: usize,
     body_lines: usize,
     width: usize,
-) -> Vec<Line<'static>> {
-    let mut rows = Vec::<(Line<'static>, Option<usize>)>::new();
-    for (index, item) in items.iter().enumerate() {
-        for (offset, line) in notification_inbox_card_lines(item, index == selected, width)
-            .into_iter()
-            .enumerate()
-        {
-            rows.push((line, (offset == 0).then_some(index)));
+) -> NotificationInboxBody {
+    let cards = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| notification_inbox_card_lines(item, index == selected, width))
+        .collect::<Vec<_>>();
+    let (item_scroll, row_items) = popup_rows_with_visible_selection(
+        items.len(),
+        selected,
+        item_scroll,
+        body_lines,
+        |start, max_rows| {
+            notification_inbox_card_rows(&cards, start, max_rows)
+                .into_iter()
+                .map(|(_, index)| Some(index))
+                .collect()
+        },
+    );
+    let rows = notification_inbox_card_rows(&cards, item_scroll, body_lines);
+    let lines = rows.iter().map(|(line, _)| line.clone()).collect();
+    let total = cards.iter().map(Vec::len).sum();
+    let line_scroll = cards.iter().take(item_scroll).map(Vec::len).sum();
+    NotificationInboxBody {
+        lines,
+        item_scroll,
+        row_items,
+        scroll: PopupScrollMetrics {
+            position: line_scroll,
+            viewport_len: body_lines,
+            content_len: total,
+        },
+    }
+}
+
+struct NotificationInboxBody {
+    lines: Vec<Line<'static>>,
+    item_scroll: usize,
+    row_items: Vec<Option<usize>>,
+    scroll: PopupScrollMetrics,
+}
+
+fn notification_inbox_card_rows(
+    cards: &[Vec<Line<'static>>],
+    start: usize,
+    max_rows: usize,
+) -> Vec<(Line<'static>, usize)> {
+    let mut rows = Vec::new();
+    for (index, card) in cards.iter().enumerate().skip(start) {
+        if !rows.is_empty() && rows.len().saturating_add(card.len()) > max_rows {
+            break;
+        }
+        rows.extend(card.iter().cloned().map(|line| (line, index)));
+        if rows.len() >= max_rows {
+            break;
         }
     }
-
-    let total = rows.len();
-    let start = if total <= body_lines {
-        0
-    } else {
-        let selected_line = rows
-            .iter()
-            .position(|(_, index)| *index == Some(selected))
-            .unwrap_or_default();
-        selected_line
-            .saturating_sub(body_lines / 3)
-            .min(total - body_lines)
-    };
-    rows[start..total.min(start + body_lines)]
-        .iter()
-        .map(|(line, _)| line.clone())
-        .collect()
+    rows.truncate(max_rows.max(1));
+    rows
 }
 
 fn notification_inbox_card_lines(
@@ -210,6 +326,13 @@ fn notification_inbox_card_lines(
             ),
         ]),
         notification_inbox_inner_line(header, inner_width, selected),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!("├{}┤", "─".repeat(card_width.saturating_sub(2))),
+                border,
+            ),
+        ]),
     ];
     for content in body {
         lines.push(notification_inbox_inner_line(
@@ -262,6 +385,8 @@ fn notification_inbox_card_content(
                 header,
                 vec![notification_inbox_message_spans(
                     &NotificationInboxMessage {
+                        channel_id: item.channel_id,
+                        message_id: item.message_id,
                         author_id: item.author_id,
                         author: item.author.clone(),
                         author_role_ids: item.author_role_ids.clone(),
@@ -434,6 +559,7 @@ mod tests {
         },
     };
     use crate::tui::keybindings::SelectionAction;
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn state_with_unread_inbox_page() -> DashboardState {
         let mut state = DashboardState::new();
@@ -504,6 +630,68 @@ mod tests {
         state.advance_animation_frame();
         let second_frame = rendered_inbox_lines(state, tab);
         assert_ne!(first_frame, second_frame);
+    }
+
+    #[test]
+    fn notification_inbox_viewport_drives_scrollbar_paging_and_card_hits() {
+        for (mut state, expected_scrollbar) in [
+            (state_with_unread_inbox_page(), true),
+            (
+                {
+                    let mut state = DashboardState::new();
+                    state.open_notification_inbox();
+                    state
+                },
+                false,
+            ),
+        ] {
+            let backend = TestBackend::new(100, 14);
+            let mut terminal = Terminal::new(backend).expect("test terminal should build");
+            terminal
+                .draw(|frame| {
+                    crate::tui::ui::sync_view_heights(frame.area(), &mut state);
+                    render_notification_inbox_popup(frame, frame.area(), &state);
+                })
+                .expect("inbox should render");
+
+            let has_scrollbar = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .any(|cell| cell.symbol() == "┃");
+            assert_eq!(has_scrollbar, expected_scrollbar);
+
+            if expected_scrollbar {
+                assert!(
+                    terminal
+                        .backend()
+                        .buffer()
+                        .content
+                        .iter()
+                        .any(|cell| cell.symbol() == "├"),
+                    "unread cards should separate the channel header from messages"
+                );
+                let snapshot = state
+                    .active_selectable_popup_snapshot()
+                    .expect("inbox selection snapshot");
+                let layout =
+                    notification_inbox_list_layout(Rect::new(0, 0, 100, 14), &state, snapshot);
+                let visible_items = layout.visible_items();
+                assert!(visible_items < snapshot.item_count);
+                assert_eq!(layout.item_at(layout.list.x, layout.list.y), Some(0));
+                assert_eq!(
+                    layout.item_at(layout.list.x, layout.list.y.saturating_add(1)),
+                    Some(0)
+                );
+
+                assert!(state.page_active_popup_down());
+                assert_eq!(
+                    state.selected_notification_inbox_index(),
+                    Some((visible_items / 2).max(1))
+                );
+            }
+        }
     }
 
     #[test]

@@ -6,12 +6,8 @@ use super::{ActiveModalPopupKind, KeymapPopupState, ModalPopup};
 use crate::logging;
 
 impl DashboardState {
-    pub fn toggle_debug_log_popup(&mut self) {
-        if self.is_active_modal_popup(ActiveModalPopupKind::DebugLog) {
-            self.popups.clear_modal();
-        } else {
-            self.popups.modal = Some(ModalPopup::DebugLog);
-        }
+    pub fn open_debug_log_popup(&mut self) {
+        self.popups.set_modal(ModalPopup::DebugLog);
     }
 
     pub fn close_debug_log_popup(&mut self) {
@@ -21,9 +17,10 @@ impl DashboardState {
     }
 
     pub fn open_keymap_help_popup(&mut self) {
-        self.popups.modal = Some(ModalPopup::KeymapHelp(KeymapPopupState {
-            scroll: Default::default(),
-        }));
+        self.popups
+            .set_modal(ModalPopup::KeymapHelp(KeymapPopupState {
+                scroll: Default::default(),
+            }));
     }
 
     pub fn close_keymap_popup(&mut self) {

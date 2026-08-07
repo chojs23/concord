@@ -430,7 +430,10 @@ fn current_user_roles_handle_partial_and_complete_member_upserts() {
     );
     state.apply_event(&AppEvent::GuildMemberUpsert {
         guild_id: guild,
-        member: member_info(me, "unknown"),
+        member: MemberInfo {
+            role_ids_present: false,
+            ..member_info(me, "unknown")
+        },
     });
 
     let ch = state.channel(channel).expect("channel");
@@ -717,6 +720,10 @@ fn permission_data_stays_unknown_while_current_member_roles_hydrate() {
     assert_eq!(
         state.channel_permission_decision(ch, DiscordPermission::SendMessages),
         PermissionDecision::Unavailable(PermissionDataGap::CurrentMember)
+    );
+    assert_eq!(
+        state.missing_member_hydration_requests(Some(guild), std::time::Instant::now()),
+        vec![(guild, vec![me])]
     );
     assert!(state.can_send_in_channel(ch));
 }

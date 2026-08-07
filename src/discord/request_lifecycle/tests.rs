@@ -343,11 +343,11 @@ fn gateway_member_requests_can_retry_after_remove_or_new_gateway_session() {
     let message_author_request = vec![(guild_id, vec![message_author_user_id])];
     let initial_unknown_request = vec![(guild_id, vec![initial_unknown_user_id])];
     assert_eq!(
-        lifecycle.next_message_author_member_requests(message_author_request.clone(), now),
+        lifecycle.next_member_hydration_requests(message_author_request.clone(), now),
         message_author_request
     );
     assert_eq!(
-        lifecycle.next_initial_unknown_member_requests(initial_unknown_request.clone(), now),
+        lifecycle.next_member_hydration_requests(initial_unknown_request.clone(), now),
         initial_unknown_request
     );
     let mention_target = MentionMemberSearchTarget {
@@ -379,11 +379,11 @@ fn gateway_member_requests_can_retry_after_remove_or_new_gateway_session() {
         Some(guild_id)
     );
     assert_eq!(
-        lifecycle.next_message_author_member_requests(message_author_request.clone(), now),
+        lifecycle.next_member_hydration_requests(message_author_request.clone(), now),
         message_author_request
     );
     assert_eq!(
-        lifecycle.next_initial_unknown_member_requests(initial_unknown_request.clone(), now),
+        lifecycle.next_member_hydration_requests(initial_unknown_request.clone(), now),
         initial_unknown_request
     );
     lifecycle.set_mention_member_search_target(Some(mention_target.clone()), now);
@@ -448,7 +448,7 @@ fn user_note_request_dedupes_until_success_or_failure() {
 }
 
 #[test]
-fn message_author_member_request_dedupes_until_member_arrives_or_ttl_expires() {
+fn member_hydration_dedupes_across_sources_until_member_arrives_or_ttl_expires() {
     let mut requests = MemberBatchRequests::default();
     let guild_id = Id::new(1);
     let user_id = Id::new(10);
@@ -456,7 +456,13 @@ fn message_author_member_request_dedupes_until_member_arrives_or_ttl_expires() {
     let now = std::time::Instant::now();
 
     assert_eq!(
-        requests.next(vec![(guild_id, vec![user_id, other_user_id])], now),
+        requests.next(
+            vec![
+                (guild_id, vec![user_id]),
+                (guild_id, vec![user_id, other_user_id]),
+            ],
+            now,
+        ),
         vec![(guild_id, vec![user_id, other_user_id])]
     );
     assert_eq!(

@@ -218,6 +218,10 @@ pub(super) async fn start_stream(
 ) {
     if let Err(message) = client.request_stream_start(scope, channel_id, target) {
         logging::error("stream", &message);
+        // The TUI stages preparation before dispatch, so a synchronous failure must complete it.
+        client
+            .publish_event(AppEvent::StreamBroadcastStartFailed { scope, channel_id })
+            .await;
         client
             .publish_event(AppEvent::GatewayError {
                 message: format!("Could not start stream: {message}"),
@@ -266,5 +270,48 @@ pub(super) async fn leave_channel(
                 message: Some("Voice leave requested".to_owned()),
             })
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discord::StreamCaptureTargetKind;
+
+    #[tokio::test]
+    async fn stream_start_failure_completes_preparation_before_showing_error() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("test client is valid");
+        let mut effects = client.take_effects();
+        let scope = VoiceScope::Guild(Id::new(1));
+        let channel_id = Id::new(2);
+        let target = StreamCaptureTarget {
+            kind: StreamCaptureTargetKind::Portal,
+            id: 0,
+            title: "test capture".to_owned(),
+        };
+
+        start_stream(client, scope, channel_id, target).await;
+
+        assert!(matches!(
+            effects
+                .recv()
+                .await
+                .expect("stream end event should be published")
+                .event,
+            AppEvent::StreamBroadcastStartFailed {
+                scope: event_scope,
+                channel_id: event_channel_id,
+            } if event_scope == scope && event_channel_id == channel_id
+        ));
+        assert!(matches!(
+            effects
+                .recv()
+                .await
+                .expect("stream error event should be published")
+                .event,
+            AppEvent::GatewayError { message }
+                if message.starts_with("Could not start stream:")
+        ));
     }
 }

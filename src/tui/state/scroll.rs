@@ -1,6 +1,6 @@
 use std::{collections::HashSet, hash::Hash};
 
-pub(super) const SCROLL_OFF: usize = 3;
+pub(in crate::tui) const SCROLL_OFF: usize = 3;
 
 pub(super) fn pane_content_height(height: usize) -> usize {
     height.max(1)

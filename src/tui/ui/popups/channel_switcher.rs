@@ -19,20 +19,40 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
     let selected = state.selected_channel_switcher_index().unwrap_or(0);
     let popup = channel_switcher_popup_area(area);
     let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
-    let scroll = state.channel_switcher_scroll();
-    render_modal_paragraph(
-        frame,
-        popup,
-        "Channel Switcher",
-        channel_switcher_lines(
+    let scroll = state
+        .popup_list_scroll(SelectablePopupTarget::ChannelSwitcher)
+        .expect("channel switcher has selection state");
+    let inner = render_modal_frame(frame, popup, "Channel Switcher");
+    let content = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
+    frame.render_widget(
+        Paragraph::new(channel_switcher_lines(
             &items,
             selected,
             query,
             query_cursor,
             max_result_lines,
             scroll,
-            popup.width.saturating_sub(2) as usize,
-        ),
+            usize::from(content.width),
+        )),
+        content,
+    );
+    render_vertical_scrollbar(
+        frame,
+        Rect {
+            y: inner.y.saturating_add(2),
+            height: max_result_lines.min(u16::MAX as usize) as u16,
+            ..inner
+        },
+        scroll,
+        channel_switcher_visible_result_rows(&items, scroll, max_result_lines)
+            .iter()
+            .filter(|row| matches!(row, ChannelSwitcherResultRow::Item(_)))
+            .count()
+            .max(1),
+        items.len(),
     );
     if let Some(position) = channel_switcher_cursor_position(area, state) {
         frame.set_cursor_position(position);
@@ -44,39 +64,29 @@ pub(in crate::tui::ui) fn channel_switcher_popup_area(area: Rect) -> Rect {
     centered_rect(area, CHANNEL_SWITCHER_POPUP_WIDTH, height)
 }
 
-pub(in crate::tui::ui) fn channel_switcher_visible_items(area: Rect) -> usize {
-    usize::from(channel_switcher_popup_area(area).height.saturating_sub(4)).max(1)
-}
-
-pub(in crate::tui::ui) fn channel_switcher_item_index_at(
+pub(in crate::tui::ui) fn channel_switcher_list_layout(
     area: Rect,
     state: &DashboardState,
-    column: u16,
-    row: u16,
-) -> Option<usize> {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::ChannelSwitcher) {
-        return None;
-    }
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
     let popup = channel_switcher_popup_area(area);
     let inner = panel_block("", false).inner(popup);
-    if column < inner.x
-        || column >= inner.x.saturating_add(inner.width)
-        || row < inner.y
-        || row >= inner.y.saturating_add(inner.height)
-    {
-        return None;
-    }
-    let line = row.saturating_sub(inner.y) as usize;
-    let result_line = line.checked_sub(2)?;
+    let list = Rect {
+        y: inner.y.saturating_add(2),
+        width: inner.width.saturating_sub(1).max(1),
+        height: inner.height.saturating_sub(2),
+        ..inner
+    };
     let items = state.channel_switcher_items();
-    let scroll = state.channel_switcher_scroll();
-    let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
-    channel_switcher_visible_result_rows(&items, scroll, max_result_lines)
-        .get(result_line)
-        .and_then(|row| match row {
-            ChannelSwitcherResultRow::Item(index) => Some(*index),
-            ChannelSwitcherResultRow::Group(_) => None,
-        })
+    SelectablePopupLayout::new(snapshot.target, popup, list, snapshot, |start, max_rows| {
+        channel_switcher_visible_result_rows(&items, start, max_rows)
+            .into_iter()
+            .map(|row| match row {
+                ChannelSwitcherResultRow::Item(index) => Some(index),
+                ChannelSwitcherResultRow::Group(_) => None,
+            })
+            .collect()
+    })
 }
 
 pub(in crate::tui::ui) fn channel_switcher_cursor_position(
@@ -91,7 +101,7 @@ pub(in crate::tui::ui) fn channel_switcher_cursor_position(
         .channel_switcher_query_cursor_byte_index()?
         .min(query.len());
     let popup = channel_switcher_popup_area(area);
-    let inner_width = usize::from(popup.width.saturating_sub(2)).max(1);
+    let inner_width = usize::from(popup.width.saturating_sub(3)).max(1);
     let (_, cursor_offset) = visible_channel_switcher_query(query, cursor, inner_width);
     Some(Position::new(
         popup

@@ -19,6 +19,7 @@ const MEDIA_PLAYBACK_DISABLED_TEXT: &str = "Media playback is disabled in Displa
 const MEDIA_PLAYBACK_PREPARING_TEXT: &str = "Preparing media playback...";
 const STREAM_PLAYBACK_PREPARING_TEXT: &str = "Preparing stream playback...";
 const STREAM_BROADCAST_PREPARING_TEXT: &str = "Preparing screen share...";
+const STREAM_CAPTURE_TARGETS_LOADING_TEXT: &str = "Loading screens and windows...";
 
 impl DashboardState {
     pub(in crate::tui) fn show_success_toast(&mut self, text: impl Into<String>, now: Instant) {
@@ -99,16 +100,7 @@ impl DashboardState {
 
         self.runtime.stream_playback_preparing = None;
         self.runtime.active_stream_playback = Some(target);
-        if self
-            .runtime
-            .toast_message
-            .as_ref()
-            .is_some_and(|message| message.expires_at.is_none())
-        {
-            self.runtime.toast_message = None;
-            return true;
-        }
-        false
+        self.clear_owned_preparing_toast(STREAM_PLAYBACK_PREPARING_TEXT)
     }
 
     pub(in crate::tui) fn record_stream_playback_ended(
@@ -138,17 +130,7 @@ impl DashboardState {
         if was_preparing {
             self.runtime.stream_playback_preparing = None;
         }
-        if was_preparing
-            && self
-                .runtime
-                .toast_message
-                .as_ref()
-                .is_some_and(|message| message.expires_at.is_none())
-        {
-            self.runtime.toast_message = None;
-            return true;
-        }
-        false
+        was_preparing && self.clear_owned_preparing_toast(STREAM_PLAYBACK_PREPARING_TEXT)
     }
 
     pub(in crate::tui) fn show_media_playback_preparing_toast(
@@ -212,16 +194,25 @@ impl DashboardState {
             .take()
             .expect("matching broadcast preparation exists");
         self.runtime.active_stream_broadcast = Some(target);
-        if self
+        self.clear_owned_preparing_toast(STREAM_BROADCAST_PREPARING_TEXT)
+    }
+
+    pub(in crate::tui) fn cancel_stream_broadcast_preparing(
+        &mut self,
+        scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
+    ) -> bool {
+        if !self
             .runtime
-            .toast_message
+            .stream_broadcast_preparing
             .as_ref()
-            .is_some_and(|message| message.expires_at.is_none())
+            .is_some_and(|target| target.matches(scope, channel_id))
         {
-            self.runtime.toast_message = None;
-            return true;
+            return false;
         }
-        false
+
+        self.runtime.stream_broadcast_preparing = None;
+        self.clear_owned_preparing_toast(STREAM_BROADCAST_PREPARING_TEXT)
     }
 
     pub(in crate::tui) fn record_stream_broadcast_ended(
@@ -251,17 +242,7 @@ impl DashboardState {
         if preparing_matches {
             self.runtime.stream_broadcast_preparing = None;
         }
-        if was_preparing
-            && self
-                .runtime
-                .toast_message
-                .as_ref()
-                .is_some_and(|message| message.expires_at.is_none())
-        {
-            self.runtime.toast_message = None;
-            return true;
-        }
-        false
+        was_preparing && self.clear_owned_preparing_toast(STREAM_BROADCAST_PREPARING_TEXT)
     }
 
     pub(in crate::tui) fn clear_media_playback_preparing(
@@ -279,16 +260,19 @@ impl DashboardState {
         }
 
         self.runtime.media_playback_preparing = None;
-        if self
-            .runtime
-            .toast_message
-            .as_ref()
-            .is_some_and(|message| message.expires_at.is_none())
-        {
-            self.runtime.toast_message = None;
-            return true;
-        }
-        false
+        self.clear_owned_preparing_toast(MEDIA_PLAYBACK_PREPARING_TEXT)
+    }
+
+    pub(in crate::tui) fn show_stream_capture_targets_loading_toast(&mut self) {
+        self.runtime.toast_message = Some(ToastMessage {
+            text: STREAM_CAPTURE_TARGETS_LOADING_TEXT.to_owned(),
+            kind: ToastKind::Info,
+            expires_at: None,
+        });
+    }
+
+    pub(in crate::tui) fn clear_stream_capture_targets_loading_toast(&mut self) -> bool {
+        self.clear_owned_preparing_toast(STREAM_CAPTURE_TARGETS_LOADING_TEXT)
     }
 
     pub(in crate::tui) fn clear_expired_toast(&mut self, now: Instant) -> bool {
@@ -299,24 +283,43 @@ impl DashboardState {
             .and_then(|message| message.expires_at)
             .is_some_and(|expires_at| expires_at <= now)
         {
-            self.runtime.toast_message = if self.runtime.stream_broadcast_preparing.is_some() {
-                Some(ToastMessage {
-                    text: STREAM_BROADCAST_PREPARING_TEXT.to_owned(),
-                    kind: ToastKind::Info,
-                    expires_at: None,
-                })
-            } else if self.runtime.stream_playback_preparing.is_some() {
-                Some(ToastMessage {
-                    text: STREAM_PLAYBACK_PREPARING_TEXT.to_owned(),
-                    kind: ToastKind::Info,
-                    expires_at: None,
-                })
-            } else {
-                None
-            };
+            self.runtime.toast_message = self.pending_activity_toast();
             return true;
         }
         false
+    }
+
+    fn clear_owned_preparing_toast(&mut self, text: &str) -> bool {
+        if !self
+            .runtime
+            .toast_message
+            .as_ref()
+            .is_some_and(|message| message.expires_at.is_none() && message.text == text)
+        {
+            return false;
+        }
+
+        self.runtime.toast_message = self.pending_activity_toast();
+        true
+    }
+
+    fn pending_activity_toast(&self) -> Option<ToastMessage> {
+        let text = if self.runtime.stream_capture_targets_request.is_some() {
+            STREAM_CAPTURE_TARGETS_LOADING_TEXT
+        } else if self.runtime.stream_broadcast_preparing.is_some() {
+            STREAM_BROADCAST_PREPARING_TEXT
+        } else if self.runtime.stream_playback_preparing.is_some() {
+            STREAM_PLAYBACK_PREPARING_TEXT
+        } else if self.runtime.media_playback_preparing.is_some() {
+            MEDIA_PLAYBACK_PREPARING_TEXT
+        } else {
+            return None;
+        };
+        Some(ToastMessage {
+            text: text.to_owned(),
+            kind: ToastKind::Info,
+            expires_at: None,
+        })
     }
 
     pub(in crate::tui) fn next_toast_deadline(&self) -> Option<Instant> {
@@ -426,6 +429,41 @@ mod tests {
                 .text,
             STREAM_BROADCAST_PREPARING_TEXT
         );
+
+        let mut capture_targets_state = DashboardState::new();
+        capture_targets_state.begin_stream_capture_targets_request(scope, channel_id);
+        capture_targets_state.show_error_toast("Failed to copy message", now);
+        assert!(capture_targets_state.clear_expired_toast(now + TOAST_DURATION));
+        assert_eq!(
+            capture_targets_state
+                .toast_message()
+                .expect("capture target loading remains tracked")
+                .text,
+            STREAM_CAPTURE_TARGETS_LOADING_TEXT
+        );
+    }
+
+    #[test]
+    fn capture_target_loading_failure_replaces_the_loading_toast() {
+        let mut state = DashboardState::new();
+        let scope = VoiceScope::Guild(Id::new(1));
+        let channel_id = Id::new(2);
+        let request_id = state.begin_stream_capture_targets_request(scope, channel_id);
+
+        state.push_effect(AppEvent::StreamCaptureTargetsLoaded {
+            request_id,
+            scope,
+            channel_id,
+            targets: Vec::new(),
+            error: Some("ScreenCaptureKit target loading failed".to_owned()),
+        });
+
+        let toast = state
+            .toast_message()
+            .expect("capture target error is visible");
+        assert_eq!(toast.text, "ScreenCaptureKit target loading failed");
+        assert_eq!(toast.kind, ToastKind::Error);
+        assert!(state.next_toast_deadline().is_some());
     }
 
     #[test]
@@ -532,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_broadcast_preparing_toast_waits_for_matching_started_event() {
+    fn stream_broadcast_preparing_toast_tracks_matching_broadcast_lifecycle() {
         let mut state = DashboardState::new();
         let scope = VoiceScope::Guild(Id::new(1));
         let channel_id = Id::new(2);
@@ -545,6 +583,15 @@ mod tests {
                 .text,
             STREAM_BROADCAST_PREPARING_TEXT
         );
+        state.push_event(AppEvent::StreamBroadcastStartFailed {
+            scope,
+            channel_id: Id::new(3),
+        });
+        assert!(state.toast_message().is_some());
+        state.push_event(AppEvent::StreamBroadcastStartFailed { scope, channel_id });
+        assert!(state.toast_message().is_none());
+
+        assert!(state.show_stream_broadcast_preparing_toast(scope, channel_id));
         state.push_event(AppEvent::StreamBroadcastStarted {
             scope,
             channel_id: Id::new(3),
@@ -552,6 +599,8 @@ mod tests {
         assert!(state.toast_message().is_some());
         state.push_event(AppEvent::StreamBroadcastStarted { scope, channel_id });
         assert!(state.toast_message().is_none());
+        assert!(!state.show_stream_broadcast_preparing_toast(scope, channel_id));
+        state.push_event(AppEvent::StreamBroadcastStartFailed { scope, channel_id });
         assert!(!state.show_stream_broadcast_preparing_toast(scope, channel_id));
 
         state.push_event(AppEvent::StreamBroadcastEnded { scope, channel_id });

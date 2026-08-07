@@ -1,7 +1,7 @@
 use ratatui::{layout::Rect, text::Line};
 use ratatui_image::protocol::{Protocol, StatefulProtocol};
 
-use super::super::state::FocusPane;
+use super::super::state::{FocusPane, SelectablePopupTarget};
 
 pub(super) const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 pub(super) const IMAGE_PREVIEW_HEIGHT: u16 = 10;
@@ -88,25 +88,21 @@ pub(super) struct MessageAreas {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MouseTarget {
     Pane(FocusPane),
-    PaneRow { pane: FocusPane, row: usize },
+    PaneRow {
+        pane: FocusPane,
+        row: usize,
+    },
     Composer,
-    PopupRow { target: PopupListTarget, row: usize },
-    ChannelSwitcherRow { row: usize },
+    PopupRow {
+        target: SelectablePopupTarget,
+        row: usize,
+    },
     ModalBackdrop,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PopupListTarget {
-    MessageAction,
-    GuildAction,
-    ChannelAction,
-    MemberAction,
-    ThreadAction,
-    MessageUrl,
 }
 
 pub(super) struct UserProfilePopupText {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) emoji_overlays: Vec<(usize, String)>,
     pub(super) cursor: Option<(usize, usize)>,
+    pub(super) picker_rows: Option<std::ops::Range<usize>>,
 }

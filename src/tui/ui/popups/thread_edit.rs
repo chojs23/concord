@@ -308,16 +308,15 @@ fn thread_edit_tag_picker_popup_area(area: Rect, tag_count: usize) -> Rect {
     centered_rect(area, TAG_PICKER_WIDTH, visible.saturating_add(2))
 }
 
-pub(in crate::tui::ui) fn thread_edit_tag_picker_visible_items(
+pub(in crate::tui::ui) fn thread_edit_tag_picker_list_layout(
     area: Rect,
-    tag_count: usize,
-) -> usize {
-    let popup = thread_edit_tag_picker_popup_area(area, tag_count);
-    let content = panel_block("Choose tags", true).inner(popup);
-    usize::from(content.height)
-        .min(TAG_PICKER_VISIBLE_ITEMS)
-        .min(tag_count)
-        .max(1)
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
+    SelectablePopupLayout::fixed(
+        snapshot.target,
+        thread_edit_tag_picker_popup_area(area, snapshot.item_count),
+        snapshot,
+    )
 }
 
 fn tag_line(tag: &ThreadEditTagView, width: usize, thumbnail_ready: bool) -> Line<'static> {

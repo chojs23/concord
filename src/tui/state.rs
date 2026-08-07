@@ -56,6 +56,7 @@ use runtime_state::{
     MediaPlaybackPreparingUiState, RuntimeUiState, StreamBroadcastUiTarget, StreamPlaybackUiTarget,
     ToastMessage, VoiceConnectionUiState,
 };
+pub(in crate::tui) use scroll::SCROLL_OFF;
 use scroll::clamp_selected_index;
 
 pub(in crate::tui) const MINIMUM_ESTABLISHED_DM_MESSAGES: usize = 5;
@@ -86,7 +87,8 @@ pub use model::{
 };
 pub use options::{DisplayOptionGauge, DisplayOptionItem};
 pub(in crate::tui) use popups::{
-    ActiveModalPopupKind, ConfirmationButton, MessageConfirmationKind, VoiceParticipantAudioField,
+    ActiveModalPopupKind, ConfirmationButton, MessageConfirmationKind, PopupInputMode,
+    PopupKeymapContext, SelectablePopupSnapshot, SelectablePopupTarget, VoiceParticipantAudioField,
 };
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,

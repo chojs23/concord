@@ -1,5 +1,11 @@
+use std::net::{Ipv4Addr, SocketAddrV4};
+
+use socket2::{Domain, Protocol, Socket, Type};
+
 use super::media::GatewayChildTasks;
 use super::*;
+
+const VOICE_UDP_RECEIVE_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
 pub(super) async fn run_voice_gateway_session(
     session: VoiceGatewaySession,
@@ -930,9 +936,7 @@ pub(super) async fn discover_voice_udp_address(
     ready: &VoiceTransportSession,
 ) -> Result<(Arc<UdpSocket>, DiscoveredVoiceAddress), String> {
     logging::debug("voice", "binding voice UDP socket");
-    let socket = UdpSocket::bind("0.0.0.0:0")
-        .await
-        .map_err(|error| format!("voice UDP bind failed: {error}"))?;
+    let socket = bind_voice_udp_socket()?;
     if let Ok(local_addr) = socket.local_addr() {
         logging::debug(
             "voice",
@@ -975,6 +979,39 @@ pub(super) async fn discover_voice_udp_address(
         ),
     );
     Ok((Arc::new(socket), discovered))
+}
+
+fn bind_voice_udp_socket() -> Result<UdpSocket, String> {
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
+        .map_err(|error| format!("voice UDP socket creation failed: {error}"))?;
+    if let Err(error) = socket.set_recv_buffer_size(VOICE_UDP_RECEIVE_BUFFER_BYTES) {
+        logging::debug(
+            "voice",
+            format!(
+                "voice UDP receive buffer configuration failed: requested_bytes={VOICE_UDP_RECEIVE_BUFFER_BYTES} error={error}"
+            ),
+        );
+    }
+    match socket.recv_buffer_size() {
+        Ok(applied_bytes) => logging::debug(
+            "voice",
+            format!(
+                "voice UDP receive buffer size: requested_bytes={VOICE_UDP_RECEIVE_BUFFER_BYTES} applied_bytes={applied_bytes}"
+            ),
+        ),
+        Err(error) => logging::debug(
+            "voice",
+            format!("read applied voice UDP receive buffer failed: {error}"),
+        ),
+    }
+    socket
+        .set_nonblocking(true)
+        .map_err(|error| format!("set voice UDP socket nonblocking failed: {error}"))?;
+    socket
+        .bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into())
+        .map_err(|error| format!("voice UDP bind failed: {error}"))?;
+    UdpSocket::from_std(socket.into())
+        .map_err(|error| format!("register voice UDP socket failed: {error}"))
 }
 
 pub(super) async fn run_voice_udp_receive(
@@ -1515,4 +1552,25 @@ pub(super) fn voice_media_payload_counts_as_remote_activity(media: &VoiceMediaPa
         | VoiceMediaPayload::DaveDecryptFailed { .. } => return false,
     };
     opus.as_slice() != DISCORD_OPUS_SILENCE_FRAME
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use socket2::SockRef;
+
+    #[tokio::test]
+    async fn voice_udp_socket_binds_after_receive_buffer_tuning() {
+        let socket = bind_voice_udp_socket().expect("voice UDP socket should bind");
+        let local_addr = socket
+            .local_addr()
+            .expect("voice UDP socket should have a local address");
+        let applied_bytes = SockRef::from(&socket)
+            .recv_buffer_size()
+            .expect("voice UDP receive buffer should be readable");
+
+        assert!(local_addr.is_ipv4());
+        assert_ne!(local_addr.port(), 0);
+        assert_ne!(applied_bytes, 0);
+    }
 }

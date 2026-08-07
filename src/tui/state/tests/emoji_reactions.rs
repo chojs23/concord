@@ -489,7 +489,7 @@ fn reaction_users_popup_scroll_down_clamps_at_bottom() {
         after: None,
     }));
     // 6 user rows with a 3-line viewport: the furthest scroll offset is 3.
-    state.set_reaction_users_popup_view_height(3);
+    state.set_reaction_users_document_view_height(3);
 
     for _ in 0..50 {
         state.navigate_reaction_users_popup(SelectionAction::Next);
@@ -530,7 +530,7 @@ fn reaction_users_popup_scroll_requests_next_page_when_more_remain() {
         next_after: Some(Id::new(100)),
         after: None,
     }));
-    state.set_reaction_users_popup_view_height(3);
+    state.set_reaction_users_document_view_height(3);
 
     // A full first page that still has more should be marked as paginable.
     assert_eq!(

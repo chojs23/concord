@@ -134,7 +134,6 @@ pub(in crate::discord) struct PresenceCache {
 #[derive(Clone, Debug)]
 pub(in crate::discord) struct TypingIndicator {
     pub(in crate::discord) started: Instant,
-    pub(in crate::discord) display_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]

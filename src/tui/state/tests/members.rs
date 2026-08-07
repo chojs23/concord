@@ -150,7 +150,7 @@ fn message_history_author_member_requests_chunk_at_gateway_limit() {
         .collect::<Vec<_>>();
 
     let requests = state.missing_message_author_member_requests(&messages);
-    state.enqueue_message_author_member_requests(requests);
+    state.enqueue_member_hydration_requests(requests);
 
     assert_eq!(
         state.drain_pending_commands(),

@@ -2,6 +2,8 @@ use super::activity::{ActivityLeading, build_activity_render};
 use super::message::list::render_image_preview;
 use super::*;
 use crate::discord::ActivityKind;
+use crate::tui::selection;
+use crate::tui::state::SCROLL_OFF;
 use crate::tui::text::format_byte_size;
 use ratatui::layout::Position;
 
@@ -28,9 +30,184 @@ mod voice_participant_audio;
 
 const POPUP_GAUGE_WIDTH: usize = 28;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PopupScrollMetrics {
+    position: usize,
+    viewport_len: usize,
+    content_len: usize,
+}
+
+/// The rendered item rows for the active selectable popup. State owns the
+/// selected item, while this UI plan owns terminal geometry and variable row
+/// heights. Paging, rendering, scrollbars, and hit testing all derive from the
+/// same plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SelectablePopupLayout {
+    pub(super) target: SelectablePopupTarget,
+    pub(super) popup: Rect,
+    pub(super) list: Rect,
+    pub(super) scroll: usize,
+    row_items: Vec<Option<usize>>,
+}
+
+impl SelectablePopupLayout {
+    fn new(
+        target: SelectablePopupTarget,
+        popup: Rect,
+        list: Rect,
+        snapshot: SelectablePopupSnapshot,
+        rows_from_start: impl Fn(usize, usize) -> Vec<Option<usize>>,
+    ) -> Self {
+        let max_rows = usize::from(list.height).max(1);
+        let (scroll, row_items) = popup_rows_with_visible_selection(
+            snapshot.item_count,
+            snapshot.selected,
+            snapshot.scroll,
+            max_rows,
+            rows_from_start,
+        );
+        Self {
+            target,
+            popup,
+            list,
+            scroll,
+            row_items,
+        }
+    }
+
+    fn fixed(
+        target: SelectablePopupTarget,
+        popup: Rect,
+        snapshot: SelectablePopupSnapshot,
+    ) -> Self {
+        let inner = panel_block("", false).inner(popup);
+        let list = Rect {
+            width: inner.width.saturating_sub(1).max(1),
+            ..inner
+        };
+        Self::new(target, popup, list, snapshot, |start, max_rows| {
+            (start..snapshot.item_count.min(start.saturating_add(max_rows)))
+                .map(Some)
+                .collect()
+        })
+    }
+
+    pub(super) fn visible_items(&self) -> usize {
+        self.row_items
+            .iter()
+            .flatten()
+            .copied()
+            .fold((None, 0usize), |(previous, count), item| {
+                if previous == Some(item) {
+                    (previous, count)
+                } else {
+                    (Some(item), count + 1)
+                }
+            })
+            .1
+            .max(1)
+    }
+
+    pub(super) fn item_at(&self, column: u16, row: u16) -> Option<usize> {
+        let inside = column >= self.list.x
+            && column < self.list.x.saturating_add(self.list.width)
+            && row >= self.list.y
+            && row < self.list.y.saturating_add(self.list.height);
+        if !inside {
+            return None;
+        }
+        self.row_items
+            .get(usize::from(row.saturating_sub(self.list.y)))
+            .copied()
+            .flatten()
+    }
+}
+
+fn popup_rows_with_visible_selection(
+    item_count: usize,
+    selected: usize,
+    preferred_start: usize,
+    max_rows: usize,
+    rows_from_start: impl Fn(usize, usize) -> Vec<Option<usize>>,
+) -> (usize, Vec<Option<usize>>) {
+    if item_count == 0 {
+        return (0, Vec::new());
+    }
+
+    let selected = selected.min(item_count - 1);
+    let mut start = preferred_start.min(item_count - 1).min(selected);
+    let mut rows = rows_from_start(start, max_rows);
+    while !rows.iter().flatten().any(|item| *item == selected) && start < selected {
+        start += 1;
+        rows = rows_from_start(start, max_rows);
+    }
+
+    // At the end of a list, fill otherwise empty rows without hiding the
+    // selection. This keeps the window stable and avoids a blank tail.
+    while start > 0
+        && rows.len() < max_rows
+        && rows.iter().flatten().next_back().copied() == Some(item_count - 1)
+    {
+        let candidate = rows_from_start(start - 1, max_rows);
+        if !candidate.iter().flatten().any(|item| *item == selected) {
+            break;
+        }
+        start -= 1;
+        rows = candidate;
+    }
+
+    // Match pane navigation's scrolloff, but count logical items rather than
+    // terminal rows. This keeps the same breathing room for grouped and
+    // variable-height lists without making their geometry a state concern.
+    while let Some((before, after, visible)) = popup_visible_item_counts(&rows, selected) {
+        let scrolloff = SCROLL_OFF.min(visible.saturating_sub(1) / 2);
+        if before < scrolloff && start > 0 {
+            let candidate = rows_from_start(start - 1, max_rows);
+            if popup_visible_item_counts(&candidate, selected)
+                .is_some_and(|(candidate_before, _, _)| candidate_before > before)
+            {
+                start -= 1;
+                rows = candidate;
+                continue;
+            }
+        }
+        if after < scrolloff && start < selected {
+            let candidate = rows_from_start(start + 1, max_rows);
+            if popup_visible_item_counts(&candidate, selected)
+                .is_some_and(|(_, candidate_after, _)| candidate_after > after)
+            {
+                start += 1;
+                rows = candidate;
+                continue;
+            }
+        }
+        break;
+    }
+
+    (start, rows)
+}
+
+fn popup_visible_item_counts(
+    rows: &[Option<usize>],
+    selected: usize,
+) -> Option<(usize, usize, usize)> {
+    let mut items = Vec::new();
+    for item in rows.iter().flatten().copied() {
+        if items.last().copied() != Some(item) {
+            items.push(item);
+        }
+    }
+    let position = items.iter().position(|item| *item == selected)?;
+    Some((
+        position,
+        items.len().saturating_sub(position + 1),
+        items.len(),
+    ))
+}
+
 pub(super) use action_menu::{
-    action_menu_area, leader_popup_area_for_state, render_channel_action_menu,
-    render_guild_action_menu, render_leader_popup, render_member_action_menu,
+    action_menu_area, key_sequence_hint_area_for_state, render_channel_action_menu,
+    render_guild_action_menu, render_key_sequence_hint, render_member_action_menu,
     render_message_action_menu, render_thread_action_menu,
 };
 #[cfg(test)]
@@ -44,8 +221,7 @@ pub(super) use attachment_viewer::render_attachment_viewer;
 #[cfg(test)]
 pub(super) use channel_switcher::{channel_switcher_cursor_position, channel_switcher_lines};
 pub(super) use channel_switcher::{
-    channel_switcher_item_index_at, channel_switcher_popup_area, channel_switcher_visible_items,
-    render_channel_switcher_popup,
+    channel_switcher_list_layout, channel_switcher_popup_area, render_channel_switcher_popup,
 };
 pub(super) use confirmation::{
     guild_leave_confirmation_popup_area_for_state, message_confirmation_popup_area_for_state,
@@ -70,8 +246,8 @@ pub(super) use downloads::{
 pub(super) use folder_settings::folder_settings_input_line_for_test;
 pub(super) use folder_settings::{folder_settings_popup_area, render_folder_settings_popup};
 pub(super) use forum_post::{
-    forum_post_composer_metrics, forum_post_composer_popup_area,
-    forum_post_tag_picker_visible_items, render_forum_post_composer, render_forum_post_tag_picker,
+    forum_post_composer_metrics, forum_post_composer_popup_area, forum_post_tag_picker_list_layout,
+    render_forum_post_composer, render_forum_post_tag_picker,
 };
 #[cfg(test)]
 pub(super) use keymap::keymap_help_popup_lines;
@@ -79,17 +255,18 @@ pub(super) use keymap::{
     keymap_popup_area, keymap_popup_text_area, keymap_popup_total_lines, render_keymap_help_popup,
 };
 pub(super) use notification_inbox::{
-    notification_inbox_popup_area, render_notification_inbox_popup,
+    notification_inbox_list_layout, notification_inbox_popup_area, render_notification_inbox_popup,
 };
 #[cfg(test)]
 pub(super) use options::options_popup_lines;
-pub(super) use options::{options_popup_area, options_popup_visible_items, render_options_popup};
+pub(super) use options::{options_popup_area, options_popup_list_layout, render_options_popup};
 #[cfg(test)]
 pub(super) use polls::poll_vote_picker_lines;
 pub(super) use polls::{poll_vote_picker_popup_area, render_poll_vote_picker};
 pub(in crate::tui) use profile::user_profile_popup_area;
 pub(super) use profile::{
-    render_user_profile_popup, user_profile_popup_has_avatar, user_profile_popup_text_geometry,
+    render_user_profile_popup, user_profile_picker_list_layout, user_profile_popup_has_avatar,
+    user_profile_popup_selected_picker_line, user_profile_popup_text_geometry,
     user_profile_popup_total_lines,
 };
 #[cfg(test)]
@@ -101,18 +278,19 @@ pub(super) use reactions::{
     reaction_list_lines_with_ready_urls, reaction_users_popup_lines,
 };
 pub(super) use reactions::{
-    emoji_reaction_picker_popup_area_for_state, emoji_reaction_picker_visible_items_for_area,
-    reaction_users_popup_area_for_state, render_emoji_reaction_picker, render_reaction_users_popup,
+    emoji_reaction_picker_list_layout, emoji_reaction_picker_popup_area_for_state,
+    reaction_users_list_layout, reaction_users_popup_area_for_state, render_emoji_reaction_picker,
+    render_reaction_users_popup,
 };
 pub(super) use search::{
-    render_search_popup, search_popup_area_for_state, search_popup_visible_items,
+    render_search_popup, search_popup_area_for_state, search_popup_list_layout,
 };
 pub(super) use stream_info::{render_stream_info, stream_info_area, stream_info_lines_for_area};
 #[cfg(test)]
 pub(super) use stream_info::{stream_info_lines, stream_info_lines_for_width};
 pub(super) use thread_edit::{
     render_thread_edit, render_thread_edit_tag_picker, thread_edit_metrics, thread_edit_popup_area,
-    thread_edit_tag_picker_visible_items,
+    thread_edit_tag_picker_list_layout,
 };
 #[cfg(test)]
 pub(super) use toast::toast_line;
@@ -121,8 +299,59 @@ pub(super) use toast::{render_toast, toast_area};
 pub(super) use url_picker::message_url_picker_lines_for_width;
 pub(super) use url_picker::{message_url_picker_popup_area, render_message_url_picker};
 pub(super) use voice_participant_audio::{
-    render_voice_participant_audio_popup, voice_participant_audio_popup_area,
+    render_voice_participant_audio_popup, voice_participant_audio_list_layout,
+    voice_participant_audio_popup_area,
 };
+
+pub(super) fn active_selectable_popup_layout(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<SelectablePopupLayout> {
+    let snapshot = state.active_selectable_popup_snapshot()?;
+    Some(match snapshot.target {
+        SelectablePopupTarget::MessageActions
+        | SelectablePopupTarget::GuildActions
+        | SelectablePopupTarget::ChannelActions
+        | SelectablePopupTarget::MemberActions
+        | SelectablePopupTarget::ThreadActions => SelectablePopupLayout::fixed(
+            snapshot.target,
+            action_menu_area(area, snapshot.item_count),
+            snapshot,
+        ),
+        SelectablePopupTarget::MessageUrls => SelectablePopupLayout::fixed(
+            snapshot.target,
+            message_url_picker_popup_area(area, snapshot.item_count),
+            snapshot,
+        ),
+        SelectablePopupTarget::Options => options_popup_list_layout(area, state, snapshot),
+        SelectablePopupTarget::UserProfileStatus | SelectablePopupTarget::UserProfileActivity => {
+            user_profile_picker_list_layout(area, state, snapshot)
+        }
+        SelectablePopupTarget::EmojiReactions => {
+            emoji_reaction_picker_list_layout(area, state, snapshot)
+        }
+        SelectablePopupTarget::PollVotes => SelectablePopupLayout::fixed(
+            snapshot.target,
+            poll_vote_picker_popup_area(area, snapshot.item_count),
+            snapshot,
+        ),
+        SelectablePopupTarget::ReactionList => reaction_users_list_layout(area, snapshot),
+        SelectablePopupTarget::ChannelSwitcher => {
+            channel_switcher_list_layout(area, state, snapshot)
+        }
+        SelectablePopupTarget::NotificationInbox => {
+            notification_inbox_list_layout(area, state, snapshot)
+        }
+        SelectablePopupTarget::ForumPostTags => forum_post_tag_picker_list_layout(area, snapshot),
+        SelectablePopupTarget::ThreadEditTags => thread_edit_tag_picker_list_layout(area, snapshot),
+        SelectablePopupTarget::VoiceParticipantAudio => {
+            voice_participant_audio_list_layout(area, snapshot)
+        }
+        SelectablePopupTarget::SearchResults | SelectablePopupTarget::SearchSuggestions => {
+            search_popup_list_layout(area, state, snapshot)
+        }
+    })
+}
 
 fn popup_gauge_spacer() -> Span<'static> {
     Span::raw(" ".repeat(POPUP_GAUGE_WIDTH))
@@ -190,6 +419,9 @@ pub(super) fn background_media_occlusion_areas(
     if let Some(area) = active_modal_popup_area(frame_area, state) {
         areas.push(area);
     }
+    if state.is_key_sequence_active() {
+        areas.push(key_sequence_hint_area_for_state(frame_area, state));
+    }
 
     let downloads = state.attachment_downloads();
     if !downloads.is_empty() {
@@ -248,7 +480,6 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
             frame_area,
             state.attachment_viewer_zoom(),
         )),
-        ActiveModalPopupKind::Leader => Some(leader_popup_area_for_state(frame_area, state)),
         ActiveModalPopupKind::UserProfile => Some(user_profile_popup_area(frame_area)),
         ActiveModalPopupKind::EmojiReactionPicker => {
             emoji_reaction_picker_popup_area_for_state(frame_area, state)
@@ -296,6 +527,36 @@ fn render_modal_paragraph(
 ) {
     let inner = render_modal_frame(frame, popup, title);
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+/// Renders a one-row-per-item popup list with the shared selection viewport.
+/// Keeping clipping and the scrollbar here prevents individual list popups from
+/// showing page navigation while leaving the selected row off-screen.
+fn render_selectable_popup_list(
+    frame: &mut Frame,
+    popup: Rect,
+    title: impl Into<String>,
+    lines: Vec<Line<'static>>,
+    scroll: usize,
+) {
+    let inner = render_modal_frame(frame, popup, title);
+    let viewport_len = usize::from(inner.height).max(1);
+    let range = selection::visible_window(scroll, viewport_len, lines.len());
+    let content = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
+    let width = usize::from(content.width).max(1);
+    let visible_lines = lines[range.clone()]
+        .iter()
+        .cloned()
+        .map(|line| truncate_line_to_display_width(line, width))
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(visible_lines).wrap(Wrap { trim: false }),
+        content,
+    );
+    render_vertical_scrollbar(frame, inner, range.start, viewport_len, lines.len());
 }
 
 fn popup_shortcut_help_text(items: &[(&str, &str)]) -> String {

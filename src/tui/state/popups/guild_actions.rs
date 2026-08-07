@@ -3,7 +3,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker},
 };
-use crate::tui::keybindings::KeyChord;
+use crate::tui::keybindings::{KeyChord, SelectionAction};
 
 use super::super::model::{
     ActionAvailability, FocusPane, GuildActionItem, GuildActionKind, GuildPaneEntry,
@@ -12,7 +12,7 @@ use super::super::model::{
 use super::super::{DashboardState, MuteActionDurationItem};
 use super::{
     ActiveModalPopupKind, GuildActionMenuState, GuildLeaveConfirmationState, ModalPopup,
-    SelectablePopupState,
+    SelectablePopupState, SelectablePopupTarget,
 };
 
 impl DashboardState {
@@ -20,7 +20,7 @@ impl DashboardState {
     #[allow(dead_code)]
     pub fn open_selected_guild_actions(&mut self) {
         if let Some(menu) = self.selected_guild_action_context() {
-            self.popups.modal = Some(ModalPopup::GuildActionMenu(menu));
+            self.popups.set_modal(ModalPopup::GuildActionMenu(menu));
         }
     }
 
@@ -140,16 +140,14 @@ impl DashboardState {
     }
 
     pub fn move_guild_action_down(&mut self) {
-        let len = self.guild_action_row_count();
-        if let Some(selection) = self.guild_action_selection_mut() {
-            selection.move_down(len);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::GuildActions, SelectionAction::Next);
     }
 
     pub fn move_guild_action_up(&mut self) {
-        if let Some(selection) = self.guild_action_selection_mut() {
-            selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::GuildActions,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn select_guild_action_row(&mut self, row: usize) -> bool {
@@ -255,7 +253,7 @@ impl DashboardState {
             .map(|guild| guild.name.clone())
             .unwrap_or_else(|| format!("server-{}", guild_id.get()));
         self.popups.confirmation_button = super::ConfirmationButton::default();
-        self.popups.modal = Some(ModalPopup::GuildLeaveConfirmation(
+        self.popups.set_modal(ModalPopup::GuildLeaveConfirmation(
             GuildLeaveConfirmationState { guild_id, name },
         ));
     }

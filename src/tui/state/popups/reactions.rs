@@ -13,7 +13,7 @@ use super::super::emoji::{
 use super::super::{
     DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
 };
-use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup};
+use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupTarget};
 
 impl DashboardState {
     pub fn reaction_users_popup(&self) -> Option<&ReactionUsersPopupState> {
@@ -155,15 +155,15 @@ impl DashboardState {
         reactions: Vec<(ReactionEmoji, u64)>,
     ) {
         let popup = ReactionUsersPopupState::new(channel_id, message_id, reactions);
-        self.popups.modal = Some(ModalPopup::ReactionUsers(popup));
+        self.popups.set_modal(ModalPopup::ReactionUsers(popup));
     }
 
     pub fn navigate_reaction_users_popup(&mut self, action: SelectionAction) -> Option<AppCommand> {
-        let popup = self.popups.reaction_users_popup_mut()?;
-        if !popup.is_viewing_users() {
-            popup.move_selection(action);
+        if !self.popups.reaction_users_popup()?.is_viewing_users() {
+            self.move_selectable_popup(SelectablePopupTarget::ReactionList, action);
             return None;
         }
+        let popup = self.popups.reaction_users_popup_mut()?;
         match action {
             SelectionAction::Previous => {
                 popup.user_scroll.scroll_up();
@@ -215,44 +215,24 @@ impl DashboardState {
             .is_some_and(|popup| popup.back_to_list())
     }
 
-    pub fn set_reaction_users_popup_view_height(&mut self, height: usize) {
+    pub fn set_reaction_users_document_view_height(&mut self, height: usize) {
         if let Some(popup) = self.popups.reaction_users_popup_mut() {
-            if popup.is_viewing_users() {
-                popup.set_user_view_height(height);
-            } else {
-                popup.set_list_view_height(height);
+            if !popup.is_viewing_users() {
+                return;
             }
+            popup.set_user_view_height(height);
         }
     }
 
     pub fn move_emoji_reaction_down(&mut self) {
-        let reactions_len = self.filtered_emoji_reaction_items().len();
-        if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
-            picker.selection.move_down(reactions_len);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::EmojiReactions, SelectionAction::Next);
     }
 
     pub fn move_emoji_reaction_up(&mut self) {
-        if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
-            picker.selection.move_up();
-        }
-    }
-
-    pub fn set_emoji_reaction_picker_view_height(&mut self, height: usize) {
-        let len = self
-            .filtered_emoji_reaction_items_slice()
-            .map(<[_]>::len)
-            .unwrap_or(0);
-        if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
-            picker.selection.set_view_height_and_sync(height, len);
-        }
-    }
-
-    pub fn emoji_reaction_picker_scroll(&self) -> usize {
-        self.popups
-            .emoji_reaction_picker()
-            .map(|picker| picker.selection.scroll())
-            .unwrap_or(0)
+        self.move_selectable_popup(
+            SelectablePopupTarget::EmojiReactions,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn selected_emoji_reaction_index_for_len(&self, len: usize) -> Option<usize> {
@@ -393,18 +373,19 @@ impl DashboardState {
                     })
                     .collect()
             };
-            self.popups.modal = Some(ModalPopup::EmojiReactionPicker(EmojiReactionPickerState {
-                selection: Default::default(),
-                filter: None,
-                filter_editing: false,
-                filtered_items: items.clone(),
-                items,
-                existing_reactions,
-                own_reactions,
-                guild_id,
-                channel_id: message.channel_id,
-                message_id: message.id,
-            }));
+            self.popups
+                .set_modal(ModalPopup::EmojiReactionPicker(EmojiReactionPickerState {
+                    selection: Default::default(),
+                    filter: None,
+                    filter_editing: false,
+                    filtered_items: items.clone(),
+                    items,
+                    existing_reactions,
+                    own_reactions,
+                    guild_id,
+                    channel_id: message.channel_id,
+                    message_id: message.id,
+                }));
         }
     }
 

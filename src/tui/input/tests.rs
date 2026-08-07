@@ -31,7 +31,10 @@ use crate::{
         PresenceStatus, ReactionEmoji, ReactionUserInfo, ReadStateInfo, RoleInfo,
         UserGuildSettingsInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceVolumePercent,
     },
-    tui::state::{ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind},
+    tui::state::{
+        ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
+        SelectablePopupTarget,
+    },
 };
 
 macro_rules! assert_send_message_eq {
@@ -189,12 +192,14 @@ fn assert_selected_channel_category_collapsed(state: &DashboardState, expected: 
 }
 
 fn state_with_channel_tree() -> DashboardState {
+    state_with_channel_tree_from_state(DashboardState::new())
+}
+
+fn state_with_channel_tree_from_state(mut state: DashboardState) -> DashboardState {
     let guild_id = Id::new(1);
     let category_id = Id::new(10);
     let general_id = Id::new(11);
     let random_id = Id::new(12);
-    let mut state = DashboardState::new();
-
     state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![
             ChannelInfo {
@@ -482,6 +487,15 @@ fn state_with_forum_channel_posts() -> DashboardState {
             guild_id: Some(guild_id),
             position: Some(0),
             name: "announcements".to_owned(),
+            available_tags: (1..=12)
+                .map(|index| crate::discord::ForumTagInfo {
+                    id: Id::new(100 + index),
+                    name: format!("tag-{index}"),
+                    moderated: false,
+                    emoji_id: None,
+                    emoji_name: None,
+                })
+                .collect(),
             ..ChannelInfo::test(forum_id, "forum")
         }],
         roles: vec![RoleInfo {

@@ -1,9 +1,11 @@
 use crate::discord::AppCommand;
 use crate::discord::{MicrophoneSensitivityDb, VoiceAudioSourceOptions, VoiceVolumePercent};
-use crate::tui::keybindings::OptionsCategoryShortcut;
+use crate::tui::keybindings::{OptionsCategoryShortcut, SelectionAction};
 
 use super::super::{DashboardState, DisplayOptionGauge, DisplayOptionItem};
-use super::{ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState};
+use super::{
+    ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState, SelectablePopupTarget,
+};
 
 const DISPLAY_OPTION_COUNT: usize = 8;
 const COMPOSER_OPTION_COUNT: usize = 1;
@@ -59,7 +61,8 @@ impl DashboardState {
     }
 
     pub fn open_options_category_picker(&mut self) {
-        self.popups.modal = Some(ModalPopup::Options(OptionsPopupState::default()));
+        self.popups
+            .set_modal(ModalPopup::Options(OptionsPopupState::default()));
     }
 
     pub fn open_options_category(&mut self, category: OptionsCategory) {
@@ -73,10 +76,11 @@ impl DashboardState {
             self.options.voice_audio_sources_request_id = Some(request_id);
             self.enqueue_pending_command(AppCommand::LoadVoiceAudioSources { request_id });
         }
-        self.popups.modal = Some(ModalPopup::Options(OptionsPopupState {
-            category: Some(category),
-            ..OptionsPopupState::default()
-        }));
+        self.popups
+            .set_modal(ModalPopup::Options(OptionsPopupState {
+                category: Some(category),
+                ..OptionsPopupState::default()
+            }));
     }
 
     pub fn close_options_popup(&mut self) {
@@ -86,30 +90,11 @@ impl DashboardState {
     }
 
     pub fn move_option_down(&mut self) {
-        let item_count = self.options_popup_item_count();
-        if let Some(popup) = self.popups.options_popup_mut() {
-            popup.selection.move_down(item_count);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::Options, SelectionAction::Next);
     }
 
     pub fn move_option_up(&mut self) {
-        if let Some(popup) = self.popups.options_popup_mut() {
-            popup.selection.move_up();
-        }
-    }
-
-    pub fn set_options_popup_view_height(&mut self, height: usize) {
-        let item_count = self.options_popup_item_count();
-        if let Some(popup) = self.popups.options_popup_mut() {
-            popup.selection.set_view_height_and_sync(height, item_count);
-        }
-    }
-
-    pub fn options_popup_scroll(&self) -> usize {
-        self.popups
-            .options_popup()
-            .map(|popup| popup.selection.scroll())
-            .unwrap_or(0)
+        self.move_selectable_popup(SelectablePopupTarget::Options, SelectionAction::Previous);
     }
 
     pub fn selected_option_index(&self) -> Option<usize> {

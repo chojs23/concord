@@ -328,6 +328,16 @@ fn search_popup_message_results_show_sent_time() {
         rendered.contains(&format!("#general neo {expected_time}: needle result")),
         "{rendered}"
     );
+
+    let area = Rect::new(0, 0, 120, 28);
+    let layout = active_selectable_popup_layout(area, &state).expect("search results layout");
+    assert_eq!(
+        mouse_target_at(area, &state, layout.list.x, layout.list.y),
+        Some(MouseTarget::PopupRow {
+            target: SelectablePopupTarget::SearchResults,
+            row: 0,
+        })
+    );
 }
 
 #[test]
@@ -344,6 +354,50 @@ fn options_popup_render_keeps_selected_row_visible_when_short() {
             .any(|row| row.contains("›") && row.contains("Desktop notifications")),
         "{rendered}"
     );
+}
+
+#[test]
+fn options_popup_variable_rows_share_paging_and_mouse_mapping() {
+    let area = Rect::new(0, 0, 100, 12);
+    let mut state = DashboardState::new();
+    state.open_options_category_picker();
+    state.open_options_category_from_shortcut(OptionsCategoryShortcut::Voice);
+    sync_view_heights(area, &mut state);
+
+    let first_layout = active_selectable_popup_layout(area, &state).expect("options layout");
+    let page_step = (first_layout.visible_items() / 2).max(1);
+    assert!(state.page_active_popup_down());
+    assert_eq!(state.selected_option_index(), Some(page_step));
+
+    let gauge_index = state
+        .display_option_items()
+        .iter()
+        .position(|item| item.gauge.is_some())
+        .expect("voice options include a gauge");
+    while state.selected_option_index().unwrap_or(0) > gauge_index {
+        state.move_option_up();
+    }
+    while state.selected_option_index().unwrap_or(0) < gauge_index {
+        state.move_option_down();
+    }
+    sync_view_heights(area, &mut state);
+    let gauge_layout = active_selectable_popup_layout(area, &state).expect("voice options layout");
+    let gauge_rows = (0..gauge_layout.list.height)
+        .filter_map(|offset| {
+            let row = gauge_layout.list.y.saturating_add(offset);
+            (gauge_layout.item_at(gauge_layout.list.x, row) == Some(gauge_index)).then_some(row)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(gauge_rows.len(), 2);
+    for row in gauge_rows {
+        assert_eq!(
+            mouse_target_at(area, &state, gauge_layout.list.x, row),
+            Some(MouseTarget::PopupRow {
+                target: SelectablePopupTarget::Options,
+                row: gauge_index,
+            })
+        );
+    }
 }
 
 #[test]
@@ -542,6 +596,24 @@ fn current_user_profile_settings_render_contract() {
         theme::current()
             .style(theme::HighlightGroup::SelectedRow)
             .bg
+    );
+
+    let area = Rect::new(0, 0, 100, 14);
+    sync_view_heights(area, &mut state);
+    let snapshot = state
+        .active_selectable_popup_snapshot()
+        .expect("status picker selection");
+    let layout = active_selectable_popup_layout(area, &state).expect("status picker layout");
+    let selected_screen_row = (0..layout.list.height)
+        .map(|offset| layout.list.y.saturating_add(offset))
+        .find(|row| layout.item_at(layout.list.x, *row) == Some(snapshot.selected))
+        .expect("selected status should remain visible in a short popup");
+    assert_eq!(
+        mouse_target_at(area, &state, layout.list.x, selected_screen_row),
+        Some(MouseTarget::PopupRow {
+            target: SelectablePopupTarget::UserProfileStatus,
+            row: snapshot.selected,
+        })
     );
 }
 
@@ -1178,7 +1250,7 @@ fn emoji_reaction_picker_shows_active_filter() {
 }
 
 #[test]
-fn leader_popup_renders_as_bottom_window() {
+fn leader_key_sequence_hint_renders_as_bottom_window() {
     let mut state = DashboardState::new();
     state.open_leader();
 
@@ -1197,7 +1269,57 @@ fn leader_popup_renders_as_bottom_window() {
 }
 
 #[test]
-fn leader_popup_shows_keymap_entries_alongside_default_entries() {
+fn popup_key_sequence_hint_renders_above_the_active_modal() {
+    let mappings = [
+        (
+            "JumpTop".to_owned(),
+            crate::config::KeymapBinding::one("z z"),
+        ),
+        (
+            "StartComposer".to_owned(),
+            crate::config::KeymapBinding::one("z s"),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let mut state = DashboardState::new_with_options(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        crate::config::KeymapOptions {
+            mappings,
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    state.open_options_popup();
+
+    crate::tui::input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+    );
+
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
+    assert!(state.is_key_sequence_active());
+    assert_eq!(state.key_sequence_title(), "z");
+    assert_eq!(
+        state
+            .key_sequence_shortcuts()
+            .into_iter()
+            .map(|item| (item.key, item.label))
+            .collect::<Vec<_>>(),
+        [("z".to_owned(), "jump top".to_owned())]
+    );
+
+    let rendered = render_dashboard_dump(160, 20, &mut state).join("\n");
+    assert!(rendered.contains("Options"), "{rendered}");
+    assert!(rendered.contains("jump top"), "{rendered}");
+}
+
+#[test]
+fn leader_key_sequence_hint_shows_keymap_entries_alongside_defaults() {
     let mut mappings = BTreeMap::new();
     mappings.insert(
         "StartComposer".to_owned(),
@@ -1243,7 +1365,7 @@ fn leader_popup_shows_keymap_entries_alongside_default_entries() {
 }
 
 #[test]
-fn leader_popup_expands_horizontally_for_many_keymap_entries() {
+fn leader_key_sequence_hint_expands_for_many_keymap_entries() {
     let mut mappings = BTreeMap::new();
     for (action, key) in [
         ("StartComposer", "<leader>b"),
@@ -1259,7 +1381,7 @@ fn leader_popup_expands_horizontally_for_many_keymap_entries() {
             action.to_owned(),
             crate::config::KeymapBinding {
                 keys: vec![key.to_owned()],
-                description: Some(format!("wide leader popup column label for {action}")),
+                description: Some(format!("wide key sequence hint column label for {action}")),
             },
         );
     }
@@ -1299,7 +1421,7 @@ fn leader_popup_expands_horizontally_for_many_keymap_entries() {
 }
 
 #[test]
-fn leader_popup_shows_non_leader_prefix_title_and_description() {
+fn key_sequence_hint_shows_non_leader_prefix_title_and_description() {
     let mut mappings = BTreeMap::new();
     mappings.insert(
         "ChannelSwitcher".to_owned(),

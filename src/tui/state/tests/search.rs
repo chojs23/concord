@@ -6,6 +6,16 @@ use crate::tui::state::SearchSuggestionItem;
 #[test]
 fn message_search_builds_query_and_jumps_to_selected_result() {
     let mut state = state_with_writable_channel();
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![message_info(Id::new(2), 1), message_info(Id::new(2), 2)],
+    ));
+    state.focus_pane(FocusPane::Messages);
+    state.move_up();
+    assert_eq!(
+        state.selected_message_state().map(|message| message.id),
+        Some(Id::new(1))
+    );
     state.open_search_popup_for_focus(FocusPane::Messages);
 
     type_search_text(&mut state, "needle");
@@ -48,6 +58,10 @@ fn message_search_builds_query_and_jumps_to_selected_result() {
         })
     );
     assert_eq!(state.focus(), FocusPane::Messages);
+    assert_eq!(
+        state.selected_message_state().map(|message| message.id),
+        Some(Id::new(1))
+    );
 }
 
 #[test]

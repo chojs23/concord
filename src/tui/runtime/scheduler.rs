@@ -225,9 +225,9 @@ impl DashboardCommandScheduler {
             }
         }
 
-        let initial_unknown_requests = client
-            .next_initial_unknown_member_requests(state.initial_unknown_member_requests(), now);
-        if state.enqueue_guild_member_by_id_requests(initial_unknown_requests) {
+        let hydration_requests = client
+            .next_member_hydration_requests(state.observed_member_hydration_requests(now), now);
+        if state.enqueue_guild_member_by_id_requests(hydration_requests) {
             *dirty = true;
         }
     }

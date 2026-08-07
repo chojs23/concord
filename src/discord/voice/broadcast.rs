@@ -26,6 +26,7 @@ use super::runtime::MAX_VOICE_RECONNECT_ATTEMPTS;
 use super::{
     DISCORD_OPUS_TIMESTAMP_INCREMENT, DISCORD_STREAM_VIDEO_PAYLOAD_TYPE,
     DISCORD_STREAM_VIDEO_RTX_PAYLOAD_TYPE, DISCORD_VOICE_PAYLOAD_TYPE, DiscoveredVoiceAddress,
+    RTP_AEAD_NONCE_SUFFIX_BYTES, RTP_AEAD_TAG_BYTES, RTP_HEADER_EXTENSION_BYTES,
     RTP_HEADER_MIN_LEN, RTP_VERSION, StreamBroadcastRequest, StreamCreateInfo, StreamServerInfo,
     VOICE_OP_READY, VOICE_OP_SESSION_DESCRIPTION, VOICE_OP_SPEAKING,
     VOICE_WEBSOCKET_CONNECT_TIMEOUT, VoiceConnectionEnd, VoiceDaveState, VoiceRuntimeEvent,
@@ -53,6 +54,8 @@ use crate::{
 
 const STREAM_RID: &str = "100";
 const STREAM_RTP_MAX_PAYLOAD_BYTES: usize = 1_100;
+const STREAM_RTP_EXTENSION_BODY_BYTES: usize = 16;
+const STREAM_RTX_ORIGINAL_SEQUENCE_BYTES: usize = 2;
 const RTP_EXTENSION_PROFILE_ONE_BYTE: u16 = 0xbede;
 const RTP_EXTENSION_TRANSPORT_SEQUENCE: u8 = 5;
 const RTP_EXTENSION_PLAYOUT_DELAY: u8 = 6;
@@ -62,8 +65,10 @@ const RTP_EXTENSION_REPAIRED_RID: u8 = 12;
 const VIDEO_CONTENT_TYPE_SCREEN: u8 = 1;
 const RTCP_SENDER_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const BROADCAST_SEND_STATS_INTERVAL: Duration = Duration::from_secs(5);
-const STREAM_RTP_PACING_BUDGET: Duration = Duration::from_millis(25);
+const STREAM_RTP_SMALL_FRAME_PACING_BUDGET: Duration = Duration::from_millis(25);
 const STREAM_RTP_MAX_PACKET_SPACING: Duration = Duration::from_millis(2);
+const STREAM_RTP_BURST_CREDIT: Duration = Duration::from_millis(150);
+const STREAM_RTP_MAX_BURST_BITRATE: u64 = 16_000_000;
 const STREAM_RTP_HISTORY_CAPACITY: usize = 2_048;
 const STREAM_RTX_MAX_RETRANSMISSIONS_PER_FEEDBACK: usize = 128;
 const STREAM_UDP_RECEIVE_PACKET_BYTES: usize = 2_048;
@@ -181,7 +186,13 @@ impl StreamBroadcastCaptureRegistry {
             .state
             .lock()
             .expect("stream capture registry lock is not poisoned");
-        state.active_requests.insert(stream_key, request_id);
+        let previous_request_id = state.active_requests.insert(stream_key.clone(), request_id);
+        logging::debug(
+            "stream",
+            format!(
+                "activated stream capture request: stream_key={stream_key} request_id={request_id} previous_request_id={previous_request_id:?}"
+            ),
+        );
     }
 
     pub(super) fn prepare(
@@ -191,6 +202,13 @@ impl StreamBroadcastCaptureRegistry {
         target: super::StreamCaptureTarget,
         cancellation: capture::StreamCaptureCancellation,
     ) -> Result<bool, String> {
+        logging::debug(
+            "stream",
+            format!(
+                "starting stream capture preparation: stream_key={stream_key} request_id={request_id} target_kind={:?}",
+                target.kind,
+            ),
+        );
         let capture = capture::prepare_stream_capture(target, cancellation)?;
         let prepared = PreparedBroadcastCapture {
             request_id,
@@ -201,10 +219,23 @@ impl StreamBroadcastCaptureRegistry {
             .state
             .lock()
             .expect("stream capture registry lock is not poisoned");
-        if state.active_requests.get(&stream_key) != Some(&request_id) {
+        let active_request_id = state.active_requests.get(&stream_key).copied();
+        if active_request_id != Some(request_id) {
+            logging::debug(
+                "stream",
+                format!(
+                    "discarding stale prepared stream capture: stream_key={stream_key} request_id={request_id} active_request_id={active_request_id:?}"
+                ),
+            );
             return Ok(false);
         }
-        state.captures.insert(stream_key, prepared);
+        state.captures.insert(stream_key.clone(), prepared);
+        logging::debug(
+            "stream",
+            format!(
+                "stored prepared stream capture: stream_key={stream_key} request_id={request_id}"
+            ),
+        );
         Ok(true)
     }
 
@@ -213,9 +244,39 @@ impl StreamBroadcastCaptureRegistry {
             .state
             .lock()
             .expect("stream capture registry lock is not poisoned");
-        let active_request_id = *state.active_requests.get(stream_key)?;
-        let prepared = state.captures.remove(stream_key)?;
-        (prepared.request_id == active_request_id).then_some(prepared)
+        let Some(active_request_id) = state.active_requests.get(stream_key).copied() else {
+            logging::debug(
+                "stream",
+                format!("prepared stream capture has no active request: stream_key={stream_key}"),
+            );
+            return None;
+        };
+        let Some(prepared) = state.captures.remove(stream_key) else {
+            logging::debug(
+                "stream",
+                format!(
+                    "active stream capture request has no prepared capture: stream_key={stream_key} request_id={active_request_id}"
+                ),
+            );
+            return None;
+        };
+        if prepared.request_id != active_request_id {
+            logging::debug(
+                "stream",
+                format!(
+                    "prepared stream capture request mismatch: stream_key={stream_key} prepared_request_id={} active_request_id={active_request_id}",
+                    prepared.request_id,
+                ),
+            );
+            return None;
+        }
+        logging::debug(
+            "stream",
+            format!(
+                "taking prepared stream capture: stream_key={stream_key} request_id={active_request_id}"
+            ),
+        );
+        Some(prepared)
     }
 
     fn restore(
@@ -227,7 +288,15 @@ impl StreamBroadcastCaptureRegistry {
             .state
             .lock()
             .expect("stream capture registry lock is not poisoned");
-        if state.active_requests.get(&stream_key) != Some(&prepared.request_id) {
+        let active_request_id = state.active_requests.get(&stream_key).copied();
+        if active_request_id != Some(prepared.request_id) {
+            logging::debug(
+                "stream",
+                format!(
+                    "could not restore stale stream capture: stream_key={stream_key} prepared_request_id={} active_request_id={active_request_id:?}",
+                    prepared.request_id,
+                ),
+            );
             return Err(prepared);
         }
         state.captures.insert(stream_key, prepared);
@@ -239,8 +308,14 @@ impl StreamBroadcastCaptureRegistry {
             .state
             .lock()
             .expect("stream capture registry lock is not poisoned");
-        state.active_requests.remove(stream_key);
-        state.captures.remove(stream_key);
+        let request_id = state.active_requests.remove(stream_key);
+        let had_capture = state.captures.remove(stream_key).is_some();
+        logging::debug(
+            "stream",
+            format!(
+                "discarded stream capture registry entry: stream_key={stream_key} request_id={request_id:?} had_capture={had_capture}"
+            ),
+        );
     }
 
     #[cfg(test)]
@@ -1145,7 +1220,7 @@ fn stream_broadcast_video_payload(audio_ssrc: u32, video: BroadcastVideoSsrcs) -
                 "rtx_ssrc": video.rtx_ssrc,
                 "active": true,
                 "quality": 100,
-                "max_bitrate": capture::STREAM_CAPTURE_BITRATE,
+                "max_bitrate": capture::STREAM_TRANSPORT_BITRATE,
                 "max_framerate": capture::STREAM_CAPTURE_FPS,
                 "max_resolution": {
                     "type": "fixed",
@@ -1308,6 +1383,7 @@ struct BroadcastVideoTransport {
     transport_sequence: u16,
     video_sent_packets: u32,
     video_sent_octets: u32,
+    pacer: BroadcastRtpPacer,
     next_video_sender_report_at: Instant,
     last_reported_packet_loss: HashMap<u32, i32>,
     history: BroadcastRtpHistory,
@@ -1321,6 +1397,7 @@ impl BroadcastVideoTransport {
         packet_encryptor: Arc<BroadcastPacketEncryptor>,
         stats: SharedBroadcastSendStats,
     ) -> Result<Self, String> {
+        let now = Instant::now();
         Ok(Self {
             video,
             packet_encryptor,
@@ -1330,7 +1407,8 @@ impl BroadcastVideoTransport {
             transport_sequence: random(),
             video_sent_packets: 0,
             video_sent_octets: 0,
-            next_video_sender_report_at: Instant::now() + RTCP_SENDER_REPORT_INTERVAL,
+            pacer: BroadcastRtpPacer::new(now),
+            next_video_sender_report_at: now + RTCP_SENDER_REPORT_INTERVAL,
             last_reported_packet_loss: HashMap::new(),
             history: BroadcastRtpHistory::new(),
             stats,
@@ -1352,7 +1430,12 @@ impl BroadcastVideoTransport {
             &mut self.transport_sequence,
         );
         let packet_count = packets.len();
-        let pacing_interval = rtp_packet_pacing_interval(packet_count);
+        let estimated_wire_bytes = packets.iter().fold(0usize, |total, packet| {
+            total.saturating_add(packet.len() + RTP_AEAD_TAG_BYTES + RTP_AEAD_NONCE_SUFFIX_BYTES)
+        });
+        let pacing_interval =
+            self.pacer
+                .pacing_interval(packet_count, estimated_wire_bytes, Instant::now());
         let pacing_started_at = TokioInstant::now();
         let mut wire_bytes = 0usize;
 
@@ -1437,7 +1520,18 @@ impl BroadcastVideoTransport {
             .nack_sequences
             .len()
             .min(STREAM_RTX_MAX_RETRANSMISSIONS_PER_FEEDBACK);
-        let pacing_interval = rtp_packet_pacing_interval(retransmission_count);
+        let estimated_wire_bytes = retransmission_count.saturating_mul(
+            STREAM_RTP_MAX_PAYLOAD_BYTES
+                + RTP_HEADER_MIN_LEN
+                + RTP_HEADER_EXTENSION_BYTES
+                + STREAM_RTP_EXTENSION_BODY_BYTES
+                + STREAM_RTX_ORIGINAL_SEQUENCE_BYTES
+                + RTP_AEAD_TAG_BYTES
+                + RTP_AEAD_NONCE_SUFFIX_BYTES,
+        );
+        let pacing_interval =
+            self.pacer
+                .pacing_interval(retransmission_count, estimated_wire_bytes, Instant::now());
         let pacing_started_at = TokioInstant::now();
         for (index, original_sequence) in feedback
             .nack_sequences
@@ -1848,12 +1942,72 @@ fn broadcast_audio_elapsed_frames(previous: Option<u64>, frame_index: u64) -> u3
         .unwrap_or(1)
 }
 
-fn rtp_packet_pacing_interval(packet_count: usize) -> Option<Duration> {
+struct BroadcastRtpPacer {
+    debt: Duration,
+    updated_at: Instant,
+}
+
+impl BroadcastRtpPacer {
+    fn new(now: Instant) -> Self {
+        Self {
+            debt: Duration::ZERO,
+            updated_at: now,
+        }
+    }
+
+    fn pacing_interval(
+        &mut self,
+        packet_count: usize,
+        estimated_wire_bytes: usize,
+        now: Instant,
+    ) -> Option<Duration> {
+        // Unused transport time becomes bounded burst credit. This lets an IDR
+        // use bandwidth saved by smaller frames without weakening the rolling
+        // bitrate limit or accumulating latency in the encoded-frame queue.
+        self.debt = self
+            .debt
+            .saturating_sub(now.saturating_duration_since(self.updated_at));
+        self.updated_at = now;
+        let frame_budget = duration_for_bitrate(
+            estimated_wire_bytes,
+            u64::from(capture::STREAM_TRANSPORT_BITRATE),
+        );
+        self.debt = self.debt.saturating_add(frame_budget);
+        let rolling_budget = self.debt.saturating_sub(STREAM_RTP_BURST_CREDIT);
+        // A separate burst ceiling prevents saved credit from releasing a large
+        // IDR fast enough to cause loss and another keyframe request.
+        let burst_budget = duration_for_bitrate(estimated_wire_bytes, STREAM_RTP_MAX_BURST_BITRATE);
+
+        packet_pacing_interval(packet_count, rolling_budget.max(burst_budget))
+    }
+}
+
+fn packet_pacing_interval(packet_count: usize, rate_limited_budget: Duration) -> Option<Duration> {
     let gap_count = u32::try_from(packet_count.checked_sub(1)?).unwrap_or(u32::MAX);
     if gap_count == 0 {
         return None;
     }
-    Some((STREAM_RTP_PACING_BUDGET / gap_count).min(STREAM_RTP_MAX_PACKET_SPACING))
+
+    // Small frames keep the prior low-latency spacing. Large hardware IDRs
+    // need a longer budget so they do not turn the advertised stream bitrate
+    // into a short network burst that loses packets before DAVE decryption.
+    let low_latency_interval =
+        (STREAM_RTP_SMALL_FRAME_PACING_BUDGET / gap_count).min(STREAM_RTP_MAX_PACKET_SPACING);
+    let rate_limited_interval = duration_div_ceil(rate_limited_budget, gap_count);
+    Some(low_latency_interval.max(rate_limited_interval))
+}
+
+fn duration_for_bitrate(bytes: usize, bits_per_second: u64) -> Duration {
+    let nanoseconds = (bytes as u128)
+        .saturating_mul(8)
+        .saturating_mul(1_000_000_000)
+        .div_ceil(u128::from(bits_per_second.max(1)));
+    Duration::from_nanos(u64::try_from(nanoseconds).unwrap_or(u64::MAX))
+}
+
+fn duration_div_ceil(duration: Duration, divisor: u32) -> Duration {
+    let nanoseconds = duration.as_nanos().div_ceil(u128::from(divisor.max(1)));
+    Duration::from_nanos(u64::try_from(nanoseconds).unwrap_or(u64::MAX))
 }
 
 fn receiver_report_has_new_loss(
@@ -2064,7 +2218,8 @@ fn build_discord_video_rtx_packet(
     let original_payload = original
         .get(header.payload_offset..)
         .ok_or_else(|| "original RTP packet is missing media payload".to_owned())?;
-    let mut rtx_payload = Vec::with_capacity(2 + original_payload.len());
+    let mut rtx_payload =
+        Vec::with_capacity(STREAM_RTX_ORIGINAL_SEQUENCE_BYTES + original_payload.len());
     rtx_payload.extend_from_slice(&header.sequence.to_be_bytes());
     rtx_payload.extend_from_slice(original_payload);
     Ok(build_discord_video_rtp_packet_with_payload_type(
@@ -2090,7 +2245,7 @@ fn build_discord_video_rtp_packet_with_payload_type(
     rid_extension: u8,
     payload: &[u8],
 ) -> Vec<u8> {
-    let mut extensions = Vec::with_capacity(16);
+    let mut extensions = Vec::with_capacity(STREAM_RTP_EXTENSION_BODY_BYTES);
     push_one_byte_extension(
         &mut extensions,
         RTP_EXTENSION_TRANSPORT_SEQUENCE,
@@ -2107,7 +2262,9 @@ fn build_discord_video_rtp_packet_with_payload_type(
         extensions.push(0);
     }
 
-    let mut packet = Vec::with_capacity(RTP_HEADER_MIN_LEN + 4 + extensions.len() + payload.len());
+    let mut packet = Vec::with_capacity(
+        RTP_HEADER_MIN_LEN + RTP_HEADER_EXTENSION_BYTES + extensions.len() + payload.len(),
+    );
     packet.push((RTP_VERSION << 6) | 0x10);
     packet.push((u8::from(marker) << 7) | payload_type);
     packet.extend_from_slice(&sequence.to_be_bytes());
@@ -2433,6 +2590,28 @@ mod tests {
     }
 
     #[test]
+    fn capture_failure_reports_error_and_ends_the_preparing_broadcast() {
+        let request = request();
+        let mut state = StreamBroadcastRuntimeState::default();
+        state.apply(&VoiceRuntimeEvent::BroadcastStreamRequested(
+            request.clone(),
+        ));
+
+        let failed = state.apply(&VoiceRuntimeEvent::BroadcastStreamCaptureFailed {
+            request_id: 1,
+            stream_key: request.stream_key.clone(),
+            error: "PipeWire format negotiation failed".to_owned(),
+        });
+
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("Could not broadcast stream: PipeWire format negotiation failed")
+        );
+        assert_eq!(failed.broadcast_ended, Some(request));
+        assert!(state.requested.is_none());
+    }
+
+    #[test]
     fn broadcast_request_repairs_an_orphaned_active_session() {
         let active = session();
         let mut state = StreamBroadcastRuntimeState {
@@ -2674,7 +2853,7 @@ mod tests {
         assert_eq!(announced["d"]["streams"][0]["active"], true);
         assert_eq!(
             announced["d"]["streams"][0]["max_bitrate"],
-            capture::STREAM_CAPTURE_BITRATE
+            capture::STREAM_TRANSPORT_BITRATE
         );
         assert_eq!(
             announced["d"]["streams"][0]["max_framerate"],
@@ -2956,19 +3135,51 @@ mod tests {
     }
 
     #[test]
-    fn large_frames_are_paced_with_bounded_latency() {
-        assert_eq!(rtp_packet_pacing_interval(1), None);
+    fn rtp_pacer_limits_bursts_and_saved_bandwidth() {
+        let now = Instant::now();
+        let mut small_frame_pacer = BroadcastRtpPacer::new(now);
+        assert_eq!(small_frame_pacer.pacing_interval(1, 1_100, now), None);
 
-        let small_frame_interval =
-            rtp_packet_pacing_interval(3).expect("multiple packets should be paced");
+        let small_frame_interval = small_frame_pacer
+            .pacing_interval(3, 3_300, now)
+            .expect("multiple packets should be paced");
         assert!(small_frame_interval <= STREAM_RTP_MAX_PACKET_SPACING);
 
-        let packet_count = 100;
-        let large_frame_interval =
-            rtp_packet_pacing_interval(packet_count).expect("large frame should be paced");
-        let total_pacing = large_frame_interval * (packet_count as u32 - 1);
-        assert!(total_pacing <= STREAM_RTP_PACING_BUDGET);
-        assert!(total_pacing >= STREAM_RTP_PACING_BUDGET - Duration::from_millis(1));
+        let packet_count = 250;
+        let estimated_wire_bytes = 280_000;
+        let gap_count = packet_count as u32 - 1;
+        let frame_budget = duration_for_bitrate(
+            estimated_wire_bytes,
+            u64::from(capture::STREAM_TRANSPORT_BITRATE),
+        );
+        let burst_budget = duration_for_bitrate(estimated_wire_bytes, STREAM_RTP_MAX_BURST_BITRATE);
+        let mut pacer = BroadcastRtpPacer::new(now);
+
+        let credited_interval = pacer
+            .pacing_interval(packet_count, estimated_wire_bytes, now)
+            .expect("large frame should be paced");
+        let credited_pacing = credited_interval * gap_count;
+        assert!(credited_pacing >= frame_budget - STREAM_RTP_BURST_CREDIT);
+        assert!(credited_pacing >= burst_budget);
+        assert!(credited_pacing < frame_budget);
+
+        let depleted_at = now + credited_pacing;
+        let depleted_interval = pacer
+            .pacing_interval(packet_count, estimated_wire_bytes, depleted_at)
+            .expect("large frame without saved credit should be paced");
+        let depleted_pacing = depleted_interval * gap_count;
+        let depleted_budget = frame_budget
+            .saturating_sub(credited_pacing)
+            .saturating_add(frame_budget)
+            .saturating_sub(STREAM_RTP_BURST_CREDIT);
+        assert!(depleted_pacing >= depleted_budget.max(burst_budget));
+        assert!(depleted_pacing > credited_pacing);
+
+        let refilled_at = depleted_at + depleted_pacing + Duration::from_secs(10);
+        let refilled_interval = pacer
+            .pacing_interval(packet_count, estimated_wire_bytes, refilled_at)
+            .expect("idle transport should refill only bounded credit");
+        assert_eq!(refilled_interval, credited_interval);
     }
 
     #[tokio::test]

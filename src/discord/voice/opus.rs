@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex};
 
 use ::opus::{
     Application as OpusApplication, Bitrate as OpusBitrate, Channels, Decoder as OpusDecoder,
-    Encoder as OpusEncoder, Signal as OpusSignal,
+    Encoder as OpusEncoder, InbandFec as OpusInbandFec, SampleRate as OpusSampleRate,
+    Signal as OpusSignal,
 };
 use tokio::{
     sync::mpsc,
@@ -30,9 +31,8 @@ use super::playback::{
 };
 use super::{
     DISCORD_OPUS_20MS_STEREO_SAMPLES, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL,
-    DISCORD_VOICE_CHANNELS, DISCORD_VOICE_SAMPLE_RATE, OPUS_MAX_ENCODED_FRAME_BYTES,
-    OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL, VOICE_OUTPUT_STATS_LOG_INTERVAL,
-    VOICE_PLAYBACK_FRAME_QUEUE, VOICE_PLAYBACK_POLL_DURATION,
+    DISCORD_VOICE_CHANNELS, OPUS_MAX_ENCODED_FRAME_BYTES, OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL,
+    VOICE_OUTPUT_STATS_LOG_INTERVAL, VOICE_PLAYBACK_FRAME_QUEUE, VOICE_PLAYBACK_POLL_DURATION,
     VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL, VoiceParticipantPlaybackSettings,
 };
 use crate::discord::ids::{Id, marker::UserMarker};
@@ -279,27 +279,36 @@ impl VoiceOpusEncode {
         let mut encoder = Self::new_with_application(OpusApplication::Audio)?;
         encoder
             .encoder
-            .set_bitrate(OpusBitrate::Bits(128_000))
-            .map_err(|error| format!("system audio Opus bitrate setup failed: {error}"))?;
+            .set_bitrate(OpusBitrate::Value(128_000))
+            .map_err(|error| {
+                format!(
+                    "system audio Opus bitrate setup failed: {}",
+                    error.message()
+                )
+            })?;
         encoder
             .encoder
             .set_signal(OpusSignal::Music)
-            .map_err(|error| format!("system audio Opus signal setup failed: {error}"))?;
+            .map_err(|error| {
+                format!("system audio Opus signal setup failed: {}", error.message())
+            })?;
         encoder
             .encoder
-            .set_inband_fec(true)
-            .map_err(|error| format!("system audio Opus FEC setup failed: {error}"))?;
-        encoder
-            .encoder
-            .set_packet_loss_perc(10)
-            .map_err(|error| format!("system audio Opus packet loss setup failed: {error}"))?;
+            .set_inband_fec(OpusInbandFec::Mode1)
+            .map_err(|error| format!("system audio Opus FEC setup failed: {}", error.message()))?;
+        encoder.encoder.set_packet_loss(10).map_err(|error| {
+            format!(
+                "system audio Opus packet loss setup failed: {}",
+                error.message()
+            )
+        })?;
         Ok(encoder)
     }
 
     fn new_with_application(application: OpusApplication) -> Result<Self, String> {
-        OpusEncoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo, application)
+        OpusEncoder::new(Channels::Stereo, OpusSampleRate::Hz48000, application)
             .map(|encoder| Self { encoder })
-            .map_err(|error| format!("voice Opus encoder init failed: {error}"))
+            .map_err(|error| format!("voice Opus encoder init failed: {}", error.message()))
     }
 
     pub(super) fn encode_20ms_i16(&mut self, pcm: &[i16]) -> Result<Vec<u8>, String> {
@@ -310,9 +319,15 @@ impl VoiceOpusEncode {
                 pcm.len()
             ));
         }
+
+        // opusic-c exposes libopus's signed 16-bit PCM input as u16. Both
+        // element types have the same layout, and every bit pattern is valid.
+        let pcm = unsafe { std::slice::from_raw_parts(pcm.as_ptr().cast::<u16>(), pcm.len()) };
+        let mut encoded = Vec::with_capacity(OPUS_MAX_ENCODED_FRAME_BYTES);
         self.encoder
-            .encode_vec(pcm, OPUS_MAX_ENCODED_FRAME_BYTES)
-            .map_err(|error| format!("voice Opus encode failed: {error}"))
+            .encode_to_vec(pcm, &mut encoded)
+            .map_err(|error| format!("voice Opus encode failed: {}", error.message()))?;
+        Ok(encoded)
     }
 }
 
@@ -465,12 +480,15 @@ pub(super) fn decode_voice_playout_frame(
         return Some(vec![0.0f32; packet_loss_stereo_samples]);
     }
     if let std::collections::hash_map::Entry::Vacant(entry) = decoders.entry(ssrc) {
-        match OpusDecoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo) {
+        match OpusDecoder::new(Channels::Stereo, OpusSampleRate::Hz48000) {
             Ok(decoder) => {
                 entry.insert(decoder);
             }
             Err(error) => {
-                logging::error("voice", format!("voice Opus decoder init failed: {error}"));
+                logging::error(
+                    "voice",
+                    format!("voice Opus decoder init failed: {}", error.message()),
+                );
                 return None;
             }
         }
@@ -484,7 +502,8 @@ pub(super) fn decode_voice_playout_frame(
         OPUS_MAX_FRAME_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS)
     };
     let mut decoded = vec![0.0f32; decode_sample_capacity];
-    let samples_per_channel = match decoder.decode_float(frame.opus(), &mut decoded, false) {
+    let samples_per_channel = match decoder.decode_float_to_slice(frame.opus(), &mut decoded, false)
+    {
         Ok(samples) => samples,
         Err(error) => {
             logging::debug(
@@ -493,7 +512,7 @@ pub(super) fn decode_voice_playout_frame(
                     "voice Opus decode failed: ssrc={} seq={} error={}",
                     frame.ssrc(),
                     frame.sequence(),
-                    error
+                    error.message()
                 ),
             );
             decoders.remove(&ssrc);

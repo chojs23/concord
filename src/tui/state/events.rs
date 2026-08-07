@@ -237,6 +237,7 @@ impl DashboardState {
                     return;
                 }
                 self.runtime.stream_capture_targets_request = None;
+                self.clear_stream_capture_targets_loading_toast();
                 if let Some(error) = error {
                     self.show_error_toast(error, Instant::now());
                 } else if targets.is_empty() {
@@ -249,7 +250,7 @@ impl DashboardState {
                         voice.scope == *scope && voice.channel_id == Some(*channel_id)
                     })
                 {
-                    self.popups.modal = Some(ModalPopup::ChannelActionMenu(
+                    self.popups.set_modal(ModalPopup::ChannelActionMenu(
                         ChannelActionMenuState::StreamTargets {
                             scope: *scope,
                             channel_id: *channel_id,
@@ -301,6 +302,9 @@ impl DashboardState {
             }
             AppEvent::StreamBroadcastAudioUnavailable { message } => {
                 self.show_error_toast(message, Instant::now());
+            }
+            AppEvent::StreamBroadcastStartFailed { scope, channel_id } => {
+                self.cancel_stream_broadcast_preparing(*scope, *channel_id);
             }
             AppEvent::StreamBroadcastEnded { scope, channel_id } => {
                 self.record_stream_broadcast_ended(*scope, *channel_id);
@@ -421,6 +425,7 @@ impl DashboardState {
                 offset,
                 next_offset: _,
                 threads,
+                first_messages,
                 has_more,
                 ..
             } => {
@@ -431,6 +436,19 @@ impl DashboardState {
                     threads,
                     *has_more,
                 );
+                if *archive_state == crate::discord::ForumPostArchiveState::Active && *offset == 0 {
+                    self.apply_inbox_forum_posts_loaded(*channel_id, threads, first_messages);
+                }
+            }
+            AppEvent::ForumPostsLoadFailed {
+                channel_id,
+                archive_state,
+                offset,
+                ..
+            } => {
+                if *archive_state == crate::discord::ForumPostArchiveState::Active && *offset == 0 {
+                    self.apply_inbox_forum_posts_load_failed(*channel_id);
+                }
             }
             AppEvent::MessageSearchLoaded { .. } | AppEvent::MessageSearchLoadFailed { .. } => {
                 self.record_search_event(event);

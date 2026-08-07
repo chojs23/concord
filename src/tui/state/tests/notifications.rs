@@ -286,18 +286,24 @@ fn notification_inbox_includes_only_eligible_unread_channels() {
 }
 
 #[test]
-fn notification_inbox_prefers_loaded_then_cached_post_content_and_title_fallback() {
+fn notification_inbox_loads_forum_post_titles_and_preserves_cached_role_colors() {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
     let cached_thread_id = Id::new(31);
     let fallback_thread_id = Id::new(32);
-    let cached_message_id = Id::new(301);
+    // Forum search previews can use a message ID that differs from the thread ID.
+    let cached_message_id = Id::new(300);
+    let author_role_id = Id::<RoleMarker>::new(7);
+    let author_role_color = 0x11AA22;
     let mut state = DashboardState::new();
-    let thread = |thread_id, name: &str, last_message_id| ChannelInfo {
+    let thread = |thread_id, name: &str, last_message_id, owner_id| ChannelInfo {
         last_message_id: Some(Id::new(last_message_id)),
+        owner_id: Some(Id::new(owner_id)),
         current_user_joined_thread: Some(true),
         ..thread_channel_info(guild_id, forum_id, thread_id, name)
     };
+    let cached_thread = thread(cached_thread_id, "cached post", 301, 99);
+    let fallback_thread = thread(fallback_thread_id, "title only", 302, 100);
 
     state.push_event(guild_create_event(
         guild_id,
@@ -305,26 +311,53 @@ fn notification_inbox_prefers_loaded_then_cached_post_content_and_title_fallback
         vec![
             ChannelInfo {
                 kind: "forum".to_owned(),
+                last_message_id: Some(Id::new(302)),
                 ..text_channel_info(guild_id, forum_id, "forum")
             },
-            thread(cached_thread_id, "cached post", cached_message_id.get()),
-            thread(fallback_thread_id, "title only", 302),
+            cached_thread.clone(),
+            fallback_thread.clone(),
         ],
     ));
+    state.push_event(AppEvent::GuildRoleUpsert {
+        guild_id,
+        role: RoleInfo {
+            color: Some(author_role_color),
+            position: 10,
+            ..RoleInfo::test(author_role_id, "author")
+        },
+    });
+    state.open_notification_inbox();
+
+    let forum_request = state
+        .drain_pending_commands()
+        .into_iter()
+        .find(|command| matches!(command, AppCommand::LoadForumPosts { .. }))
+        .expect("the forum channel should load its post list");
+    assert_eq!(
+        forum_request,
+        AppCommand::LoadForumPosts {
+            guild_id,
+            channel_id: forum_id,
+            archive_state: ForumPostArchiveState::Active,
+            offset: 0,
+        }
+    );
+
     state.push_event(forum_posts_loaded_event(ForumPostsLoadedFixture {
         channel_id: forum_id,
+        threads: vec![cached_thread, fallback_thread],
         first_messages: vec![MessageInfo {
             guild_id: Some(guild_id),
             channel_id: cached_thread_id,
             message_id: cached_message_id,
             author_id: Id::new(99),
             author: "alice".to_owned(),
+            author_role_ids: vec![author_role_id],
             content: Some("cached starter content".to_owned()),
             ..MessageInfo::default()
         }],
         ..ForumPostsLoadedFixture::new()
     }));
-    state.open_notification_inbox();
 
     let mut requested_channel_ids = Vec::new();
     for _ in 0..2 {
@@ -356,12 +389,33 @@ fn notification_inbox_prefers_loaded_then_cached_post_content_and_title_fallback
             NotificationInboxItem::Mention(_) => None,
         })
         .collect::<Vec<_>>();
+    let forum = items
+        .iter()
+        .find(|item| item.channel_id == forum_id)
+        .expect("forum channel should be in the inbox");
+    assert_eq!(forum.messages.len(), 2);
+    assert!(forum.messages.iter().any(|message| {
+        message.author == "alice"
+            && message.content == "cached post"
+            && message.author_role_color == Some(author_role_color)
+    }));
+    assert!(
+        forum
+            .messages
+            .iter()
+            .any(|message| { message.author == "user-100" && message.content == "title only" })
+    );
+
     let cached = items
         .iter()
         .find(|item| item.channel_id == cached_thread_id)
         .expect("cached post should be in the inbox");
     assert_eq!(cached.messages.len(), 1);
     assert_eq!(cached.messages[0].content, "cached starter content");
+    assert_eq!(
+        cached.messages[0].author_role_color,
+        Some(author_role_color)
+    );
 
     let fallback = items
         .iter()

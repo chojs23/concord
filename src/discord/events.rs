@@ -475,9 +475,10 @@ pub enum AppEvent {
     /// indicator should expire. The dashboard tracks the latest timestamp
     /// per (channel, user) and shows "X is typing…" while it's fresh.
     TypingStart {
+        guild_id: Option<Id<GuildMarker>>,
         channel_id: Id<ChannelMarker>,
         user_id: Id<UserMarker>,
-        display_name: Option<String>,
+        member: Option<MemberInfo>,
     },
     CurrentUserReactionAdd {
         channel_id: Id<ChannelMarker>,
@@ -601,6 +602,10 @@ pub enum AppEvent {
     },
     StreamBroadcastAudioUnavailable {
         message: String,
+    },
+    StreamBroadcastStartFailed {
+        scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
     },
     StreamBroadcastEnded {
         scope: VoiceScope,
@@ -832,6 +837,7 @@ define_app_event_kinds! {
     StreamCaptureTargetsLoaded: AppEvent::StreamCaptureTargetsLoaded { .. },
     StreamBroadcastStarted: AppEvent::StreamBroadcastStarted { .. },
     StreamBroadcastAudioUnavailable: AppEvent::StreamBroadcastAudioUnavailable { .. },
+    StreamBroadcastStartFailed: AppEvent::StreamBroadcastStartFailed { .. },
     StreamBroadcastEnded: AppEvent::StreamBroadcastEnded { .. },
     AttachmentDownloadStarted: AppEvent::AttachmentDownloadStarted { .. },
     AttachmentDownloadProgress: AppEvent::AttachmentDownloadProgress { .. },
@@ -1105,26 +1111,29 @@ pub(crate) mod test_builders {
     }
 
     pub(crate) struct TypingStartFixture {
+        pub(crate) guild_id: Option<Id<GuildMarker>>,
         pub(crate) channel_id: Id<ChannelMarker>,
         pub(crate) user_id: Id<UserMarker>,
-        pub(crate) display_name: Option<String>,
+        pub(crate) member: Option<MemberInfo>,
     }
 
     impl TypingStartFixture {
         pub(crate) fn new() -> Self {
             Self {
+                guild_id: None,
                 channel_id: Id::new(1),
                 user_id: Id::new(1),
-                display_name: None,
+                member: None,
             }
         }
     }
 
     pub(crate) fn typing_start_event(f: TypingStartFixture) -> AppEvent {
         AppEvent::TypingStart {
+            guild_id: f.guild_id,
             channel_id: f.channel_id,
             user_id: f.user_id,
-            display_name: f.display_name,
+            member: f.member,
         }
     }
 
@@ -1809,14 +1818,15 @@ impl AppEventKind {
             | AppEventKind::RelationshipUpsert
             | AppEventKind::UserIdentityUpdate
             | AppEventKind::RelationshipRemove
-            | AppEventKind::VoiceStateUpdate => {
+            | AppEventKind::VoiceStateUpdate
+            | AppEventKind::TypingStart
+            | AppEventKind::ReadyUserDirectory => {
                 AppEventMetadata::mutating(SnapshotAreas::navigation_and_message())
             }
 
             AppEventKind::GuildUnavailable => AppEventMetadata::inert(),
 
             AppEventKind::SelectedGuildChanged
-            | AppEventKind::ReadyUserDirectory
             | AppEventKind::GuildRolesUpdate
             | AppEventKind::GuildRoleUpsert
             | AppEventKind::GuildRoleDelete
@@ -1825,7 +1835,6 @@ impl AppEventKind {
             | AppEventKind::PresenceUpdate
             | AppEventKind::VoiceSpeakingUpdate
             | AppEventKind::CallDelete
-            | AppEventKind::TypingStart
             | AppEventKind::UserSettingsUpdate
             | AppEventKind::UserNotificationSettingsUpdate
             | AppEventKind::UserNoteLoaded
@@ -1859,6 +1868,7 @@ impl AppEventKind {
             | AppEventKind::VoiceAudioSourcesApplyFailed
             | AppEventKind::StreamBroadcastStarted
             | AppEventKind::StreamBroadcastAudioUnavailable
+            | AppEventKind::StreamBroadcastStartFailed
             | AppEventKind::StreamBroadcastEnded
             | AppEventKind::ApplicationCommandsLoaded
             | AppEventKind::ApplicationCommandIndexUpdated
@@ -2068,6 +2078,25 @@ mod tests {
                     guild_id: Id::new(1),
                 },
                 None,
+                false,
+            ),
+            (
+                "typing updates shared member and message identity",
+                AppEvent::TypingStart {
+                    guild_id: Some(Id::new(1)),
+                    channel_id: Id::new(10),
+                    user_id: Id::new(20),
+                    member: None,
+                },
+                Some(SnapshotAreas::navigation_and_message()),
+                false,
+            ),
+            (
+                "ready user directory joins guild and message identity",
+                AppEvent::ReadyUserDirectory {
+                    users: vec![ChannelRecipientInfo::test(Id::new(20), "Ready User")],
+                },
+                Some(SnapshotAreas::navigation_and_message()),
                 false,
             ),
         ];

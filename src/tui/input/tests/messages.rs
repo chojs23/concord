@@ -115,13 +115,30 @@ fn message_viewport_scroll_uses_configured_keys() {
 }
 
 #[test]
-fn backtick_toggles_debug_log_popup() {
+fn debug_log_uses_the_configured_open_action() {
     let mut state = DashboardState::new();
 
     handle_key(&mut state, char_key('`'));
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
 
+    handle_key(&mut state, char_key('q'));
+    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
+
+    let mut state = state_with_keymap(KeymapOptions {
+        mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("z d"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    });
+
     handle_key(&mut state, char_key('`'));
+    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
+
+    handle_key(&mut state, char_key('z'));
+    handle_key(&mut state, char_key('d'));
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
+
+    handle_key(&mut state, char_key('q'));
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
 }
 
@@ -129,7 +146,7 @@ fn backtick_toggles_debug_log_popup() {
 fn esc_closes_debug_log_popup_modally() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
-    state.toggle_debug_log_popup();
+    state.open_debug_log_popup();
 
     handle_key(&mut state, key(KeyCode::Esc));
 
@@ -403,55 +420,88 @@ fn message_pane_copy_shortcut_requests_selected_message_content() {
 }
 
 #[test]
-fn message_action_popup_q_runs_configured_action_before_close_popup() {
-    let mut state = state_with_keymap(KeymapOptions {
-        leader: None,
-        groups: std::collections::BTreeMap::new(),
-        message_actions: [("CopyMessage".to_owned(), KeymapBinding::one("q"))]
+fn message_action_popup_shortcuts_precede_global_popup_actions() {
+    for shortcut in ['q', '`'] {
+        let mut state = state_with_keymap(KeymapOptions {
+            leader: None,
+            groups: std::collections::BTreeMap::new(),
+            message_actions: [(
+                "CopyMessage".to_owned(),
+                KeymapBinding::one(shortcut.to_string()),
+            )]
             .into_iter()
             .collect(),
-        ..Default::default()
-    });
-    state = state_with_messages_from_state(state, 1);
-    state.focus_pane(FocusPane::Messages);
+            ..Default::default()
+        });
+        state = state_with_messages_from_state(state, 1);
+        state.focus_pane(FocusPane::Messages);
 
-    handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_menu_active());
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.is_message_action_menu_active());
 
-    handle_key(&mut state, char_key('q'));
+        handle_key(&mut state, char_key(shortcut));
 
-    assert_eq!(
-        state.take_copy_text_request(),
-        Some(("msg 1".to_owned(), "Message copied"))
-    );
-    assert!(!state.is_message_action_menu_active());
+        assert_eq!(
+            state.take_copy_text_request(),
+            Some(("msg 1".to_owned(), "Message copied")),
+            "{shortcut}"
+        );
+        assert!(!state.is_message_action_menu_active(), "{shortcut}");
+        assert!(
+            !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog),
+            "{shortcut}"
+        );
+    }
 }
 
 #[test]
-fn message_action_popup_configured_navigation_key_closes_popup() {
-    let mut state = state_with_keymap(KeymapOptions {
-        leader: None,
-        groups: std::collections::BTreeMap::new(),
-        mappings: [("ClosePopup".to_owned(), KeymapBinding::one("j"))]
-            .into_iter()
-            .collect(),
-        ..Default::default()
-    });
-    state = state_with_messages_from_state(state, 1);
-    state.focus_pane(FocusPane::Messages);
+fn close_popup_bindings_remain_scoped_from_dashboard_sequences() {
+    {
+        let mut state = state_with_keymap(KeymapOptions {
+            mappings: [("ClosePopup".to_owned(), KeymapBinding::one("g"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        state = state_with_messages_from_state(state, 3);
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Down));
+        assert_eq!(state.selected_message(), 2);
 
-    handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_menu_active());
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.is_message_action_menu_active());
+        handle_key(&mut state, char_key('g'));
+        assert!(!state.is_message_action_menu_active());
 
-    handle_key(&mut state, key(KeyCode::Esc));
-    assert!(!state.is_message_action_menu_active());
+        handle_key(&mut state, char_key('g'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, char_key('g'));
 
-    handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_menu_active());
+        assert!(!state.is_key_sequence_active());
+        assert_eq!(state.selected_message(), 0);
+    }
 
-    handle_key(&mut state, char_key('j'));
+    {
+        let mut state = state_with_keymap(KeymapOptions {
+            mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("q d"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        state = state_with_messages_from_state(state, 1);
+        state.focus_pane(FocusPane::Messages);
 
-    assert!(!state.is_message_action_menu_active());
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.is_message_action_menu_active());
+        handle_key(&mut state, char_key('q'));
+        assert!(!state.is_message_action_menu_active());
+
+        handle_key(&mut state, char_key('q'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, char_key('d'));
+        assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
+    }
 }
 
 #[test]
@@ -605,6 +655,43 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
 }
 
 #[test]
+fn goto_referenced_message_in_active_channel_keeps_reply_visible_while_loading() {
+    let mut state = state_with_messages(0);
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(10),
+        reference: Some(MessageReferenceInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Some(Id::new(2)),
+            message_id: Some(Id::new(5)),
+        }),
+        ..guild_message_create_fixture()
+    }));
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(11),
+        ..guild_message_create_fixture()
+    }));
+    state.focus_pane(FocusPane::Messages);
+    state.move_up();
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(10));
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    let command = handle_key(&mut state, char_key('g'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadMessageHistoryAround {
+            channel_id: Id::new(2),
+            message_id: Id::new(5),
+        })
+    );
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(10));
+}
+
+#[test]
 fn pinned_and_forum_down_keys_do_not_request_newer_history() {
     let mut pinned_state = state_with_messages(0);
     pinned_state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
@@ -699,20 +786,94 @@ fn message_pane_pin_shortcut_requires_confirmation() {
 }
 
 #[test]
-fn message_action_menu_control_page_keys_move_selection() {
-    let mut state = state_with_own_message();
-    state.focus_pane(FocusPane::Messages);
-    handle_key(&mut state, key(KeyCode::Enter));
+fn message_action_menu_pages_and_routes_active_sequences_before_fixed_shortcuts() {
+    {
+        let mut state = state_with_own_message();
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
 
-    let command = handle_key(&mut state, ctrl_key('d'));
+        let command = handle_key(&mut state, ctrl_key('d'));
 
-    assert_eq!(command, None);
-    assert!(state.is_message_action_menu_active());
-    assert_eq!(state.selected_message_action_index(), Some(10));
+        assert_eq!(command, None);
+        assert!(state.is_message_action_menu_active());
+        assert!(
+            state
+                .selected_message_action_index()
+                .is_some_and(|index| index > 0)
+        );
 
-    handle_key(&mut state, ctrl_key('u'));
+        handle_key(&mut state, ctrl_key('u'));
 
-    assert_eq!(state.selected_message_action_index(), Some(0));
+        assert_eq!(state.selected_message_action_index(), Some(0));
+    }
+
+    {
+        let mut state = state_with_messages_from_state(
+            state_with_keymap(KeymapOptions {
+                mappings: [("HalfPageDown".to_owned(), KeymapBinding::one("z d"))]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }),
+            1,
+        );
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(99)),
+        });
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
+
+        handle_key(&mut state, char_key('z'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, char_key('d'));
+
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+        assert!(
+            state
+                .selected_message_action_index()
+                .is_some_and(|index| index > 0)
+        );
+
+        handle_key(&mut state, char_key('z'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+
+        handle_key(&mut state, char_key('z'));
+        handle_key(&mut state, char_key('q'));
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+
+        handle_key(&mut state, char_key('q'));
+        assert!(!state.is_message_action_menu_active());
+    }
+
+    {
+        let mut state = state_with_messages_from_state(
+            state_with_keymap(KeymapOptions {
+                mappings: [("SelectNext".to_owned(), KeymapBinding::one("z <A-left>"))]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }),
+            1,
+        );
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+
+        handle_key(&mut state, char_key('z'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, alt_key(KeyCode::Left));
+
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+        assert_eq!(state.selected_message_action_index(), Some(1));
+    }
 }
 
 #[test]

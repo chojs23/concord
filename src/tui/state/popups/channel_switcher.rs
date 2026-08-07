@@ -16,7 +16,9 @@ use super::super::{
     presentation::{is_direct_message_channel, sort_direct_message_channels},
 };
 use crate::discord::AppCommand;
-use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupState};
+use crate::tui::state::popups::{
+    ActiveModalPopupKind, ModalPopup, SelectablePopupState, SelectablePopupTarget,
+};
 
 #[derive(Debug)]
 pub(in crate::tui::state) struct ChannelSwitcherState {
@@ -40,8 +42,16 @@ impl ChannelSwitcherState {
         self.query_items.as_deref().unwrap_or(&self.base_items)
     }
 
-    fn visible_len(&self) -> usize {
+    pub(super) fn visible_len(&self) -> usize {
         self.visible_items().len()
+    }
+
+    pub(super) fn selection_mut(&mut self) -> &mut SelectablePopupState {
+        &mut self.selection
+    }
+
+    pub(super) fn selection(&self) -> &SelectablePopupState {
+        &self.selection
     }
 
     fn refresh_query_items(&mut self) {
@@ -54,9 +64,10 @@ impl ChannelSwitcherState {
 impl DashboardState {
     pub fn open_channel_switcher(&mut self) {
         let items = self.all_channel_switcher_items();
-        self.popups.modal = Some(ModalPopup::ChannelSwitcher(ChannelSwitcherState::new(
-            items,
-        )));
+        self.popups
+            .set_modal(ModalPopup::ChannelSwitcher(ChannelSwitcherState::new(
+                items,
+            )));
     }
 
     pub fn close_channel_switcher(&mut self) {
@@ -89,55 +100,17 @@ impl DashboardState {
     }
 
     pub fn move_channel_switcher_down(&mut self) {
-        let len = self
-            .popups
-            .channel_switcher()
-            .map(ChannelSwitcherState::visible_len)
-            .unwrap_or_default();
-        if let Some(switcher) = self.popups.channel_switcher_mut() {
-            switcher.selection.move_down(len);
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::ChannelSwitcher,
+            SelectionAction::Next,
+        );
     }
 
     pub fn move_channel_switcher_up(&mut self) {
-        if let Some(switcher) = self.popups.channel_switcher_mut() {
-            switcher.selection.move_up();
-        }
-    }
-
-    pub fn set_channel_switcher_view_height(&mut self, height: usize) {
-        let len = self
-            .popups
-            .channel_switcher()
-            .map(ChannelSwitcherState::visible_len)
-            .unwrap_or(0);
-        if let Some(switcher) = self.popups.channel_switcher_mut() {
-            switcher.selection.set_view_height_and_sync(height, len);
-        }
-    }
-
-    pub fn channel_switcher_scroll(&self) -> usize {
-        self.popups
-            .channel_switcher()
-            .map(|switcher| switcher.selection.scroll())
-            .unwrap_or(0)
-    }
-
-    pub(super) fn page_channel_switcher_selection(&mut self, action: SelectionAction) {
-        if let Some(switcher) = self.popups.channel_switcher_mut() {
-            switcher.selection.page(switcher.visible_len(), action);
-        }
-    }
-
-    pub fn select_channel_switcher_item(&mut self, row: usize) -> bool {
-        let Some(switcher) = self.popups.channel_switcher_mut() else {
-            return false;
-        };
-        if row >= switcher.visible_len() {
-            return false;
-        }
-        switcher.selection.select(row);
-        true
+        self.move_selectable_popup(
+            SelectablePopupTarget::ChannelSwitcher,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn push_channel_switcher_char(&mut self, value: char) {

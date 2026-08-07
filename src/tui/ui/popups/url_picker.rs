@@ -15,11 +15,15 @@ pub(in crate::tui::ui) fn render_message_url_picker(
     }
     let selected = state.selected_message_url_index().unwrap_or(0);
     let popup = message_url_picker_popup_area(area, urls.len());
-    let lines = truncate_message_url_picker_lines(
+    render_selectable_popup_list(
+        frame,
+        popup,
+        "Open URL",
         message_url_picker_lines(&urls, selected),
-        popup.width.saturating_sub(2) as usize,
+        state
+            .popup_list_scroll(SelectablePopupTarget::MessageUrls)
+            .expect("message URLs have selection state"),
     );
-    render_modal_paragraph(frame, popup, "Open URL", lines);
 }
 
 pub(in crate::tui::ui) fn message_url_picker_popup_area(area: Rect, url_count: usize) -> Rect {
@@ -59,6 +63,7 @@ pub(in crate::tui::ui) fn message_url_picker_lines_for_width(
     truncate_message_url_picker_lines(message_url_picker_lines(urls, selected), width)
 }
 
+#[cfg(test)]
 fn truncate_message_url_picker_lines(
     lines: Vec<Line<'static>>,
     width: usize,

@@ -21,10 +21,10 @@ use actions::DefaultKeymapChord;
 pub use actions::OptionsCategoryShortcut;
 pub(in crate::tui) use actions::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, ComposerCompletionAction,
-    DashboardAction, DebugLogPopupAction, EmojiReactionPickerAction, GlobalAction, LoginBusyAction,
-    LoginGlobalAction, LoginMfaSelectAction, LoginModeSelectAction, LoginPasswordInputAction,
-    LoginTextInputAction, NotificationInboxAction, NotificationInboxActionKind, OptionsPopupAction,
-    PaneFilterAction, PollVotePickerAction, PopupListAction, ProfilePopupAction,
+    DashboardAction, EmojiReactionPickerAction, LoginBusyAction, LoginGlobalAction,
+    LoginMfaSelectAction, LoginModeSelectAction, LoginPasswordInputAction, LoginTextInputAction,
+    NotificationInboxAction, NotificationInboxActionKind, OptionsPopupAction, PaneFilterAction,
+    PollVotePickerAction, PopupAction, PopupKeymapScope, PopupListAction, ProfilePopupAction,
     ProfilePopupTabAction, ReactionUsersPopupAction, ScrollAction, SearchPopupAction,
     SelectionAction, SelectionKeySet, UiAction, VoiceParticipantAudioPopupAction,
 };
@@ -115,6 +115,12 @@ pub(in crate::tui) struct LeaderShortcutItem {
 pub(in crate::tui) enum KeyMapLookup {
     Pending,
     Action(UiAction),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum PopupKeyMapLookup {
+    Pending,
+    Action(PopupAction),
 }
 
 impl KeyBindings {
@@ -282,9 +288,8 @@ impl KeyMap {
                 }
             }
         }
-        let mut specs = default_keymap_specs(leader);
-        remove_default_keymap_conflicts(&mut specs, &configured_specs);
-        specs.extend(configured_specs);
+
+        let specs = effective_keymap_specs(leader, &configured_specs);
         Self::from_specs(leader, &specs, group_titles).expect("default keymap has no conflicts")
     }
 
@@ -309,9 +314,7 @@ impl KeyMap {
         }
         Self::from_specs(leader, &configured_specs, group_titles.clone())?;
 
-        let mut specs = default_keymap_specs(leader);
-        remove_default_keymap_conflicts(&mut specs, &configured_specs);
-        specs.extend(configured_specs);
+        let specs = effective_keymap_specs(leader, &configured_specs);
         Self::from_specs(leader, &specs, group_titles)
     }
 
@@ -327,6 +330,8 @@ impl KeyMap {
             group_titles,
         };
         for (action, spec) in specs {
+            // ClosePopup is a single-key command resolved directly by popup
+            // input. It must not alter the dashboard trie or its sequences.
             if *action == UiAction::ClosePopup {
                 continue;
             }
@@ -392,6 +397,107 @@ impl KeyMap {
             .as_ref()
             .map(|action| KeyMapLookup::Action(action.action))
             .or_else(|| (!node.children.is_empty()).then_some(KeyMapLookup::Pending))
+    }
+
+    fn lookup_popup_actions(
+        &self,
+        sequence: &[KeyChord],
+        scope: PopupKeymapScope,
+    ) -> Option<PopupKeyMapLookup> {
+        let mut exact_action = None;
+        let mut pending = false;
+        for action in PopupAction::ALL
+            .iter()
+            .copied()
+            .filter(|action| action.is_allowed_in(scope))
+        {
+            let Some(spec) = self.specs.get(&action.ui_action()) else {
+                continue;
+            };
+            for candidate in &spec.sequences {
+                if sequence.len() > candidate.len()
+                    || !sequence
+                        .iter()
+                        .zip(candidate)
+                        .all(|(actual, expected)| actual.matches_chord(*expected))
+                {
+                    continue;
+                }
+                if sequence.len() == candidate.len() {
+                    exact_action = Some(action);
+                    continue;
+                }
+                pending = true;
+            }
+        }
+        exact_action
+            .map(PopupKeyMapLookup::Action)
+            .or_else(|| pending.then_some(PopupKeyMapLookup::Pending))
+    }
+
+    fn popup_children(
+        &self,
+        sequence: &[KeyChord],
+        scope: PopupKeymapScope,
+    ) -> Vec<LeaderShortcutItem> {
+        let Some(node) = self.node(sequence) else {
+            return Vec::new();
+        };
+
+        node.children
+            .iter()
+            .filter_map(|child| {
+                let mut child_sequence = sequence.to_vec();
+                child_sequence.push(child.key);
+                let mut exact = None;
+                let mut has_children = false;
+
+                for action in PopupAction::ALL
+                    .iter()
+                    .copied()
+                    .filter(|action| action.is_allowed_in(scope))
+                {
+                    let ui_action = action.ui_action();
+                    let Some(spec) = self.specs.get(&ui_action) else {
+                        continue;
+                    };
+                    for candidate in &spec.sequences {
+                        if candidate.len() < child_sequence.len()
+                            || !child_sequence
+                                .iter()
+                                .zip(candidate)
+                                .all(|(actual, expected)| actual.matches_chord(*expected))
+                        {
+                            continue;
+                        }
+                        if candidate.len() == child_sequence.len() {
+                            exact = Some((ui_action, spec.label.clone()));
+                        } else {
+                            has_children = true;
+                        }
+                    }
+                }
+
+                if exact.is_none() && !has_children {
+                    return None;
+                }
+                let (action, label) = exact
+                    .map(|(action, label)| (Some(action), label))
+                    .unwrap_or_else(|| {
+                        (
+                            None,
+                            self.group_title(&child_sequence)
+                                .unwrap_or_else(|| "prefix".to_owned()),
+                        )
+                    });
+                Some(LeaderShortcutItem {
+                    key: child.key.label(),
+                    label,
+                    has_children,
+                    action,
+                })
+            })
+            .collect()
     }
 
     fn children(&self, sequence: &[KeyChord]) -> Vec<LeaderShortcutItem> {
@@ -893,7 +999,9 @@ fn remove_default_keymap_conflicts(
         default_spec.sequences.retain(|default_sequence| {
             !configured
                 .iter()
-                .filter(|(configured_action, _)| **configured_action != UiAction::ClosePopup)
+                .filter(|(configured_action, _)| {
+                    keymap_actions_share_input_scope(*default_action, **configured_action)
+                })
                 .any(|(_, configured_spec)| {
                     configured_spec.sequences.iter().any(|configured_sequence| {
                         keymap_sequences_conflict(default_sequence, configured_sequence)
@@ -902,6 +1010,23 @@ fn remove_default_keymap_conflicts(
         });
         !default_spec.sequences.is_empty()
     });
+}
+
+fn keymap_actions_share_input_scope(left: UiAction, right: UiAction) -> bool {
+    // ClosePopup is matched directly only while a popup owns input. Every
+    // other direct action is routed through the dashboard trie, so the two
+    // scopes may safely use the same key or prefix in either direction.
+    left != UiAction::ClosePopup && right != UiAction::ClosePopup
+}
+
+fn effective_keymap_specs(
+    leader: KeyChord,
+    configured: &BTreeMap<UiAction, KeyMapActionSpec>,
+) -> BTreeMap<UiAction, KeyMapActionSpec> {
+    let mut specs = default_keymap_specs(leader);
+    remove_default_keymap_conflicts(&mut specs, configured);
+    specs.extend(configured.clone());
+    specs
 }
 
 fn keymap_sequences_conflict(left: &[KeyChord], right: &[KeyChord]) -> bool {

@@ -3,12 +3,11 @@ use crate::discord::ids::{
     marker::{ChannelMarker, ForumTagMarker},
 };
 use crate::discord::{AppCommand, DiscordAction};
-use crate::tui::keybindings::ScrollAction;
+use crate::tui::keybindings::{ScrollAction, SelectionAction};
 use crate::tui::text_input::TextEditAction;
 
-use super::super::scroll::clamp_list_scroll;
 use super::super::{DashboardState, ThreadEditField, ThreadEditTagView, ThreadEditView};
-use super::{ActiveModalPopupKind, ModalPopup, ThreadEditState};
+use super::{ActiveModalPopupKind, ModalPopup, SelectablePopupTarget, ThreadEditState};
 
 /// Discord allows at most five tags applied to a single forum post.
 const MAX_FORUM_POST_TAGS: usize = 5;
@@ -82,25 +81,25 @@ impl super::super::DashboardState {
         let mut edit_title = crate::tui::text_input::TextInputState::default();
         edit_title.set_value(title.clone());
 
-        self.popups.modal = Some(ModalPopup::ThreadEdit(ThreadEditState {
-            channel_id,
-            is_forum_post,
-            title: edit_title,
-            editing_title: false,
-            edit_input: crate::tui::text_input::TextInputState::default(),
-            selected_tag_ids,
-            tag_order: Vec::new(),
-            selected_tag_index: 0,
-            tag_scroll: 0,
-            editing_tags: false,
-            rate_limit_index,
-            auto_archive_index,
-            can_set_slow_mode,
-            active_field: ThreadEditField::Title,
-            status: None,
-            scroll: super::ScrollablePopupState::default(),
-            pending_scroll_reveal: true,
-        }));
+        self.popups
+            .set_modal(ModalPopup::ThreadEdit(ThreadEditState {
+                channel_id,
+                is_forum_post,
+                title: edit_title,
+                editing_title: false,
+                edit_input: crate::tui::text_input::TextInputState::default(),
+                selected_tag_ids,
+                tag_order: Vec::new(),
+                tag_selection: Default::default(),
+                editing_tags: false,
+                rate_limit_index,
+                auto_archive_index,
+                can_set_slow_mode,
+                active_field: ThreadEditField::Title,
+                status: None,
+                scroll: super::ScrollablePopupState::default(),
+                pending_scroll_reveal: true,
+            }));
     }
 
     pub fn close_thread_edit(&mut self) {
@@ -203,7 +202,7 @@ impl super::super::DashboardState {
                     custom_emoji_url: emoji.custom_emoji_url,
                     custom_emoji_label: emoji.custom_emoji_label,
                     selected,
-                    active: popup.editing_tags && index == popup.selected_tag_index,
+                    active: popup.editing_tags && index == popup.tag_selection.selected(),
                     selectable: selected || !cap_reached,
                 })
             })
@@ -229,7 +228,7 @@ impl super::super::DashboardState {
             title_cursor,
             is_forum_post: popup.is_forum_post,
             tags,
-            tag_scroll: popup.tag_scroll,
+            tag_scroll: popup.tag_selection.scroll(),
             requires_tag,
             slow_mode_label: SLOW_MODE_OPTIONS[popup.rate_limit_index].1.to_owned(),
             can_set_slow_mode: popup.can_set_slow_mode,
@@ -287,11 +286,11 @@ impl super::super::DashboardState {
             return;
         };
         if editing_tags {
-            if tag_count > 0
-                && let Some(popup) = self.popups.thread_edit_mut()
-            {
-                popup.selected_tag_index =
-                    (popup.selected_tag_index + 1).min(tag_count.saturating_sub(1));
+            if tag_count > 0 {
+                self.move_selectable_popup(
+                    SelectablePopupTarget::ThreadEditTags,
+                    SelectionAction::Next,
+                );
             }
         } else {
             self.cycle_thread_edit_field_next();
@@ -304,19 +303,12 @@ impl super::super::DashboardState {
             .thread_edit()
             .is_some_and(|popup| popup.editing_tags);
         if editing_tags {
-            if let Some(popup) = self.popups.thread_edit_mut() {
-                popup.selected_tag_index = popup.selected_tag_index.saturating_sub(1);
-            }
+            self.move_selectable_popup(
+                SelectablePopupTarget::ThreadEditTags,
+                SelectionAction::Previous,
+            );
         } else {
             self.cycle_thread_edit_field_previous();
-        }
-    }
-
-    pub fn set_thread_edit_tag_picker_view_height(&mut self, height: usize) {
-        if let Some(popup) = self.popups.thread_edit_mut() {
-            let len = popup.tag_order.len();
-            let cursor = popup.selected_tag_index.min(len.saturating_sub(1));
-            popup.tag_scroll = clamp_list_scroll(cursor, popup.tag_scroll, height.max(1), len);
         }
     }
 
@@ -401,11 +393,12 @@ impl super::super::DashboardState {
     }
 
     pub fn toggle_selected_thread_edit_tag(&mut self) {
-        let Some(tag_id) = self
-            .popups
-            .thread_edit()
-            .and_then(|popup| popup.tag_order.get(popup.selected_tag_index).copied())
-        else {
+        let Some(tag_id) = self.popups.thread_edit().and_then(|popup| {
+            popup
+                .tag_order
+                .get(popup.tag_selection.selected_for_len(popup.tag_order.len()))
+                .copied()
+        }) else {
             return;
         };
         if let Some(popup) = self.popups.thread_edit_mut() {
@@ -533,7 +526,7 @@ impl super::super::DashboardState {
             return;
         }
         popup.tag_order = ordered;
-        popup.selected_tag_index = 0;
+        popup.tag_selection = Default::default();
         popup.editing_tags = true;
         popup.status = None;
     }

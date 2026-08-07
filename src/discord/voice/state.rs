@@ -111,10 +111,10 @@ pub(in crate::discord) struct VoiceState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::discord) struct StreamState {
-    scope: VoiceScope,
-    channel_id: Id<ChannelMarker>,
-    owner_id: Id<UserMarker>,
-    viewer_ids: BTreeSet<Id<UserMarker>>,
+    pub(in crate::discord) scope: VoiceScope,
+    pub(in crate::discord) channel_id: Id<ChannelMarker>,
+    pub(in crate::discord) owner_id: Id<UserMarker>,
+    pub(in crate::discord) viewer_ids: BTreeSet<Id<UserMarker>>,
     paused: bool,
 }
 
@@ -286,11 +286,11 @@ impl DiscordState {
             .into_iter()
             .flat_map(|stream| stream.viewer_ids.iter().copied())
             .filter(|user_id| *user_id != owner_id)
-            .map(|user_id| self.stream_participant_display_name(scope, user_id))
+            .map(|user_id| self.stream_participant_display_name(scope, channel_id, user_id))
             .collect();
         StreamParticipantList {
             paused,
-            broadcaster: self.stream_participant_display_name(scope, owner_id),
+            broadcaster: self.stream_participant_display_name(scope, channel_id, owner_id),
             viewers,
         }
     }
@@ -335,7 +335,7 @@ impl DiscordState {
         VoiceParticipantState {
             user_id: state.user_id,
             display_name: self
-                .voice_participant_display_name(scope, state.user_id)
+                .voice_participant_display_name(scope, state.channel_id, state.user_id)
                 .unwrap_or_else(|| format!("user-{}", state.user_id.get())),
             deaf: state.deaf,
             mute: state.mute,
@@ -352,39 +352,26 @@ impl DiscordState {
     fn voice_participant_display_name(
         &self,
         scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
         user_id: Id<UserMarker>,
     ) -> Option<String> {
-        match scope {
-            VoiceScope::Guild(guild_id) => self
-                .member_display_name(guild_id, user_id)
-                .map(str::to_owned),
-            VoiceScope::Private(channel_id) => {
-                if self.session.current_user_id == Some(user_id)
-                    && let Some(name) = self.session.current_user.clone()
-                {
-                    return Some(name);
-                }
-                self.channel(channel_id)?
-                    .recipients
-                    .iter()
-                    .find(|recipient| recipient.user_id == user_id)
-                    .map(|recipient| recipient.display_name.clone())
-            }
-        }
+        self.user_display_name_for_channel(channel_id, user_id)
+            .or_else(|| match scope {
+                VoiceScope::Guild(guild_id) => self
+                    .member_display_name(guild_id, user_id)
+                    .filter(|name| *name != "unknown")
+                    .map(str::to_owned),
+                VoiceScope::Private(_) => None,
+            })
     }
 
     fn stream_participant_display_name(
         &self,
         scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
         user_id: Id<UserMarker>,
     ) -> String {
-        self.voice_participant_display_name(scope, user_id)
-            .or_else(|| {
-                self.session
-                    .ready_users
-                    .get(&user_id)
-                    .map(|user| user.display_name.clone())
-            })
+        self.voice_participant_display_name(scope, channel_id, user_id)
             .unwrap_or_else(|| format!("user-{}", user_id.get()))
     }
 

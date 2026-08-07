@@ -42,8 +42,18 @@ pub struct MemberInfo {
     /// [`ChannelRecipientInfo::username`].
     pub username: Option<String>,
     pub is_bot: bool,
+    /// Whether the source payload included the user's `bot` field. Partial
+    /// member payloads often omit the nested user fields, so `false` alone
+    /// cannot safely replace a cached value.
+    pub is_bot_present: bool,
     pub avatar_url: Option<String>,
+    /// Whether the source payload carried enough avatar fields to replace a
+    /// cached avatar without guessing from an incomplete nested user.
+    pub avatar_url_present: bool,
     pub role_ids: Vec<Id<RoleMarker>>,
+    /// Whether the source payload included `roles`. An omitted field is a
+    /// partial patch, while an empty array means the member has no roles.
+    pub role_ids_present: bool,
     /// When this member joined the server. Required for HIGH verification.
     pub joined_at: Option<DateTime<Utc>>,
     /// Discord guild member flags, including BYPASSES_VERIFICATION.
@@ -68,8 +78,11 @@ impl MemberInfo {
             display_name: display_name.into(),
             username: None,
             is_bot: false,
+            is_bot_present: true,
             avatar_url: None,
+            avatar_url_present: true,
             role_ids: Vec::new(),
+            role_ids_present: true,
             joined_at: None,
             flags: None,
             pending: None,

@@ -1,6 +1,6 @@
 use crate::discord::ids::{Id, marker::ChannelMarker};
 use crate::discord::{AppCommand, DiscordAction, StreamCaptureTarget, VoiceScope};
-use crate::tui::keybindings::KeyChord;
+use crate::tui::keybindings::{KeyChord, SelectionAction};
 
 use super::super::model::{
     ActionAvailability, ChannelActionItem, ChannelActionKind, ChannelPaneEntry, FocusPane,
@@ -8,12 +8,12 @@ use super::super::model::{
 };
 use super::super::{DashboardState, MuteActionDurationItem};
 use super::ModalPopup;
-use super::{ChannelActionMenuState, SelectablePopupState};
+use super::{ChannelActionMenuState, SelectablePopupState, SelectablePopupTarget};
 
 impl DashboardState {
     pub(in crate::tui) fn open_selected_channel_actions(&mut self) {
         if let Some(menu) = self.selected_channel_action_context() {
-            self.popups.modal = Some(ModalPopup::ChannelActionMenu(menu));
+            self.popups.set_modal(ModalPopup::ChannelActionMenu(menu));
         }
     }
 
@@ -305,16 +305,14 @@ impl DashboardState {
     }
 
     pub fn move_channel_action_down(&mut self) {
-        let len = self.channel_action_row_count();
-        if let Some(selection) = self.channel_action_selection_mut() {
-            selection.move_down(len);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::ChannelActions, SelectionAction::Next);
     }
 
     pub fn move_channel_action_up(&mut self) {
-        if let Some(selection) = self.channel_action_selection_mut() {
-            selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::ChannelActions,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn select_channel_action_row(&mut self, row: usize) -> bool {

@@ -16,20 +16,35 @@ pub(in crate::tui::ui) fn render_search_popup(
     let Some(view) = state.search_popup_view() else {
         return;
     };
-    let popup = search_popup_area(area, &view);
-    let max_result_lines = search_popup_result_capacity(popup, &view);
-    render_modal_paragraph(
-        frame,
-        popup,
-        view.mode.title(),
-        search_popup_lines(
+    let layout = search_popup_render_layout(area, &view, state.animation_frame());
+    let inner = render_modal_frame(frame, layout.popup, view.mode.title());
+    frame.render_widget(Paragraph::new(layout.header_lines), layout.header);
+    frame.render_widget(
+        Paragraph::new(search_popup_result_lines(
             &view,
-            max_result_lines,
-            popup.width as usize - 2,
-            state.animation_frame(),
-        ),
+            usize::from(layout.results.height),
+            usize::from(layout.results.width),
+        )),
+        layout.results,
     );
-    if let Some(position) = search_popup_cursor_position(popup, &view) {
+    frame.render_widget(Paragraph::new(layout.footer_lines), layout.footer);
+    let (scroll, content_len) = if view.suggestions.is_empty() {
+        (view.scroll, view.results.len())
+    } else {
+        (view.suggestion_scroll, view.suggestions.len())
+    };
+    render_vertical_scrollbar(
+        frame,
+        Rect {
+            y: layout.results.y,
+            height: layout.results.height,
+            ..inner
+        },
+        scroll,
+        usize::from(layout.results.height),
+        content_len,
+    );
+    if let Some(position) = search_popup_cursor_position(layout.popup, &view) {
         frame.set_cursor_position(position);
     }
 }
@@ -51,23 +66,87 @@ pub(in crate::tui::ui) fn search_popup_area_for_state(
     Some(search_popup_area(area, &view))
 }
 
-fn search_popup_result_capacity(popup: Rect, view: &SearchPopupView) -> usize {
-    usize::from(
-        popup
-            .height
-            .saturating_sub(view.fields.len() as u16)
-            .saturating_sub(if view.loading { 6 } else { 4 }),
-    )
-    .max(1)
+struct SearchPopupRenderLayout {
+    popup: Rect,
+    header: Rect,
+    results: Rect,
+    footer: Rect,
+    header_lines: Vec<Line<'static>>,
+    footer_lines: Vec<Line<'static>>,
 }
 
-pub(in crate::tui::ui) fn search_popup_visible_items(area: Rect, view: &SearchPopupView) -> usize {
-    search_popup_result_capacity(search_popup_area(area, view), view)
-}
-
-pub(in crate::tui::ui) fn search_popup_lines(
+fn search_popup_render_layout(
+    area: Rect,
     view: &SearchPopupView,
-    max_result_lines: usize,
+    animation_frame: usize,
+) -> SearchPopupRenderLayout {
+    let popup = search_popup_area(area, view);
+    let inner = panel_block(view.mode.title(), true).inner(popup);
+    let content = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
+    let width = usize::from(content.width).max(1);
+    let header_lines = search_popup_header_lines(view, width, animation_frame);
+    let footer_lines = search_popup_footer_lines(view, width);
+    let header_height = u16::try_from(header_lines.len())
+        .unwrap_or(u16::MAX)
+        .min(content.height);
+    let footer_height = u16::try_from(footer_lines.len())
+        .unwrap_or(u16::MAX)
+        .min(content.height.saturating_sub(header_height));
+    let results_height = content
+        .height
+        .saturating_sub(header_height)
+        .saturating_sub(footer_height);
+    let header = Rect {
+        height: header_height,
+        ..content
+    };
+    let results = Rect {
+        y: content.y.saturating_add(header_height),
+        height: results_height,
+        ..content
+    };
+    let footer = Rect {
+        y: results.y.saturating_add(results.height),
+        height: footer_height,
+        ..content
+    };
+    SearchPopupRenderLayout {
+        popup,
+        header,
+        results,
+        footer,
+        header_lines,
+        footer_lines,
+    }
+}
+
+pub(in crate::tui::ui) fn search_popup_list_layout(
+    area: Rect,
+    state: &DashboardState,
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
+    let view = state
+        .search_popup_view()
+        .expect("selectable search popup has a view");
+    let layout = search_popup_render_layout(area, &view, state.animation_frame());
+    SelectablePopupLayout::new(
+        snapshot.target,
+        layout.popup,
+        layout.results,
+        snapshot,
+        |start, max_rows| {
+            (start..snapshot.item_count.min(start.saturating_add(max_rows)))
+                .map(Some)
+                .collect()
+        },
+    )
+}
+
+fn search_popup_header_lines(
+    view: &SearchPopupView,
     width: usize,
     animation_frame: usize,
 ) -> Vec<Line<'static>> {
@@ -107,47 +186,55 @@ pub(in crate::tui::ui) fn search_popup_lines(
         );
     }
 
+    lines
+}
+
+fn search_popup_result_lines(
+    view: &SearchPopupView,
+    max_result_lines: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
+    if max_result_lines == 0 {
+        return Vec::new();
+    }
     if !view.suggestions.is_empty() {
         let start = view
             .suggestion_scroll
             .min(view.suggestions.len().saturating_sub(max_result_lines));
-        for (index, suggestion) in view
+        return view
             .suggestions
             .iter()
             .enumerate()
             .skip(start)
             .take(max_result_lines)
-        {
-            lines.push(search_suggestion_line(
-                suggestion,
-                index == view.selected_suggestion,
-                width,
-            ));
-        }
-        return lines;
+            .map(|(index, suggestion)| {
+                search_suggestion_line(suggestion, index == view.selected_suggestion, width)
+            })
+            .collect();
     }
 
     if view.results.is_empty() && !view.loading {
-        lines.push(Line::from(Span::styled(
+        return vec![Line::from(Span::styled(
             "No results",
             theme::current().style(theme::HighlightGroup::Placeholder),
-        )));
-        return lines;
+        ))];
     }
 
     let start = view
         .scroll
         .min(view.results.len().saturating_sub(max_result_lines));
-    for (index, result) in view
-        .results
+    view.results
         .iter()
         .enumerate()
         .skip(start)
         .take(max_result_lines)
-    {
-        lines.push(search_result_line(result, index == view.selected, width));
-    }
-    if view.has_more {
+        .map(|(index, result)| search_result_line(result, index == view.selected, width))
+        .collect()
+}
+
+fn search_popup_footer_lines(view: &SearchPopupView, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if view.suggestions.is_empty() && view.has_more {
         push_wrapped_styled_popup_text(
             &mut lines,
             "More results: [Down/PageDown] load more at the end",
@@ -280,6 +367,6 @@ fn search_popup_cursor_position(popup: Rect, view: &SearchPopupView) -> Option<P
         .x
         .saturating_add(1)
         .saturating_add((label_width + value_width) as u16)
-        .min(popup.x.saturating_add(popup.width.saturating_sub(2)));
+        .min(popup.x.saturating_add(popup.width.saturating_sub(3)));
     Some(Position::new(x, popup.y.saturating_add(1 + row as u16)))
 }

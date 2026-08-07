@@ -145,6 +145,11 @@ fn remove_embeds_message_action_emits_command_for_unsuppressed_embeds() {
     assert!(
         state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
+    state.open_popup_keymap_prefix(
+        crate::tui::state::PopupKeymapContext::Confirmation,
+        Vec::new(),
+    );
+    assert!(state.is_key_sequence_active());
 
     assert_eq!(
         state.confirm_message_confirmation(),
@@ -153,6 +158,7 @@ fn remove_embeds_message_action_emits_command_for_unsuppressed_embeds() {
             message_id: Id::new(1),
         })
     );
+    assert!(!state.is_key_sequence_active());
 }
 
 #[test]

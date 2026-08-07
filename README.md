@@ -11,6 +11,7 @@ Concord is a feature-rich TUI client for Discord, written in Rust with ratatui.
 - [Features](#features)
 - [Configuration](#configuration)
 - [Performance](#performance)
+- [Debug mode](#debug-mode)
 - [FAQ](#faq)
 - [Security](#security)
 - [Contributing](#contributing)
@@ -88,16 +89,18 @@ macOS 13 or later is required. Linux release builds need these packages:
 
 ```sh
 # Fedora
-sudo dnf install alsa-lib opus pipewire-libs xdg-desktop-portal
+sudo dnf install alsa-lib libva mesa-libEGL pipewire-libs xdg-desktop-portal
 
 # Debian or Ubuntu
-sudo apt install libasound2 libopus0 libpipewire-0.3-0 xdg-desktop-portal
+sudo apt install libasound2 libegl1 libpipewire-0.3-0 libva-drm2 libva2 xdg-desktop-portal
 
 # Arch Linux
-sudo pacman -S alsa-lib opus pipewire xdg-desktop-portal
+sudo pacman -S alsa-lib libva mesa pipewire xdg-desktop-portal
 ```
 
 Screen sharing requires the portal backend for your desktop environment.
+Concord uses native H.264 hardware encoding when available: VA API on Linux,
+VideoToolbox on macOS, and Media Foundation on Windows. If hardware encoding is unavailable, Concord falls back to software encoding.
 
 ### Build from source
 
@@ -109,17 +112,17 @@ Install the Rust stable toolchain and the native dependencies for your platform:
 ```sh
 # macOS
 xcode-select --install
-brew install opus pkg-config
+brew install cmake pkg-config
 brew install nasm # Intel only
 
 # Fedora
-sudo dnf install alsa-lib-devel clang-devel gcc gcc-c++ nasm opus-devel pipewire-devel pkgconf-pkg-config
+sudo dnf install alsa-lib-devel clang-devel cmake gcc gcc-c++ libva-devel nasm pipewire-devel pkgconf-pkg-config
 
 # Debian or Ubuntu
-sudo apt install build-essential libasound2-dev libclang-dev libopus-dev libpipewire-0.3-dev nasm pkg-config
+sudo apt install build-essential cmake libasound2-dev libclang-dev libpipewire-0.3-dev libva-dev nasm pkg-config
 
 # Arch Linux
-sudo pacman -S alsa-lib base-devel clang nasm opus pipewire pkgconf
+sudo pacman -S alsa-lib base-devel clang cmake libva mesa nasm pipewire pkgconf
 ```
 
 Windows source builds require the MSVC Rust toolchain, Visual Studio 2022 Build
@@ -439,6 +442,7 @@ leader = "space"
 StartComposer = "i"
 OpenPaneFilter = "/"
 ClosePopup = "q"
+OpenDebugLog = "`"
 FocusGuildPane = "1"
 FocusChannelPane = "2"
 FocusMessagePane = "3"
@@ -996,6 +1000,11 @@ Image-heavy screens can temporarily use more memory because compressed image
 bytes need to be decoded before they can be rendered in the terminal. When many
 images are loaded, memory can briefly rise to around 100-200 MB while decoding
 and then drop again as work completes and caches are pruned.
+
+## Debug mode
+
+Run `CONCORD_DEBUG=1 concord`. Logs are written to `concord.log` in the Concord
+config directory.
 
 ## FAQ
 

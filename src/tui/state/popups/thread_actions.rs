@@ -3,7 +3,7 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker},
 };
 use crate::discord::{AppCommand, DiscordAction, MuteDuration};
-use crate::tui::keybindings::KeyChord;
+use crate::tui::keybindings::{KeyChord, SelectionAction};
 
 use super::super::model::{ActionAvailability, FocusPane, MUTE_ACTION_DURATIONS};
 use super::super::{
@@ -11,7 +11,8 @@ use super::super::{
     ThreadNotificationItem,
 };
 use super::{
-    ActiveModalPopupKind, ModalPopup, ThreadActionMenuState, ThreadDeleteConfirmationState,
+    ActiveModalPopupKind, ModalPopup, SelectablePopupTarget, ThreadActionMenuState,
+    ThreadDeleteConfirmationState,
 };
 
 impl DashboardState {
@@ -22,7 +23,7 @@ impl DashboardState {
         let Some((guild_id, channel_id)) = self.focused_thread_action_target() else {
             return false;
         };
-        self.popups.modal = Some(ModalPopup::ThreadActionMenu(
+        self.popups.set_modal(ModalPopup::ThreadActionMenu(
             ThreadActionMenuState::Actions {
                 guild_id,
                 channel_id,
@@ -396,16 +397,14 @@ impl DashboardState {
     }
 
     pub fn move_thread_action_down(&mut self) {
-        let len = self.thread_action_row_count();
-        if let Some(selection) = self.thread_action_selection_mut() {
-            selection.move_down(len);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::ThreadActions, SelectionAction::Next);
     }
 
     pub fn move_thread_action_up(&mut self) {
-        if let Some(selection) = self.thread_action_selection_mut() {
-            selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::ThreadActions,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn activate_selected_thread_action(&mut self) -> Option<AppCommand> {
@@ -662,7 +661,7 @@ impl DashboardState {
             .and_then(|parent_id| self.discord.cache.channel(parent_id))
             .is_some_and(|parent| parent.is_forum());
         self.popups.confirmation_button = super::ConfirmationButton::default();
-        self.popups.modal = Some(ModalPopup::ThreadDeleteConfirmation(
+        self.popups.set_modal(ModalPopup::ThreadDeleteConfirmation(
             ThreadDeleteConfirmationState {
                 channel_id,
                 name,

@@ -12,6 +12,7 @@ use crate::{
     DiscordClient,
     discord::{AppEvent, AttachmentDownloadId, DownloadAttachmentSource, MediaPlaybackRequestId},
     logging,
+    support::media_player::MediaPlayerIpcEndpoint,
     url_policy::normalize_openable_url,
 };
 
@@ -21,7 +22,6 @@ const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 const ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const ATTACHMENT_DOWNLOAD_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 const MEDIA_PLAYER_WINDOW_READY_TIMEOUT: Duration = Duration::from_secs(300);
-const MEDIA_PLAYER_IPC_CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 const MEDIA_PLAYER_IPC_WINDOW_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(super) async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, String> {
@@ -250,13 +250,7 @@ pub(super) async fn play_media(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let child = match command.spawn().map_err(media_player_spawn_error) {
-        Ok(child) => child,
-        Err(error) => {
-            ipc_endpoint.cleanup();
-            return Err(error);
-        }
-    };
+    let child = command.spawn().map_err(media_player_spawn_error)?;
     let url = url.to_owned();
     let label = media_playback_label(label).to_owned();
     let _player_monitor_task = tokio::spawn(async move {
@@ -275,7 +269,7 @@ async fn monitor_media_player_window(
 ) {
     let ready_timeout = sleep(MEDIA_PLAYER_WINDOW_READY_TIMEOUT);
     tokio::pin!(ready_timeout);
-    let ready_result = wait_for_media_player_window_ready(ipc_endpoint.clone());
+    let ready_result = wait_for_media_player_window_ready(&ipc_endpoint);
     tokio::pin!(ready_result);
 
     let outcome = tokio::select! {
@@ -320,8 +314,6 @@ async fn monitor_media_player_window(
             )
         }
     };
-
-    ipc_endpoint.cleanup();
 
     match outcome {
         MediaPlayerWindowMonitorOutcome::Ready => {
@@ -387,84 +379,16 @@ fn media_player_command_spec_for_url_with_ipc(
     })
 }
 
-#[derive(Clone, Debug)]
-struct MediaPlayerIpcEndpoint {
-    server_arg: String,
-    #[cfg(unix)]
-    socket_path: PathBuf,
-}
-
-impl MediaPlayerIpcEndpoint {
-    fn unique() -> Self {
-        let id = uuid::Uuid::new_v4();
-
-        #[cfg(unix)]
-        {
-            let socket_path = std::env::temp_dir().join(format!("concord-mpv-{id}.sock"));
-            Self {
-                server_arg: socket_path.display().to_string(),
-                socket_path,
-            }
-        }
-
-        #[cfg(windows)]
-        {
-            Self {
-                server_arg: format!(r"\\.\pipe\concord-mpv-{id}"),
-            }
-        }
-
-        #[cfg(not(any(unix, windows)))]
-        {
-            Self {
-                server_arg: std::env::temp_dir()
-                    .join(format!("concord-mpv-{id}.sock"))
-                    .display()
-                    .to_string(),
-            }
-        }
-    }
-
-    fn server_arg(&self) -> &str {
-        &self.server_arg
-    }
-
-    fn prepare(&self) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            match fs::remove_file(&self.socket_path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
-        }
-
-        #[cfg(not(unix))]
-        {
-            Ok(())
-        }
-    }
-
-    fn cleanup(&self) {
-        #[cfg(unix)]
-        if let Err(error) = fs::remove_file(&self.socket_path)
-            && error.kind() != io::ErrorKind::NotFound
-        {
-            logging::error("media", format!("media player IPC cleanup failed: {error}"));
-        }
-    }
-}
-
-async fn wait_for_media_player_window_ready(endpoint: MediaPlayerIpcEndpoint) -> io::Result<()> {
+async fn wait_for_media_player_window_ready(endpoint: &MediaPlayerIpcEndpoint) -> io::Result<()> {
     #[cfg(unix)]
     {
-        let stream = connect_media_player_unix_ipc(&endpoint).await?;
+        let stream = endpoint.connect().await?;
         wait_for_mpv_window_id(stream).await
     }
 
     #[cfg(windows)]
     {
-        let stream = connect_media_player_windows_ipc(&endpoint).await?;
+        let stream = endpoint.connect().await?;
         wait_for_mpv_window_id(stream).await
     }
 
@@ -476,43 +400,6 @@ async fn wait_for_media_player_window_ready(endpoint: MediaPlayerIpcEndpoint) ->
             "media player IPC is not supported on this platform",
         ))
     }
-}
-
-#[cfg(unix)]
-async fn connect_media_player_unix_ipc(
-    endpoint: &MediaPlayerIpcEndpoint,
-) -> io::Result<tokio::net::UnixStream> {
-    loop {
-        match tokio::net::UnixStream::connect(&endpoint.socket_path).await {
-            Ok(stream) => return Ok(stream),
-            Err(error) if media_player_ipc_connect_error_is_retryable(&error) => {
-                sleep(MEDIA_PLAYER_IPC_CONNECT_RETRY_INTERVAL).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-#[cfg(windows)]
-async fn connect_media_player_windows_ipc(
-    endpoint: &MediaPlayerIpcEndpoint,
-) -> io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
-    loop {
-        match tokio::net::windows::named_pipe::ClientOptions::new().open(endpoint.server_arg()) {
-            Ok(stream) => return Ok(stream),
-            Err(error) if media_player_ipc_connect_error_is_retryable(&error) => {
-                sleep(MEDIA_PLAYER_IPC_CONNECT_RETRY_INTERVAL).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn media_player_ipc_connect_error_is_retryable(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused | io::ErrorKind::WouldBlock
-    )
 }
 
 async fn wait_for_mpv_window_id<S>(stream: S) -> io::Result<()>

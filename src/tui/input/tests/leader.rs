@@ -31,7 +31,7 @@ fn keymap_leader_e_starts_composer() {
     assert!(state.is_leader_active());
     assert!(
         state
-            .leader_keymap_shortcuts()
+            .key_sequence_shortcuts()
             .iter()
             .any(|item| item.key == "e" && item.label == "start composer")
     );
@@ -55,7 +55,7 @@ fn keymap_nested_leader_m_r_replies_to_message() {
     state.focus_pane(FocusPane::Messages);
 
     handle_key(&mut state, char_key(' '));
-    let root_shortcuts = state.leader_keymap_shortcuts();
+    let root_shortcuts = state.key_sequence_shortcuts();
     assert!(
         root_shortcuts
             .iter()
@@ -63,7 +63,7 @@ fn keymap_nested_leader_m_r_replies_to_message() {
     );
 
     handle_key(&mut state, char_key('m'));
-    let nested_shortcuts = state.leader_keymap_shortcuts();
+    let nested_shortcuts = state.key_sequence_shortcuts();
     assert_eq!(nested_shortcuts[0].key, "r");
     assert_eq!(nested_shortcuts[0].label, "reply");
 
@@ -123,8 +123,8 @@ fn keymap_compact_root_prefix_opens_popup_then_executes() {
     handle_key(&mut state, char_key('f'));
 
     assert!(state.is_leader_active());
-    assert_eq!(state.leader_keymap_title(), "f");
-    assert_eq!(state.leader_keymap_shortcuts()[0].key, "d");
+    assert_eq!(state.key_sequence_title(), "f");
+    assert_eq!(state.key_sequence_shortcuts()[0].key, "d");
 
     handle_key(&mut state, char_key('d'));
 
@@ -149,7 +149,7 @@ fn keymap_configured_d_prefix_overrides_message_delete_default() {
 
     assert_eq!(command, None);
     assert!(state.is_leader_active());
-    assert_eq!(state.leader_keymap_title(), "d");
+    assert_eq!(state.key_sequence_title(), "d");
     assert!(
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
@@ -254,7 +254,7 @@ fn keymap_leader_n_opens_notification_inbox_and_switches_tabs() {
     handle_key(&mut state, char_key(' '));
     assert!(
         state
-            .leader_keymap_shortcuts()
+            .key_sequence_shortcuts()
             .iter()
             .any(|item| item.key == "n" && item.label == "Notification inbox")
     );
@@ -614,7 +614,7 @@ fn keymap_leader_ctrl_w_opens_channel_switcher() {
     handle_key(&mut state, char_key(' '));
     assert!(
         state
-            .leader_keymap_shortcuts()
+            .key_sequence_shortcuts()
             .iter()
             .any(|item| item.key == "Ctrl+w" && item.label == "Switch channels")
     );
@@ -658,8 +658,8 @@ fn keymap_non_leader_prefix_opens_which_key_then_executes() {
 
     handle_key(&mut state, ctrl_key('w'));
     assert!(state.is_leader_active());
-    assert_eq!(state.leader_keymap_title(), "<C-w>");
-    let shortcuts = state.leader_keymap_shortcuts();
+    assert_eq!(state.key_sequence_title(), "<C-w>");
+    let shortcuts = state.key_sequence_shortcuts();
     assert!(
         shortcuts
             .iter()
@@ -687,12 +687,12 @@ fn keymap_non_leader_nested_prefix_title_tracks_sequence() {
     });
 
     handle_key(&mut state, ctrl_key('e'));
-    assert_eq!(state.leader_keymap_title(), "<C-e>");
-    assert_eq!(state.leader_keymap_shortcuts()[0].key, "q");
+    assert_eq!(state.key_sequence_title(), "<C-e>");
+    assert_eq!(state.key_sequence_shortcuts()[0].key, "q");
 
     handle_key(&mut state, char_key('q'));
-    assert_eq!(state.leader_keymap_title(), "<C-e>q");
-    assert_eq!(state.leader_keymap_shortcuts()[0].key, "e");
+    assert_eq!(state.key_sequence_title(), "<C-e>q");
+    assert_eq!(state.key_sequence_shortcuts()[0].key, "e");
 
     handle_key(&mut state, char_key('e'));
     assert_eq!(state.options_popup_title(), "Options");
@@ -718,7 +718,7 @@ fn keymap_description_overrides_which_key_label() {
     handle_key(&mut state, ctrl_key('w'));
     assert!(
         state
-            .leader_keymap_shortcuts()
+            .key_sequence_shortcuts()
             .iter()
             .any(|item| item.key == "f" && item.label == "find channel")
     );
@@ -984,7 +984,7 @@ fn leader_v_opens_voice_keymap_group() {
     assert!(state.is_leader_active());
     assert!(
         state
-            .leader_keymap_shortcuts()
+            .key_sequence_shortcuts()
             .iter()
             .any(|item| item.key == "m" && item.label == "mute voice")
     );
@@ -1162,16 +1162,32 @@ fn leader_leader_switcher_opens_direct_message() {
 }
 
 #[test]
-fn leader_leader_switcher_j_and_k_type_into_search() {
-    let mut state = state_with_channel_tree();
+fn leader_leader_switcher_printable_navigation_keys_type_into_search() {
+    let state = state_with_keymap(KeymapOptions {
+        mappings: [
+            ("ClosePopup".to_owned(), KeymapBinding::one("pagedown")),
+            ("HalfPageDown".to_owned(), KeymapBinding::one("x")),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    });
+    let mut state = state_with_channel_tree_from_state(state);
 
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key(' '));
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, char_key('k'));
+    handle_key(&mut state, char_key('g'));
+    handle_key(&mut state, char_key('g'));
+    handle_key(&mut state, char_key('G'));
+    handle_key(&mut state, char_key('x'));
 
-    assert_eq!(state.channel_switcher_query(), Some("jk"));
+    assert_eq!(state.channel_switcher_query(), Some("jkggGx"));
     assert_eq!(state.selected_channel_switcher_index(), Some(0));
+
+    handle_key(&mut state, key(KeyCode::PageDown));
+    assert_eq!(state.channel_switcher_query(), None);
 }
 
 #[test]
@@ -1222,18 +1238,47 @@ fn leader_leader_switcher_left_right_move_search_cursor() {
 }
 
 #[test]
-fn mouse_input_closes_leader_hint() {
-    let mut state = DashboardState::new();
-    handle_key(&mut state, char_key(' '));
-    assert!(state.is_leader_active());
+fn mouse_input_closes_key_sequence_hints_before_routing_the_event() {
+    {
+        let mut state = DashboardState::new();
+        handle_key(&mut state, char_key(' '));
+        assert!(state.is_leader_active());
 
-    handle_mouse(
-        &mut state,
-        mouse(MouseEventKind::Down(MouseButton::Left), 50, 1),
-        dashboard_area(),
-    );
+        handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), 50, 1),
+            dashboard_area(),
+        );
 
-    assert!(!state.is_leader_active());
+        assert!(!state.is_leader_active());
+    }
+
+    {
+        let mut state = state_with_messages_from_state(
+            state_with_keymap(KeymapOptions {
+                mappings: [("HalfPageDown".to_owned(), KeymapBinding::one("z d"))]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }),
+            1,
+        );
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('z'));
+        assert!(state.is_key_sequence_active());
+        assert_eq!(state.selected_message_action_index(), Some(0));
+
+        handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollDown, 50, 1),
+            dashboard_area(),
+        );
+
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+        assert_eq!(state.selected_message_action_index(), Some(1));
+    }
 }
 
 #[test]

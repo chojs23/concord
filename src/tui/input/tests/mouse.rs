@@ -451,7 +451,7 @@ fn mouse_wheel_scrolls_message_viewport_without_changing_selection() {
 }
 
 #[test]
-fn user_profile_popup_absorbs_left_clicks_only_inside_popup() {
+fn user_profile_popup_absorbs_all_backdrop_clicks() {
     let mut state = DashboardState::new();
     state.focus_pane(FocusPane::Messages);
     state.open_user_profile_popup(Id::new(10), None);
@@ -469,7 +469,7 @@ fn user_profile_popup_absorbs_left_clicks_only_inside_popup() {
         mouse(MouseEventKind::Down(MouseButton::Left), 100, 1),
         dashboard_area(),
     ));
-    assert_eq!(state.focus(), FocusPane::Members);
+    assert_eq!(state.focus(), FocusPane::Messages);
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::UserProfile));
 }
 
@@ -532,24 +532,61 @@ fn mouse_double_click_activates_message_action_row_like_enter() {
 }
 
 #[test]
-fn mouse_wheel_moves_message_action_selection() {
-    let mut state = state_with_thread_created_message();
-    state.focus_pane(FocusPane::Messages);
-    handle_key(&mut state, key(KeyCode::Enter));
-    let count = state.selected_message_action_items().len() as u16;
-    let (column, row) = message_action_row_point(count, 0);
+fn mouse_wheel_moves_active_popup_lists() {
+    {
+        let mut state = state_with_thread_created_message();
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        let count = state.selected_message_action_items().len() as u16;
+        let (column, row) = message_action_row_point(count, 0);
 
-    assert!(handle_mouse(
-        &mut state,
-        mouse(MouseEventKind::ScrollDown, column, row),
-        dashboard_area(),
-    ));
-    assert_eq!(state.selected_message_action_index(), Some(1));
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollDown, column, row),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_message_action_index(), Some(1));
 
-    assert!(handle_mouse(
-        &mut state,
-        mouse(MouseEventKind::ScrollUp, column, row),
-        dashboard_area(),
-    ));
-    assert_eq!(state.selected_message_action_index(), Some(0));
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollUp, column, row),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_message_action_index(), Some(0));
+    }
+
+    {
+        let mut state = state_with_messages(1);
+        state.open_options_popup();
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollDown, 60, 10),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_option_index(), Some(1));
+
+        assert!(handle_mouse(
+            &mut state,
+            mouse(MouseEventKind::ScrollUp, 60, 10),
+            dashboard_area(),
+        ));
+        assert_eq!(state.selected_option_index(), Some(0));
+
+        let (column, row) = (0..dashboard_area().height)
+            .flat_map(|row| (0..dashboard_area().width).map(move |column| (column, row)))
+            .find(|(column, row)| {
+                crate::tui::ui::mouse_target_at(dashboard_area(), &state, *column, *row)
+                    == Some(crate::tui::ui::MouseTarget::PopupRow {
+                        target: SelectablePopupTarget::Options,
+                        row: 0,
+                    })
+            })
+            .expect("options row is clickable");
+        let mut clicks = MouseClickTracker::default();
+        let event = mouse(MouseEventKind::Down(MouseButton::Left), column, row);
+        handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
+        handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
+        assert!(!state.is_options_category_picker_open());
+    }
 }

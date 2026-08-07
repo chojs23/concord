@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 mod primitives;
@@ -62,8 +62,8 @@ pub(crate) struct MentionMemberSearchTarget {
 }
 
 /// Batch member fetches deduped per (guild, user) with a TTL so lost
-/// responses eventually retry. Used for both message-author lookups and
-/// initial unknown-member sweeps.
+/// responses eventually retry. Every feature shares this coordinator so a
+/// voice, typing, message, or permission demand cannot issue duplicate work.
 #[derive(Debug)]
 pub(super) struct MemberBatchRequests {
     requested: TimedRequestSet<(Id<GuildMarker>, Id<UserMarker>)>,
@@ -143,8 +143,7 @@ pub(crate) struct RequestLifecycle {
     older_history: OlderHistoryRequests,
     newer_history: NewerHistoryRequests,
     read_acks: ReadAckRequests,
-    message_author_members: MemberBatchRequests,
-    initial_unknown_members: MemberBatchRequests,
+    member_hydration: MemberBatchRequests,
     member_list_subscriptions: MemberListSubscriptionRequests,
     mention_member_searches: MentionMemberSearchRequests,
     members: MemberRequests,
@@ -164,17 +163,14 @@ impl RequestLifecycle {
         self.newer_history.record_event(event);
         self.forum_posts.record_event(event);
         self.pinned_messages.record_event(event);
-        // initial_unknown_members skips this. Arrived members stop being
-        // reported as missing, so its entries can simply age out.
-        self.message_author_members.record_event(event);
+        self.member_hydration.record_event(event);
         self.thread_previews.record_event(event);
         self.user_profiles.record_event(event);
         self.user_notes.record_event(event);
     }
 
     fn reset_gateway_session(&mut self) {
-        self.message_author_members = MemberBatchRequests::default();
-        self.initial_unknown_members = MemberBatchRequests::default();
+        self.member_hydration = MemberBatchRequests::default();
         self.member_list_subscriptions = MemberListSubscriptionRequests::default();
         self.mention_member_searches = MentionMemberSearchRequests::default();
         self.members = MemberRequests::default();
@@ -270,20 +266,12 @@ impl RequestLifecycle {
         self.pinned_messages.mark_failed(channel_id);
     }
 
-    pub(crate) fn next_message_author_member_requests(
+    pub(crate) fn next_member_hydration_requests(
         &mut self,
         missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
         now: Instant,
     ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
-        self.message_author_members.next(missing, now)
-    }
-
-    pub(crate) fn next_initial_unknown_member_requests(
-        &mut self,
-        missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
-        now: Instant,
-    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
-        self.initial_unknown_members.next(missing, now)
+        self.member_hydration.next(missing, now)
     }
 
     pub(crate) fn next_member_request(
@@ -650,6 +638,28 @@ impl MemberBatchRequests {
             | AppEvent::GuildMemberAdd { guild_id, member } => {
                 self.requested.remove(&(*guild_id, member.user_id));
             }
+            AppEvent::GuildMembersChunk { chunk } => {
+                for member in &chunk.members {
+                    self.requested.remove(&(chunk.guild_id, member.user_id));
+                }
+            }
+            AppEvent::GuildMemberListUpdate { update } => {
+                for member in &update.members {
+                    self.requested.remove(&(update.guild_id, member.user_id));
+                }
+            }
+            AppEvent::VoiceStateUpdate { state } => {
+                if let (Some(guild_id), Some(member)) = (state.guild_id, state.member.as_ref()) {
+                    self.requested.remove(&(guild_id, member.user_id));
+                }
+            }
+            AppEvent::TypingStart {
+                guild_id: Some(guild_id),
+                member: Some(member),
+                ..
+            } => {
+                self.requested.remove(&(*guild_id, member.user_id));
+            }
             _ => {}
         }
     }
@@ -661,17 +671,22 @@ impl MemberBatchRequests {
     ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
         self.requested.prune(now);
 
-        let mut requests = Vec::new();
+        let mut by_guild: BTreeMap<Id<GuildMarker>, BTreeSet<Id<UserMarker>>> = BTreeMap::new();
         for (guild_id, user_ids) in missing {
-            let fresh_user_ids = user_ids
-                .into_iter()
-                .filter(|user_id| self.requested.insert((guild_id, *user_id), now))
-                .collect::<Vec<_>>();
-            if !fresh_user_ids.is_empty() {
-                requests.push((guild_id, fresh_user_ids));
+            for user_id in user_ids {
+                by_guild.entry(guild_id).or_default().insert(user_id);
             }
         }
-        requests
+        by_guild
+            .into_iter()
+            .filter_map(|(guild_id, user_ids)| {
+                let fresh_user_ids = user_ids
+                    .into_iter()
+                    .filter(|user_id| self.requested.insert((guild_id, *user_id), now))
+                    .collect::<Vec<_>>();
+                (!fresh_user_ids.is_empty()).then_some((guild_id, fresh_user_ids))
+            })
+            .collect()
     }
 }
 

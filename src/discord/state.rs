@@ -29,9 +29,9 @@ use crate::discord::ids::{
 };
 
 use super::{
-    ActivityInfo, AppEvent, ChannelInfo, CustomEmojiInfo, FriendStatus, GuildFolder, MemberInfo,
-    MessageInfo, PremiumTier, PresenceStatus, ReadStateInfo, RelationshipInfo, UserProfileInfo,
-    display_name::display_name_from_parts_or_unknown,
+    ActivityInfo, AppEvent, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, FriendStatus,
+    GuildFolder, MemberInfo, MessageInfo, PremiumTier, PresenceStatus, ReadStateInfo,
+    RelationshipInfo, UserProfileInfo, display_name::display_name_from_parts_or_unknown,
 };
 
 /// Maximum number of recent messages kept per channel in the normal message cache.
@@ -678,22 +678,21 @@ impl DiscordState {
                 self.remove_voice_states_for_channel(*channel_id);
             }
             AppEvent::TypingStart {
+                guild_id,
                 channel_id,
                 user_id,
-                display_name,
+                member,
             } => {
+                if let (Some(guild_id), Some(member)) = (guild_id, member) {
+                    self.upsert_guild_member(*guild_id, member);
+                    self.refresh_message_author_display_name(*guild_id, member);
+                }
                 // Record (or refresh) the typing entry, then sweep this
                 // channel's stale entries while we already hold the mutable
                 // borrow. Read paths see only fresh entries.
                 let now = Instant::now();
                 let bucket = self.presence_mut().typing.entry(*channel_id).or_default();
-                bucket.insert(
-                    *user_id,
-                    TypingIndicator {
-                        started: now,
-                        display_name: display_name.clone(),
-                    },
-                );
+                bucket.insert(*user_id, TypingIndicator { started: now });
                 bucket.retain(|_, indicator| {
                     now.duration_since(indicator.started) <= TYPING_INDICATOR_TTL
                 });
@@ -754,10 +753,63 @@ impl DiscordState {
                 }
             }
             AppEvent::ReadyUserDirectory { users } => {
-                self.session_mut().ready_users = users
+                let ready_users: BTreeMap<_, _> = users
                     .iter()
                     .map(|user| (user.user_id, user.clone()))
                     .collect();
+                self.session_mut().ready_users = ready_users.clone();
+
+                // DEDUPE_USER_OBJECTS splits guild role data and global user
+                // identity across `merged_members` and READY's top-level
+                // `users`. Join those halves in shared state instead of
+                // leaving a role-complete member named `unknown`.
+                let mut refreshed_members = Vec::new();
+                for (guild_id, members) in &mut self.guild_details_mut().members {
+                    for member in members.values_mut() {
+                        let Some(user) = ready_users.get(&member.user_id) else {
+                            continue;
+                        };
+                        if is_fallback_identity(member.username.as_deref(), &member.display_name)
+                            && user.display_name != "unknown"
+                        {
+                            member.display_name = user.display_name.clone();
+                        }
+                        if user.username.is_some() {
+                            member.username = user.username.clone();
+                        }
+                        // Discord omits `bot` for normal users. The flattened
+                        // READY directory cannot distinguish an omitted value
+                        // from an explicit false, while a known bot account
+                        // does not become a normal account. Keep the stronger
+                        // cached fact instead of clearing it by omission.
+                        member.is_bot |= user.is_bot;
+                        if user.avatar_url.is_some() || member.avatar_url.is_none() {
+                            member.avatar_url = user.avatar_url.clone();
+                        }
+                        refreshed_members.push((
+                            *guild_id,
+                            MemberInfo {
+                                user_id: member.user_id,
+                                display_name: member.display_name.clone(),
+                                username: member.username.clone(),
+                                is_bot: member.is_bot,
+                                is_bot_present: true,
+                                avatar_url: member.avatar_url.clone(),
+                                avatar_url_present: true,
+                                role_ids: member.role_ids.clone(),
+                                role_ids_present: member.role_ids_known,
+                                joined_at: member.joined_at,
+                                flags: member.flags,
+                                pending: member.pending,
+                                communication_disabled_until: member.communication_disabled_until,
+                                communication_disabled_until_present: false,
+                            },
+                        ));
+                    }
+                }
+                for (guild_id, member) in refreshed_members {
+                    self.refresh_message_author_display_name(guild_id, &member);
+                }
             }
             AppEvent::CurrentUserCapabilities { premium_tier } => {
                 self.session_mut().current_user_premium_tier = Some(*premium_tier);
@@ -862,6 +914,7 @@ impl DiscordState {
             | AppEvent::VoiceAudioSourcesApplyFailed { .. }
             | AppEvent::StreamBroadcastStarted { .. }
             | AppEvent::StreamBroadcastAudioUnavailable { .. }
+            | AppEvent::StreamBroadcastStartFailed { .. }
             | AppEvent::StreamBroadcastEnded { .. }
             | AppEvent::ApplicationCommandsLoaded { .. }
             | AppEvent::ApplicationCommandIndexUpdated { .. }
@@ -1336,7 +1389,74 @@ impl DiscordState {
         {
             return profile.display_name().to_owned();
         }
-        display_name_from_parts_or_unknown(None, fallback_display_name, fallback_username)
+        let ready_user = self.session.ready_users.get(&user_id);
+        display_name_from_parts_or_unknown(
+            None,
+            fallback_display_name.or_else(|| ready_user.map(|user| user.display_name.as_str())),
+            fallback_username.or_else(|| ready_user.and_then(|user| user.username.as_deref())),
+        )
+    }
+
+    /// Resolves one user through the identity sources valid for a channel.
+    /// Guild member data stays authoritative for guild nicknames, while global
+    /// user data is only a provisional display fallback and never supplies
+    /// guild roles or permissions.
+    pub fn user_display_name_for_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<String> {
+        let channel = self.channel(channel_id);
+        if let Some(guild_id) = channel.and_then(|channel| channel.guild_id) {
+            if let Some(member) = self
+                .guild_details
+                .members
+                .get(&guild_id)
+                .and_then(|members| members.get(&user_id))
+                .filter(|member| {
+                    !is_fallback_identity(member.username.as_deref(), &member.display_name)
+                })
+            {
+                return Some(member.display_name.clone());
+            }
+            if let Some(profile) = self
+                .profiles
+                .user_profiles
+                .get(&UserProfileCacheKey::new(user_id, Some(guild_id)))
+                .or_else(|| {
+                    self.profiles
+                        .user_profiles
+                        .get(&UserProfileCacheKey::new(user_id, None))
+                })
+            {
+                return Some(profile.display_name().to_owned());
+            }
+            return self
+                .session
+                .ready_users
+                .get(&user_id)
+                .map(|user| user.display_name.clone())
+                .filter(|name| name != "unknown");
+        }
+
+        if self.session.current_user_id == Some(user_id) {
+            return self.session.current_user.clone();
+        }
+        let recipient = channel
+            .into_iter()
+            .flat_map(|channel| channel.recipients.iter())
+            .find(|recipient| recipient.user_id == user_id);
+        let ready_user = self.session.ready_users.get(&user_id);
+        let display_name = self.private_user_display_name(
+            user_id,
+            recipient
+                .map(|recipient| recipient.display_name.as_str())
+                .or_else(|| ready_user.map(|user| user.display_name.as_str())),
+            recipient
+                .and_then(|recipient| recipient.username.as_deref())
+                .or_else(|| ready_user.and_then(|user| user.username.as_deref())),
+        );
+        (display_name != "unknown").then_some(display_name)
     }
 
     fn refresh_private_user_display_name(
@@ -1405,6 +1525,23 @@ impl DiscordState {
         }
 
         let display_name = display_name_from_parts_or_unknown(None, global_name, Some(username));
+        self.session_mut()
+            .ready_users
+            .entry(user_id)
+            .and_modify(|user| {
+                user.display_name = display_name.clone();
+                user.username = Some(username.to_owned());
+                user.is_bot = is_bot;
+                user.avatar_url = avatar_url.map(str::to_owned);
+            })
+            .or_insert_with(|| ChannelRecipientInfo {
+                user_id,
+                display_name: display_name.clone(),
+                username: Some(username.to_owned()),
+                is_bot,
+                avatar_url: avatar_url.map(str::to_owned),
+                status: None,
+            });
         if self.session.current_user_id == Some(user_id) {
             self.session_mut().current_user = Some(display_name.clone());
         }
@@ -1453,8 +1590,11 @@ impl DiscordState {
                     display_name: member.display_name.clone(),
                     username: member.username.clone(),
                     is_bot: member.is_bot,
+                    is_bot_present: true,
                     avatar_url: member.avatar_url.clone(),
+                    avatar_url_present: true,
                     role_ids: member.role_ids.clone(),
+                    role_ids_present: member.role_ids_known,
                     joined_at: member.joined_at,
                     flags: member.flags,
                     pending: member.pending,

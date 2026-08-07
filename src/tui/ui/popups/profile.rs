@@ -163,6 +163,7 @@ fn user_profile_popup_text_for_render(
             ))],
             emoji_overlays: Vec::new(),
             cursor: None,
+            picker_rows: None,
         }
     } else {
         UserProfilePopupText {
@@ -172,6 +173,7 @@ fn user_profile_popup_text_for_render(
             ))],
             emoji_overlays: Vec::new(),
             cursor: None,
+            picker_rows: None,
         }
     }
 }
@@ -186,6 +188,61 @@ pub(in crate::tui::ui) fn user_profile_popup_total_lines(
     user_profile_popup_text_for_render(state, width, &[])
         .lines
         .len()
+}
+
+pub(in crate::tui::ui) fn user_profile_popup_selected_picker_line(
+    state: &DashboardState,
+    width: u16,
+) -> Option<usize> {
+    let text = user_profile_popup_text_for_render(state, width, &[]);
+    let rows = text.picker_rows?;
+    let selected = state.active_selectable_popup_snapshot()?.selected;
+    Some(
+        rows.start
+            .saturating_add(selected.min(rows.len().saturating_sub(1))),
+    )
+}
+
+pub(in crate::tui::ui) fn user_profile_picker_list_layout(
+    area: Rect,
+    state: &DashboardState,
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
+    let popup = user_profile_popup_area(area);
+    let inner = panel_block("Profile", true).inner(popup);
+    let has_avatar = user_profile_popup_has_avatar_inside(
+        inner,
+        state.show_avatars() && state.user_profile_popup_has_avatar_preview(),
+    );
+    let text_area = user_profile_popup_text_area_inside(inner, has_avatar);
+    let list = Rect {
+        width: text_area.width.saturating_sub(1).max(1),
+        ..text_area
+    };
+    let text = user_profile_popup_text_for_render(state, text_area.width, &[]);
+    let picker_rows = text.picker_rows.unwrap_or(0..0);
+    let document_scroll = state.user_profile_popup_scroll();
+    let row_items = (0..usize::from(list.height))
+        .map(|offset| {
+            let line = document_scroll.saturating_add(offset);
+            picker_rows
+                .contains(&line)
+                .then_some(line.saturating_sub(picker_rows.start))
+        })
+        .collect::<Vec<_>>();
+    let scroll = row_items
+        .iter()
+        .flatten()
+        .copied()
+        .next()
+        .unwrap_or(snapshot.scroll);
+    SelectablePopupLayout {
+        target: snapshot.target,
+        popup,
+        list,
+        scroll,
+        row_items,
+    }
 }
 
 #[cfg(test)]
@@ -341,6 +398,7 @@ pub(in crate::tui::ui) fn user_profile_popup_text(
         lines,
         emoji_overlays,
         cursor: None,
+        picker_rows: None,
     }
 }
 
@@ -411,14 +469,19 @@ fn user_profile_settings_popup_text(
         }
     }
 
+    let mut picker_rows = None;
     let status_rows = state.user_profile_status_picker_rows();
     if !status_rows.is_empty() {
+        let start = lines.len().saturating_add(2);
         push_profile_status_picker_lines(&mut lines, width, &status_rows);
+        picker_rows = Some(start..start.saturating_add(status_rows.len()));
     }
 
     let activity_rows = state.user_profile_activity_picker_rows();
     if !activity_rows.is_empty() {
+        let start = lines.len().saturating_add(2);
         push_profile_activity_picker_lines(&mut lines, width, &activity_rows);
+        picker_rows = Some(start..start.saturating_add(activity_rows.len()));
     }
 
     lines.push(Line::from(Span::raw(String::new())));
@@ -460,6 +523,7 @@ fn user_profile_settings_popup_text(
         lines,
         emoji_overlays: Vec::new(),
         cursor,
+        picker_rows,
     }
 }
 

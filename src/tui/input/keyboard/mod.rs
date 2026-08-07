@@ -1,8 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::tui::keybindings::{
-    GlobalAction, KeyMapLookup, PaneFilterAction, SelectionAction, SelectionKeySet,
-};
+use crate::tui::keybindings::{KeyMapLookup, PaneFilterAction, SelectionAction, SelectionKeySet};
 
 use super::super::state::{DashboardState, FocusPane};
 use crate::discord::AppCommand;
@@ -15,34 +13,29 @@ mod popups;
 
 use composer::handle_composer_key;
 use dashboard::{execute_ui_action, handle_dashboard_action};
+use leader::handle_dashboard_key_sequence;
 pub use paste::{handle_paste, handle_pasted_file_attachments, handle_pasted_user_profile_avatar};
-use popups::{PopupKeyPhase, handle_popup_key};
+use popups::handle_popup_key;
+
+fn is_key_sequence_cancel_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Esc && key.modifiers.is_empty()
+}
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if key.kind != KeyEventKind::Press {
         return None;
     }
 
-    if let Some(command) = handle_popup_key(state, key, PopupKeyPhase::Priority) {
+    if state.is_leader_active() {
+        return handle_dashboard_key_sequence(state, key);
+    }
+
+    if let Some(command) = handle_popup_key(state, key) {
         return command;
     }
 
     if state.is_composing() {
         return handle_composer_key(state, key);
-    }
-
-    // The debug log is intentionally available from regular dashboard modes,
-    // but popups and the composer get first chance to handle their own keys.
-    if matches!(
-        state.key_bindings().global_action(key),
-        Some(GlobalAction::ToggleDebugLog)
-    ) {
-        state.toggle_debug_log_popup();
-        return None;
-    }
-
-    if let Some(command) = handle_popup_key(state, key, PopupKeyPhase::Deferred) {
-        return command;
     }
 
     let focus = state.focus();

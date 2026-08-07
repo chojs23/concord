@@ -10,6 +10,7 @@ Example `keymap.toml`:
 [keymap]
 StartComposer = { keys = ["c"] }
 ClosePopup = "q"
+OpenDebugLog = "`"
 ReplyMessage = "<leader>mr"
 VoiceDeafen = "<leader>vd"
 VoiceMute = "<leader>vm"
@@ -45,9 +46,9 @@ There are several kinds of keymap settings:
 
 | Config path                                                                                                                                                                   | What it controls                                                                                        |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `[keymap] leader`                                                                                                                                                             | The key that opens the leader popup. Defaults to `Space`.                                               |
+| `[keymap] leader`                                                                                                                                                             | The key that opens the leader key hint. Defaults to `Space`.                                            |
 | `[keymap] <ActionName>`                                                                                                                                                       | Directly assignable UI actions such as `StartComposer`, `ClosePopup`, `ReplyMessage`, and `OpenThread`. |
-| `[keymap.groups]`                                                                                                                                                             | Optional titles for prefix popups, such as naming `<leader>v` as `Voice`.                               |
+| `[keymap.groups]`                                                                                                                                                             | Optional titles for key sequence hints, such as naming `<leader>v` as `Voice`.                          |
 | `[keymap.guild_actions]`, `[keymap.channel_actions]`, `[keymap.message_actions]`, `[keymap.member_actions]`, `[keymap.thread_actions]`, `[keymap.notification_inbox_actions]` | Shortcuts used inside focused-pane action menus and the notification inbox.                             |
 | `[keymap.composer]`                                                                                                                                                           | Shortcuts used while the message composer is open, such as editor and cursor commands.                  |
 
@@ -64,7 +65,7 @@ ChannelSwitcher = { keys = ["<C-w>f", "<leader><C-w>"], description = "find chan
 Vim-style angle syntax, such as `<C-f>`, `<S-tab>`, and `<A-backspace>`.
 Leader sequences like `<leader><C-w>`, compact plain sequences like `fd`, and
 general multi-key prefixes like `<C-w>f` are supported. Prefix sequences show a
-[which-key.nvim](https://github.com/folke/which-key.nvim) style popup. For example, `fd` opens an `f` popup after `f`, then runs
+[which-key.nvim](https://github.com/folke/which-key.nvim) style hint. For example, `fd` opens an `f` hint after `f`, then runs
 the action after `d`.
 
 Set an action to `false` or an empty string to disable that shortcut and remove
@@ -106,14 +107,16 @@ DeletePreviousWord = "<A-backspace>"
 Direct `[keymap]` actions and `leader` cannot use reserved keys: `Enter`, `Esc`,
 `Backspace`, `Delete`, `Ctrl+c`, `Ctrl+n`, or `Ctrl+p`. Invalid, reserved, or
 conflicting bindings are ignored for that action. `[keymap.composer]` is separate
-and can remap those editing keys. `Esc` always closes active popups, and
-`Ctrl+n` and `Ctrl+p` always move row selection down and up.
+and can remap those editing keys. With a key sequence hint open, the first bare
+`Esc` cancels the sequence and keeps the underlying popup open. Otherwise,
+`Esc` closes or cancels the active popup. `Ctrl+n` and `Ctrl+p` always move row
+selection down and up.
 
 ## Directly assignable actions
 
 These action names can be assigned directly under `[keymap]`. Defaults
 that start with `<leader>` are shown without the leading `Space` in the leader
-popup. `OpenDisplayOptions`, `OpenComposerOptions`, `OpenNotificationOptions`,
+hint. `OpenDisplayOptions`, `OpenComposerOptions`, `OpenNotificationOptions`,
 and `OpenVoiceOptions` have contextual defaults inside the Options popup, so
 assign your own full sequence if you want direct keys for them.
 
@@ -124,6 +127,7 @@ Navigation and app actions:
 | `StartComposer`         | `"i"`                      | Start the message composer, or open the forum/media post composer overlay. |
 | `OpenPaneFilter`        | `"/"`                      | Open the focused pane filter or search.                                    |
 | `ClosePopup`            | `"q"`                      | Close the active popup.                                                    |
+| `OpenDebugLog`          | `` "`" ``                  | Open the Debug Log popup from the dashboard.                               |
 | `FocusGuildPane`        | `"1"`                      | Show and focus the Servers pane.                                           |
 | `FocusChannelPane`      | `"2"`                      | Show and focus the Channels pane.                                          |
 | `FocusMessagePane`      | `"3"`                      | Focus the Messages pane.                                                   |
@@ -143,6 +147,29 @@ Navigation and app actions:
 | `ResizePaneLeft`        | `["<A-h>", "<A-left>"]`    | Shrink the focused pane width.                                             |
 | `ResizePaneRight`       | `["<A-l>", "<A-right>"]`   | Grow the focused pane width.                                               |
 | `Quit`                  | `"q"`                      | Quit Concord.                                                              |
+
+### Popup navigation keymap actions
+
+These configured navigation actions also work while a modal popup owns input:
+
+| Actions                        | Valid popup contexts                           |
+| ------------------------------ | ---------------------------------------------- |
+| `SelectNext`, `SelectPrevious` | Lists, scrollable documents, and confirmations |
+| `HalfPageDown`, `HalfPageUp`   | Lists and scrollable documents                 |
+| `JumpTop`, `JumpBottom`        | Selectable lists                               |
+
+Popup-local fixed shortcuts run first. `ClosePopup` is then matched directly as
+a single key instead of being treated as a popup navigation sequence. For
+example, `ClosePopup = "g"` closes a popup immediately while dashboard `g g`
+continues to mean `JumpTop`. Unmodified printable keys remain text while a
+search, filter, or editor owns input. Use `Esc` or a modified/non-character
+`ClosePopup` binding to close those input modes.
+
+Once a navigation sequence hint is open, its next key wins so the displayed
+continuation is always truthful. Physical `PageUp` and `PageDown`, plus
+configured modified or non-character half-page keys, remain available where a
+text popup supports paging. `OpenDebugLog` is a dashboard action and is not
+part of popup navigation.
 
 Message actions:
 

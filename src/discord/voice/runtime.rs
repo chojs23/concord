@@ -32,8 +32,23 @@ impl ActiveBroadcastCaptureRequest {
 }
 
 struct BroadcastCapturePreparationTask {
+    request_id: u64,
+    stream_key: String,
     cancellation: capture::StreamCaptureCancellation,
     task: JoinHandle<()>,
+}
+
+impl BroadcastCapturePreparationTask {
+    fn cancel(&self, reason: &str) {
+        logging::debug(
+            "stream",
+            format!(
+                "cancelling stream capture preparation: stream_key={} request_id={} reason={reason}",
+                self.stream_key, self.request_id,
+            ),
+        );
+        self.cancellation.cancel();
+    }
 }
 
 #[derive(Default)]
@@ -135,7 +150,7 @@ impl StreamBroadcastController {
             {
                 self.active_capture_request = None;
                 if let Some(preparation) = self.capture_preparation.as_ref() {
-                    preparation.cancellation.cancel();
+                    preparation.cancel("broadcast request stopped");
                 }
             }
             self.captures.discard(stream_key);
@@ -156,11 +171,25 @@ impl StreamBroadcastController {
         target: StreamCaptureTarget,
         events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
     ) {
+        logging::debug(
+            "stream",
+            format!(
+                "starting stream capture request: stream_key={stream_key} request_id={request_id} target_kind={:?}",
+                target.kind,
+            ),
+        );
         if let Some(active) = self.active_capture_request.take() {
+            logging::debug(
+                "stream",
+                format!(
+                    "discarding previous active stream capture request: stream_key={} request_id={}",
+                    active.stream_key, active.request_id,
+                ),
+            );
             self.captures.discard(&active.stream_key);
         }
         if let Some(previous) = self.capture_preparation.take() {
-            previous.cancellation.cancel();
+            previous.cancel("replaced by a newer capture request");
             previous.task.abort();
         }
         self.captures.activate(stream_key.clone(), request_id);
@@ -171,6 +200,7 @@ impl StreamBroadcastController {
         let captures = self.captures.clone();
         let cancellation = capture::StreamCaptureCancellation::default();
         let preparation_cancellation = cancellation.clone();
+        let preparation_stream_key = stream_key.clone();
         let task = tokio::spawn(run_broadcast_capture_preparation(
             request_id,
             stream_key,
@@ -181,7 +211,12 @@ impl StreamBroadcastController {
             Arc::clone(&self.capture_preparation_gate),
             preparation_cancellation,
         ));
-        self.capture_preparation = Some(BroadcastCapturePreparationTask { cancellation, task });
+        self.capture_preparation = Some(BroadcastCapturePreparationTask {
+            request_id,
+            stream_key: preparation_stream_key,
+            cancellation,
+            task,
+        });
     }
 
     fn capture_ready(
@@ -193,24 +228,56 @@ impl StreamBroadcastController {
         events_tx: &mpsc::UnboundedSender<VoiceRuntimeEvent>,
     ) {
         self.capture_preparation.take();
+        logging::debug(
+            "stream",
+            format!(
+                "stream capture preparation completed: stream_key={stream_key} request_id={request_id} has_destination={}",
+                destination.is_some(),
+            ),
+        );
         if let Some((scope, channel_id)) = destination {
             if gateway_commands_tx
                 .send(GatewayCommand::CreateStream { scope, channel_id })
                 .is_err()
             {
+                logging::debug(
+                    "stream",
+                    format!(
+                        "could not send Discord stream creation command: stream_key={stream_key} request_id={request_id}"
+                    ),
+                );
                 let _ = events_tx.send(VoiceRuntimeEvent::BroadcastStreamCaptureFailed {
                     request_id,
                     stream_key,
                     error: "gateway command channel closed".to_owned(),
                 });
+            } else {
+                logging::debug(
+                    "stream",
+                    format!(
+                        "sent Discord stream creation command: stream_key={stream_key} request_id={request_id}"
+                    ),
+                );
             }
         } else {
+            logging::debug(
+                "stream",
+                format!(
+                    "discarding prepared capture without a requested destination: stream_key={stream_key} request_id={request_id}"
+                ),
+            );
             self.active_capture_request = None;
             self.captures.discard(&stream_key);
         }
     }
 
-    fn capture_failed(&mut self, stream_key: &str) {
+    fn capture_failed(&mut self, request_id: u64, stream_key: &str, error: &str) {
+        logging::debug(
+            "stream",
+            format!(
+                "stream capture preparation failed: stream_key={stream_key} request_id={request_id} error={error}"
+            ),
+        );
         self.capture_preparation.take();
         self.active_capture_request = None;
         self.captures.discard(stream_key);
@@ -268,28 +335,60 @@ async fn run_broadcast_capture_preparation(
     preparation_gate: Arc<Mutex<()>>,
     cancellation: capture::StreamCaptureCancellation,
 ) {
+    logging::debug(
+        "stream",
+        format!(
+            "stream capture preparation task started: stream_key={stream_key} request_id={request_id}"
+        ),
+    );
     if let Some(cleanup) = cleanup {
         logging::debug(
             "stream",
-            "waiting for previous stream broadcast cleanup before capture",
+            format!(
+                "waiting for previous stream broadcast cleanup before capture: stream_key={stream_key} request_id={request_id}"
+            ),
         );
         tokio::select! {
             () = wait_for_stream_broadcast_cleanup(cleanup) => {}
-            () = wait_for_capture_preparation_cancellation(&cancellation) => return,
+            () = wait_for_capture_preparation_cancellation(&cancellation) => {
+                logging::debug(
+                    "stream",
+                    format!(
+                        "stream capture preparation cancelled while waiting for cleanup: stream_key={stream_key} request_id={request_id}"
+                    ),
+                );
+                return;
+            },
         }
     }
 
     let preparation_guard = tokio::select! {
         guard = Arc::clone(&preparation_gate).lock_owned() => guard,
-        () = wait_for_capture_preparation_cancellation(&cancellation) => return,
+        () = wait_for_capture_preparation_cancellation(&cancellation) => {
+            logging::debug(
+                "stream",
+                format!(
+                    "stream capture preparation cancelled while waiting for the preparation gate: stream_key={stream_key} request_id={request_id}"
+                ),
+            );
+            return;
+        },
     };
     if cancellation.is_cancelled() {
+        logging::debug(
+            "stream",
+            format!(
+                "stream capture preparation cancelled before backend startup: stream_key={stream_key} request_id={request_id}"
+            ),
+        );
         return;
     }
 
     logging::debug(
         "stream",
-        "preparing stream capture before creating Discord stream",
+        format!(
+            "preparing stream capture before creating Discord stream: stream_key={stream_key} request_id={request_id}"
+        ),
     );
     let prepared_stream_key = stream_key.clone();
     let capture_cancellation = cancellation.clone();
@@ -306,22 +405,63 @@ async fn run_broadcast_capture_preparation(
     .map_err(|error| format!("stream capture preparation task failed: {error}"))
     .and_then(|result| result);
     if cancellation.is_cancelled() {
+        logging::debug(
+            "stream",
+            format!(
+                "stream capture preparation result ignored after cancellation: stream_key={stream_key} request_id={request_id}"
+            ),
+        );
         return;
     }
     match result {
         Ok(true) => {
-            let _ = events_tx.send(VoiceRuntimeEvent::BroadcastStreamCaptureReady {
-                request_id,
-                stream_key,
-            });
+            logging::debug(
+                "stream",
+                format!(
+                    "stream capture preparation task is ready: stream_key={stream_key} request_id={request_id}"
+                ),
+            );
+            if events_tx
+                .send(VoiceRuntimeEvent::BroadcastStreamCaptureReady {
+                    request_id,
+                    stream_key,
+                })
+                .is_err()
+            {
+                logging::debug(
+                    "stream",
+                    "voice runtime closed before stream capture readiness could be delivered",
+                );
+            }
         }
-        Ok(false) => {}
+        Ok(false) => {
+            logging::debug(
+                "stream",
+                format!(
+                    "stale stream capture preparation result was not stored: stream_key={stream_key} request_id={request_id}"
+                ),
+            );
+        }
         Err(error) => {
-            let _ = events_tx.send(VoiceRuntimeEvent::BroadcastStreamCaptureFailed {
-                request_id,
-                stream_key,
-                error,
-            });
+            logging::debug(
+                "stream",
+                format!(
+                    "stream capture preparation task failed: stream_key={stream_key} request_id={request_id} error={error}"
+                ),
+            );
+            if events_tx
+                .send(VoiceRuntimeEvent::BroadcastStreamCaptureFailed {
+                    request_id,
+                    stream_key,
+                    error,
+                })
+                .is_err()
+            {
+                logging::debug(
+                    "stream",
+                    "voice runtime closed before stream capture failure could be delivered",
+                );
+            }
         }
     }
 }
@@ -750,7 +890,23 @@ pub(crate) async fn run_voice_runtime(
 
     while let Some(event) = events.recv().await {
         if !broadcast_controller.is_current_capture_event(&event) {
-            logging::debug("stream", "ignoring stale stream capture preparation result");
+            match &event {
+                VoiceRuntimeEvent::BroadcastStreamCaptureReady {
+                    request_id,
+                    stream_key,
+                }
+                | VoiceRuntimeEvent::BroadcastStreamCaptureFailed {
+                    request_id,
+                    stream_key,
+                    ..
+                } => logging::debug(
+                    "stream",
+                    format!(
+                        "ignoring stale stream capture preparation result: stream_key={stream_key} request_id={request_id}"
+                    ),
+                ),
+                _ => {}
+            }
             continue;
         }
         let shutdown = matches!(event, VoiceRuntimeEvent::Shutdown);
@@ -766,8 +922,8 @@ pub(crate) async fn run_voice_runtime(
             VoiceRuntimeEvent::BroadcastStreamCaptureFailed {
                 request_id,
                 stream_key,
-                ..
-            } => Some((*request_id, stream_key.clone())),
+                error,
+            } => Some((*request_id, stream_key.clone(), error.clone())),
             _ => None,
         };
         let changed_audio_sources = matches!(
@@ -861,8 +1017,8 @@ pub(crate) async fn run_voice_runtime(
                 &events_tx,
             );
         }
-        if let Some((_request_id, stream_key)) = broadcast_capture_failed {
-            broadcast_controller.capture_failed(&stream_key);
+        if let Some((request_id, stream_key, error)) = broadcast_capture_failed {
+            broadcast_controller.capture_failed(request_id, &stream_key, &error);
         }
         if let Some(session) = broadcast_update.connect {
             broadcast_controller.replace(
@@ -1026,7 +1182,7 @@ async fn cancel_broadcast_capture_preparation(
     let Some(mut preparation) = preparation.take() else {
         return;
     };
-    preparation.cancellation.cancel();
+    preparation.cancel("voice runtime shutdown");
     if timeout(VOICE_CONNECTION_SHUTDOWN_TIMEOUT, &mut preparation.task)
         .await
         .is_err()
@@ -1242,7 +1398,12 @@ mod tests {
                 tokio::task::yield_now().await;
             }
         });
-        let mut preparation = Some(BroadcastCapturePreparationTask { cancellation, task });
+        let mut preparation = Some(BroadcastCapturePreparationTask {
+            request_id: 1,
+            stream_key: "guild:1:2:3".to_owned(),
+            cancellation,
+            task,
+        });
 
         cancel_broadcast_capture_preparation(&mut preparation).await;
 
@@ -1363,7 +1524,7 @@ mod tests {
             .capture_preparation
             .take()
             .expect("capture preparation should be tracked immediately");
-        preparation.cancellation.cancel();
+        preparation.cancel("test cleanup");
         preparation.task.abort();
         let _ = preparation.task.await;
     }

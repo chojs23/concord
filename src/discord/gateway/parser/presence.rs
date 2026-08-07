@@ -10,7 +10,10 @@ use crate::discord::{
     },
 };
 
-use super::shared::{display_name_from_parts, parse_id, parse_status};
+use super::{
+    members::parse_member_info,
+    shared::{parse_id, parse_status},
+};
 
 pub(super) fn parse_presence_update(data: &Value) -> Vec<AppEvent> {
     let Some(presence) = parse_presence_entry(data) else {
@@ -35,6 +38,7 @@ pub(super) fn parse_presence_update(data: &Value) -> Vec<AppEvent> {
 /// and ignore the timestamp (state stamps its own Instant on receive).
 pub(super) fn parse_typing_start(data: &Value) -> Option<AppEvent> {
     let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
+    let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
     let user_id = data
         .get("user_id")
         .and_then(parse_id::<UserMarker>)
@@ -44,24 +48,16 @@ pub(super) fn parse_typing_start(data: &Value) -> Option<AppEvent> {
                 .and_then(|user| user.get("id"))
                 .and_then(parse_id::<UserMarker>)
         })?;
-    let display_name = data.get("member").and_then(typing_member_display_name);
+    let member = guild_id.and_then(|guild_id| {
+        data.get("member")
+            .and_then(|member| parse_member_info(member, Some(guild_id)))
+    });
     Some(AppEvent::TypingStart {
+        guild_id,
         channel_id,
         user_id,
-        display_name,
+        member,
     })
-}
-
-fn typing_member_display_name(member: &Value) -> Option<String> {
-    let user = member.get("user");
-    let nick = member.get("nick").and_then(Value::as_str);
-    let global_name = user
-        .and_then(|user| user.get("global_name"))
-        .and_then(Value::as_str);
-    let username = user
-        .and_then(|user| user.get("username"))
-        .and_then(Value::as_str);
-    display_name_from_parts(nick, global_name, username).map(str::to_owned)
 }
 
 pub(super) fn parse_presence_entry(value: &Value) -> Option<PresenceEventFields> {

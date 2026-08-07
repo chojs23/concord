@@ -242,6 +242,15 @@ pub(super) fn parse_member_info(
 ) -> Option<MemberInfo> {
     let communication_disabled_until_present = value.get("communication_disabled_until").is_some();
     let user = value.get("user");
+    let is_bot_present = user
+        .and_then(|user| user.get("bot"))
+        .and_then(Value::as_bool)
+        .is_some();
+    let avatar_url_present = value.get("avatar").is_some()
+        || user.is_some_and(|user| {
+            user.get("avatar").is_some() || user.get("discriminator").is_some()
+        });
+    let role_ids_present = value.get("roles").and_then(Value::as_array).is_some();
     let user_id = user
         .and_then(|user| user.get("id"))
         .or_else(|| value.get("user_id"))
@@ -264,12 +273,15 @@ pub(super) fn parse_member_info(
         display_name,
         username: username.map(str::to_owned),
         is_bot,
+        is_bot_present,
         avatar_url: member_avatar_url(guild_id, user_id, Some(value), user),
+        avatar_url_present,
         role_ids: value
             .get("roles")
             .and_then(Value::as_array)
             .map(|roles| roles.iter().filter_map(parse_id::<RoleMarker>).collect())
             .unwrap_or_default(),
+        role_ids_present,
         joined_at: value
             .get("joined_at")
             .and_then(Value::as_str)

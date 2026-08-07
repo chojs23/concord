@@ -16,7 +16,8 @@ use crate::discord::{PresenceStatus, ProfileAvatarUpload};
 
 use crate::discord::ReactionUserInfo;
 use crate::tui::keybindings::{
-    KeyBindings, KeyChord, LeaderShortcutItem, SelectionAction, UiAction,
+    KeyBindings, KeyChord, LeaderShortcutItem, PopupAction, PopupKeymapScope, SelectionAction,
+    UiAction,
 };
 use crate::tui::text_input::TextInputState;
 
@@ -37,7 +38,9 @@ mod thread_edit;
 mod user;
 mod voice_participant_audio;
 pub(in crate::tui) use voice_participant_audio::VoiceParticipantAudioField;
-use voice_participant_audio::VoiceParticipantAudioPopupState;
+use voice_participant_audio::{
+    VOICE_PARTICIPANT_AUDIO_FIELD_COUNT, VoiceParticipantAudioPopupState,
+};
 
 use super::scroll::clamp_list_scroll;
 use super::{
@@ -52,12 +55,11 @@ pub use notification_inbox::{
 };
 use search::SearchPopupState;
 
-const SELECTABLE_POPUP_PAGE_STEP: usize = 10;
-
 #[derive(Debug, Default)]
 pub(super) struct PopupUiState {
     pub(super) modal: Option<ModalPopup>,
     pub(super) confirmation_button: ConfirmationButton,
+    key_sequence: Option<KeySequenceState>,
     /// Bumped per inbox open so a previous open's late responses are ignored.
     pub(super) inbox_request_generation: u64,
 }
@@ -117,7 +119,6 @@ define_modal_popups! {
     GuildLeaveConfirmation(GuildLeaveConfirmationState),
     Options(OptionsPopupState),
     AttachmentViewer(AttachmentViewerState),
-    Leader(LeaderPopupState),
     UserProfile(UserProfilePopupState),
     EmojiReactionPicker(EmojiReactionPickerState),
     PollVotePicker(PollVotePickerState),
@@ -132,6 +133,168 @@ define_modal_popups! {
     ThreadActionMenu(ThreadActionMenuState),
     ThreadDeleteConfirmation(ThreadDeleteConfirmationState),
     VoiceParticipantAudio(VoiceParticipantAudioPopupState),
+}
+
+/// The input behavior of the topmost visible popup layer.
+///
+/// A modal kind alone is not enough because forms can open nested lists or
+/// confirmations without replacing the outer modal. Resolving the interaction
+/// first prevents page keys from moving hidden background content.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActivePopupInteraction {
+    SelectableList(SelectablePopupTarget),
+    ScrollableDocument(ScrollablePopupTarget),
+    EditingDocument(ScrollablePopupTarget),
+    Custom(CustomPopupTarget),
+    Confirmation,
+    NoNavigation,
+}
+
+impl ActivePopupInteraction {
+    const fn keymap_context(self) -> Option<PopupKeymapContext> {
+        match self {
+            Self::SelectableList(target) => Some(PopupKeymapContext::Selectable(target)),
+            Self::ScrollableDocument(target) => Some(PopupKeymapContext::Scrollable(target)),
+            Self::Confirmation => Some(PopupKeymapContext::Confirmation),
+            Self::EditingDocument(_) | Self::Custom(_) | Self::NoNavigation => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum PopupInputMode {
+    /// Popup-local commands and the shared popup keymap both own input.
+    Routed,
+    /// Printable keys stay with the editor while modified shared keys may run.
+    TextEntry,
+    /// Raw shortcut capture bypasses every shared action except bare Esc.
+    Exclusive,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) struct ActivePopupPolicy {
+    pub(in crate::tui) kind: ActiveModalPopupKind,
+    interaction: ActivePopupInteraction,
+    pub(in crate::tui) input_mode: PopupInputMode,
+}
+
+impl ActivePopupPolicy {
+    const fn routed(kind: ActiveModalPopupKind, interaction: ActivePopupInteraction) -> Self {
+        Self {
+            kind,
+            interaction,
+            input_mode: PopupInputMode::Routed,
+        }
+    }
+
+    const fn text_entry(kind: ActiveModalPopupKind, interaction: ActivePopupInteraction) -> Self {
+        Self {
+            kind,
+            interaction,
+            input_mode: PopupInputMode::TextEntry,
+        }
+    }
+
+    const fn exclusive(kind: ActiveModalPopupKind) -> Self {
+        Self {
+            kind,
+            interaction: ActivePopupInteraction::NoNavigation,
+            input_mode: PopupInputMode::Exclusive,
+        }
+    }
+
+    const fn selectable(kind: ActiveModalPopupKind, target: SelectablePopupTarget) -> Self {
+        Self::routed(kind, ActivePopupInteraction::SelectableList(target))
+    }
+
+    const fn scrollable(kind: ActiveModalPopupKind, target: ScrollablePopupTarget) -> Self {
+        Self::routed(kind, ActivePopupInteraction::ScrollableDocument(target))
+    }
+
+    const fn confirmation(kind: ActiveModalPopupKind) -> Self {
+        Self::routed(kind, ActivePopupInteraction::Confirmation)
+    }
+
+    pub(in crate::tui) const fn keymap_context(self) -> Option<PopupKeymapContext> {
+        match self.input_mode {
+            PopupInputMode::Routed => self.interaction.keymap_context(),
+            PopupInputMode::TextEntry | PopupInputMode::Exclusive => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum SelectablePopupTarget {
+    MessageActions,
+    GuildActions,
+    ChannelActions,
+    MemberActions,
+    MessageUrls,
+    Options,
+    UserProfileStatus,
+    UserProfileActivity,
+    EmojiReactions,
+    PollVotes,
+    ReactionList,
+    ChannelSwitcher,
+    NotificationInbox,
+    ForumPostTags,
+    ThreadEditTags,
+    ThreadActions,
+    VoiceParticipantAudio,
+    SearchResults,
+    SearchSuggestions,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum PopupKeymapContext {
+    Selectable(SelectablePopupTarget),
+    Scrollable(ScrollablePopupTarget),
+    Confirmation,
+}
+
+impl PopupKeymapContext {
+    pub(in crate::tui) const fn scope(self) -> PopupKeymapScope {
+        match self {
+            Self::Selectable(_) => PopupKeymapScope::Selectable,
+            Self::Scrollable(_) => PopupKeymapScope::Scrollable,
+            Self::Confirmation => PopupKeymapScope::Confirmation,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KeySequenceContext {
+    Dashboard,
+    Popup(PopupKeymapContext),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct KeySequenceState {
+    context: KeySequenceContext,
+    keys: Vec<KeyChord>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CustomPopupTarget {
+    Search,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) struct SelectablePopupSnapshot {
+    pub(in crate::tui) target: SelectablePopupTarget,
+    pub(in crate::tui) item_count: usize,
+    pub(in crate::tui) selected: usize,
+    pub(in crate::tui) scroll: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum ScrollablePopupTarget {
+    KeymapHelp,
+    ReactionUsers,
+    UserProfile,
+    ForumPostComposer,
+    ThreadEdit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -152,11 +315,10 @@ pub(super) struct ForumPostComposerState {
     pub(super) edit_input: TextInputState,
     pub(super) active_field: ForumPostComposerFieldState,
     pub(super) editing: Option<ForumPostComposerFieldState>,
-    pub(super) selected_tag_index: usize,
-    pub(super) tag_scroll: usize,
+    pub(super) tag_selection: SelectablePopupState,
     /// Display order of tags while the tag picker is open. Captured on entry
     /// (selected tags first) so the cursor does not jump as tags are toggled.
-    /// Indexed by `selected_tag_index`.
+    /// Indexed by `tag_selection.selected()`.
     pub(super) tag_order: Vec<Id<ForumTagMarker>>,
     pub(super) selected_tag_ids: Vec<Id<ForumTagMarker>>,
     /// Attachments uploaded with the post. Pasted and previewed inline with the
@@ -181,8 +343,7 @@ impl ForumPostComposerState {
             edit_input: TextInputState::default(),
             active_field: ForumPostComposerFieldState::Title,
             editing: None,
-            selected_tag_index: 0,
-            tag_scroll: 0,
+            tag_selection: SelectablePopupState::default(),
             tag_order: Vec::new(),
             selected_tag_ids: Vec::new(),
             attachments: Vec::new(),
@@ -213,10 +374,9 @@ pub(super) struct ThreadEditState {
     pub(super) selected_tag_ids: Vec<Id<ForumTagMarker>>,
     /// Display order of tags while the tag picker is open. Captured on entry
     /// (selected tags first) so the cursor does not jump as tags are toggled.
-    /// Indexed by `selected_tag_index`.
+    /// Indexed by `tag_selection.selected()`.
     pub(super) tag_order: Vec<Id<ForumTagMarker>>,
-    pub(super) selected_tag_index: usize,
-    pub(super) tag_scroll: usize,
+    pub(super) tag_selection: SelectablePopupState,
     pub(super) editing_tags: bool,
     /// Index into [`SLOW_MODE_OPTIONS`] for the current slow-mode value.
     pub(super) rate_limit_index: usize,
@@ -258,22 +418,15 @@ pub(super) enum ThreadActionMenuState {
     },
 }
 
-/// The leader popup is purely the keymap-hint window: it lists the key
-/// bindings reachable from the pressed prefix. Action menus opened through
-/// the leader flow are their own [`ModalPopup`] variants.
-#[derive(Debug)]
-pub(super) struct LeaderPopupState {
-    pub(super) keymap_prefix: Vec<KeyChord>,
-}
-
-/// Selectable list with the panes' scrolloff windowing. `view_height` is owned
-/// by the renderer, so `sync_view_heights` refreshes it every frame through
-/// `set_view_height_and_sync`, which also re-clamps `scroll`.
+/// Selectable list with the panes' scrolloff windowing. The UI builds a
+/// `SelectablePopupLayout` from the rows it actually renders, then synchronizes
+/// the item scroll and visible count here before input is handled.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct SelectablePopupState {
     selected: usize,
     scroll: usize,
-    view_height: usize,
+    visible_items: usize,
+    page_step: usize,
 }
 
 impl SelectablePopupState {
@@ -304,55 +457,40 @@ impl SelectablePopupState {
         self.selected = self.selected.saturating_sub(1);
     }
 
-    pub(super) fn set_view_height_and_sync(&mut self, height: usize, len: usize) {
-        self.view_height = height.max(1);
+    pub(super) fn set_layout(&mut self, scroll: usize, visible_items: usize, len: usize) {
+        self.visible_items = visible_items.max(1);
+        self.page_step = (self.visible_items / 2).max(1);
+        self.scroll = scroll.min(len.saturating_sub(self.visible_items));
+    }
+
+    pub(super) fn page(&mut self, len: usize, action: SelectionAction) {
+        let step = self.page_step.max(1);
+        match action {
+            SelectionAction::Next => {
+                if len > 0 {
+                    self.selected = self.selected.saturating_add(step).min(len - 1);
+                }
+            }
+            SelectionAction::Previous => {
+                self.selected = self.selected.saturating_sub(step);
+            }
+        }
         self.scroll = clamp_list_scroll(
             self.selected_for_len(len),
             self.scroll,
-            self.view_height,
+            self.visible_items.max(1),
             len,
         );
     }
 
-    pub(super) fn page(&mut self, len: usize, action: SelectionAction) {
-        match action {
-            SelectionAction::Next => {
-                if len > 0 {
-                    self.selected = self
-                        .selected
-                        .saturating_add(SELECTABLE_POPUP_PAGE_STEP)
-                        .min(len - 1);
-                }
-            }
-            SelectionAction::Previous => {
-                self.selected = self.selected.saturating_sub(SELECTABLE_POPUP_PAGE_STEP);
-            }
-        }
+    pub(super) fn jump_top(&mut self) {
+        self.selected = 0;
+        self.scroll = 0;
     }
-}
 
-#[cfg(test)]
-mod selectable_popup_viewport_tests {
-    use super::SelectablePopupState;
-
-    #[test]
-    fn selection_keeps_scrolloff_margin_like_panes() {
-        let mut sel = SelectablePopupState::default();
-        for _ in 0..6 {
-            sel.move_down(15);
-        }
-        sel.set_view_height_and_sync(5, 15);
-        // scrolloff 2 holds cursor 6 two rows below the top, not pinned to the bottom.
-        assert_eq!(sel.selected(), 6);
-        assert_eq!(sel.scroll(), 4);
-
-        for _ in 0..6 {
-            sel.move_down(15);
-        }
-        sel.set_view_height_and_sync(5, 15);
-        // At the list end the scroll stops, so cursor 12 keeps rows 13 and 14 below it.
-        assert_eq!(sel.selected(), 12);
-        assert_eq!(sel.scroll(), 10);
+    pub(super) fn jump_bottom(&mut self, len: usize) {
+        self.selected = len.saturating_sub(1);
+        self.scroll = len.saturating_sub(self.visible_items.max(1));
     }
 }
 
@@ -970,22 +1108,9 @@ impl ReactionUsersPopupState {
         self.list.scroll()
     }
 
-    pub(super) fn move_selection(&mut self, action: SelectionAction) {
-        match action {
-            SelectionAction::Next => self.list.move_down(self.entries.len()),
-            SelectionAction::Previous => self.list.move_up(),
-        }
-    }
-
-    pub(super) fn set_list_view_height(&mut self, height: usize) {
-        self.list
-            .set_view_height_and_sync(height, self.entries.len());
-    }
-
     pub fn viewed_entry(&self) -> Option<&ReactionUsersEntry> {
         self.viewing.and_then(|index| self.entries.get(index))
     }
-
     pub fn user_scroll(&self) -> usize {
         self.user_scroll.scroll()
     }
@@ -1160,9 +1285,29 @@ macro_rules! modal_popup_accessors {
     };
 }
 
+macro_rules! take_modal_state {
+    ($self:ident, $variant:ident, $binding:ident) => {{
+        if !matches!(&$self.modal, Some(ModalPopup::$variant(_))) {
+            None
+        } else {
+            let Some(ModalPopup::$variant($binding)) = $self.modal.take() else {
+                unreachable!("modal variant was checked before extraction")
+            };
+            $self.clear_modal();
+            Some($binding)
+        }
+    }};
+}
+
 impl PopupUiState {
+    pub(super) fn set_modal(&mut self, modal: ModalPopup) {
+        self.modal = Some(modal);
+        self.key_sequence = None;
+    }
+
     pub(super) fn clear_modal(&mut self) {
         self.modal = None;
+        self.key_sequence = None;
     }
 
     modal_popup_accessors!(
@@ -1210,13 +1355,7 @@ impl PopupUiState {
     }
 
     pub(super) fn take_message_confirmation(&mut self) -> Option<MessageConfirmationState> {
-        match self.modal.take() {
-            Some(ModalPopup::MessageConfirmation(confirmation)) => Some(confirmation),
-            other => {
-                self.modal = other;
-                None
-            }
-        }
+        take_modal_state!(self, MessageConfirmation, confirmation)
     }
 
     pub(super) fn guild_leave_confirmation(&self) -> Option<&GuildLeaveConfirmationState> {
@@ -1227,13 +1366,7 @@ impl PopupUiState {
     }
 
     pub(super) fn take_guild_leave_confirmation(&mut self) -> Option<GuildLeaveConfirmationState> {
-        match self.modal.take() {
-            Some(ModalPopup::GuildLeaveConfirmation(confirmation)) => Some(confirmation),
-            other => {
-                self.modal = other;
-                None
-            }
-        }
+        take_modal_state!(self, GuildLeaveConfirmation, confirmation)
     }
 
     pub(super) fn thread_delete_confirmation(&self) -> Option<&ThreadDeleteConfirmationState> {
@@ -1246,13 +1379,7 @@ impl PopupUiState {
     pub(super) fn take_thread_delete_confirmation(
         &mut self,
     ) -> Option<ThreadDeleteConfirmationState> {
-        match self.modal.take() {
-            Some(ModalPopup::ThreadDeleteConfirmation(confirmation)) => Some(confirmation),
-            other => {
-                self.modal = other;
-                None
-            }
-        }
+        take_modal_state!(self, ThreadDeleteConfirmation, confirmation)
     }
 
     modal_popup_accessors!(
@@ -1276,7 +1403,6 @@ impl PopupUiState {
         AttachmentViewerState,
         viewer
     );
-    modal_popup_accessors!(leader, leader_mut, Leader, LeaderPopupState, leader);
 
     modal_popup_accessors!(
         user_profile_popup,
@@ -1301,13 +1427,7 @@ impl PopupUiState {
     );
 
     pub(super) fn take_poll_vote_picker(&mut self) -> Option<PollVotePickerState> {
-        match self.modal.take() {
-            Some(ModalPopup::PollVotePicker(picker)) => Some(picker),
-            other => {
-                self.modal = other;
-                None
-            }
-        }
+        take_modal_state!(self, PollVotePicker, picker)
     }
 
     modal_popup_accessors!(
@@ -1377,46 +1497,89 @@ impl DashboardState {
         self.active_modal_popup_kind() == Some(kind)
     }
 
+    pub(in crate::tui) fn is_key_sequence_active(&self) -> bool {
+        self.popups.key_sequence.is_some()
+    }
+
     pub fn is_leader_active(&self) -> bool {
-        self.popups.leader().is_some()
+        self.popups
+            .key_sequence
+            .as_ref()
+            .is_some_and(|sequence| sequence.context == KeySequenceContext::Dashboard)
     }
 
     pub fn open_leader(&mut self) {
-        self.popups.modal = Some(ModalPopup::Leader(LeaderPopupState {
-            keymap_prefix: self.options.key_bindings.leader_keymap_prefix(),
-        }));
+        self.open_keymap_prefix(self.options.key_bindings.leader_keymap_prefix());
     }
 
-    pub(in crate::tui) fn open_keymap_prefix(&mut self, prefix: Vec<KeyChord>) {
-        self.popups.modal = Some(ModalPopup::Leader(LeaderPopupState {
-            keymap_prefix: prefix,
-        }));
+    pub(in crate::tui) fn open_keymap_prefix(&mut self, keys: Vec<KeyChord>) {
+        self.popups.key_sequence = Some(KeySequenceState {
+            context: KeySequenceContext::Dashboard,
+            keys,
+        });
+    }
+
+    pub(in crate::tui) fn open_popup_keymap_prefix(
+        &mut self,
+        context: PopupKeymapContext,
+        keys: Vec<KeyChord>,
+    ) {
+        self.popups.key_sequence = Some(KeySequenceState {
+            context: KeySequenceContext::Popup(context),
+            keys,
+        });
+    }
+
+    pub(in crate::tui) fn close_key_sequence(&mut self) {
+        self.popups.key_sequence = None;
     }
 
     pub fn close_leader(&mut self) {
-        if self.popups.leader().is_some() {
-            self.popups.clear_modal();
+        if self.is_leader_active() {
+            self.close_key_sequence();
         }
     }
 
     pub(in crate::tui) fn leader_keymap_prefix(&self) -> &[KeyChord] {
-        self.popups
-            .leader()
-            .map(|leader| leader.keymap_prefix.as_slice())
+        self.key_sequence_prefix(KeySequenceContext::Dashboard)
             .unwrap_or_default()
     }
 
-    pub(in crate::tui) fn push_leader_keymap_key(&mut self, key: KeyChord) {
-        if let Some(leader) = self.popups.leader_mut() {
-            leader.keymap_prefix.push(key);
+    pub(in crate::tui) fn popup_keymap_prefix(
+        &self,
+        context: PopupKeymapContext,
+    ) -> Option<&[KeyChord]> {
+        self.key_sequence_prefix(KeySequenceContext::Popup(context))
+    }
+
+    fn key_sequence_prefix(&self, context: KeySequenceContext) -> Option<&[KeyChord]> {
+        self.popups
+            .key_sequence
+            .as_ref()
+            .filter(|sequence| sequence.context == context)
+            .map(|sequence| sequence.keys.as_slice())
+    }
+
+    pub(in crate::tui) fn push_key_sequence_key(&mut self, key: KeyChord) {
+        if let Some(sequence) = self.popups.key_sequence.as_mut() {
+            sequence.keys.push(key);
         }
     }
 
-    pub fn leader_keymap_shortcuts(&self) -> Vec<LeaderShortcutItem> {
-        let mut shortcuts = self
-            .options
-            .key_bindings
-            .leader_keymap_children(self.leader_keymap_prefix());
+    pub(in crate::tui) fn key_sequence_shortcuts(&self) -> Vec<LeaderShortcutItem> {
+        let Some(sequence) = self.popups.key_sequence.as_ref() else {
+            return Vec::new();
+        };
+        let mut shortcuts = match sequence.context {
+            KeySequenceContext::Dashboard => self
+                .options
+                .key_bindings
+                .leader_keymap_children(&sequence.keys),
+            KeySequenceContext::Popup(context) => self
+                .options
+                .key_bindings
+                .popup_keymap_children(&sequence.keys, context.scope()),
+        };
         for shortcut in &mut shortcuts {
             if shortcut.action == Some(UiAction::ToggleStream)
                 && shortcut.label == UiAction::ToggleStream.label()
@@ -1427,10 +1590,14 @@ impl DashboardState {
         shortcuts
     }
 
-    pub(in crate::tui) fn leader_keymap_title(&self) -> String {
-        self.options
-            .key_bindings
-            .keymap_prefix_title(self.leader_keymap_prefix())
+    pub(in crate::tui) fn key_sequence_title(&self) -> String {
+        let prefix = self
+            .popups
+            .key_sequence
+            .as_ref()
+            .map(|sequence| sequence.keys.as_slice())
+            .unwrap_or_default();
+        self.options.key_bindings.keymap_prefix_title(prefix)
     }
 
     /// Open the action menu for the focused pane's selected target. Every
@@ -1448,18 +1615,18 @@ impl DashboardState {
         match self.navigation.focus {
             FocusPane::Guilds => {
                 if let Some(menu) = self.selected_guild_action_context() {
-                    self.popups.modal = Some(ModalPopup::GuildActionMenu(menu));
+                    self.popups.set_modal(ModalPopup::GuildActionMenu(menu));
                 }
             }
             FocusPane::Channels => {
                 if let Some(menu) = self.selected_channel_action_context() {
-                    self.popups.modal = Some(ModalPopup::ChannelActionMenu(menu));
+                    self.popups.set_modal(ModalPopup::ChannelActionMenu(menu));
                 }
             }
             FocusPane::Messages => self.open_selected_message_actions(),
             FocusPane::Members => {
                 if let Some(menu) = self.selected_member_action_context() {
-                    self.popups.modal = Some(ModalPopup::MemberActionMenu(menu));
+                    self.popups.set_modal(ModalPopup::MemberActionMenu(menu));
                 }
             }
         }
@@ -1481,7 +1648,7 @@ impl DashboardState {
 
     pub fn open_quit_confirmation(&mut self) {
         self.popups.confirmation_button = ConfirmationButton::default();
-        self.popups.modal = Some(ModalPopup::QuitConfirmation);
+        self.popups.set_modal(ModalPopup::QuitConfirmation);
     }
 
     pub fn close_quit_confirmation(&mut self) {
@@ -1503,6 +1670,127 @@ impl DashboardState {
         self.popups.confirmation_button = self.popups.confirmation_button.next();
     }
 
+    /// Closes the topmost popup layer using that popup's own back or cancel
+    /// behavior. Raw close keys and configured `ClosePopup` bindings both use
+    /// this path so nested popup state cannot behave differently by key source.
+    pub(in crate::tui) fn close_active_popup(&mut self) {
+        let Some(kind) = self.active_modal_popup_kind() else {
+            return;
+        };
+
+        match kind {
+            ActiveModalPopupKind::MessageActionMenu => self.close_message_action_menu(),
+            ActiveModalPopupKind::GuildActionMenu => {
+                if !self.back_guild_action_menu() {
+                    self.close_guild_action_menu();
+                }
+            }
+            ActiveModalPopupKind::ChannelActionMenu => {
+                if !self.back_channel_action_menu() {
+                    self.close_channel_action_menu();
+                }
+            }
+            ActiveModalPopupKind::MemberActionMenu => self.close_member_action_menu(),
+            ActiveModalPopupKind::MessageUrlPicker => self.close_message_url_picker(),
+            ActiveModalPopupKind::MessageConfirmation => self.close_message_confirmation(),
+            ActiveModalPopupKind::QuitConfirmation => self.close_quit_confirmation(),
+            ActiveModalPopupKind::GuildLeaveConfirmation => {
+                self.close_guild_leave_confirmation();
+            }
+            ActiveModalPopupKind::Options if self.is_capturing_push_to_talk_shortcut() => {
+                self.cancel_push_to_talk_shortcut_capture();
+            }
+            ActiveModalPopupKind::Options => self.close_options_popup(),
+            ActiveModalPopupKind::AttachmentViewer => self.close_attachment_viewer(),
+            ActiveModalPopupKind::UserProfile => self.close_or_cancel_user_profile_popup(),
+            ActiveModalPopupKind::EmojiReactionPicker => self.close_emoji_reaction_picker(),
+            ActiveModalPopupKind::PollVotePicker => self.close_poll_vote_picker(),
+            ActiveModalPopupKind::ReactionUsers => {
+                if !self.reaction_users_popup_back() {
+                    self.close_reaction_users_popup();
+                }
+            }
+            ActiveModalPopupKind::DebugLog => self.close_debug_log_popup(),
+            ActiveModalPopupKind::KeymapHelp => self.close_keymap_popup(),
+            ActiveModalPopupKind::ChannelSwitcher => self.close_channel_switcher(),
+            ActiveModalPopupKind::NotificationInbox
+                if self.notification_inbox_is_confirming_mark_all() =>
+            {
+                self.cancel_mark_all_notification_inbox_read();
+            }
+            ActiveModalPopupKind::NotificationInbox => self.close_notification_inbox(),
+            ActiveModalPopupKind::Search => self.close_search_popup(),
+            ActiveModalPopupKind::ForumPostComposer => {
+                self.close_or_cancel_forum_post_composer();
+            }
+            ActiveModalPopupKind::ThreadEdit => self.close_or_cancel_thread_edit(),
+            ActiveModalPopupKind::ThreadActionMenu => {
+                if !self.back_thread_action_menu() {
+                    self.close_thread_action_menu();
+                }
+            }
+            ActiveModalPopupKind::ThreadDeleteConfirmation => {
+                self.close_thread_delete_confirmation();
+            }
+            ActiveModalPopupKind::VoiceParticipantAudio => {
+                self.close_voice_participant_audio_popup();
+            }
+        }
+    }
+
+    pub(in crate::tui) fn execute_popup_keymap_action(
+        &mut self,
+        action: PopupAction,
+    ) -> Option<AppCommand> {
+        let context = self
+            .active_popup_policy()
+            .and_then(ActivePopupPolicy::keymap_context)?;
+        if !action.is_allowed_in(context.scope()) {
+            return None;
+        }
+
+        match action {
+            PopupAction::SelectNext | PopupAction::SelectPrevious => match context {
+                PopupKeymapContext::Selectable(target) => {
+                    let action = if action == PopupAction::SelectNext {
+                        SelectionAction::Next
+                    } else {
+                        SelectionAction::Previous
+                    };
+                    self.move_selectable_popup(target, action);
+                    None
+                }
+                PopupKeymapContext::Scrollable(target) => {
+                    let action = if action == PopupAction::SelectNext {
+                        SelectionAction::Next
+                    } else {
+                        SelectionAction::Previous
+                    };
+                    self.select_scrollable_popup(target, action)
+                }
+                PopupKeymapContext::Confirmation => {
+                    self.next_confirmation_button();
+                    None
+                }
+            },
+            PopupAction::HalfPageDown => {
+                self.page_active_popup(SelectionAction::Next);
+                self.reaction_users_popup_take_load_more()
+            }
+            PopupAction::HalfPageUp => {
+                self.page_active_popup(SelectionAction::Previous);
+                None
+            }
+            PopupAction::JumpTop | PopupAction::JumpBottom => {
+                let PopupKeymapContext::Selectable(target) = context else {
+                    return None;
+                };
+                self.jump_selectable_popup(target, action.ui_action());
+                None
+            }
+        }
+    }
+
     pub(in crate::tui) fn page_active_popup_down(&mut self) -> bool {
         self.page_active_popup(SelectionAction::Next)
     }
@@ -1511,115 +1799,658 @@ impl DashboardState {
         self.page_active_popup(SelectionAction::Previous)
     }
 
+    pub(in crate::tui) fn move_active_popup_down(&mut self) -> Option<AppCommand> {
+        self.move_active_popup(SelectionAction::Next)
+    }
+
+    pub(in crate::tui) fn move_active_popup_up(&mut self) -> Option<AppCommand> {
+        self.move_active_popup(SelectionAction::Previous)
+    }
+
     fn page_active_popup(&mut self, action: SelectionAction) -> bool {
-        match self.active_modal_popup_kind() {
-            Some(ActiveModalPopupKind::KeymapHelp) => {
-                if let Some(popup) = self.popups.keymap_popup_mut() {
-                    popup.scroll.page(action);
+        match self.active_popup_interaction() {
+            Some(ActivePopupInteraction::SelectableList(target)) => {
+                self.page_selectable_popup(target, action);
+                true
+            }
+            Some(ActivePopupInteraction::ScrollableDocument(target)) => {
+                self.page_scrollable_popup(target, action);
+                true
+            }
+            Some(
+                ActivePopupInteraction::EditingDocument(_)
+                | ActivePopupInteraction::Custom(_)
+                | ActivePopupInteraction::Confirmation
+                | ActivePopupInteraction::NoNavigation,
+            )
+            | None => false,
+        }
+    }
+
+    fn move_active_popup(&mut self, action: SelectionAction) -> Option<AppCommand> {
+        match self.active_popup_interaction()? {
+            ActivePopupInteraction::SelectableList(target) => {
+                self.move_selectable_popup(target, action);
+                None
+            }
+            ActivePopupInteraction::ScrollableDocument(ScrollablePopupTarget::ReactionUsers) => {
+                self.navigate_reaction_users_popup(action)
+            }
+            ActivePopupInteraction::ScrollableDocument(target) => {
+                self.scroll_popup_document(target, action);
+                None
+            }
+            ActivePopupInteraction::EditingDocument(target) => {
+                self.scroll_popup_document(target, action);
+                None
+            }
+            ActivePopupInteraction::Custom(CustomPopupTarget::Search) => match action {
+                SelectionAction::Next => self.move_search_result_down(),
+                SelectionAction::Previous => {
+                    self.move_search_result_up();
+                    None
                 }
-                true
+            },
+            ActivePopupInteraction::Confirmation | ActivePopupInteraction::NoNavigation => None,
+        }
+    }
+
+    fn select_scrollable_popup(
+        &mut self,
+        target: ScrollablePopupTarget,
+        action: SelectionAction,
+    ) -> Option<AppCommand> {
+        match target {
+            ScrollablePopupTarget::KeymapHelp => {
+                self.scroll_keymap_popup(action);
+                None
             }
-            Some(ActiveModalPopupKind::ReactionUsers) => {
-                if let Some(popup) = self.popups.reaction_users_popup_mut() {
-                    if popup.viewing.is_some() {
-                        popup.user_scroll.page(action);
-                    } else {
-                        let len = popup.entries.len();
-                        popup.list.page(len, action);
-                    }
+            ScrollablePopupTarget::ReactionUsers => self.navigate_reaction_users_popup(action),
+            ScrollablePopupTarget::UserProfile => {
+                match action {
+                    SelectionAction::Next => self.next_user_profile_settings_field(),
+                    SelectionAction::Previous => self.previous_user_profile_settings_field(),
                 }
-                true
+                None
             }
-            Some(ActiveModalPopupKind::UserProfile) if self.is_user_profile_popup_editing() => {
-                false
-            }
-            Some(ActiveModalPopupKind::UserProfile) => {
-                if let Some(popup) = self.popups.user_profile_popup_mut() {
-                    popup.scroll.page(action);
+            ScrollablePopupTarget::ForumPostComposer => {
+                match action {
+                    SelectionAction::Next => self.move_forum_post_selection_down(),
+                    SelectionAction::Previous => self.move_forum_post_selection_up(),
                 }
-                true
+                None
             }
-            Some(ActiveModalPopupKind::Options) => {
-                let len = self.options_popup_item_count();
-                if let Some(popup) = self.popups.options_popup_mut() {
-                    popup.selection.page(len, action);
+            ScrollablePopupTarget::ThreadEdit => {
+                match action {
+                    SelectionAction::Next => self.move_thread_edit_selection_down(),
+                    SelectionAction::Previous => self.move_thread_edit_selection_up(),
                 }
-                true
+                None
             }
-            Some(ActiveModalPopupKind::ChannelSwitcher) => {
-                self.page_channel_switcher_selection(action);
-                true
+        }
+    }
+
+    pub(in crate::tui) fn active_popup_policy(&self) -> Option<ActivePopupPolicy> {
+        let modal = self.popups.modal.as_ref()?;
+        let kind = modal.kind();
+        let policy = match modal {
+            ModalPopup::MessageActionMenu(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::MessageActions)
             }
-            Some(ActiveModalPopupKind::NotificationInbox) => {
-                self.page_notification_inbox_selection(action);
-                true
+            ModalPopup::GuildActionMenu(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::GuildActions)
             }
-            Some(ActiveModalPopupKind::PollVotePicker) => {
-                if let Some(picker) = self.popups.poll_vote_picker_mut() {
-                    picker.selection.page(picker.answers.len(), action);
-                }
-                true
+            ModalPopup::ChannelActionMenu(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::ChannelActions)
             }
-            Some(ActiveModalPopupKind::EmojiReactionPicker) => {
-                let len = self.filtered_emoji_reaction_items().len();
-                if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
-                    picker.selection.page(len, action);
-                }
-                true
+            ModalPopup::MemberActionMenu(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::MemberActions)
             }
-            Some(ActiveModalPopupKind::MessageUrlPicker) => {
-                if let Some(picker) = self.popups.message_url_picker_mut() {
-                    picker.selection.page(picker.items.len(), action);
-                }
-                true
+            ModalPopup::MessageUrlPicker(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::MessageUrls)
             }
-            Some(ActiveModalPopupKind::MessageActionMenu) => {
+            ModalPopup::Options(popup) if popup.capturing_push_to_talk_shortcut => {
+                ActivePopupPolicy::exclusive(kind)
+            }
+            ModalPopup::Options(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::Options)
+            }
+            ModalPopup::UserProfile(popup) if popup.settings.status_picker.is_some() => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::UserProfileStatus)
+            }
+            ModalPopup::UserProfile(popup) if popup.settings.activity_picker.is_some() => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::UserProfileActivity)
+            }
+            ModalPopup::UserProfile(popup) if popup.settings.editing.is_some() => {
+                ActivePopupPolicy::text_entry(
+                    kind,
+                    ActivePopupInteraction::EditingDocument(ScrollablePopupTarget::UserProfile),
+                )
+            }
+            ModalPopup::UserProfile(_) => {
+                ActivePopupPolicy::scrollable(kind, ScrollablePopupTarget::UserProfile)
+            }
+            ModalPopup::EmojiReactionPicker(popup) if popup.filter_editing => {
+                ActivePopupPolicy::text_entry(
+                    kind,
+                    ActivePopupInteraction::SelectableList(SelectablePopupTarget::EmojiReactions),
+                )
+            }
+            ModalPopup::EmojiReactionPicker(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::EmojiReactions)
+            }
+            ModalPopup::PollVotePicker(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::PollVotes)
+            }
+            ModalPopup::ReactionUsers(popup) if popup.viewing.is_some() => {
+                ActivePopupPolicy::scrollable(kind, ScrollablePopupTarget::ReactionUsers)
+            }
+            ModalPopup::ReactionUsers(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::ReactionList)
+            }
+            ModalPopup::KeymapHelp(_) => {
+                ActivePopupPolicy::scrollable(kind, ScrollablePopupTarget::KeymapHelp)
+            }
+            ModalPopup::ChannelSwitcher(_) => ActivePopupPolicy::text_entry(
+                kind,
+                ActivePopupInteraction::SelectableList(SelectablePopupTarget::ChannelSwitcher),
+            ),
+            ModalPopup::NotificationInbox(_)
+                if self.notification_inbox_is_confirming_mark_all() =>
+            {
+                ActivePopupPolicy::confirmation(kind)
+            }
+            ModalPopup::NotificationInbox(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::NotificationInbox)
+            }
+            ModalPopup::Search(_) => ActivePopupPolicy::text_entry(
+                kind,
+                ActivePopupInteraction::Custom(CustomPopupTarget::Search),
+            ),
+            ModalPopup::ForumPostComposer(popup)
+                if popup.editing == Some(ForumPostComposerFieldState::Tags) =>
+            {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::ForumPostTags)
+            }
+            ModalPopup::ForumPostComposer(popup) if popup.editing.is_some() => {
+                ActivePopupPolicy::text_entry(
+                    kind,
+                    ActivePopupInteraction::EditingDocument(
+                        ScrollablePopupTarget::ForumPostComposer,
+                    ),
+                )
+            }
+            ModalPopup::ForumPostComposer(_) => {
+                ActivePopupPolicy::scrollable(kind, ScrollablePopupTarget::ForumPostComposer)
+            }
+            ModalPopup::ThreadEdit(popup) if popup.editing_tags => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::ThreadEditTags)
+            }
+            ModalPopup::ThreadEdit(popup) if popup.editing_title => ActivePopupPolicy::text_entry(
+                kind,
+                ActivePopupInteraction::EditingDocument(ScrollablePopupTarget::ThreadEdit),
+            ),
+            ModalPopup::ThreadEdit(_) => {
+                ActivePopupPolicy::scrollable(kind, ScrollablePopupTarget::ThreadEdit)
+            }
+            ModalPopup::ThreadActionMenu(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::ThreadActions)
+            }
+            ModalPopup::MessageConfirmation(_)
+            | ModalPopup::QuitConfirmation
+            | ModalPopup::GuildLeaveConfirmation(_)
+            | ModalPopup::ThreadDeleteConfirmation(_) => ActivePopupPolicy::confirmation(kind),
+            ModalPopup::AttachmentViewer(_) | ModalPopup::DebugLog => {
+                ActivePopupPolicy::routed(kind, ActivePopupInteraction::NoNavigation)
+            }
+            ModalPopup::VoiceParticipantAudio(_) => {
+                ActivePopupPolicy::selectable(kind, SelectablePopupTarget::VoiceParticipantAudio)
+            }
+        };
+        Some(policy)
+    }
+
+    fn active_popup_interaction(&self) -> Option<ActivePopupInteraction> {
+        self.active_popup_policy().map(|policy| policy.interaction)
+    }
+
+    pub(in crate::tui) fn active_selectable_popup_snapshot(
+        &self,
+    ) -> Option<SelectablePopupSnapshot> {
+        let target = match self.active_popup_interaction()? {
+            ActivePopupInteraction::SelectableList(target) => target,
+            ActivePopupInteraction::Custom(CustomPopupTarget::Search) => {
+                self.popups.search_popup()?.active_selectable_target()
+            }
+            ActivePopupInteraction::ScrollableDocument(_)
+            | ActivePopupInteraction::EditingDocument(_)
+            | ActivePopupInteraction::Confirmation
+            | ActivePopupInteraction::NoNavigation => return None,
+        };
+        let (selection, item_count) = self.selectable_popup_state(target)?;
+        Some(SelectablePopupSnapshot {
+            target,
+            item_count,
+            selected: selection.selected_for_len(item_count),
+            scroll: selection.scroll(),
+        })
+    }
+
+    pub(in crate::tui) fn popup_list_scroll(&self, target: SelectablePopupTarget) -> Option<usize> {
+        self.selectable_popup_state(target)
+            .map(|(selection, _)| selection.scroll())
+    }
+
+    fn selectable_popup_state(
+        &self,
+        target: SelectablePopupTarget,
+    ) -> Option<(&SelectablePopupState, usize)> {
+        Some(match target {
+            SelectablePopupTarget::MessageActions => {
+                let selection = &self.popups.message_action_menu()?.selection;
+                (selection, self.selected_message_action_items().len())
+            }
+            SelectablePopupTarget::GuildActions => {
+                let selection = match self.popups.guild_action_menu()? {
+                    GuildActionMenuState::Actions { selection }
+                    | GuildActionMenuState::MuteDuration { selection } => selection,
+                };
+                (selection, self.guild_action_row_count())
+            }
+            SelectablePopupTarget::ChannelActions => {
+                let selection = match self.popups.channel_action_menu()? {
+                    ChannelActionMenuState::Actions { selection, .. }
+                    | ChannelActionMenuState::ParticipantActions { selection, .. }
+                    | ChannelActionMenuState::MuteDuration { selection, .. }
+                    | ChannelActionMenuState::StreamTargets { selection, .. } => selection,
+                };
+                (selection, self.channel_action_row_count())
+            }
+            SelectablePopupTarget::MemberActions => {
+                let selection = &self.popups.member_action_menu()?.selection;
+                (selection, self.selected_member_action_items().len())
+            }
+            SelectablePopupTarget::MessageUrls => {
+                let picker = self.popups.message_url_picker()?;
+                (&picker.selection, picker.items.len())
+            }
+            SelectablePopupTarget::Options => {
+                let selection = &self.popups.options_popup()?.selection;
+                (selection, self.options_popup_item_count())
+            }
+            SelectablePopupTarget::UserProfileStatus => {
+                let selection = self
+                    .popups
+                    .user_profile_popup()?
+                    .settings
+                    .status_picker
+                    .as_ref()?;
+                (selection, PresenceStatus::user_selectable().len())
+            }
+            SelectablePopupTarget::UserProfileActivity => {
+                let selection = self
+                    .popups
+                    .user_profile_popup()?
+                    .settings
+                    .activity_picker
+                    .as_ref()?;
+                (selection, self.detected_rich_presence().len() + 1)
+            }
+            SelectablePopupTarget::EmojiReactions => {
+                let selection = &self.popups.emoji_reaction_picker()?.selection;
+                (selection, self.filtered_emoji_reaction_items_slice()?.len())
+            }
+            SelectablePopupTarget::PollVotes => {
+                let picker = self.popups.poll_vote_picker()?;
+                (&picker.selection, picker.answers.len())
+            }
+            SelectablePopupTarget::ReactionList => {
+                let popup = self.popups.reaction_users_popup()?;
+                (&popup.list, popup.entries.len())
+            }
+            SelectablePopupTarget::ChannelSwitcher => {
+                let popup = self.popups.channel_switcher()?;
+                (popup.selection(), popup.visible_len())
+            }
+            SelectablePopupTarget::NotificationInbox => {
+                let tab = self.notification_inbox_tab()?;
+                let inbox = self.popups.notification_inbox()?;
+                (inbox.selection(tab), inbox.active_len())
+            }
+            SelectablePopupTarget::ForumPostTags => {
+                let popup = self.popups.forum_post_composer()?;
+                (&popup.tag_selection, popup.tag_order.len())
+            }
+            SelectablePopupTarget::ThreadEditTags => {
+                let popup = self.popups.thread_edit()?;
+                (&popup.tag_selection, popup.tag_order.len())
+            }
+            SelectablePopupTarget::ThreadActions => {
+                let selection = match self.popups.thread_action_menu()? {
+                    ThreadActionMenuState::Actions { selection, .. }
+                    | ThreadActionMenuState::MuteDuration { selection, .. }
+                    | ThreadActionMenuState::NotificationSettings { selection, .. } => selection,
+                };
+                (selection, self.thread_action_row_count())
+            }
+            SelectablePopupTarget::VoiceParticipantAudio => {
+                let popup = self.popups.voice_participant_audio()?;
+                (&popup.selection, VOICE_PARTICIPANT_AUDIO_FIELD_COUNT)
+            }
+            SelectablePopupTarget::SearchResults | SelectablePopupTarget::SearchSuggestions => {
+                self.popups.search_popup()?.selectable_state(target)?
+            }
+        })
+    }
+
+    pub(in crate::tui) fn set_active_popup_list_layout(
+        &mut self,
+        target: SelectablePopupTarget,
+        scroll: usize,
+        visible_items: usize,
+    ) -> bool {
+        if self
+            .active_selectable_popup_snapshot()
+            .map(|snapshot| snapshot.target)
+            != Some(target)
+        {
+            return false;
+        }
+        self.update_selectable_popup(target, |selection, len| {
+            selection.set_layout(scroll, visible_items, len);
+        });
+        true
+    }
+
+    pub(in crate::tui) fn select_active_popup_row(
+        &mut self,
+        target: SelectablePopupTarget,
+        row: usize,
+    ) -> bool {
+        if self
+            .active_selectable_popup_snapshot()
+            .map(|snapshot| snapshot.target)
+            != Some(target)
+        {
+            return false;
+        }
+        let mut selected = false;
+        self.update_selectable_popup(target, |selection, len| {
+            if row < len {
+                selection.select(row);
+                selected = true;
+            }
+        });
+        if selected {
+            self.after_selectable_popup_selection_changed(target);
+        }
+        selected
+    }
+
+    pub(in crate::tui) fn activate_active_popup_row(
+        &mut self,
+        target: SelectablePopupTarget,
+    ) -> Option<AppCommand> {
+        if self
+            .active_selectable_popup_snapshot()
+            .map(|snapshot| snapshot.target)
+            != Some(target)
+        {
+            return None;
+        }
+        match target {
+            SelectablePopupTarget::MessageActions => self.activate_selected_message_action(),
+            SelectablePopupTarget::GuildActions => self.activate_selected_guild_action(),
+            SelectablePopupTarget::ChannelActions => self.activate_selected_channel_action(),
+            SelectablePopupTarget::MemberActions => self.activate_selected_member_action(),
+            SelectablePopupTarget::MessageUrls => self.activate_selected_message_url(),
+            SelectablePopupTarget::Options => {
+                self.toggle_selected_display_option();
+                None
+            }
+            SelectablePopupTarget::UserProfileStatus => self.activate_user_profile_status_picker(),
+            SelectablePopupTarget::UserProfileActivity => {
+                self.activate_user_profile_activity_picker()
+            }
+            SelectablePopupTarget::EmojiReactions => self.activate_selected_emoji_reaction(),
+            SelectablePopupTarget::PollVotes => {
+                self.toggle_selected_poll_vote_answer();
+                None
+            }
+            SelectablePopupTarget::ReactionList => self.activate_reaction_users_popup(),
+            SelectablePopupTarget::ChannelSwitcher => {
+                self.activate_selected_channel_switcher_item()
+            }
+            SelectablePopupTarget::NotificationInbox => {
+                self.activate_selected_notification_inbox_item()
+            }
+            SelectablePopupTarget::ForumPostTags => self.activate_forum_post_composer(),
+            SelectablePopupTarget::ThreadEditTags => self.activate_thread_edit(),
+            SelectablePopupTarget::ThreadActions => self.activate_selected_thread_action(),
+            SelectablePopupTarget::VoiceParticipantAudio => {
+                self.activate_voice_participant_audio_field()
+            }
+            SelectablePopupTarget::SearchResults | SelectablePopupTarget::SearchSuggestions => {
+                self.activate_search_popup()
+            }
+        }
+    }
+
+    fn page_selectable_popup(&mut self, target: SelectablePopupTarget, action: SelectionAction) {
+        self.update_selectable_popup(target, |selection, len| {
+            selection.page(len, action);
+        });
+        self.after_selectable_popup_selection_changed(target);
+    }
+
+    pub(in crate::tui) fn jump_selectable_popup(
+        &mut self,
+        target: SelectablePopupTarget,
+        action: UiAction,
+    ) -> bool {
+        if self
+            .active_selectable_popup_snapshot()
+            .map(|snapshot| snapshot.target)
+            != Some(target)
+        {
+            return false;
+        }
+        let jump_bottom = match action {
+            UiAction::JumpTop => false,
+            UiAction::JumpBottom => true,
+            _ => return false,
+        };
+        self.update_selectable_popup(target, |selection, len| {
+            if jump_bottom {
+                selection.jump_bottom(len);
+            } else {
+                selection.jump_top();
+            }
+        });
+        self.after_selectable_popup_selection_changed(target);
+        true
+    }
+
+    fn move_selectable_popup(&mut self, target: SelectablePopupTarget, action: SelectionAction) {
+        self.update_selectable_popup(target, |selection, len| match action {
+            SelectionAction::Next => selection.move_down(len),
+            SelectionAction::Previous => selection.move_up(),
+        });
+        self.after_selectable_popup_selection_changed(target);
+    }
+
+    fn after_selectable_popup_selection_changed(&mut self, target: SelectablePopupTarget) {
+        if target == SelectablePopupTarget::NotificationInbox {
+            self.ensure_notification_inbox_requests();
+        }
+    }
+
+    fn update_selectable_popup(
+        &mut self,
+        target: SelectablePopupTarget,
+        update: impl FnOnce(&mut SelectablePopupState, usize),
+    ) {
+        match target {
+            SelectablePopupTarget::MessageActions => {
                 let len = self.selected_message_action_items().len();
                 if let Some(menu) = self.popups.message_action_menu_mut() {
-                    menu.selection.page(len, action);
+                    update(&mut menu.selection, len);
                 }
-                true
             }
-            Some(ActiveModalPopupKind::GuildActionMenu) => {
+            SelectablePopupTarget::GuildActions => {
                 let len = self.guild_action_row_count();
                 if let Some(selection) = self.guild_action_selection_mut() {
-                    selection.page(len, action);
+                    update(selection, len);
                 }
-                true
             }
-            Some(ActiveModalPopupKind::ChannelActionMenu) => {
+            SelectablePopupTarget::ChannelActions => {
                 let len = self.channel_action_row_count();
                 if let Some(selection) = self.channel_action_selection_mut() {
-                    selection.page(len, action);
+                    update(selection, len);
                 }
-                true
             }
-            Some(ActiveModalPopupKind::MemberActionMenu) => {
+            SelectablePopupTarget::MemberActions => {
                 let len = self.selected_member_action_items().len();
                 if let Some(menu) = self.popups.member_action_menu_mut() {
-                    menu.selection.page(len, action);
+                    update(&mut menu.selection, len);
                 }
-                true
             }
-            Some(ActiveModalPopupKind::ThreadActionMenu) => {
+            SelectablePopupTarget::MessageUrls => {
+                if let Some(picker) = self.popups.message_url_picker_mut() {
+                    update(&mut picker.selection, picker.items.len());
+                }
+            }
+            SelectablePopupTarget::Options => {
+                let len = self.options_popup_item_count();
+                if let Some(popup) = self.popups.options_popup_mut() {
+                    update(&mut popup.selection, len);
+                }
+            }
+            SelectablePopupTarget::UserProfileStatus => {
+                let len = PresenceStatus::user_selectable().len();
+                if let Some(selection) = self
+                    .popups
+                    .user_profile_popup_mut()
+                    .and_then(|popup| popup.settings.status_picker.as_mut())
+                {
+                    update(selection, len);
+                }
+            }
+            SelectablePopupTarget::UserProfileActivity => {
+                let len = self.detected_rich_presence().len() + 1;
+                if let Some(selection) = self
+                    .popups
+                    .user_profile_popup_mut()
+                    .and_then(|popup| popup.settings.activity_picker.as_mut())
+                {
+                    update(selection, len);
+                }
+            }
+            SelectablePopupTarget::EmojiReactions => {
+                let len = self
+                    .filtered_emoji_reaction_items_slice()
+                    .map_or(0, <[EmojiReactionItem]>::len);
+                if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
+                    update(&mut picker.selection, len);
+                }
+            }
+            SelectablePopupTarget::PollVotes => {
+                if let Some(picker) = self.popups.poll_vote_picker_mut() {
+                    update(&mut picker.selection, picker.answers.len());
+                }
+            }
+            SelectablePopupTarget::ReactionList => {
+                if let Some(popup) = self.popups.reaction_users_popup_mut() {
+                    update(&mut popup.list, popup.entries.len());
+                }
+            }
+            SelectablePopupTarget::ChannelSwitcher => {
+                if let Some(popup) = self.popups.channel_switcher_mut() {
+                    let len = popup.visible_len();
+                    update(popup.selection_mut(), len);
+                }
+            }
+            SelectablePopupTarget::NotificationInbox => {
+                let Some(tab) = self.notification_inbox_tab() else {
+                    return;
+                };
+                if let Some(popup) = self.popups.notification_inbox_mut() {
+                    let len = popup.active_len();
+                    update(popup.selection_mut(tab), len);
+                }
+            }
+            SelectablePopupTarget::ForumPostTags => {
+                if let Some(popup) = self.popups.forum_post_composer_mut() {
+                    update(&mut popup.tag_selection, popup.tag_order.len());
+                }
+            }
+            SelectablePopupTarget::ThreadEditTags => {
+                if let Some(popup) = self.popups.thread_edit_mut() {
+                    update(&mut popup.tag_selection, popup.tag_order.len());
+                }
+            }
+            SelectablePopupTarget::ThreadActions => {
                 let len = self.thread_action_row_count();
                 if let Some(selection) = self.thread_action_selection_mut() {
-                    selection.page(len, action);
+                    update(selection, len);
                 }
-                true
             }
-            Some(ActiveModalPopupKind::MessageConfirmation)
-            | Some(ActiveModalPopupKind::QuitConfirmation)
-            | Some(ActiveModalPopupKind::GuildLeaveConfirmation)
-            | Some(ActiveModalPopupKind::AttachmentViewer)
-            | Some(ActiveModalPopupKind::Leader)
-            | Some(ActiveModalPopupKind::DebugLog)
-            | Some(ActiveModalPopupKind::Search)
-            | Some(ActiveModalPopupKind::ForumPostComposer)
-            | Some(ActiveModalPopupKind::ThreadEdit)
-            | Some(ActiveModalPopupKind::ThreadDeleteConfirmation)
-            | Some(ActiveModalPopupKind::VoiceParticipantAudio)
-            | None => false,
+            SelectablePopupTarget::VoiceParticipantAudio => {
+                if let Some(popup) = self.popups.voice_participant_audio_mut() {
+                    update(&mut popup.selection, VOICE_PARTICIPANT_AUDIO_FIELD_COUNT);
+                }
+            }
+            SelectablePopupTarget::SearchResults | SelectablePopupTarget::SearchSuggestions => {
+                if let Some((selection, len)) = self
+                    .popups
+                    .search_popup_mut()
+                    .and_then(|search| search.selectable_state_mut(target))
+                {
+                    update(selection, len);
+                }
+            }
+        }
+    }
+
+    fn page_scrollable_popup(&mut self, target: ScrollablePopupTarget, action: SelectionAction) {
+        if let Some(scroll) = self.scrollable_popup_state_mut(target) {
+            scroll.page(action);
+        }
+    }
+
+    fn scroll_popup_document(&mut self, target: ScrollablePopupTarget, action: SelectionAction) {
+        if let Some(scroll) = self.scrollable_popup_state_mut(target) {
+            match action {
+                SelectionAction::Next => scroll.scroll_down(),
+                SelectionAction::Previous => scroll.scroll_up(),
+            }
+        }
+    }
+
+    fn scrollable_popup_state_mut(
+        &mut self,
+        target: ScrollablePopupTarget,
+    ) -> Option<&mut ScrollablePopupState> {
+        match target {
+            ScrollablePopupTarget::KeymapHelp => self
+                .popups
+                .keymap_popup_mut()
+                .map(|popup| &mut popup.scroll),
+            ScrollablePopupTarget::ReactionUsers => self
+                .popups
+                .reaction_users_popup_mut()
+                .map(|popup| &mut popup.user_scroll),
+            ScrollablePopupTarget::UserProfile => self
+                .popups
+                .user_profile_popup_mut()
+                .map(|popup| &mut popup.scroll),
+            ScrollablePopupTarget::ForumPostComposer => self
+                .popups
+                .forum_post_composer_mut()
+                .map(|popup| &mut popup.scroll),
+            ScrollablePopupTarget::ThreadEdit => {
+                self.popups.thread_edit_mut().map(|popup| &mut popup.scroll)
+            }
         }
     }
 
@@ -1719,6 +2550,27 @@ impl DashboardState {
             |key_bindings, actions, index| key_bindings.member_action_shortcuts(actions, index),
             |action| action.is_enabled(),
         )
+    }
+
+    pub(in crate::tui) fn message_url_shortcut_matches(&self, shortcut: KeyChord) -> bool {
+        indexed_shortcut_matches(
+            self.key_bindings(),
+            shortcut,
+            self.selected_message_url_items().len(),
+        )
+    }
+
+    pub(in crate::tui) fn emoji_reaction_shortcut_matches(&self, shortcut: KeyChord) -> bool {
+        self.filtered_emoji_reaction_items_slice()
+            .is_some_and(|items| {
+                indexed_shortcut_matches(self.key_bindings(), shortcut, items.len())
+            })
+    }
+
+    pub(in crate::tui) fn poll_vote_shortcut_matches(&self, shortcut: KeyChord) -> bool {
+        self.poll_vote_picker_items().is_some_and(|items| {
+            indexed_shortcut_matches(self.key_bindings(), shortcut, items.len())
+        })
     }
 }
 

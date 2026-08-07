@@ -33,6 +33,11 @@ use crate::discord::voice::{StreamCaptureTarget, StreamCaptureTargetKind};
 const FRAME_QUEUE_CAPACITY: usize = 2;
 const CALLBACK_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CALLBACK_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
+const EXCLUDED_WINDOW_BUNDLE_IDENTIFIERS: [&str; 3] = [
+    "com.apple.dock",
+    "com.apple.controlcenter",
+    "com.apple.systemuiserver",
+];
 
 pub(super) struct CaptureSession {
     active: Option<ActiveStream>,
@@ -67,6 +72,16 @@ pub(super) fn list_targets() -> Result<Vec<StreamCaptureTarget>, String> {
         if !unsafe { window.isOnScreen() } {
             continue;
         }
+        let owning_application = unsafe { window.owningApplication() };
+        let bundle_identifier = owning_application
+            .as_ref()
+            .map(|application| unsafe { application.bundleIdentifier() }.to_string());
+        if !is_default_shareable_window(
+            unsafe { window.windowLayer() },
+            bundle_identifier.as_deref(),
+        ) {
+            continue;
+        }
         let frame = unsafe { window.frame() };
         if frame.size.width < 2.0 || frame.size.height < 2.0 {
             continue;
@@ -78,7 +93,8 @@ pub(super) fn list_targets() -> Result<Vec<StreamCaptureTarget>, String> {
         if title.is_empty() {
             continue;
         }
-        let app_name = unsafe { window.owningApplication() }
+        let app_name = owning_application
+            .as_ref()
             .map(|application| unsafe { application.applicationName() }.to_string())
             .unwrap_or_default();
         let label = if app_name.is_empty() || title.starts_with(&app_name) {
@@ -94,6 +110,23 @@ pub(super) fn list_targets() -> Result<Vec<StreamCaptureTarget>, String> {
     }
 
     Ok(targets)
+}
+
+fn is_default_shareable_window(window_layer: isize, bundle_identifier: Option<&str>) -> bool {
+    if window_layer != 0 {
+        return false;
+    }
+
+    let Some(bundle_identifier) = bundle_identifier else {
+        return true;
+    };
+    let bundle_identifier = bundle_identifier.to_ascii_lowercase();
+    !EXCLUDED_WINDOW_BUNDLE_IDENTIFIERS.iter().any(|excluded| {
+        bundle_identifier == *excluded
+            || bundle_identifier
+                .strip_prefix(excluded)
+                .is_some_and(|suffix| suffix.starts_with('.'))
+    })
 }
 
 pub(super) fn start_capture(
@@ -444,4 +477,34 @@ fn copy_bgra_frame(
         rgba,
         buffer_pool.clone(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_shareable_window_policy_keeps_app_windows_and_rejects_system_surfaces() {
+        let cases = [
+            (0, Some("com.example.Terminal"), true),
+            (0, None, true),
+            (1, Some("com.example.Terminal"), false),
+            (-1, Some("com.example.Terminal"), false),
+            (0, Some("com.apple.dock"), false),
+            (0, Some("com.apple.Dock.extra"), false),
+            (0, Some("com.apple.controlcenter"), false),
+            (0, Some("com.apple.controlcenter.helper"), false),
+            (0, Some("com.apple.SystemUIServer"), false),
+            (0, Some("com.apple.systemuiserver.widget"), false),
+            (0, Some("com.apple.docker"), true),
+        ];
+
+        for (window_layer, bundle_identifier, expected) in cases {
+            assert_eq!(
+                is_default_shareable_window(window_layer, bundle_identifier),
+                expected,
+                "window_layer={window_layer} bundle_identifier={bundle_identifier:?}"
+            );
+        }
+    }
 }

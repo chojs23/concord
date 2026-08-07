@@ -7,15 +7,15 @@ use crate::discord::{
     MessageAttachmentUpload, PresenceStatus, ProfileAvatarUpload, UserProfileInfo,
     UserProfileUpdate,
 };
-use crate::tui::keybindings::KeyChord;
+use crate::tui::keybindings::{KeyChord, SelectionAction};
 use crate::tui::text_input::TextEditAction;
 
 use super::super::model::{ActionAvailability, FocusPane, MemberActionItem, MemberActionKind};
 use super::super::{ActiveGuildScope, DashboardState};
 use super::{
     ActiveModalPopupKind, MemberActionMenuState, ModalPopup, SelectablePopupState,
-    UserProfilePopupState, UserProfileSettingsField, UserProfileSettingsState,
-    UserProfileSettingsTab,
+    SelectablePopupTarget, UserProfilePopupState, UserProfileSettingsField,
+    UserProfileSettingsState, UserProfileSettingsTab,
 };
 
 impl DashboardState {
@@ -50,7 +50,7 @@ impl DashboardState {
 
     pub fn open_selected_member_actions(&mut self) {
         if let Some(menu) = self.selected_member_action_context() {
-            self.popups.modal = Some(ModalPopup::MemberActionMenu(menu));
+            self.popups.set_modal(ModalPopup::MemberActionMenu(menu));
         }
     }
 
@@ -101,16 +101,14 @@ impl DashboardState {
     }
 
     pub fn move_member_action_down(&mut self) {
-        let len = self.selected_member_action_items().len();
-        if let Some(action) = self.popups.member_action_menu_mut() {
-            action.selection.move_down(len);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::MemberActions, SelectionAction::Next);
     }
 
     pub fn move_member_action_up(&mut self) {
-        if let Some(action) = self.popups.member_action_menu_mut() {
-            action.selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::MemberActions,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn select_member_action_row(&mut self, row: usize) -> bool {
@@ -161,13 +159,14 @@ impl DashboardState {
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
     ) -> Option<AppCommand> {
-        self.popups.modal = Some(ModalPopup::UserProfile(UserProfilePopupState {
-            user_id,
-            guild_id,
-            load_error: None,
-            settings: UserProfileSettingsState::default(),
-            scroll: Default::default(),
-        }));
+        self.popups
+            .set_modal(ModalPopup::UserProfile(UserProfilePopupState {
+                user_id,
+                guild_id,
+                load_error: None,
+                settings: UserProfileSettingsState::default(),
+                scroll: Default::default(),
+            }));
         Some(AppCommand::LoadUserProfile { user_id, guild_id })
     }
 
@@ -491,26 +490,18 @@ impl DashboardState {
         }
     }
 
-    pub fn close_user_profile_status_picker(&mut self) {
-        if let Some(popup) = self.popups.user_profile_popup_mut() {
-            popup.settings.status_picker = None;
-        }
-    }
-
     pub fn move_user_profile_status_picker_down(&mut self) {
-        if let Some(popup) = self.popups.user_profile_popup_mut()
-            && let Some(picker) = popup.settings.status_picker.as_mut()
-        {
-            picker.move_down(PresenceStatus::user_selectable().len());
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::UserProfileStatus,
+            SelectionAction::Next,
+        );
     }
 
     pub fn move_user_profile_status_picker_up(&mut self) {
-        if let Some(popup) = self.popups.user_profile_popup_mut()
-            && let Some(picker) = popup.settings.status_picker.as_mut()
-        {
-            picker.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::UserProfileStatus,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn activate_user_profile_status_picker(&mut self) -> Option<AppCommand> {
@@ -541,44 +532,29 @@ impl DashboardState {
             .collect()
     }
 
-    fn user_profile_activity_picker_len(&self) -> usize {
-        self.detected_rich_presence().len() + 1
-    }
-
     pub fn open_user_profile_activity_picker(&mut self) {
         if !self.is_current_user_profile_popup() {
             return;
         }
         if let Some(popup) = self.popups.user_profile_popup_mut() {
-            let mut picker = SelectablePopupState::default();
-            picker.select(0);
             popup.settings.editing = None;
             popup.settings.edit_input.clear();
-            popup.settings.activity_picker = Some(picker);
-        }
-    }
-
-    pub fn close_user_profile_activity_picker(&mut self) {
-        if let Some(popup) = self.popups.user_profile_popup_mut() {
-            popup.settings.activity_picker = None;
+            popup.settings.activity_picker = Some(SelectablePopupState::default());
         }
     }
 
     pub fn move_user_profile_activity_picker_down(&mut self) {
-        let len = self.user_profile_activity_picker_len();
-        if let Some(popup) = self.popups.user_profile_popup_mut()
-            && let Some(picker) = popup.settings.activity_picker.as_mut()
-        {
-            picker.move_down(len);
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::UserProfileActivity,
+            SelectionAction::Next,
+        );
     }
 
     pub fn move_user_profile_activity_picker_up(&mut self) {
-        if let Some(popup) = self.popups.user_profile_popup_mut()
-            && let Some(picker) = popup.settings.activity_picker.as_mut()
-        {
-            picker.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::UserProfileActivity,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn is_user_profile_activity_picker_open(&self) -> bool {
@@ -890,6 +866,12 @@ impl DashboardState {
     pub fn set_user_profile_popup_total_lines(&mut self, total_lines: usize) {
         if let Some(popup) = self.popups.user_profile_popup_mut() {
             popup.scroll.set_total_lines(total_lines);
+        }
+    }
+
+    pub(in crate::tui) fn reveal_user_profile_popup_row(&mut self, row: usize) {
+        if let Some(popup) = self.popups.user_profile_popup_mut() {
+            popup.scroll.reveal(row, row.saturating_add(1));
         }
     }
 

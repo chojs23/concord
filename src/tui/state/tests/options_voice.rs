@@ -32,9 +32,9 @@ fn private_voice_state(kind: &str) -> DashboardState {
 
 fn current_voice_stream_leader_label(state: &mut DashboardState) -> String {
     state.open_leader();
-    state.push_leader_keymap_key(KeyChord::from_str("v").expect("voice prefix should parse"));
+    state.push_key_sequence_key(KeyChord::from_str("v").expect("voice prefix should parse"));
     state
-        .leader_keymap_shortcuts()
+        .key_sequence_shortcuts()
         .into_iter()
         .find(|item| item.action == Some(UiAction::ToggleStream))
         .expect("voice stream shortcut is present")
@@ -454,7 +454,10 @@ fn voice_channel_participant_audio_controls_persist() {
         })
     );
     assert_eq!(
-        crate::tui::input::handle_key(&mut state, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),),
+        crate::tui::input::handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        ),
         None
     );
     assert_eq!(
@@ -657,6 +660,13 @@ fn joined_voice_channel_can_select_a_stream_target_and_stop_sharing() {
             channel_id,
         })
     );
+    assert_eq!(
+        state
+            .toast_message()
+            .expect("capture target loading toast is visible")
+            .text,
+        "Loading screens and windows..."
+    );
     state.open_selected_channel_actions();
 
     let actions = state.selected_channel_action_items();
@@ -681,6 +691,13 @@ fn joined_voice_channel_can_select_a_stream_target_and_stop_sharing() {
         error: None,
     });
     assert!(!state.is_channel_action_stream_target_phase());
+    assert_eq!(
+        state
+            .toast_message()
+            .expect("newer capture target request remains visible")
+            .text,
+        "Loading screens and windows..."
+    );
 
     state.push_effect(AppEvent::StreamCaptureTargetsLoaded {
         request_id: crate::discord::StreamCaptureTargetsRequestId::new(1),
@@ -690,6 +707,7 @@ fn joined_voice_channel_can_select_a_stream_target_and_stop_sharing() {
         error: None,
     });
     assert!(state.is_channel_action_stream_target_phase());
+    assert!(state.toast_message().is_none());
     assert_eq!(
         state.selected_stream_capture_targets(),
         std::slice::from_ref(&target)

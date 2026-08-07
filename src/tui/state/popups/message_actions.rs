@@ -6,7 +6,7 @@ use crate::discord::{
     AppCommand, AttachmentMediaType, DiscordAction, EmbedInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS,
     MediaPlaybackSource, MediaPlaybackTarget, MessageState, ReactionEmoji,
 };
-use crate::tui::keybindings::KeyChord;
+use crate::tui::keybindings::{KeyChord, SelectionAction};
 use crate::tui::text::detected_urls;
 
 use super::super::{
@@ -14,7 +14,7 @@ use super::super::{
     MessageActionKind, MessageActionMenuState, MessageConfirmationKind, MessageUrlItem,
     MessageUrlPickerState, popups,
 };
-use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup};
+use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupTarget};
 
 const PLAYABLE_VIDEO_EXTENSIONS: &[&str] = &["m4v", "mov", "mp4", "webm"];
 
@@ -39,7 +39,7 @@ impl DashboardState {
                 .selected_message_state()
                 .is_some_and(|message| !self.message_is_pending(message))
         {
-            self.popups.modal = Some(ModalPopup::MessageActionMenu(
+            self.popups.set_modal(ModalPopup::MessageActionMenu(
                 MessageActionMenuState::default(),
             ));
         }
@@ -52,16 +52,14 @@ impl DashboardState {
     }
 
     pub fn move_message_action_down(&mut self) {
-        let actions_len = self.selected_message_action_items().len();
-        if let Some(menu) = self.popups.message_action_menu_mut() {
-            menu.selection.move_down(actions_len);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::MessageActions, SelectionAction::Next);
     }
 
     pub fn move_message_action_up(&mut self) {
-        if let Some(menu) = self.popups.message_action_menu_mut() {
-            menu.selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::MessageActions,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn select_message_action_row(&mut self, row: usize) -> bool {
@@ -309,15 +307,14 @@ impl DashboardState {
     }
 
     pub fn move_message_url_picker_down(&mut self) {
-        if let Some(picker) = self.popups.message_url_picker_mut() {
-            picker.selection.move_down(picker.items.len());
-        }
+        self.move_selectable_popup(SelectablePopupTarget::MessageUrls, SelectionAction::Next);
     }
 
     pub fn move_message_url_picker_up(&mut self) {
-        if let Some(picker) = self.popups.message_url_picker_mut() {
-            picker.selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::MessageUrls,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn select_message_url_row(&mut self, row: usize) -> bool {
@@ -629,10 +626,11 @@ impl DashboardState {
     }
 
     fn open_message_url_picker(&mut self, items: Vec<MessageUrlItem>) {
-        self.popups.modal = Some(ModalPopup::MessageUrlPicker(MessageUrlPickerState {
-            selection: Default::default(),
-            items,
-        }));
+        self.popups
+            .set_modal(ModalPopup::MessageUrlPicker(MessageUrlPickerState {
+                selection: Default::default(),
+                items,
+            }));
     }
 
     pub fn direct_copy_selected_message_content(&mut self) {
@@ -723,8 +721,7 @@ impl DashboardState {
                 Some(guild_id) => ActiveGuildScope::Guild(guild_id),
                 None => ActiveGuildScope::DirectMessages,
             })?;
-        self.activate_guild(scope);
-        self.activate_channel(target.channel_id);
+        self.activate_message_history_channel(target.channel_id, Some(scope));
         self.focus_pane(FocusPane::Messages);
         Some(AppCommand::LoadMessageHistoryAround {
             channel_id: target.channel_id,
@@ -813,7 +810,8 @@ impl DashboardState {
 
     fn open_message_confirmation(&mut self, confirmation: popups::MessageConfirmationState) {
         self.popups.confirmation_button = popups::ConfirmationButton::default();
-        self.popups.modal = Some(ModalPopup::MessageConfirmation(confirmation));
+        self.popups
+            .set_modal(ModalPopup::MessageConfirmation(confirmation));
     }
 }
 

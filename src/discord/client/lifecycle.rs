@@ -146,7 +146,7 @@ impl DiscordClient {
             .mark_pinned_message_failed(channel_id);
     }
 
-    pub(crate) fn next_message_author_member_requests(
+    pub(crate) fn next_member_hydration_requests(
         &self,
         missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
         now: Instant,
@@ -154,18 +154,7 @@ impl DiscordClient {
         self.request_lifecycle
             .lock()
             .expect("request lifecycle lock is not poisoned")
-            .next_message_author_member_requests(missing, now)
-    }
-
-    pub(crate) fn next_initial_unknown_member_requests(
-        &self,
-        missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
-        now: Instant,
-    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
-        self.request_lifecycle
-            .lock()
-            .expect("request lifecycle lock is not poisoned")
-            .next_initial_unknown_member_requests(missing, now)
+            .next_member_hydration_requests(missing, now)
     }
 
     pub(crate) fn next_member_request(

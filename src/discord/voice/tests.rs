@@ -1876,6 +1876,8 @@ fn rtp_decrypts_aead_rtpsize_modes_and_strips_extension_body_and_padding() {
             .expect("RTP payload should decrypt");
 
         assert_eq!(decrypted.encrypted_extension_body_len, 4);
+        assert_eq!(decrypted.extension_profile, Some(0x1000));
+        assert_eq!(decrypted.extension_body, b"ext!");
         assert_eq!(decrypted.media_payload, b"opus-frame");
     }
 }
@@ -1952,11 +1954,11 @@ fn opus_encoder_encodes_decodable_20ms_stereo_frame() {
 
     assert!(!opus.is_empty());
 
-    let mut decoder = OpusDecoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo)
+    let mut decoder = OpusDecoder::new(Channels::Stereo, OpusSampleRate::Hz48000)
         .expect("Opus decoder should build");
     let mut decoded = vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     let samples_per_channel = decoder
-        .decode_float(&opus, &mut decoded, false)
+        .decode_float_to_slice(&opus, &mut decoded, false)
         .expect("encoded Opus should decode");
 
     assert_eq!(samples_per_channel, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL);
@@ -1982,11 +1984,11 @@ fn system_audio_opus_encoder_encodes_decodable_20ms_stereo_frame() {
         .encode_20ms_i16(&pcm)
         .expect("system audio frame should encode");
 
-    let mut decoder = OpusDecoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo)
+    let mut decoder = OpusDecoder::new(Channels::Stereo, OpusSampleRate::Hz48000)
         .expect("Opus decoder should build");
     let mut decoded = vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     let samples_per_channel = decoder
-        .decode_float(&opus, &mut decoded, false)
+        .decode_float_to_slice(&opus, &mut decoded, false)
         .expect("system audio Opus should decode");
 
     assert_eq!(samples_per_channel, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL);

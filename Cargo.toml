@@ -1,6 +1,6 @@
 [package]
 name = "concord"
-version = "2.5.1"
+version = "2.5.5"
 edition = "2024"
 rust-version = "1.90"
 description = "A terminal user interface client for Discord"
@@ -35,7 +35,7 @@ keyring = { version = "3.6.3", default-features = false, features = [
 ] }
 mime_guess = "2.0"
 notify-rust = "4"
-opus = "0.3.1"
+opus = { version = "1.6.1", package = "opusic-c" }
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 ratatui = "0.30.0"
@@ -64,6 +64,7 @@ rustls = { version = "0.23.39", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+socket2 = "0.6.3"
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = [
   "macros",
@@ -113,10 +114,14 @@ voice-playback = [
 ]
 stream-broadcast = [
   "voice-playback",
+  "dep:cros-codecs",
   "dep:openh264",
   "dep:fast_image_resize",
   "dep:yuv",
   "dep:pipewire",
+  "dep:libc",
+  "dep:glow",
+  "dep:khronos-egl",
   "dep:wasapi",
   "dep:windows",
   "dep:block2",
@@ -128,6 +133,7 @@ stream-broadcast = [
   "dep:objc2-core-video",
   "dep:objc2-foundation",
   "dep:objc2-screen-capture-kit",
+  "dep:objc2-video-toolbox",
 ]
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -137,7 +143,13 @@ ashpd = { version = "0.13.13", default-features = false, features = [
   "global_shortcuts",
   "screencast",
 ], optional = true }
-pipewire = { version = "0.10.0", optional = true }
+cros-codecs = { package = "cros-codecs-extended", version = "=0.0.5-extended.2", features = [
+  "vaapi",
+], optional = true }
+glow = { version = "0.17.0", optional = true }
+khronos-egl = { version = "6.0.0", features = ["dynamic"], optional = true }
+libc = { version = "0.2", optional = true }
+pipewire = { version = "0.10.0", optional = true, features = ["v0_3_33"] }
 x11rb = { version = "0.13.2", features = ["xinput"], optional = true }
 xkeysym = { version = "0.2.1", optional = true }
 
@@ -155,6 +167,10 @@ windows = { version = "0.62.2", features = [
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",
   "Win32_Graphics_Gdi",
+  "Win32_Media_MediaFoundation",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
   "Win32_System_WinRT_Direct3D11",
   "Win32_System_WinRT_Graphics_Capture",
   "Win32_UI_WindowsAndMessaging",
@@ -184,11 +200,16 @@ objc2-core-audio-types = { version = "0.3.2", default-features = false, features
 ], optional = true }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
   "std",
+  "CFDictionary",
+  "CFNumber",
+  "CFString",
 ], optional = true }
 objc2-core-media = { version = "0.3.2", default-features = false, features = [
   "std",
   "CMBlockBuffer",
+  "CMFormatDescription",
   "CMSampleBuffer",
+  "CMTime",
   "objc2",
   "objc2-core-audio-types",
   "objc2-core-video",
@@ -199,6 +220,7 @@ objc2-core-video = { version = "0.3.2", default-features = false, features = [
   "CVBuffer",
   "CVImageBuffer",
   "CVPixelBuffer",
+  "CVPixelBufferPool",
   "CVReturn",
 ], optional = true }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
@@ -218,6 +240,15 @@ objc2-screen-capture-kit = { version = "0.3.2", default-features = false, featur
   "objc2-core-foundation",
   "objc2-core-graphics",
   "objc2-core-media",
+], optional = true }
+objc2-video-toolbox = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "VTCompressionProperties",
+  "VTCompressionSession",
+  "VTErrors",
+  "VTSession",
+  "objc2-core-media",
+  "objc2-core-video",
 ], optional = true }
 
 [profile.dist]

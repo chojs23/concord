@@ -1,7 +1,8 @@
 use crate::discord::AppCommand;
+use crate::tui::keybindings::SelectionAction;
 
 use super::super::{DashboardState, PollVotePickerItem, PollVotePickerState};
-use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup};
+use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupTarget};
 
 impl DashboardState {
     pub fn poll_vote_picker_items(&self) -> Option<&[PollVotePickerItem]> {
@@ -17,15 +18,11 @@ impl DashboardState {
     }
 
     pub fn move_poll_vote_picker_down(&mut self) {
-        if let Some(picker) = self.popups.poll_vote_picker_mut() {
-            picker.selection.move_down(picker.answers.len());
-        }
+        self.move_selectable_popup(SelectablePopupTarget::PollVotes, SelectionAction::Next);
     }
 
     pub fn move_poll_vote_picker_up(&mut self) {
-        if let Some(picker) = self.popups.poll_vote_picker_mut() {
-            picker.selection.move_up();
-        }
+        self.move_selectable_popup(SelectablePopupTarget::PollVotes, SelectionAction::Previous);
     }
 
     pub fn toggle_selected_poll_vote_answer(&mut self) {
@@ -74,23 +71,24 @@ impl DashboardState {
         if let Some(message) = self.selected_message_state()
             && let Some(poll) = &message.poll
         {
-            self.popups.modal = Some(ModalPopup::PollVotePicker(PollVotePickerState {
-                selection: Default::default(),
-                allow_multiselect: poll.allow_multiselect,
-                channel_id: message.channel_id,
-                message_id: message.id,
-                answers: normalized_poll_vote_picker_answers(
-                    poll.allow_multiselect,
-                    poll.answers
-                        .iter()
-                        .map(|answer| PollVotePickerItem {
-                            answer_id: answer.answer_id,
-                            label: answer.text.clone(),
-                            selected: answer.me_voted,
-                        })
-                        .collect(),
-                ),
-            }));
+            self.popups
+                .set_modal(ModalPopup::PollVotePicker(PollVotePickerState {
+                    selection: Default::default(),
+                    allow_multiselect: poll.allow_multiselect,
+                    channel_id: message.channel_id,
+                    message_id: message.id,
+                    answers: normalized_poll_vote_picker_answers(
+                        poll.allow_multiselect,
+                        poll.answers
+                            .iter()
+                            .map(|answer| PollVotePickerItem {
+                                answer_id: answer.answer_id,
+                                label: answer.text.clone(),
+                                selected: answer.me_voted,
+                            })
+                            .collect(),
+                    ),
+                }));
         }
     }
 }

@@ -4,22 +4,17 @@ use crate::discord::AppCommand;
 use crate::tui::keybindings::KeyMapLookup;
 use crate::tui::state::DashboardState;
 
-use super::execute_ui_action;
+use super::{execute_ui_action, is_key_sequence_cancel_key};
 
-pub(super) fn handle_leader_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
-    if let Some(command) = handle_leader_keymap_key(state, key) {
-        return command;
-    }
-
-    state.close_leader();
-
-    None
-}
-
-fn handle_leader_keymap_key(
+pub(super) fn handle_dashboard_key_sequence(
     state: &mut DashboardState,
     key: KeyEvent,
-) -> Option<Option<AppCommand>> {
+) -> Option<AppCommand> {
+    if is_key_sequence_cancel_key(key) {
+        state.close_key_sequence();
+        return None;
+    }
+
     let focus = state.focus();
     let lookup = state
         .key_bindings()
@@ -27,17 +22,16 @@ fn handle_leader_keymap_key(
     match lookup {
         Some(KeyMapLookup::Pending) => {
             let chord = state.key_bindings().keymap_chord_for_event(key);
-            state.push_leader_keymap_key(chord);
-            Some(None)
+            state.push_key_sequence_key(chord);
+            None
         }
         Some(KeyMapLookup::Action(action)) => {
-            state.close_leader();
-            Some(execute_ui_action(state, focus, action))
+            state.close_key_sequence();
+            execute_ui_action(state, focus, action)
         }
-        None if state.leader_keymap_prefix().len() > 1 => {
-            state.close_leader();
-            Some(None)
+        None => {
+            state.close_key_sequence();
+            None
         }
-        None => None,
     }
 }

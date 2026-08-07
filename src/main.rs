@@ -25,8 +25,28 @@ async fn main() -> Result<()> {
         }
     }
 
+    #[cfg(all(target_os = "macos", feature = "stream-broadcast"))]
+    initialize_macos_display_services();
+
+    // Native media libraries can write directly to stderr and corrupt the
+    // Ratatui screen. Capture those diagnostics only for the interactive app;
+    // CLI commands above keep their normal terminal output.
+    let _stderr_capture = concord::logging::capture_stderr()?;
     let app = App::new();
     app.run().await
+}
+
+#[cfg(all(target_os = "macos", feature = "stream-broadcast"))]
+fn initialize_macos_display_services() {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGMainDisplayID() -> u32;
+    }
+
+    // Concord is a terminal application, so AppKit does not initialize the
+    // process's WindowServer connection for us. Do this on the main thread
+    // before ScreenCaptureKit creates window filters on capture workers.
+    let _ = unsafe { CGMainDisplayID() };
 }
 
 fn cli_command_from_args(args: impl IntoIterator<Item = OsString>) -> CliCommand {

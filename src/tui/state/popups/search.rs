@@ -8,7 +8,9 @@ use crate::discord::{
 };
 use crate::tui::fuzzy::{best_fuzzy_name_match_score, fuzzy_text_score};
 use crate::tui::keybindings::SelectionAction;
-use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupState};
+use crate::tui::state::popups::{
+    ActiveModalPopupKind, ModalPopup, SelectablePopupState, SelectablePopupTarget,
+};
 use crate::tui::text_input::TextInputState;
 use chrono::NaiveDate;
 
@@ -182,6 +184,40 @@ impl SearchPopupState {
             .selected_for_len(self.suggestions.len())
     }
 
+    pub(super) fn active_selectable_target(&self) -> SelectablePopupTarget {
+        if self.suggestions.is_empty() {
+            SelectablePopupTarget::SearchResults
+        } else {
+            SelectablePopupTarget::SearchSuggestions
+        }
+    }
+
+    pub(super) fn selectable_state(
+        &self,
+        target: SelectablePopupTarget,
+    ) -> Option<(&SelectablePopupState, usize)> {
+        match target {
+            SelectablePopupTarget::SearchResults => Some((&self.selection, self.results.len())),
+            SelectablePopupTarget::SearchSuggestions => {
+                Some((&self.suggestion_selection, self.suggestions.len()))
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn selectable_state_mut(
+        &mut self,
+        target: SelectablePopupTarget,
+    ) -> Option<(&mut SelectablePopupState, usize)> {
+        match target {
+            SelectablePopupTarget::SearchResults => Some((&mut self.selection, self.results.len())),
+            SelectablePopupTarget::SearchSuggestions => {
+                Some((&mut self.suggestion_selection, self.suggestions.len()))
+            }
+            _ => None,
+        }
+    }
+
     fn view(&self) -> SearchPopupView {
         SearchPopupView {
             mode: self.mode,
@@ -221,12 +257,14 @@ impl DashboardState {
     }
 
     pub fn open_message_search_popup(&mut self) {
-        self.popups.modal = Some(ModalPopup::Search(SearchPopupState::message()));
+        self.popups
+            .set_modal(ModalPopup::Search(SearchPopupState::message()));
     }
 
     pub fn open_member_search_popup(&mut self) {
         let results = self.member_search_results_for_query("");
-        self.popups.modal = Some(ModalPopup::Search(SearchPopupState::member(results)));
+        self.popups
+            .set_modal(ModalPopup::Search(SearchPopupState::member(results)));
     }
 
     pub fn close_search_popup(&mut self) {
@@ -263,19 +301,6 @@ impl DashboardState {
             };
         }
         self.refresh_message_search_suggestions();
-    }
-
-    pub fn set_search_popup_view_height(&mut self, height: usize) {
-        if let Some(search) = self.popups.search_popup_mut() {
-            let results_len = search.results.len();
-            let suggestions_len = search.suggestions.len();
-            search
-                .selection
-                .set_view_height_and_sync(height, results_len);
-            search
-                .suggestion_selection
-                .set_view_height_and_sync(height, suggestions_len);
-        }
     }
 
     pub fn move_search_result_down(&mut self) -> Option<AppCommand> {
@@ -468,14 +493,15 @@ impl DashboardState {
             return None;
         };
         self.close_search_popup();
-        if let Some(channel) = self.discord.cache.channel(result.channel_id) {
-            match channel.guild_id {
-                Some(guild_id) => self.activate_guild(ActiveGuildScope::Guild(guild_id)),
-                None => self.activate_guild(ActiveGuildScope::DirectMessages),
-            }
-        }
-        self.restore_channel_cursor(Some(result.channel_id));
-        self.activate_channel(result.channel_id);
+        let scope = self
+            .discord
+            .cache
+            .channel(result.channel_id)
+            .map(|channel| match channel.guild_id {
+                Some(guild_id) => ActiveGuildScope::Guild(guild_id),
+                None => ActiveGuildScope::DirectMessages,
+            });
+        self.activate_message_history_channel(result.channel_id, scope);
         self.focus_pane(FocusPane::Messages);
         Some(AppCommand::LoadMessageHistoryAround {
             channel_id: result.channel_id,

@@ -175,6 +175,7 @@ impl DashboardState {
             request_id,
             target: StreamBroadcastUiTarget { scope, channel_id },
         });
+        self.show_stream_capture_targets_loading_toast();
         request_id
     }
 

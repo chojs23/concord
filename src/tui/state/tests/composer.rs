@@ -2358,9 +2358,10 @@ fn typing_footer_resolves_one_user_to_alias() {
     let channel_id = Id::new(2);
     let user_id = Id::new(20);
     state.push_event(typing_start_event(TypingStartFixture {
+        guild_id: Some(Id::new(1)),
         channel_id,
         user_id,
-        display_name: Some("Live Nick".to_owned()),
+        member: Some(member_with_username(user_id, "Live Nick", "typing-user")),
     }));
 
     assert_eq!(
@@ -2386,9 +2387,14 @@ fn typing_footer_excludes_current_user() {
     let mut state = state_with_writable_channel_and_members();
     // user_id 10 is the local user in the fixture's READY event.
     state.push_event(typing_start_event(TypingStartFixture {
+        guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
         user_id: Id::new(10),
-        display_name: Some("Local User".to_owned()),
+        member: Some(member_with_username(
+            Id::new(10),
+            "Local User",
+            "local-user",
+        )),
     }));
 
     assert_eq!(state.typing_footer_for_selected_channel(), None);

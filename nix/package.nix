@@ -1,13 +1,15 @@
 { lib
 , stdenv
 , craneLib
+, cmake
 , rustPlatform
 , pkg-config
 , makeWrapper
 , nasm
-, opus
 , alsa-lib
 , pipewire
+, libva
+, mesa
 , src
 , pname
 , version
@@ -26,6 +28,7 @@ let
     # libclang and its search path without hard-coding a Nix store location.
     # OpenH264 uses NASM on x86_64, while AArch64 builds its NEON sources with cc.
     nativeBuildInputs = [
+      cmake
       pkg-config
     ] ++ lib.optionals stdenv.isLinux [
       rustPlatform.bindgenHook
@@ -37,11 +40,11 @@ let
     # Networking uses rustls + webpki-roots, so we do not need openssl or a
     # system CA bundle here. Darwin stdenv provides the SDK by default, so avoid
     # legacy darwin.apple_sdk framework stubs.
-    buildInputs = [
-      opus
-    ] ++ lib.optionals stdenv.isLinux [
+    buildInputs = lib.optionals stdenv.isLinux [
       alsa-lib
       pipewire
+      libva
+      mesa
     ];
 
     # The unit tests in this repo do not require network or a TTY, but disable
