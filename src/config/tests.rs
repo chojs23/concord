@@ -20,6 +20,7 @@ fn display_options_default_to_all_media_enabled() {
     assert!(options.images_visible());
     assert!(!options.media_playback_enabled());
     assert!(options.custom_emoji_visible());
+    assert!(options.hour_format_24);
     assert_eq!(
         options.image_preview_quality,
         ImagePreviewQualityPreset::Balanced
@@ -39,6 +40,7 @@ fn global_disable_overrides_individual_toggles() {
         image_protocol: ImageProtocolPreference::Auto,
         show_custom_emoji: true,
         circular_avatars: false,
+        hour_format_24: true,
     };
 
     assert!(!options.avatars_visible());
@@ -255,6 +257,16 @@ fn app_config_parses_partial_toml_with_defaults() {
         };
         assert_eq!(config.credentials.store, expected_credential_store);
     }
+}
+
+#[test]
+fn hour_format_24_defaults_to_enabled_and_can_be_disabled() {
+    let defaults: AppOptions = toml::from_str("[display]\n").expect("display config should parse");
+    let twelve_hour: AppOptions =
+        toml::from_str("[display]\nhour_format_24 = false\n").expect("display config should parse");
+
+    assert!(defaults.display.hour_format_24);
+    assert!(!twelve_hour.display.hour_format_24);
 }
 
 #[test]
@@ -675,6 +687,7 @@ fn options_save_and_load_round_trip() {
             image_protocol: ImageProtocolPreference::Kitty,
             show_custom_emoji: false,
             circular_avatars: true,
+            hour_format_24: false,
         },
         composer: ComposerOptions {
             emojis_as_links: true,

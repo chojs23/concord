@@ -24,6 +24,7 @@ pub(in crate::tui::ui) fn render_search_popup(
             &view,
             usize::from(layout.results.height),
             usize::from(layout.results.width),
+            state.hour_format_24(),
         )),
         layout.results,
     );
@@ -193,6 +194,7 @@ fn search_popup_result_lines(
     view: &SearchPopupView,
     max_result_lines: usize,
     width: usize,
+    hour_format_24: bool,
 ) -> Vec<Line<'static>> {
     if max_result_lines == 0 {
         return Vec::new();
@@ -228,7 +230,9 @@ fn search_popup_result_lines(
         .enumerate()
         .skip(start)
         .take(max_result_lines)
-        .map(|(index, result)| search_result_line(result, index == view.selected, width))
+        .map(|(index, result)| {
+            search_result_line(result, index == view.selected, width, hour_format_24)
+        })
         .collect()
 }
 
@@ -268,7 +272,12 @@ fn search_field_line(field: &SearchFieldView, width: usize) -> Line<'static> {
     Line::from(vec![Span::styled(label, label_style), value])
 }
 
-fn search_result_line(result: &SearchResultItem, selected: bool, width: usize) -> Line<'static> {
+fn search_result_line(
+    result: &SearchResultItem,
+    selected: bool,
+    width: usize,
+    hour_format_24: bool,
+) -> Line<'static> {
     let style = if selected {
         highlight_style()
     } else {
@@ -286,7 +295,10 @@ fn search_result_line(result: &SearchResultItem, selected: bool, width: usize) -
                 theme::current().style(theme::HighlightGroup::MessageAuthor),
             ));
             spans.push(Span::styled(
-                format!("{}: ", format_message_sent_time(item.message_id)),
+                format!(
+                    "{}: ",
+                    format_message_sent_time(item.message_id, hour_format_24)
+                ),
                 theme::current().style(theme::HighlightGroup::MessageTimestamp),
             ));
             spans.push(Span::raw(item.content.clone()));

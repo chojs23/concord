@@ -19,6 +19,7 @@ pub(super) fn format_embed_lines(
     embeds: &[EmbedInfo],
     message_content: Option<&str>,
     show_custom_emoji: bool,
+    hour_format_24: bool,
     width: usize,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
@@ -29,6 +30,7 @@ pub(super) fn format_embed_lines(
                 embed,
                 message_content,
                 show_custom_emoji,
+                hour_format_24,
                 width,
                 loaded_custom_emoji_urls,
             )
@@ -40,6 +42,7 @@ fn format_embed(
     embed: &EmbedInfo,
     message_content: Option<&str>,
     show_custom_emoji: bool,
+    hour_format_24: bool,
     width: usize,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
@@ -98,7 +101,7 @@ fn format_embed(
             loaded_custom_emoji_urls,
         );
     }
-    let footer = format_embed_footer(embed);
+    let footer = format_embed_footer(embed, hour_format_24);
     push_embed_text(
         &mut lines,
         footer.as_deref(),
@@ -216,10 +219,13 @@ fn strip_embed_markdown_emphasis(value: &str) -> String {
     value.replace("**", "")
 }
 
-fn format_embed_footer(embed: &EmbedInfo) -> Option<String> {
+fn format_embed_footer(embed: &EmbedInfo, hour_format_24: bool) -> Option<String> {
     match (
         embed.footer_text.as_deref(),
-        embed.timestamp.as_deref().and_then(format_embed_timestamp),
+        embed
+            .timestamp
+            .as_deref()
+            .and_then(|timestamp| format_embed_timestamp(timestamp, hour_format_24)),
     ) {
         (Some(text), Some(timestamp)) => Some(format!("{text} · {timestamp}")),
         (Some(text), None) => Some(text.to_owned()),
@@ -228,10 +234,11 @@ fn format_embed_footer(embed: &EmbedInfo) -> Option<String> {
     }
 }
 
-fn format_embed_timestamp(timestamp: &str) -> Option<String> {
+fn format_embed_timestamp(timestamp: &str, hour_format_24: bool) -> Option<String> {
+    let format = if hour_format_24 { "%H:%M" } else { "%I:%M %p" };
     DateTime::parse_from_rfc3339(timestamp)
         .ok()
-        .map(|datetime| datetime.with_timezone(&Local).format("%H:%M").to_string())
+        .map(|datetime| datetime.with_timezone(&Local).format(format).to_string())
 }
 
 fn push_embed_text(

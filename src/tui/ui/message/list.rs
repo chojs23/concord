@@ -319,7 +319,7 @@ fn message_viewport_lines_from_plan(
                 .collect(),
         );
 
-        let sent_time = format_message_sent_time(row.message.id);
+        let sent_time = format_message_sent_time(row.message.id, state.hour_format_24());
         let preview_spacers = inline_preview_spacers_for_message(
             row.message,
             plan.layout.preview_width,
@@ -457,7 +457,7 @@ fn render_unread_banner(frame: &mut Frame, area: Rect, state: &DashboardState) {
         theme.style(theme::HighlightGroup::Normal),
     );
 
-    let since_label = format_unread_banner_since(banner.since_message_id);
+    let since_label = format_unread_banner_since(banner.since_message_id, state.hour_format_24());
     let left = match since_label {
         Some(time) => format!(" {} unread messages since {}", banner.unread_count, time),
         None => format!(" {} unread messages", banner.unread_count),
@@ -500,10 +500,18 @@ fn unread_banner_line(left: String, right: &str, width: usize, style: Style) -> 
     ])
 }
 
-fn format_unread_banner_since(message_id: Id<MessageMarker>) -> Option<String> {
+fn format_unread_banner_since(
+    message_id: Id<MessageMarker>,
+    hour_format_24: bool,
+) -> Option<String> {
+    let format = if hour_format_24 {
+        "%Y-%m-%d %H:%M"
+    } else {
+        "%Y-%m-%d %I:%M %p"
+    };
     Some(
         message_local_datetime(message_id)?
-            .format("%Y-%m-%d %H:%M")
+            .format(format)
             .to_string(),
     )
 }
@@ -1007,8 +1015,11 @@ pub(in crate::tui::ui) fn selected_message_card_width(
         .max(4)
 }
 
-pub(in crate::tui::ui) fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
-    format_message_local_time(message_id)
+pub(in crate::tui::ui) fn format_message_sent_time(
+    message_id: Id<MessageMarker>,
+    hour_format_24: bool,
+) -> String {
+    format_message_local_time(message_id, hour_format_24)
 }
 
 pub(in crate::tui::ui) fn date_separator_line(

@@ -299,6 +299,7 @@ pub(super) fn format_forwarded_snapshot(
             &snapshot.embeds,
             snapshot.content.as_deref(),
             state.show_custom_emoji(),
+            state.hour_format_24(),
             width.saturating_sub(2).max(1),
             loaded_custom_emoji_urls,
         )

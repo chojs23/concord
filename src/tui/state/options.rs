@@ -298,6 +298,10 @@ impl DashboardState {
         self.options.display_options.circular_avatars
     }
 
+    pub fn hour_format_24(&self) -> bool {
+        self.options.display_options.hour_format_24
+    }
+
     pub fn show_images(&self) -> bool {
         self.options.display_options.images_visible()
     }

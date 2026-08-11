@@ -7,7 +7,7 @@ use super::{
     ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState, SelectablePopupTarget,
 };
 
-const DISPLAY_OPTION_COUNT: usize = 8;
+const DISPLAY_OPTION_COUNT: usize = 9;
 const COMPOSER_OPTION_COUNT: usize = 1;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = VoiceOption::ALL.len();
@@ -277,6 +277,14 @@ impl DashboardState {
                 effective: options.media_playback_enabled(),
                 description: "Allow videos to open in the external media player.",
             },
+            DisplayOptionItem {
+                label: "24-hour time",
+                enabled: options.hour_format_24,
+                value: None,
+                gauge: None,
+                effective: options.hour_format_24,
+                description: "Show message time in 24-hour (14:30) instead of 12 hour (2:30 pm).",
+            },
         ]
     }
 
@@ -487,6 +495,10 @@ impl DashboardState {
             (OptionsCategory::Display, 7) => {
                 self.options.display_options.media_playback =
                     !self.options.display_options.media_playback
+            }
+            (OptionsCategory::Display, 8) => {
+                self.options.display_options.hour_format_24 =
+                    !self.options.display_options.hour_format_24
             }
             (OptionsCategory::Composer, 0) => {
                 self.options.composer_options.emojis_as_links =

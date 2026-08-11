@@ -24,6 +24,7 @@ pub struct DisplayOptions {
     pub image_protocol: ImageProtocolPreference,
     pub show_custom_emoji: bool,
     pub circular_avatars: bool,
+    pub hour_format_24: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -667,6 +668,7 @@ impl Default for DisplayOptions {
             image_protocol: ImageProtocolPreference::default(),
             show_custom_emoji: true,
             circular_avatars: false,
+            hour_format_24: true,
         }
     }
 }

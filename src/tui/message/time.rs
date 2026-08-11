@@ -16,9 +16,13 @@ pub(in crate::tui) fn message_local_datetime(
     DateTime::from_timestamp_millis(unix_millis).map(|dt| dt.with_timezone(&Local))
 }
 
-pub(in crate::tui) fn format_message_local_time(message_id: Id<MessageMarker>) -> String {
+pub(in crate::tui) fn format_message_local_time(
+    message_id: Id<MessageMarker>,
+    hour_format_24: bool,
+) -> String {
+    let format = if hour_format_24 { "%H:%M" } else { "%I:%M %p" };
     message_local_datetime(message_id)
-        .map(|dt| dt.format("%H:%M").to_string())
+        .map(|dt| dt.format(format).to_string())
         .unwrap_or_else(|| "--:--".to_owned())
 }
 

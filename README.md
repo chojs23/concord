@@ -358,6 +358,9 @@ show_custom_emoji = true
 # Crop avatars into circles instead of showing square images.
 circular_avatars = false
 
+# Show message times in 24-hour format (14:30) instead of 12-hour (2:30 PM).
+hour_format_24 = true
+
 [composer]
 # Send custom emoji your account cannot use directly as image links.
 emojis_as_links = false

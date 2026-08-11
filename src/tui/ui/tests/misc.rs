@@ -743,7 +743,7 @@ fn selected_grouped_continuation_stamps_time_on_border() {
     });
     let texts = line_texts_from_ratatui(&lines);
 
-    let sent_time = format_message_sent_time(Id::new(2));
+    let sent_time = format_message_sent_time(Id::new(2), true);
     assert!(texts[3].starts_with("╔"));
     assert!(texts[4].starts_with("║ "));
     assert!(texts[4].contains("follow-up"));
@@ -783,7 +783,7 @@ fn selected_multiline_continuation_keeps_time_off_content_lines() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    let sent_time = format_message_sent_time(Id::new(2));
+    let sent_time = format_message_sent_time(Id::new(2), true);
     let content_lines: Vec<&String> = texts.iter().filter(|line| line.starts_with("│ ")).collect();
 
     assert!(

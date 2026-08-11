@@ -1878,7 +1878,7 @@ fn message_viewport_lines_keep_rows_from_tall_following_message() {
     .take(5)
     .collect::<Vec<_>>();
     let visible_text = line_texts_from_ratatui(&visible_rows);
-    let sent_time = format_message_sent_time(Id::new(1));
+    let sent_time = format_message_sent_time(Id::new(1), true);
 
     assert!(visible_text[0].starts_with("╭─oooo  "));
     assert!(visible_text[0].contains(&sent_time));

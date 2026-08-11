@@ -377,6 +377,7 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
         &message.embeds,
         message.content.as_deref(),
         state.show_custom_emoji(),
+        state.hour_format_24(),
         width,
         loaded_custom_emoji_urls,
     ));

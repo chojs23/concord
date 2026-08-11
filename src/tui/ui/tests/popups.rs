@@ -322,7 +322,7 @@ fn search_popup_message_results_show_sent_time() {
 
     let dump = render_dashboard_dump(120, 28, &mut state);
     let rendered = dump.join("\n");
-    let expected_time = format_message_sent_time(message_id);
+    let expected_time = format_message_sent_time(message_id, true);
 
     assert!(
         rendered.contains(&format!("#general neo {expected_time}: needle result")),

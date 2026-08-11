@@ -108,7 +108,7 @@ fn selected_author_group_keeps_avatar_body_inside_border() {
         super::narrow_message_viewport_layout(20),
         &[],
     );
-    let sent_time = format_message_sent_time(Id::new(1));
+    let sent_time = format_message_sent_time(Id::new(1), true);
 
     let texts = line_texts_from_ratatui(&lines);
 
