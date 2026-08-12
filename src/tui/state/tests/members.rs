@@ -207,9 +207,21 @@ fn message_history_authors_missing_member_roles_are_requested_from_batch() {
     let mut known_member = message_info(channel_id, 22);
     known_member.author_id = Id::new(10);
     known_member.author_role_ids = vec![Id::new(100)];
+    let mut webhook = message_info(channel_id, 23);
+    webhook.webhook_id = Some(Id::new(200));
+    webhook.author_id = Id::new(93);
+    webhook.mentions = vec![crate::discord::MentionInfo::test(
+        Id::new(92),
+        "webhook mention",
+    )];
 
     assert_eq!(
-        state.missing_message_author_member_requests(&[message.clone(), duplicate, known_member]),
+        state.missing_message_author_member_requests(&[
+            message.clone(),
+            duplicate,
+            known_member,
+            webhook,
+        ]),
         vec![(
             guild_id,
             vec![
@@ -219,6 +231,7 @@ fn message_history_authors_missing_member_roles_are_requested_from_batch() {
                 Id::new(97),
                 Id::new(96),
                 Id::new(95),
+                Id::new(92),
             ]
         )]
     );

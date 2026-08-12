@@ -118,4 +118,7 @@ pub mod marker {
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
     pub struct UserMarker;
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+    pub struct WebhookMarker;
 }

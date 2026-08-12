@@ -61,6 +61,74 @@ fn message_author_uses_cached_member_display_name() {
 }
 
 #[test]
+fn webhook_message_keeps_its_payload_author_identity() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let author_id = Id::new(4);
+    let webhook_avatar = "https://cdn.discordapp.com/avatars/4/webhook.png";
+    let member_avatar = "https://cdn.discordapp.com/avatars/4/member.png";
+    let mut state = DiscordState::default();
+
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            name: "general".to_owned(),
+            ..channel_info(channel_id, "GuildText", Vec::new())
+        }],
+        members: vec![MemberInfo {
+            avatar_url: Some(member_avatar.to_owned()),
+            ..member_info(author_id, "cached member")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.apply_event(&message_create_event(MessageCreateFixture {
+        guild_id: Some(guild_id),
+        channel_id,
+        message_id: Id::new(3),
+        webhook_id: Some(Id::new(40)),
+        author_id,
+        author: "Persona One".to_owned(),
+        author_avatar_url: Some(webhook_avatar.to_owned()),
+        content: Some("hello".to_owned()),
+        ..MessageCreateFixture::test_fixture_default()
+    }));
+
+    let messages = state.messages_for_channel(channel_id);
+    assert_eq!(messages[0].author, "Persona One");
+    assert_eq!(
+        messages[0].author_avatar_url.as_deref(),
+        Some(webhook_avatar)
+    );
+
+    state.apply_event(&AppEvent::GuildMemberUpsert {
+        guild_id,
+        member: MemberInfo {
+            avatar_url: Some(member_avatar.to_owned()),
+            ..member_info(author_id, "updated member")
+        },
+    });
+
+    let messages = state.messages_for_channel(channel_id);
+    assert_eq!(messages[0].author, "Persona One");
+    assert_eq!(
+        messages[0].author_avatar_url.as_deref(),
+        Some(webhook_avatar)
+    );
+
+    state.apply_event(&AppEvent::UserProfileLoaded {
+        guild_id: Some(guild_id),
+        profile: profile_info(author_id.get(), Some("profile alias")),
+    });
+
+    let messages = state.messages_for_channel(channel_id);
+    assert_eq!(messages[0].author, "Persona One");
+    assert_eq!(
+        messages[0].author_avatar_url.as_deref(),
+        Some(webhook_avatar)
+    );
+}
+
+#[test]
 fn dm_message_author_prefers_friend_nickname() {
     let channel_id = Id::new(2);
     let author_id = Id::new(4);

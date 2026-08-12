@@ -2778,6 +2778,31 @@ fn message_create_parser_resolves_author_name_by_precedence() {
 }
 
 #[test]
+fn message_info_parser_preserves_webhook_identity() {
+    let message = parse_message_info(&json!({
+        "id": "20",
+        "channel_id": "10",
+        "webhook_id": "40",
+        "author": {
+            "id": "30",
+            "global_name": "cached bot name",
+            "username": "Persona One",
+            "avatar": "avatarhash",
+            "bot": true
+        },
+        "content": "hello"
+    }))
+    .expect("webhook message should parse");
+
+    assert_eq!(message.webhook_id, Some(Id::new(40)));
+    assert_eq!(message.author, "Persona One");
+    assert_eq!(
+        message.author_avatar_url.as_deref(),
+        Some("https://cdn.discordapp.com/avatars/30/avatarhash.png")
+    );
+}
+
+#[test]
 fn message_info_parser_tracks_author_role_payload_presence() {
     let cases = [
         (

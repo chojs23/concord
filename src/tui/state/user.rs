@@ -106,7 +106,9 @@ impl DashboardState {
             let Some(guild_id) = guild_id else {
                 continue;
             };
-            users.push((*guild_id, message.author_id));
+            if message.webhook_id.is_none() {
+                users.push((*guild_id, message.author_id));
+            }
         }
 
         // The first Gateway batch must contain the names painted in the

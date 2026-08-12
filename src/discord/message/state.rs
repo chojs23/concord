@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker, WebhookMarker},
 };
 use crate::discord::{
     AttachmentInfo, AttachmentMediaType, EmbedInfo, InlinePreviewInfo, MemberInfo, MentionInfo,
@@ -24,6 +24,7 @@ pub struct MessageState {
     pub nonce: Option<Id<MessageMarker>>,
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
+    pub webhook_id: Option<Id<WebhookMarker>>,
     pub author_id: Id<UserMarker>,
     pub author: String,
     pub author_avatar_url: Option<String>,
@@ -54,6 +55,7 @@ impl Default for MessageState {
             nonce: None,
             guild_id: None,
             channel_id: Id::new(1),
+            webhook_id: None,
             author_id: Id::new(1),
             author: String::new(),
             author_avatar_url: None,
@@ -964,7 +966,9 @@ impl DiscordState {
             .chain(message_cache.pinned_messages.values_mut())
         {
             for message in messages.iter_mut().filter(|m| m.guild_id == Some(guild_id)) {
-                if let Some((display_name, avatar_url)) = identities.get(&message.author_id) {
+                if message.webhook_id.is_none()
+                    && let Some((display_name, avatar_url)) = identities.get(&message.author_id)
+                {
                     message.author = display_name.clone();
                     if avatar_url.is_some() || message.author_avatar_url.is_none() {
                         message.author_avatar_url = avatar_url.clone();
@@ -997,7 +1001,7 @@ impl DiscordState {
     ) {
         self.for_each_cached_message_mut(|message| {
             if message.guild_id == guild_id {
-                if message.author_id == user_id {
+                if message.webhook_id.is_none() && message.author_id == user_id {
                     message.author = display_name.to_owned();
                     if avatar_url.is_some() || message.author_avatar_url.is_none() {
                         message.author_avatar_url = avatar_url.map(str::to_owned);
@@ -1323,18 +1327,30 @@ impl DiscordState {
         message: &MessageInfo,
     ) -> MessageState {
         let guild_id = message.guild_id.or(channel_guild_id);
+        // A webhook author is a per-message display identity, not a guild
+        // member. Resolving it through member or profile caches would replace
+        // persona names and avatars supplied by tools such as Tupperbox.
+        let (author, author_avatar_url) = if message.webhook_id.is_some() {
+            (message.author.clone(), message.author_avatar_url.clone())
+        } else {
+            (
+                self.message_author_display_name(guild_id, message.author_id, &message.author),
+                self.message_author_avatar_url(
+                    guild_id,
+                    message.author_id,
+                    &message.author_avatar_url,
+                ),
+            )
+        };
         MessageState {
             id: message.message_id,
             nonce: message.nonce,
             guild_id,
             channel_id: message.channel_id,
+            webhook_id: message.webhook_id,
             author_id: message.author_id,
-            author: self.message_author_display_name(guild_id, message.author_id, &message.author),
-            author_avatar_url: self.message_author_avatar_url(
-                guild_id,
-                message.author_id,
-                &message.author_avatar_url,
-            ),
+            author,
+            author_avatar_url,
             author_is_bot: message.author_is_bot,
             message_kind: message.message_kind,
             interaction: message.interaction.clone(),
@@ -1564,6 +1580,7 @@ fn merge_duplicate_message_create(existing: &mut MessageState, incoming: &Messag
 fn merge_shared_message_fields(existing: &mut MessageState, incoming: &MessageState) {
     existing.guild_id = incoming.guild_id.or(existing.guild_id);
     existing.channel_id = incoming.channel_id;
+    existing.webhook_id = incoming.webhook_id.or(existing.webhook_id);
     existing.author_id = incoming.author_id;
     existing.author = preferred_user_label(&existing.author, &incoming.author);
     if incoming.author_avatar_url.is_some() || existing.author_avatar_url.is_none() {

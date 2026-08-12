@@ -11,7 +11,7 @@ use crate::tui::{
     },
 };
 
-const AUTHOR_GROUP_MAX_GAP: Duration = Duration::from_secs(5 * 60);
+const AUTHOR_GROUP_MAX_GAP: Duration = Duration::from_secs(7 * 60);
 
 impl DashboardState {
     pub(crate) fn message_scroll_row_position(
@@ -102,7 +102,13 @@ impl DashboardState {
             return true;
         }
         messages.get(index - 1).is_none_or(|previous| {
+            // Discord webhooks can override their username per message.
+            // Discord starts a new group when that username changes, but
+            // keeps avatar-only changes in the existing group.
+            let webhook_username_changed =
+                current.webhook_id.is_some() && previous.author != current.author;
             previous.author_id != current.author_id
+                || webhook_username_changed
                 || messages_exceed_author_group_gap(previous, current)
         })
     }

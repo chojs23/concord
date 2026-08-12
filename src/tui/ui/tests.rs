@@ -315,9 +315,23 @@ fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> Dashbo
 }
 
 fn seed_channel_message(
-    mut state: DashboardState,
+    state: DashboardState,
     message_id: Id<MessageMarker>,
     content: &str,
+) -> DashboardState {
+    seed_channel_message_fixture(
+        state,
+        MessageCreateFixture {
+            message_id,
+            content: Some(content.to_owned()),
+            ..guild_message_create_fixture()
+        },
+    )
+}
+
+fn seed_channel_message_fixture(
+    mut state: DashboardState,
+    message: MessageCreateFixture,
 ) -> DashboardState {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
@@ -334,10 +348,9 @@ fn seed_channel_message(
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Messages);
     state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(guild_id),
         channel_id,
-        message_id,
-        content: Some(content.to_owned()),
-        ..guild_message_create_fixture()
+        ..message
     }));
     state.push_event(empty_latest_message_history_loaded_event(channel_id));
     state

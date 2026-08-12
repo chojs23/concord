@@ -12,7 +12,7 @@ use crate::{
             Id,
             marker::{
                 AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker,
-                RoleMarker, UserMarker,
+                RoleMarker, UserMarker, WebhookMarker,
             },
         },
     },
@@ -27,9 +27,18 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
     let message_id = parse_id::<MessageMarker>(data.get("id")?)?;
     let nonce = data.get("nonce").and_then(parse_id::<MessageMarker>);
+    let webhook_id = data.get("webhook_id").and_then(parse_id::<WebhookMarker>);
     let author = data.get("author")?;
     let author_id = parse_id::<UserMarker>(author.get("id")?)?;
-    let author_name = message_author_display_name(data, author);
+    let author_name = if webhook_id.is_some() {
+        display_name_from_parts_or_unknown(
+            None,
+            None,
+            author.get("username").and_then(Value::as_str),
+        )
+    } else {
+        message_author_display_name(data, author)
+    };
     let author_avatar_url = user_avatar_url(author_id, author);
     let author_is_bot = author.get("bot").and_then(Value::as_bool).unwrap_or(false);
     let author_role_ids = parse_message_author_role_ids(data);
@@ -79,6 +88,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         channel_id,
         message_id,
         nonce,
+        webhook_id,
         author_id,
         author: author_name,
         author_avatar_url,

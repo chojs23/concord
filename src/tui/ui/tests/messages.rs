@@ -1576,6 +1576,67 @@ fn message_viewport_lines_group_consecutive_messages_by_author() {
 }
 
 #[test]
+fn message_viewport_lines_match_discord_webhook_author_grouping() {
+    let cases = [
+        ("different username", "Persona Two", "avatar-two", 2),
+        ("avatar only", "Persona One", "avatar-two", 1),
+    ];
+
+    for (label, second_author, second_avatar, expected_header_count) in cases {
+        let webhook_id = Id::new(40);
+        let author_id = Id::new(30);
+        let mut state = seed_channel_message_fixture(
+            DashboardState::new(),
+            MessageCreateFixture {
+                message_id: Id::new(1),
+                webhook_id: Some(webhook_id),
+                author_id,
+                author: "Persona One".to_owned(),
+                author_avatar_url: Some("avatar-one".to_owned()),
+                author_is_bot: true,
+                content: Some("first line".to_owned()),
+                ..guild_message_create_fixture()
+            },
+        );
+        state.push_event(message_create_event(MessageCreateFixture {
+            message_id: Id::new(2),
+            webhook_id: Some(webhook_id),
+            author_id,
+            author: second_author.to_owned(),
+            author_avatar_url: Some(second_avatar.to_owned()),
+            author_is_bot: true,
+            content: Some("second line".to_owned()),
+            ..guild_message_create_fixture()
+        }));
+        state.jump_top();
+        let messages = state.messages();
+
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &state,
+            super::default_message_viewport_layout(),
+            &[],
+        );
+        let texts = line_texts_from_ratatui(&lines);
+
+        assert_eq!(
+            texts.iter().filter(|text| text.contains("[bot]")).count(),
+            expected_header_count,
+            "{label}"
+        );
+        assert!(
+            texts.iter().any(|text| text.contains("first line")),
+            "{label}"
+        );
+        assert!(
+            texts.iter().any(|text| text.contains("second line")),
+            "{label}"
+        );
+    }
+}
+
+#[test]
 fn message_viewport_lines_dim_pending_message_content() {
     let mut state = state_with_message();
     state.insert_pending_message_for_test(MessageState {

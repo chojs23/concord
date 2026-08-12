@@ -6,7 +6,10 @@ pub use state::{MessageCapabilities, MessageState};
 use crate::discord::commands::ReactionEmoji;
 use crate::discord::ids::{
     Id,
-    marker::{AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
+    marker::{
+        AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker,
+        WebhookMarker,
+    },
 };
 
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
@@ -400,6 +403,7 @@ pub struct MessageInfo {
     pub channel_id: Id<ChannelMarker>,
     pub message_id: Id<MessageMarker>,
     pub nonce: Option<Id<MessageMarker>>,
+    pub webhook_id: Option<Id<WebhookMarker>>,
     pub author_id: Id<UserMarker>,
     pub author: String,
     pub author_avatar_url: Option<String>,
@@ -432,6 +436,7 @@ impl Default for MessageInfo {
             channel_id: Id::new(1),
             message_id: Id::new(1),
             nonce: None,
+            webhook_id: None,
             author_id: Id::new(1),
             author: String::new(),
             author_avatar_url: None,
