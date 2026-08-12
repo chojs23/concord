@@ -6,8 +6,8 @@ use super::DiscordClient;
 use crate::discord::{
     ActionBlockReason, ActionDecision, ApplicationCommandInvocation, DiscordAction,
     DiscordPermission, DiscordState, ForumPostCreate, GuildFolder, MESSAGE_FLAG_SUPPRESS_EMBEDS,
-    MessageAttachmentUpload, MessageInfo, MessageState, PermissionDecision, ReactionEmoji,
-    ReactionUsersPage, ReplyReference, UserProfileInfo, UserProfileUpdate,
+    MessageAttachmentUpload, MessageInfo, MessageSendLimits, MessageState, PermissionDecision,
+    ReactionEmoji, ReactionUsersPage, ReplyReference, UserProfileInfo, UserProfileUpdate,
     commands::ForumPostArchiveState,
     ids::{
         Id,
@@ -31,7 +31,7 @@ impl DiscordClient {
         attachments: &[MessageAttachmentUpload],
     ) -> Result<MessageInfo> {
         self.ensure_can_send_message(channel_id, reply_to.as_ref(), attachments)?;
-        let upload_limit = self.attachment_size_limit(channel_id);
+        let limits = self.message_send_limits(channel_id);
         let slow_mode = self.message_slow_mode(channel_id);
         self.rest
             .send_message(
@@ -42,7 +42,7 @@ impl DiscordClient {
                     reply_to,
                     attachments,
                 },
-                upload_limit,
+                limits,
                 slow_mode,
             )
             .await
@@ -55,9 +55,16 @@ impl DiscordClient {
         content: &str,
     ) -> Result<MessageInfo> {
         self.ensure_can_send_tts_message(channel_id)?;
+        let limits = self.message_send_limits(channel_id);
         let slow_mode = self.message_slow_mode(channel_id);
         self.rest
-            .send_tts_message(channel_id, nonce, content, slow_mode)
+            .send_tts_message(
+                channel_id,
+                nonce,
+                content,
+                limits.max_content_chars,
+                slow_mode,
+            )
             .await
     }
 
@@ -69,18 +76,15 @@ impl DiscordClient {
 
     pub async fn create_forum_post(&self, post: &ForumPostCreate) -> Result<CreatedForumPost> {
         self.ensure_can_create_forum_post(post)?;
-        let upload_limit = self.attachment_size_limit(post.channel_id);
+        let limits = self.message_send_limits(post.channel_id);
         let slow_mode = self.message_slow_mode(post.channel_id);
-        self.rest
-            .create_forum_post(post, upload_limit, slow_mode)
-            .await
+        self.rest.create_forum_post(post, limits, slow_mode).await
     }
 
-    /// Effective attachment upload limit for `channel_id`, resolved from the
-    /// current user's Nitro tier and the channel's guild boost level. Reads a
-    /// snapshot of the shared Discord state.
-    fn attachment_size_limit(&self, channel_id: Id<ChannelMarker>) -> u64 {
-        self.read_state().attachment_size_limit(channel_id)
+    /// Effective message and attachment limits for `channel_id`, resolved from
+    /// account entitlements and guild capabilities in one state snapshot.
+    fn message_send_limits(&self, channel_id: Id<ChannelMarker>) -> MessageSendLimits {
+        self.read_state().message_send_limits(channel_id)
     }
 
     pub(crate) fn message_slow_mode(&self, channel_id: Id<ChannelMarker>) -> Option<Duration> {
@@ -103,22 +107,11 @@ impl DiscordClient {
                 ActionBlockReason::ChannelDataUnavailable,
             )
         })?;
-        ensure_channel_action_policy(&state, channel, DiscordAction::SendMessage)?;
-        if reply_to.is_some() {
-            ensure_permission(
-                &state,
-                channel,
-                DiscordAction::SendMessage,
-                DiscordPermission::ReadMessageHistory,
-            )?;
-        }
-        if !attachments.is_empty() {
-            ensure_permission(
-                &state,
-                channel,
-                DiscordAction::SendMessage,
-                DiscordPermission::AttachFiles,
-            )?;
+        if let Some(reason) = state
+            .message_send_decision(channel, reply_to.is_some(), !attachments.is_empty())
+            .block_reason()
+        {
+            return Err(action_blocked(DiscordAction::SendMessage, reason));
         }
         Ok(())
     }
@@ -136,14 +129,11 @@ impl DiscordClient {
                 "cannot create forum post outside a forum channel".to_owned(),
             ));
         }
-        ensure_channel_action_policy(&state, channel, DiscordAction::CreateForumPost)?;
-        if !post.attachments.is_empty() {
-            ensure_permission(
-                &state,
-                channel,
-                DiscordAction::CreateForumPost,
-                DiscordPermission::AttachFiles,
-            )?;
+        if let Some(reason) = state
+            .forum_post_decision(channel, !post.attachments.is_empty())
+            .block_reason()
+        {
+            return Err(action_blocked(DiscordAction::CreateForumPost, reason));
         }
         if channel.requires_forum_tag() && post.applied_tags.is_empty() {
             return Err(AppError::DiscordRequest(
@@ -194,8 +184,14 @@ impl DiscordClient {
         content: &str,
     ) -> Result<MessageInfo> {
         self.ensure_can_edit_message(channel_id, message_id)?;
+        let max_content_chars = self.message_send_limits(channel_id).max_content_chars;
         self.rest
-            .edit_message(channel_id, message_id, MessageEditRequest::Content(content))
+            .edit_message(
+                channel_id,
+                message_id,
+                MessageEditRequest::Content(content),
+                max_content_chars,
+            )
             .await
     }
 
@@ -235,8 +231,14 @@ impl DiscordClient {
             }
             message.flags | MESSAGE_FLAG_SUPPRESS_EMBEDS
         };
+        let max_content_chars = self.message_send_limits(channel_id).max_content_chars;
         self.rest
-            .edit_message(channel_id, message_id, MessageEditRequest::Flags(flags))
+            .edit_message(
+                channel_id,
+                message_id,
+                MessageEditRequest::Flags(flags),
+                max_content_chars,
+            )
             .await
     }
 

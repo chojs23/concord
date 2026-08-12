@@ -12,11 +12,13 @@ use crate::{
     AppError, Result,
     discord::{
         ChannelInfo, ForumPostArchiveState, ForumPostCreate, MessageAttachmentUpload, MessageInfo,
+        MessageSendLimits,
         gateway::{parse_channel_info, parse_message_info},
+        validate_message_payload,
     },
 };
 
-use super::messages::{message_multipart_form, validate_message_payload};
+use super::messages::message_multipart_form;
 use super::{DiscordRest, clone_array, extra_fields};
 
 const FORUM_POST_SEARCH_PAGE_LIMIT: u16 = 25;
@@ -164,7 +166,7 @@ impl DiscordRest {
     pub async fn create_forum_post(
         &self,
         post: &ForumPostCreate,
-        upload_limit: u64,
+        limits: MessageSendLimits,
         slow_mode: Option<Duration>,
     ) -> Result<CreatedForumPost> {
         let _channel_guard = self.message_sends.acquire(post.channel_id).await;
@@ -175,7 +177,7 @@ impl DiscordRest {
             &post.content,
             &post.applied_tags,
             &post.attachments,
-            upload_limit,
+            limits,
         )?;
         let request = self.raw_http.post(format!(
             "https://discord.com/api/v9/channels/{}/threads",
@@ -184,7 +186,10 @@ impl DiscordRest {
         let request = if post.attachments.is_empty() {
             request.json(&body)
         } else {
-            request.multipart(message_multipart_form(body, &post.attachments, upload_limit).await?)
+            request.multipart(
+                message_multipart_form(body, &post.attachments, limits.max_attachment_bytes)
+                    .await?,
+            )
         };
 
         let result = self
@@ -391,10 +396,10 @@ pub(super) fn create_forum_post_request_body(
     content: &str,
     applied_tags: &[Id<ForumTagMarker>],
     attachments: &[MessageAttachmentUpload],
-    upload_limit: u64,
+    limits: MessageSendLimits,
 ) -> Result<Value> {
     let title = validate_forum_post_title(title)?;
-    validate_message_payload(content, attachments, upload_limit)?;
+    validate_message_payload(content, attachments, limits)?;
 
     let mut body = json!({
         "name": title,

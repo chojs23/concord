@@ -5,7 +5,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::discord::ids::Id;
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, UserMarker},
+};
 use crate::discord::test_builders::{
     CurrentUserReactionAddFixture, ForumPostsLoadedFixture, GuildCreateFixture,
     MessageCreateFixture, MessageHistoryAfterLoadedFixture, MessageHistoryAroundLoadedFixture,
@@ -60,8 +63,80 @@ mod navigation;
 mod options;
 
 const PERM_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+const PERM_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
 const PERM_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+const PERM_SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;
+const PERM_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 const PERM_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
+const PERM_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
+const PERM_USE_EXTERNAL_EMOJIS: u64 = 0x0000_0000_0004_0000;
+const PERM_USE_APPLICATION_COMMANDS: u64 = 0x0000_0000_8000_0000;
+const PERM_MANAGE_THREADS: u64 = 0x0000_0004_0000_0000;
+const PERM_SEND_MESSAGES_IN_THREADS: u64 = 0x0000_0040_0000_0000;
+const PERM_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
+
+// General input fixtures exercise several message actions. Keep the required
+// permissions explicit so channel overwrites still affect each action in tests.
+const MESSAGE_TEST_PERMISSIONS: u64 = PERM_VIEW_CHANNEL
+    | PERM_ADD_REACTIONS
+    | PERM_SEND_MESSAGES
+    | PERM_SEND_TTS_MESSAGES
+    | PERM_MANAGE_MESSAGES
+    | PERM_ATTACH_FILES
+    | PERM_READ_MESSAGE_HISTORY
+    | PERM_USE_EXTERNAL_EMOJIS
+    | PERM_USE_APPLICATION_COMMANDS
+    | PERM_MANAGE_THREADS
+    | PERM_SEND_MESSAGES_IN_THREADS
+    | PERM_PIN_MESSAGES;
+
+fn message_test_guild_fixture(
+    guild_id: Id<GuildMarker>,
+    current_user_id: Id<UserMarker>,
+    channels: Vec<ChannelInfo>,
+    permissions: u64,
+) -> GuildCreateFixture {
+    GuildCreateFixture {
+        member_count: Some(1),
+        owner_id: Some(Id::new(99)),
+        channels,
+        members: vec![MemberInfo::test(current_user_id, "me")],
+        roles: vec![RoleInfo {
+            permissions,
+            ..RoleInfo::test(Id::new(guild_id.get()), "@everyone")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }
+}
+
+fn push_test_ready(state: &mut DashboardState, current_user_id: Id<UserMarker>) {
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(current_user_id),
+    });
+}
+
+fn select_test_guild(state: &mut DashboardState, guild_id: Id<GuildMarker>) {
+    let row = state
+        .guild_pane_entries()
+        .iter()
+        .position(
+            |entry| matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == guild_id),
+        )
+        .expect("fixture guild is visible");
+    assert!(state.select_visible_pane_row(FocusPane::Guilds, row));
+    assert!(state.confirm_selected_guild());
+}
+
+fn select_test_channel(state: &mut DashboardState, channel_id: Id<ChannelMarker>) {
+    let row = state
+        .channel_pane_entries()
+        .iter()
+        .position(|entry| entry.channel_id() == Some(channel_id))
+        .expect("fixture channel is visible");
+    assert!(state.select_visible_pane_row(FocusPane::Channels, row));
+    state.confirm_selected_channel();
+}
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -202,8 +277,12 @@ fn state_with_channel_tree_from_state(mut state: DashboardState) -> DashboardSta
     let category_id = Id::new(10);
     let general_id = Id::new(11);
     let random_id = Id::new(12);
-    state.push_event(guild_create_event(GuildCreateFixture {
-        channels: vec![
+    let current_user_id = Id::new(20);
+    push_test_ready(&mut state, current_user_id);
+    state.push_event(guild_create_event(message_test_guild_fixture(
+        guild_id,
+        current_user_id,
+        vec![
             ChannelInfo {
                 guild_id: Some(guild_id),
                 position: Some(0),
@@ -229,8 +308,8 @@ fn state_with_channel_tree_from_state(mut state: DashboardState) -> DashboardSta
                 ..ChannelInfo::test(random_id, "text")
             },
         ],
-        ..GuildCreateFixture::new(guild_id)
-    }));
+        MESSAGE_TEST_PERMISSIONS,
+    )));
     state.push_event(AppEvent::ReadStateInit {
         entries: vec![
             ReadStateInfo {
@@ -246,7 +325,7 @@ fn state_with_channel_tree_from_state(mut state: DashboardState) -> DashboardSta
     for channel_id in [general_id, random_id] {
         state.push_event(empty_latest_message_history_loaded_event(channel_id));
     }
-    state.confirm_selected_guild();
+    select_test_guild(&mut state, guild_id);
     state
 }
 
@@ -275,42 +354,19 @@ fn state_with_channel_permissions(permissions: u64) -> DashboardState {
     let channel_id = Id::new(2);
     let current_user_id = Id::new(10);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::Ready {
-        user: "me".to_owned(),
-        user_id: Some(current_user_id),
-    });
-    state.push_event(guild_create_event(GuildCreateFixture {
-        member_count: Some(1),
-        owner_id: Some(Id::new(99)),
-        channels: vec![ChannelInfo {
+    push_test_ready(&mut state, current_user_id);
+    state.push_event(guild_create_event(message_test_guild_fixture(
+        guild_id,
+        current_user_id,
+        vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: vec![MemberInfo::test(current_user_id, "me")],
-        roles: vec![RoleInfo {
-            permissions,
-            ..RoleInfo::test(Id::new(guild_id.get()), "@everyone")
-        }],
-        ..GuildCreateFixture::new(guild_id)
-    }));
-    let guild_row = state
-        .guild_pane_entries()
-        .iter()
-        .position(
-            |entry| matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == guild_id),
-        )
-        .expect("fixture guild is visible");
-    assert!(state.select_visible_pane_row(FocusPane::Guilds, guild_row));
-    assert!(state.confirm_selected_guild());
-
-    let channel_row = state
-        .channel_pane_entries()
-        .iter()
-        .position(|entry| entry.channel_id() == Some(channel_id))
-        .expect("fixture channel is visible");
-    assert!(state.select_visible_pane_row(FocusPane::Channels, channel_row));
-    state.confirm_selected_channel();
+        permissions,
+    )));
+    select_test_guild(&mut state, guild_id);
+    select_test_channel(&mut state, channel_id);
     state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         messages: vec![MessageInfo {
@@ -337,17 +393,21 @@ fn guild_text_message(message_id: u64, content: impl Into<String>) -> MessageCre
 fn state_with_messages_from_state(mut state: DashboardState, count: u64) -> DashboardState {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
+    let current_user_id = Id::new(10);
 
-    state.push_event(guild_create_event(GuildCreateFixture {
-        channels: vec![ChannelInfo {
+    push_test_ready(&mut state, current_user_id);
+    state.push_event(guild_create_event(message_test_guild_fixture(
+        guild_id,
+        current_user_id,
+        vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        ..GuildCreateFixture::new(guild_id)
-    }));
-    state.confirm_selected_guild();
-    state.confirm_selected_channel();
+        MESSAGE_TEST_PERMISSIONS,
+    )));
+    select_test_guild(&mut state, guild_id);
+    select_test_channel(&mut state, channel_id);
     for id in 1..=count {
         push_guild_message(&mut state, id, format!("msg {id}"));
     }
@@ -504,10 +564,14 @@ fn state_with_custom_emoji_message() -> DashboardState {
 fn state_with_forum_channel_posts() -> DashboardState {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
+    let current_user_id = Id::new(10);
     let mut state = DashboardState::new();
 
-    state.push_event(guild_create_event(GuildCreateFixture {
-        channels: vec![ChannelInfo {
+    push_test_ready(&mut state, current_user_id);
+    state.push_event(guild_create_event(message_test_guild_fixture(
+        guild_id,
+        current_user_id,
+        vec![ChannelInfo {
             guild_id: Some(guild_id),
             position: Some(0),
             name: "announcements".to_owned(),
@@ -522,14 +586,10 @@ fn state_with_forum_channel_posts() -> DashboardState {
                 .collect(),
             ..ChannelInfo::test(forum_id, "forum")
         }],
-        roles: vec![RoleInfo {
-            permissions: PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES,
-            ..RoleInfo::test(Id::new(guild_id.get()), "@everyone")
-        }],
-        ..GuildCreateFixture::new(guild_id)
-    }));
-    state.confirm_selected_guild();
-    state.confirm_selected_channel();
+        MESSAGE_TEST_PERMISSIONS,
+    )));
+    select_test_guild(&mut state, guild_id);
+    select_test_channel(&mut state, forum_id);
 
     // Discord's `/threads/search` returns threads newest-first. Emit them in
     // descending channel-id order so the test sees the same layout.

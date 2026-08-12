@@ -696,6 +696,24 @@ fn forum_post_body_expands_emoji_shortcodes_on_submit() {
 }
 
 #[test]
+fn forum_post_long_body_keeps_the_post_open_for_correction() {
+    let mut long_body = state_with_forum_post_channel(false);
+    forum_post_editing_body(&mut long_body, "Title");
+    long_body.insert_forum_post_text(&"x".repeat(2_001));
+    long_body.activate_forum_post_composer();
+
+    assert_eq!(long_body.save_forum_post_composer(), None);
+    let view = long_body
+        .forum_post_composer_view()
+        .expect("invalid forum post should stay open");
+    assert_eq!(view.body.chars().count(), 2_001);
+    assert_eq!(
+        view.status.as_deref(),
+        Some("Body is 2001 characters. Limit: 2000.")
+    );
+}
+
+#[test]
 fn forum_post_body_external_editor_replaces_body_only_while_editing() {
     let mut state = state_with_forum_post_channel(false);
     state.start_composer();
@@ -1041,6 +1059,136 @@ fn permission_update_closes_composer_and_keeps_draft() {
     assert_eq!(
         state.toast_message().map(|toast| toast.text),
         Some("Send Messages permission is required in this channel")
+    );
+}
+
+#[test]
+fn composer_applies_account_message_limits_without_losing_invalid_drafts() {
+    for (premium_tier, character_count, character_limit, should_send) in [
+        (PremiumTier::None, 2_001, 2_000, false),
+        (PremiumTier::Nitro, 4_000, 4_000, true),
+        (PremiumTier::Nitro, 4_001, 4_000, false),
+    ] {
+        let mut state = state_with_writable_channel();
+        state.push_event(AppEvent::CurrentUserCapabilities { premium_tier });
+        state.start_composer();
+        let draft = "가".repeat(character_count);
+        state.insert_composer_text_at_cursor(&draft);
+
+        assert_eq!(state.composer_character_count(), character_count);
+        assert_eq!(state.composer_character_limit(), character_limit);
+        let command = state.submit_composer();
+
+        if should_send {
+            assert!(matches!(
+                command,
+                Some(AppCommand::SendMessage { content, .. })
+                    if content.chars().count() == character_count
+            ));
+        } else {
+            assert_eq!(command, None);
+            assert!(state.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation));
+            assert_eq!(
+                state.long_message_confirmation_counts(),
+                Some((character_count, character_limit))
+            );
+            assert_eq!(state.composer_input(), draft);
+        }
+    }
+}
+
+#[test]
+fn long_message_confirmation_sends_utf8_text_as_message_file() {
+    let mut state = state_with_writable_channel();
+    let draft = format!("{} 끝", "내용".repeat(1_000));
+    state.start_composer();
+    state.insert_composer_text_at_cursor(&draft);
+    assert_eq!(state.submit_composer(), None);
+
+    let command = state
+        .confirm_long_message_upload()
+        .expect("file confirmation should create a message command");
+    let AppCommand::SendMessage {
+        content,
+        attachments,
+        ..
+    } = command
+    else {
+        panic!("long message fallback should send a regular attachment message");
+    };
+
+    assert!(content.is_empty());
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(attachments[0].filename, "message.txt");
+    assert_eq!(attachments[0].bytes(), Some(draft.as_bytes()));
+    assert!(state.composer_input().is_empty());
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation));
+}
+
+#[test]
+fn long_message_file_send_rechecks_attachment_permission_and_capacity() {
+    let draft = "x".repeat(2_001);
+
+    let mut permission_lost = state_with_writable_channel();
+    permission_lost.start_composer();
+    permission_lost.insert_composer_text_at_cursor(&draft);
+    assert_eq!(permission_lost.submit_composer(), None);
+    permission_lost.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        permission_overwrites: vec![PermissionOverwriteInfo {
+            deny: PERM_ATTACH_FILES,
+            ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
+        }],
+        ..positioned_text_channel_info(Id::new(1), Id::new(2), "general", 0)
+    }));
+
+    assert_eq!(permission_lost.confirm_long_message_upload(), None);
+    assert_eq!(permission_lost.composer_input(), draft);
+    assert_eq!(
+        permission_lost.toast_message().map(|toast| toast.text),
+        Some("Attach Files permission is required in this channel")
+    );
+
+    let mut full = state_with_writable_channel();
+    full.start_composer();
+    full.add_pending_composer_attachments(
+        (0..crate::discord::MAX_UPLOAD_ATTACHMENT_COUNT)
+            .map(|index| {
+                MessageAttachmentUpload::from_bytes(
+                    format!("existing-{index}.txt"),
+                    vec![index as u8],
+                )
+            })
+            .collect(),
+    );
+    full.insert_composer_text_at_cursor(&draft);
+    assert_eq!(full.submit_composer(), None);
+
+    assert!(!full.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation));
+    assert_eq!(full.composer_input(), draft);
+    assert!(
+        full.toast_message()
+            .is_some_and(|toast| toast.text.contains("too many attachments"))
+    );
+}
+
+#[test]
+fn oversized_attachment_is_blocked_before_the_composer_is_cleared() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    state.insert_composer_text_at_cursor("keep this draft");
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+        "/tmp/large.bin".into(),
+        "large.bin".to_owned(),
+        10 * 1024 * 1024 + 1,
+    )]);
+
+    assert_eq!(state.submit_composer(), None);
+    assert_eq!(state.composer_input(), "keep this draft");
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert!(
+        state
+            .toast_message()
+            .is_some_and(|toast| toast.text.contains("attachment exceeds upload limit"))
     );
 }
 
@@ -2116,7 +2264,7 @@ fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     );
 
     let guild_id = Id::new(1);
-    let mut state = state_with_messages(1);
+    let mut state = state_with_custom_emojis();
     state.push_event(AppEvent::GuildEmojisUpdate {
         guild_id,
         emojis: vec![CustomEmojiInfo::test(Id::new(60), "wave")],

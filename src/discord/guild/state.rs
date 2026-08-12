@@ -4,7 +4,8 @@ use crate::discord::ids::{
 };
 use crate::discord::{
     CustomEmojiInfo, GuildBoostTier, GuildFolder, GuildOnboardingInfo, GuildVerificationLevel,
-    MemberOnboardingStatus, capabilities::effective_attachment_limit_bytes,
+    MemberOnboardingStatus, MessageSendLimits, capabilities::effective_message_send_limits,
+    capabilities::guild_attachment_limit_bytes,
 };
 
 use crate::discord::state::DiscordState;
@@ -89,16 +90,21 @@ impl DiscordState {
             .map(|status| status == MemberOnboardingStatus::InProgress)
     }
 
-    /// Per-file upload limit for the current user posting in `channel_id`:
-    /// the more generous of their Nitro tier and the channel's guild boost.
-    pub fn attachment_size_limit(&self, channel_id: Id<ChannelMarker>) -> u64 {
+    /// Limits for the current user posting in `channel_id`. Account benefits
+    /// control message length and uploads. Guild benefits can further raise the
+    /// per-file upload limit for messages sent in that guild.
+    pub(crate) fn message_send_limits(&self, channel_id: Id<ChannelMarker>) -> MessageSendLimits {
         let user_tier = self.session.current_user_premium_tier.unwrap_or_default();
-        let guild_boost = self
+        let guild_attachment_limit = self
             .channel(channel_id)
             .and_then(|channel| channel.guild_id)
             .and_then(|guild_id| self.guild(guild_id))
-            .map(|guild| guild.boost_tier);
-        effective_attachment_limit_bytes(user_tier, guild_boost)
+            .map(|guild| guild_attachment_limit_bytes(guild.boost_tier, guild.features.as_deref()));
+        effective_message_send_limits(user_tier, guild_attachment_limit)
+    }
+
+    pub fn attachment_size_limit(&self, channel_id: Id<ChannelMarker>) -> u64 {
+        self.message_send_limits(channel_id).max_attachment_bytes
     }
 
     pub fn all_custom_emojis(

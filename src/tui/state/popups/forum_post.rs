@@ -1,9 +1,11 @@
+use crate::AppError;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, ForumTagMarker},
 };
 use crate::discord::{
-    AppCommand, ForumPostCreate, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload,
+    ActionBlockReason, AppCommand, ForumPostCreate, MAX_UPLOAD_ATTACHMENT_COUNT,
+    MessageAttachmentUpload, validate_message_payload,
 };
 use crate::tui::keybindings::{ScrollAction, SelectionAction};
 use crate::tui::text_input::TextEditAction;
@@ -785,8 +787,16 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(channel_id) else {
             return Err("forum channel is no longer available".to_owned());
         };
-        if !channel.is_forum() || !self.discord.cache.can_send_in_channel(channel) {
+        if !channel.is_forum() {
             return Err("cannot create posts in this channel".to_owned());
+        }
+        if let Some(reason) = self
+            .discord
+            .cache
+            .forum_post_decision(channel, !popup.attachments.is_empty())
+            .block_reason()
+        {
+            return Err(forum_post_block_message(reason));
         }
         if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
             return Err(format!(
@@ -805,9 +815,9 @@ impl DashboardState {
         {
             return Err("Manage Threads permission is required for moderated tags".to_owned());
         }
-        if !popup.attachments.is_empty() && !self.discord.cache.can_attach_in_channel(channel) {
-            return Err("Attach Files permission is required in this channel".to_owned());
-        }
+        let limits = self.discord.cache.message_send_limits(channel_id);
+        validate_message_payload(&content, &popup.attachments, limits)
+            .map_err(forum_post_payload_error_message)?;
 
         let attachments = self
             .popups
@@ -821,6 +831,44 @@ impl DashboardState {
             applied_tags,
             attachments,
         })
+    }
+}
+
+fn forum_post_block_message(reason: ActionBlockReason) -> String {
+    match reason {
+        ActionBlockReason::PermissionDenied(permission) => {
+            format!("{permission} permission is required in this channel")
+        }
+        ActionBlockReason::PermissionDataUnavailable(_) => {
+            "Channel permissions are still loading. The post was kept.".to_owned()
+        }
+        ActionBlockReason::ParticipationRestricted(restriction) => restriction.to_string(),
+        ActionBlockReason::ParticipationDataUnavailable(_) => {
+            "Server verification status is still loading. The post was kept.".to_owned()
+        }
+        ActionBlockReason::ChannelDataUnavailable => {
+            "The forum channel is no longer available. The post was kept.".to_owned()
+        }
+        ActionBlockReason::ThreadStateUnavailable | ActionBlockReason::ThreadArchived => {
+            "This forum is not ready for a new post. The post was kept.".to_owned()
+        }
+    }
+}
+
+fn forum_post_payload_error_message(error: AppError) -> String {
+    match error {
+        AppError::MessageTooLong { len, limit } => {
+            format!("Body is {len} characters. Limit: {limit}.")
+        }
+        AppError::AttachmentTooLarge {
+            filename,
+            size,
+            limit,
+        } => format!("{filename} is too large ({size} bytes). Upload limit: {limit} bytes."),
+        AppError::TooManyAttachments { count } => {
+            format!("Post has too many attachments ({count}).")
+        }
+        error => error.to_string(),
     }
 }
 

@@ -114,6 +114,7 @@ define_modal_popups! {
     ChannelActionMenu(ChannelActionMenuState),
     MemberActionMenu(MemberActionMenuState),
     MessageUrlPicker(MessageUrlPickerState),
+    LongMessageConfirmation(LongMessageConfirmationState),
     MessageConfirmation(MessageConfirmationState),
     QuitConfirmation,
     GuildLeaveConfirmation(GuildLeaveConfirmationState),
@@ -526,6 +527,30 @@ pub(super) struct MessageConfirmationState {
     pub(super) message_id: Id<MessageMarker>,
     pub(super) author: String,
     pub(super) content: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LongMessageConfirmationState {
+    pub(super) channel_id: Id<ChannelMarker>,
+    pub(super) file_content: String,
+    pub(super) character_count: usize,
+    pub(super) character_limit: usize,
+}
+
+impl LongMessageConfirmationState {
+    pub(super) fn new(
+        channel_id: Id<ChannelMarker>,
+        file_content: String,
+        character_count: usize,
+        character_limit: usize,
+    ) -> Self {
+        Self {
+            channel_id,
+            file_content,
+            character_count,
+            character_limit,
+        }
+    }
 }
 
 impl MessageConfirmationState {
@@ -1285,6 +1310,19 @@ impl PopupUiState {
         }
     }
 
+    pub(super) fn long_message_confirmation(&self) -> Option<&LongMessageConfirmationState> {
+        match &self.modal {
+            Some(ModalPopup::LongMessageConfirmation(confirmation)) => Some(confirmation),
+            _ => None,
+        }
+    }
+
+    pub(super) fn take_long_message_confirmation(
+        &mut self,
+    ) -> Option<LongMessageConfirmationState> {
+        take_modal_state!(self, LongMessageConfirmation, confirmation)
+    }
+
     pub(super) fn take_message_confirmation(&mut self) -> Option<MessageConfirmationState> {
         take_modal_state!(self, MessageConfirmation, confirmation)
     }
@@ -1623,6 +1661,9 @@ impl DashboardState {
             }
             ActiveModalPopupKind::MemberActionMenu => self.close_member_action_menu(),
             ActiveModalPopupKind::MessageUrlPicker => self.close_message_url_picker(),
+            ActiveModalPopupKind::LongMessageConfirmation => {
+                self.close_long_message_confirmation();
+            }
             ActiveModalPopupKind::MessageConfirmation => self.close_message_confirmation(),
             ActiveModalPopupKind::QuitConfirmation => self.close_quit_confirmation(),
             ActiveModalPopupKind::GuildLeaveConfirmation => {
@@ -1840,6 +1881,7 @@ impl DashboardState {
             ModalPopup::MessageUrlPicker(_) => {
                 ActivePopupPolicy::selectable(kind, SelectablePopupTarget::MessageUrls)
             }
+            ModalPopup::LongMessageConfirmation(_) => ActivePopupPolicy::confirmation(kind),
             ModalPopup::Options(popup) if popup.capturing_push_to_talk_shortcut => {
                 ActivePopupPolicy::exclusive(kind)
             }

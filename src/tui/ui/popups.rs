@@ -224,15 +224,17 @@ pub(super) use channel_switcher::{
     channel_switcher_list_layout, channel_switcher_popup_area, render_channel_switcher_popup,
 };
 pub(super) use confirmation::{
-    guild_leave_confirmation_popup_area_for_state, message_confirmation_popup_area_for_state,
-    quit_confirmation_popup_area, render_guild_leave_confirmation, render_message_confirmation,
+    guild_leave_confirmation_popup_area_for_state, long_message_confirmation_popup_area_for_state,
+    message_confirmation_popup_area_for_state, quit_confirmation_popup_area,
+    render_guild_leave_confirmation, render_long_message_confirmation, render_message_confirmation,
     render_notification_inbox_mark_all_confirmation, render_quit_confirmation,
     render_thread_delete_confirmation, thread_delete_confirmation_popup_area_for_state,
 };
 #[cfg(test)]
 pub(super) use confirmation::{
-    message_delete_confirmation_lines, message_pin_confirmation_lines,
-    message_remove_embeds_confirmation_lines, quit_confirmation_lines,
+    long_message_confirmation_lines_for_test, message_delete_confirmation_lines,
+    message_pin_confirmation_lines, message_remove_embeds_confirmation_lines,
+    quit_confirmation_lines,
 };
 #[cfg(test)]
 pub(super) use debug_log::debug_log_popup_lines;
@@ -467,6 +469,9 @@ fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) -> Option<R
         }
         ActiveModalPopupKind::MessageConfirmation => {
             message_confirmation_popup_area_for_state(frame_area, state)
+        }
+        ActiveModalPopupKind::LongMessageConfirmation => {
+            long_message_confirmation_popup_area_for_state(frame_area, state)
         }
         ActiveModalPopupKind::QuitConfirmation => Some(quit_confirmation_popup_area(frame_area)),
         ActiveModalPopupKind::GuildLeaveConfirmation => {

@@ -146,6 +146,13 @@ pub(crate) enum ActionDecision {
 }
 
 impl ActionDecision {
+    pub(crate) const fn block_reason(self) -> Option<ActionBlockReason> {
+        match self {
+            Self::Allowed => None,
+            Self::Blocked(reason) => Some(reason),
+        }
+    }
+
     pub(crate) const fn optimistic_ui_block_reason(self) -> Option<ActionBlockReason> {
         match self {
             Self::Allowed | Self::Blocked(ActionBlockReason::PermissionDataUnavailable(_)) => None,
@@ -155,6 +162,62 @@ impl ActionDecision {
 }
 
 impl DiscordState {
+    /// Full policy for a message submission. Reply and attachment permissions
+    /// are conditional parts of the same user action, so both the composer and
+    /// request boundary must evaluate them through this shared decision.
+    pub(crate) fn message_send_decision(
+        &self,
+        channel: &ChannelState,
+        has_reply: bool,
+        has_attachments: bool,
+    ) -> ActionDecision {
+        self.message_payload_decision(
+            channel,
+            DiscordAction::SendMessage,
+            has_reply,
+            has_attachments,
+        )
+    }
+
+    pub(crate) fn forum_post_decision(
+        &self,
+        channel: &ChannelState,
+        has_attachments: bool,
+    ) -> ActionDecision {
+        self.message_payload_decision(
+            channel,
+            DiscordAction::CreateForumPost,
+            false,
+            has_attachments,
+        )
+    }
+
+    fn message_payload_decision(
+        &self,
+        channel: &ChannelState,
+        action: DiscordAction,
+        has_reply: bool,
+        has_attachments: bool,
+    ) -> ActionDecision {
+        let base = self.channel_action_decision(channel, action);
+        if base != ActionDecision::Allowed {
+            return base;
+        }
+        if has_reply
+            && let Some(reason) =
+                self.permission_block_reason(channel, DiscordPermission::ReadMessageHistory)
+        {
+            return ActionDecision::Blocked(reason);
+        }
+        if has_attachments
+            && let Some(reason) =
+                self.permission_block_reason(channel, DiscordPermission::AttachFiles)
+        {
+            return ActionDecision::Blocked(reason);
+        }
+        ActionDecision::Allowed
+    }
+
     /// Evaluate the state-only part of a Discord action policy.
     ///
     /// Dynamic rules such as message authorship and existing reactions remain
@@ -229,6 +292,22 @@ impl DiscordState {
             }
         }
         None
+    }
+
+    fn permission_block_reason(
+        &self,
+        channel: &ChannelState,
+        permission: DiscordPermission,
+    ) -> Option<ActionBlockReason> {
+        match self.channel_permission_decision(channel, permission) {
+            PermissionDecision::Allowed => None,
+            PermissionDecision::Denied(permission) => {
+                Some(ActionBlockReason::PermissionDenied(permission))
+            }
+            PermissionDecision::Unavailable(gap) => {
+                Some(ActionBlockReason::PermissionDataUnavailable(gap))
+            }
+        }
     }
 }
 

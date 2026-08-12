@@ -34,7 +34,7 @@ use super::{
     activity::{ActivityRender, build_activity_render, compact_activity_line},
     channel_prefix, channel_unread_decoration, clear_area, dm_presence_dot_span,
     layout::{
-        composer_inner_width, composer_prompt_cursor_position, composer_rows_before_input,
+        composer_content_width, composer_prompt_cursor_position, composer_rows_before_input,
         composer_upload_preview_line_count, panel_scrollbar_area, prefixed_composer_input,
         vertical_scrollbar_visible,
     },

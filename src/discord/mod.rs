@@ -17,6 +17,7 @@ pub mod ids;
 mod json;
 mod member;
 mod message;
+mod message_policy;
 mod notification;
 pub mod password_auth;
 mod permission;
@@ -49,9 +50,12 @@ pub use builtin_commands::{
     BuiltinSlashCommandInfo, BuiltinSlashCommandParse, BuiltinSlashCommandSubmit,
     builtin_slash_commands, parse_builtin_slash_command,
 };
+pub(crate) use capabilities::MessageSendLimits;
 pub use capabilities::{
     BASE_ATTACHMENT_LIMIT_BYTES, GuildBoostTier, PremiumTier, effective_attachment_limit_bytes,
 };
+#[cfg(test)]
+pub(crate) use capabilities::{BASE_MESSAGE_CHARACTER_LIMIT, NITRO_MESSAGE_CHARACTER_LIMIT};
 pub(crate) use channel::is_thread_kind;
 pub use channel::{
     ChannelInfo, ChannelRecipientInfo, ForumTagInfo, PermissionOverwriteInfo,
@@ -91,6 +95,10 @@ pub use message::{
     InlinePreviewInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MentionInfo, MessageInfo,
     MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo,
     PollInfo, ReactionInfo, ReactionUserInfo, ReplyInfo,
+};
+pub(crate) use message_policy::{
+    validate_attachment_sizes, validate_message_content, validate_message_content_length,
+    validate_message_payload,
 };
 pub use notification::{
     ChannelNotificationOverrideInfo, GuildNotificationSettingsInfo, NotificationLevel,

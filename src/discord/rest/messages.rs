@@ -9,8 +9,9 @@ use crate::discord::ids::{
 use crate::{
     AppError, Result,
     discord::{
-        BASE_ATTACHMENT_LIMIT_BYTES, MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload,
-        MessageInfo, ReplyReference, gateway::parse_message_info,
+        BASE_ATTACHMENT_LIMIT_BYTES, MessageAttachmentUpload, MessageInfo, MessageSendLimits,
+        ReplyReference, gateway::parse_message_info, validate_attachment_sizes,
+        validate_message_content, validate_message_payload,
     },
     logging,
 };
@@ -34,10 +35,10 @@ impl DiscordRest {
         &self,
         channel_id: Id<ChannelMarker>,
         request: MessageCreateRequest<'_>,
-        upload_limit: u64,
+        limits: MessageSendLimits,
         slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
-        validate_message_payload(request.content, request.attachments, upload_limit)?;
+        validate_message_payload(request.content, request.attachments, limits)?;
         let body = message_request_body(
             request.content,
             request.nonce,
@@ -49,7 +50,7 @@ impl DiscordRest {
             channel_id,
             body,
             request.attachments,
-            upload_limit,
+            limits.max_attachment_bytes,
             slow_mode,
         )
         .await
@@ -88,9 +89,10 @@ impl DiscordRest {
         channel_id: Id<ChannelMarker>,
         nonce: Id<MessageMarker>,
         content: &str,
+        max_content_chars: usize,
         slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
-        validate_message_content(content)?;
+        validate_message_content(content, max_content_chars)?;
         let body = message_request_body_with_tts(content, nonce, None, &[], true);
 
         self.send_message_body(
@@ -153,8 +155,9 @@ impl DiscordRest {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         request: MessageEditRequest<'_>,
+        max_content_chars: usize,
     ) -> Result<MessageInfo> {
-        let (body, action) = edit_message_request_body(request)?;
+        let (body, action) = edit_message_request_body(request, max_content_chars)?;
         let raw: Value = self
             .send_json(
                 self.raw_http
@@ -513,10 +516,11 @@ fn message_request_body_with_nonce(
 
 pub(super) fn edit_message_request_body(
     request: MessageEditRequest<'_>,
+    max_content_chars: usize,
 ) -> Result<(Value, &'static str)> {
     match request {
         MessageEditRequest::Content(content) => {
-            validate_message_content(content)?;
+            validate_message_content(content, max_content_chars)?;
             Ok((json!({ "content": content }), "edit message"))
         }
         MessageEditRequest::Flags(flags) => Ok((json!({ "flags": flags }), "update message flags")),
@@ -529,7 +533,13 @@ pub(super) async fn message_multipart_form(
     upload_limit: u64,
 ) -> Result<Form> {
     let actual_sizes = attachment_sizes(attachments).await?;
-    validate_attachment_sizes(&actual_sizes, upload_limit)?;
+    validate_attachment_sizes(
+        actual_sizes.len(),
+        actual_sizes
+            .iter()
+            .map(|(filename, size)| (filename.as_str(), *size)),
+        upload_limit,
+    )?;
 
     let mut form = Form::new().part(
         "payload_json",
@@ -541,7 +551,8 @@ pub(super) async fn message_multipart_form(
     for (index, attachment) in attachments.iter().enumerate() {
         let bytes = attachment_bytes(attachment).await?;
         validate_attachment_sizes(
-            &[(attachment.filename.clone(), bytes.len() as u64)],
+            1,
+            std::iter::once((attachment.filename.as_str(), bytes.len() as u64)),
             upload_limit,
         )?;
         let content_type = upload_content_type(&attachment.filename);
@@ -603,55 +614,6 @@ pub(super) fn upload_content_type(filename: &str) -> String {
         .first_or_octet_stream()
         .essence_str()
         .to_owned()
-}
-
-pub(super) fn validate_message_payload(
-    content: &str,
-    attachments: &[MessageAttachmentUpload],
-    upload_limit: u64,
-) -> Result<()> {
-    if content.trim().is_empty() && attachments.is_empty() {
-        return Err(AppError::EmptyMessageContent);
-    }
-
-    let len = content.chars().count();
-    if len > 2_000 {
-        return Err(AppError::MessageTooLong { len });
-    }
-
-    let sizes = attachments
-        .iter()
-        .map(|attachment| (attachment.filename.clone(), attachment.size_bytes))
-        .collect::<Vec<_>>();
-    validate_attachment_sizes(&sizes, upload_limit)
-}
-
-/// Discord applies `upload_limit` to each file independently, not to the
-/// message's combined size, so this checks every file rather than the total.
-fn validate_attachment_sizes(attachments: &[(String, u64)], upload_limit: u64) -> Result<()> {
-    if attachments.len() > MAX_UPLOAD_ATTACHMENT_COUNT {
-        return Err(AppError::TooManyAttachments {
-            count: attachments.len(),
-        });
-    }
-
-    for (filename, size) in attachments {
-        if *size > upload_limit {
-            return Err(AppError::AttachmentTooLarge {
-                filename: filename.clone(),
-                size: *size,
-                limit: upload_limit,
-            });
-        }
-    }
-
-    Ok(())
-}
-
-pub(super) fn validate_message_content(content: &str) -> Result<()> {
-    // No attachments here, so the limit is unused. Pass the base to reuse the
-    // shared payload validator.
-    validate_message_payload(content, &[], BASE_ATTACHMENT_LIMIT_BYTES)
 }
 
 #[cfg(test)]

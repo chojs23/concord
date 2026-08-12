@@ -1,6 +1,27 @@
 use super::*;
 use crate::tui::state::{ConfirmationButton, MessageConfirmationKind};
 
+pub(in crate::tui::ui) fn render_long_message_confirmation(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation) {
+        return;
+    }
+
+    let Some((character_count, character_limit)) = state.long_message_confirmation_counts() else {
+        return;
+    };
+    let lines = long_message_confirmation_lines(
+        character_count,
+        character_limit,
+        state.active_confirmation_button(),
+    );
+    let popup = long_message_confirmation_popup_area(area, lines.len());
+    render_modal_paragraph(frame, popup, "Message is too long", lines);
+}
+
 pub(in crate::tui::ui) fn render_message_confirmation(
     frame: &mut Frame,
     area: Rect,
@@ -92,6 +113,26 @@ pub(in crate::tui::ui) fn render_notification_inbox_mark_all_confirmation(
 
 pub(in crate::tui::ui) fn message_confirmation_popup_area(area: Rect, line_count: usize) -> Rect {
     centered_rect(area, 60, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn long_message_confirmation_popup_area(
+    area: Rect,
+    line_count: usize,
+) -> Rect {
+    centered_rect(area, 64, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn long_message_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let (character_count, character_limit) = state.long_message_confirmation_counts()?;
+    let lines = long_message_confirmation_lines(
+        character_count,
+        character_limit,
+        state.active_confirmation_button(),
+    );
+    Some(long_message_confirmation_popup_area(area, lines.len()))
 }
 
 pub(in crate::tui::ui) fn message_confirmation_popup_area_for_state(
@@ -250,10 +291,52 @@ fn thread_delete_confirmation_lines(
 }
 
 fn confirmation_button_lines(active: ConfirmationButton) -> Vec<Line<'static>> {
+    confirmation_button_lines_with_labels(active, "confirm", "cancel")
+}
+
+fn confirmation_button_lines_with_labels(
+    active: ConfirmationButton,
+    confirm_label: &'static str,
+    cancel_label: &'static str,
+) -> Vec<Line<'static>> {
     vec![
-        popup_button_line("y", "confirm", active == ConfirmationButton::Confirm),
-        popup_button_line("n", "cancel", active == ConfirmationButton::Cancel),
+        popup_button_line("y", confirm_label, active == ConfirmationButton::Confirm),
+        popup_button_line("n", cancel_label, active == ConfirmationButton::Cancel),
     ]
+}
+
+fn long_message_confirmation_lines(
+    character_count: usize,
+    character_limit: usize,
+    active: ConfirmationButton,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("{character_count} / {character_limit} characters"),
+            theme::current().style(theme::HighlightGroup::Error),
+        )),
+        Line::from(Span::raw("This message is too long to send as text.")),
+        Line::from(Span::raw("Send the full text as message.txt instead?")),
+        Line::from(Span::raw(String::new())),
+    ];
+    lines.extend(confirmation_button_lines_with_labels(
+        active,
+        "send as file",
+        "cancel",
+    ));
+    lines
+}
+
+#[cfg(test)]
+pub(in crate::tui::ui) fn long_message_confirmation_lines_for_test(
+    character_count: usize,
+    character_limit: usize,
+) -> Vec<Line<'static>> {
+    long_message_confirmation_lines(
+        character_count,
+        character_limit,
+        ConfirmationButton::default(),
+    )
 }
 
 fn notification_inbox_mark_all_confirmation_lines(

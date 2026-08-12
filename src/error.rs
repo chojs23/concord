@@ -21,8 +21,8 @@ pub enum AppError {
     DiscordTokenRejected,
     #[error("message content must not be empty")]
     EmptyMessageContent,
-    #[error("message content exceeds Discord's 2000 character limit: {len}")]
-    MessageTooLong { len: usize },
+    #[error("message content exceeds the {limit} character limit: {len}")]
+    MessageTooLong { len: usize, limit: usize },
     #[error("attachment exceeds upload limit: {filename} ({size} bytes, limit {limit} bytes)")]
     AttachmentTooLarge {
         filename: String,

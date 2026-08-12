@@ -18,6 +18,33 @@ fn composer_requires_selected_channel() {
 }
 
 #[test]
+fn enter_confirms_long_message_file_upload() {
+    let permissions = PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES;
+    let draft = "x".repeat(2_001);
+
+    let mut send = state_with_channel_permissions(permissions);
+    send.start_composer();
+    send.insert_composer_text_at_cursor(&draft);
+    assert_eq!(handle_key(&mut send, key(KeyCode::Enter)), None);
+    assert!(
+        send.is_active_modal_popup(
+            crate::tui::state::ActiveModalPopupKind::LongMessageConfirmation
+        )
+    );
+
+    assert!(matches!(
+        handle_key(&mut send, key(KeyCode::Enter)),
+        Some(AppCommand::SendMessage { attachments, .. })
+            if attachments.first().is_some_and(|file| file.filename == "message.txt")
+    ));
+    assert!(
+        !send.is_active_modal_popup(
+            crate::tui::state::ActiveModalPopupKind::LongMessageConfirmation
+        )
+    );
+}
+
+#[test]
 fn thread_edit_shortcuts_cycle_selectors_submit_and_cancel() {
     let mut state = state_with_forum_channel_posts();
     state.open_thread_edit(Id::new(31));

@@ -1,4 +1,22 @@
 use super::*;
+
+#[test]
+fn long_message_confirmation_explains_the_file_fallback() {
+    let lines = long_message_confirmation_lines_for_test(2_001, 2_000);
+    let rendered = line_texts_from_ratatui(&lines);
+
+    assert_eq!(
+        rendered,
+        vec![
+            "2001 / 2000 characters",
+            "This message is too long to send as text.",
+            "Send the full text as message.txt instead?",
+            "",
+            "› [y] send as file",
+            "  [n] cancel",
+        ]
+    );
+}
 use crate::discord::FriendStatus;
 use crate::discord::test_builders::{
     GuildCreateFixture, ReactionUsersLoadedFixture, guild_create_event, reaction_users_loaded_event,

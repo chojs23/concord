@@ -152,6 +152,13 @@ fn dispatch_popup_key(
             DashboardState::confirm_message_confirmation,
             DashboardState::close_active_popup,
         ),
+        ActiveModalPopupKind::LongMessageConfirmation => route_confirmation_key(
+            state,
+            key,
+            stage,
+            DashboardState::confirm_long_message_upload,
+            DashboardState::close_active_popup,
+        ),
         ActiveModalPopupKind::GuildLeaveConfirmation => route_confirmation_key(
             state,
             key,

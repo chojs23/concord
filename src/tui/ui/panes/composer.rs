@@ -8,10 +8,11 @@ pub(in crate::tui::ui) fn render_composer(
     state: &DashboardState,
     emoji_images: &[EmojiImage<'_>],
 ) {
-    let inner_width = composer_inner_width(area.width);
+    let inner_width = composer_content_width(area.width);
     let ready_urls = ready_custom_emoji_urls(emoji_images);
     let prompt = composer_lines_with_loaded_custom_emoji_urls(state, inner_width, &ready_urls);
-    let vertical_scroll = composer_vertical_scroll(area, state, &ready_urls, prompt.len());
+    let total_lines = prompt.len();
+    let vertical_scroll = composer_vertical_scroll(area, state, &ready_urls, total_lines);
     let composer_active = state.is_composing() && state.composer_lock().is_none();
     let theme = theme::current();
     let border_style = if composer_active {
@@ -19,6 +20,26 @@ pub(in crate::tui::ui) fn render_composer(
     } else {
         theme.style(theme::HighlightGroup::ComposerBorder)
     };
+    let character_count = state.composer_character_count();
+    let character_limit = state.composer_character_limit();
+    let character_style = if character_count > character_limit {
+        theme.style(theme::HighlightGroup::Error)
+    } else {
+        theme.style(theme::HighlightGroup::MessageSecondary)
+    };
+    let block = Block::default()
+        .title(state.composer_title())
+        .title(
+            Line::from(Span::styled(
+                format!(" {character_count} / {character_limit} "),
+                character_style,
+            ))
+            .right_aligned(),
+        )
+        .borders(Borders::ALL)
+        .border_type(theme.border_type(theme::BorderSurface::Composer))
+        .border_style(border_style)
+        .title_style(theme.style(theme::HighlightGroup::ComposerTitle));
 
     frame.render_widget(
         Paragraph::new(prompt)
@@ -28,15 +49,15 @@ pub(in crate::tui::ui) fn render_composer(
             } else {
                 theme.style(theme::HighlightGroup::Disabled)
             })
-            .block(
-                Block::default()
-                    .title(state.composer_title())
-                    .borders(Borders::ALL)
-                    .border_type(theme.border_type(theme::BorderSurface::Composer))
-                    .border_style(border_style)
-                    .title_style(theme.style(theme::HighlightGroup::ComposerTitle)),
-            ),
+            .block(block),
         area,
+    );
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        usize::from(vertical_scroll),
+        usize::from(area.height.saturating_sub(2)),
+        total_lines,
     );
     if state.show_custom_emoji() {
         render_composer_custom_emoji_images(frame, area, state, emoji_images, vertical_scroll);
@@ -61,9 +82,12 @@ pub(in crate::tui::ui) fn composer_cursor_position(
     area: Rect,
     state: &DashboardState,
 ) -> Option<Position> {
-    let total_lines =
-        composer_lines_with_loaded_custom_emoji_urls(state, composer_inner_width(area.width), &[])
-            .len();
+    let total_lines = composer_lines_with_loaded_custom_emoji_urls(
+        state,
+        composer_content_width(area.width),
+        &[],
+    )
+    .len();
     let vertical_scroll = composer_vertical_scroll(area, state, &[], total_lines);
     composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &[], vertical_scroll)
 }
@@ -136,7 +160,7 @@ fn composer_cursor_document_position(
     let (prompt_row, prompt_column) = composer_prompt_cursor_position(
         &display_input.input,
         display_cursor,
-        composer_inner_width(area.width),
+        composer_content_width(area.width),
     );
 
     (
@@ -769,7 +793,7 @@ fn render_composer_custom_emoji_images(
     let ready_urls = ready_custom_emoji_urls(emoji_images);
     let display_input = composer_display_input(state, &ready_urls);
     let input = display_input.input.as_str();
-    let inner_width = composer_inner_width(area.width) as usize;
+    let inner_width = composer_content_width(area.width) as usize;
     let content_row = composer_rows_before_input(state);
 
     let mut slots = Vec::new();
@@ -792,10 +816,9 @@ fn render_composer_custom_emoji_images(
         });
     }
 
-    // Shrink by one so the helper's bounds reproduce the border the composer
-    // keeps clear on its right and bottom edges.
+    // Keep both the border and reserved scrollbar column outside image bounds.
     let list = Rect {
-        width: area.width.saturating_sub(1),
+        width: area.width.saturating_sub(2),
         height: area.height.saturating_sub(1),
         ..area
     };
@@ -844,6 +867,10 @@ fn render_composer_attachment_previews(
         horizontal: 1,
         vertical: 1,
     });
+    let inner = Rect {
+        width: inner.width.saturating_sub(1),
+        ..inner
+    };
     if inner.width == 0 || inner.height == 0 {
         return;
     }

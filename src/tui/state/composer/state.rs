@@ -6,6 +6,8 @@ use std::{
 
 use chrono::Utc;
 
+use crate::AppError;
+use crate::discord::ActionBlockReason;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
@@ -15,11 +17,12 @@ use crate::discord::{
     APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND,
     ApplicationCommandAutocompleteInvocation, ApplicationCommandChoiceInfo,
     ApplicationCommandIdentity, ApplicationCommandInfo, ApplicationCommandInvocation,
-    BuiltinSlashCommandParse, BuiltinSlashCommandSubmit, GlobalUserProfileUpdate,
+    BuiltinSlashCommandParse, BuiltinSlashCommandSubmit, DiscordAction, GlobalUserProfileUpdate,
     GuildParticipationBlock, GuildParticipationRestriction, GuildUserProfileUpdate,
-    MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload, UserProfileUpdate,
+    MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload, MessageSendLimits, UserProfileUpdate,
     application_command_content_is_complete, application_command_option_scope, next_message_nonce,
     parse_builtin_slash_command, parsed_application_command_option_names,
+    validate_attachment_sizes, validate_message_content_length, validate_message_payload,
 };
 
 use super::super::MINIMUM_ESTABLISHED_DM_MESSAGES;
@@ -27,6 +30,7 @@ use super::super::local_upload_preview::{
     LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
     local_upload_preview_view,
 };
+use super::super::popups::{LongMessageConfirmationState, ModalPopup};
 use super::super::request_tracking::LatestMessageHistoryState;
 use super::super::scroll::{VerticalScrollState, clamp_list_scroll};
 use super::super::text_completion::EmojiCompletionState;
@@ -294,6 +298,32 @@ impl DashboardState {
             " Reply ".to_owned()
         } else {
             " Message Input ".to_owned()
+        }
+    }
+
+    pub fn composer_character_count(&self) -> usize {
+        self.expanded_composer_message_content().chars().count()
+    }
+
+    pub fn composer_character_limit(&self) -> usize {
+        self.composer_channel_id()
+            .map(|channel_id| {
+                self.discord
+                    .cache
+                    .message_send_limits(channel_id)
+                    .max_content_chars
+            })
+            .unwrap_or_else(|| MessageSendLimits::default().max_content_chars)
+    }
+
+    pub(in crate::tui) fn long_message_confirmation_counts(&self) -> Option<(usize, usize)> {
+        let confirmation = self.popups.long_message_confirmation()?;
+        Some((confirmation.character_count, confirmation.character_limit))
+    }
+
+    pub(in crate::tui) fn close_long_message_confirmation(&mut self) {
+        if self.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation) {
+            self.popups.clear_modal();
         }
     }
 
@@ -861,21 +891,18 @@ impl DashboardState {
     }
 
     pub fn submit_composer(&mut self) -> Option<AppCommand> {
-        let expanded = expand_composer_completions(
-            self.composer.composer_input.value(),
-            &self.composer.composer_mention_completions,
-            &self.composer.composer_emoji_completions,
-            MentionExpansionMode::Message,
-        );
-        let expanded = expand_emoji_shortcodes(&expanded);
-        let content = expanded.trim().to_owned();
+        let content = self.expanded_composer_message_content();
         let has_attachments = !self.composer.pending_composer_attachments.is_empty();
         if content.is_empty() && !has_attachments {
             return None;
         }
-        if let Some((channel_id, message_id)) = self.composer.edit_target_message.take() {
+
+        if let Some((channel_id, message_id)) = self.composer.edit_target_message {
             if content.is_empty() {
-                self.composer.edit_target_message = Some((channel_id, message_id));
+                return None;
+            }
+            if let Err(error) = self.composer_edit_preflight(channel_id, message_id, &content) {
+                self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
                 return None;
             }
             self.cancel_composer();
@@ -885,56 +912,13 @@ impl DashboardState {
                 content,
             });
         }
+
         let channel_id = self.selected_channel_id()?;
-        // Defense in depth: the channel could have lost SEND_MESSAGES while
-        // the composer was open (role change, channel overwrite update). Drop
-        // the message rather than fire a request that would 403.
-        if !self.can_send_in_selected_channel() {
-            self.show_error_toast(
-                "Send Messages permission is required in this channel",
-                std::time::Instant::now(),
-            );
-            return None;
-        }
-        if has_attachments && !self.can_attach_in_selected_channel() {
-            self.show_error_toast(
-                "Attach Files permission is required in this channel",
-                std::time::Instant::now(),
-            );
-            return None;
-        }
 
         if !has_attachments && self.composer.reply_target_message_id.is_none() {
             match self.builtin_slash_command_submit_for_content(&content, channel_id) {
                 BuiltinCommandSubmit::Ready(command) => {
-                    self.clear_submitted_composer_text();
-                    self.composer.reply_target_message_id = None;
-                    self.composer.pending_composer_attachments.clear();
-                    self.composer.pending_composer_attachment_previews.clear();
-                    if let AppCommand::SendMessage {
-                        channel_id,
-                        nonce,
-                        content,
-                        reply_to,
-                        attachments,
-                    } = &command
-                    {
-                        self.stage_pending_message(
-                            *channel_id,
-                            *nonce,
-                            content,
-                            *reply_to,
-                            attachments,
-                        );
-                    } else if let AppCommand::SendTtsMessage {
-                        channel_id,
-                        nonce,
-                        content,
-                    } = &command
-                    {
-                        self.stage_pending_message(*channel_id, *nonce, content, None, &[]);
-                    }
-                    return Some(command);
+                    return self.submit_ready_composer_command(command);
                 }
                 BuiltinCommandSubmit::Incomplete => return None,
                 BuiltinCommandSubmit::Error(message) => {
@@ -946,10 +930,17 @@ impl DashboardState {
             let command_content = self.expanded_composer_command_content();
             match self.application_command_submit_for_content(&command_content) {
                 ApplicationCommandSubmit::Ready(interaction) => {
-                    self.clear_submitted_composer_text();
-                    self.composer.reply_target_message_id = None;
-                    self.composer.pending_composer_attachments.clear();
-                    self.composer.pending_composer_attachment_previews.clear();
+                    if let Err(error) = self.channel_action_preflight(
+                        interaction.channel_id,
+                        DiscordAction::RunApplicationCommand,
+                    ) {
+                        self.show_error_toast(
+                            composer_preflight_error_message(&error),
+                            Instant::now(),
+                        );
+                        return None;
+                    }
+                    self.clear_submitted_composer();
                     return Some(AppCommand::RunApplicationCommand {
                         invocation: interaction,
                     });
@@ -959,6 +950,154 @@ impl DashboardState {
             }
         }
 
+        let file_content = self.composer.composer_input.value().trim().to_owned();
+        self.submit_composer_message(channel_id, content, file_content)
+    }
+
+    pub(in crate::tui) fn confirm_long_message_upload(&mut self) -> Option<AppCommand> {
+        let confirmation = self.popups.take_long_message_confirmation()?;
+        if self.selected_channel_id() != Some(confirmation.channel_id) {
+            self.show_error_toast(
+                "The selected channel changed. The draft was kept.",
+                Instant::now(),
+            );
+            return None;
+        }
+
+        if let Err(error) = self
+            .long_message_fallback_preflight(confirmation.channel_id, &confirmation.file_content)
+        {
+            self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
+            return None;
+        }
+
+        let attachment = MessageAttachmentUpload::from_bytes(
+            "message.txt".to_owned(),
+            confirmation.file_content.into_bytes(),
+        );
+        Some(self.finish_composer_message_submission(
+            confirmation.channel_id,
+            String::new(),
+            Some(attachment),
+        ))
+    }
+
+    fn submit_composer_message(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        content: String,
+        file_content: String,
+    ) -> Option<AppCommand> {
+        let result = self.message_submission_preflight(
+            channel_id,
+            &content,
+            self.composer.reply_target_message_id.is_some(),
+            &self.composer.pending_composer_attachments,
+        );
+        match result {
+            Ok(_) => Some(self.finish_composer_message_submission(channel_id, content, None)),
+            Err(AppError::MessageTooLong { len, limit }) => {
+                self.offer_long_message_fallback(channel_id, file_content, len, limit);
+                None
+            }
+            Err(error) => {
+                self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
+                None
+            }
+        }
+    }
+
+    fn submit_ready_composer_command(&mut self, command: AppCommand) -> Option<AppCommand> {
+        match &command {
+            AppCommand::SendMessage {
+                channel_id,
+                content,
+                reply_to,
+                attachments,
+                ..
+            } => {
+                match self.message_submission_preflight(
+                    *channel_id,
+                    content,
+                    reply_to.is_some(),
+                    attachments,
+                ) {
+                    Ok(_) => {}
+                    Err(AppError::MessageTooLong { len, limit }) => {
+                        self.offer_long_message_fallback(*channel_id, content.clone(), len, limit);
+                        return None;
+                    }
+                    Err(error) => {
+                        self.show_error_toast(
+                            composer_preflight_error_message(&error),
+                            Instant::now(),
+                        );
+                        return None;
+                    }
+                }
+            }
+            AppCommand::SendTtsMessage {
+                channel_id,
+                content,
+                ..
+            } => {
+                if let Err(error) =
+                    self.channel_action_preflight(*channel_id, DiscordAction::SendTtsMessage)
+                {
+                    self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
+                    return None;
+                }
+                let limit = self
+                    .discord
+                    .cache
+                    .message_send_limits(*channel_id)
+                    .max_content_chars;
+                if let Err(error) = validate_message_content_length(content, limit) {
+                    match error {
+                        AppError::MessageTooLong { len, limit } => {
+                            self.offer_long_message_fallback(
+                                *channel_id,
+                                content.clone(),
+                                len,
+                                limit,
+                            );
+                        }
+                        error => self.show_error_toast(
+                            composer_preflight_error_message(&error),
+                            Instant::now(),
+                        ),
+                    }
+                    return None;
+                }
+            }
+            _ => {}
+        }
+
+        self.clear_submitted_composer();
+        match &command {
+            AppCommand::SendMessage {
+                channel_id,
+                nonce,
+                content,
+                reply_to,
+                attachments,
+            } => self.stage_pending_message(*channel_id, *nonce, content, *reply_to, attachments),
+            AppCommand::SendTtsMessage {
+                channel_id,
+                nonce,
+                content,
+            } => self.stage_pending_message(*channel_id, *nonce, content, None, &[]),
+            _ => {}
+        }
+        Some(command)
+    }
+
+    fn finish_composer_message_submission(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        content: String,
+        additional_attachment: Option<MessageAttachmentUpload>,
+    ) -> AppCommand {
         self.clear_submitted_composer_text();
         let mention_author = self.options.composer_options.ping_on_reply;
         let reply_to = self
@@ -969,21 +1108,167 @@ impl DashboardState {
                 message_id,
                 mention_author,
             });
-        let attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
+        let mut attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
+        if let Some(attachment) = additional_attachment {
+            attachments.push(attachment);
+        }
         self.composer.pending_composer_attachment_previews.clear();
         let nonce = crate::discord::next_message_nonce();
         self.stage_pending_message(channel_id, nonce, &content, reply_to, &attachments);
-        // Stay in insert mode so the user can send several messages in a
-        // row without re-pressing `i`. The composer closes only when the
-        // user explicitly bails with Esc or the channel revokes
-        // SEND_MESSAGES (handled above).
-        Some(AppCommand::SendMessage {
+        AppCommand::SendMessage {
             channel_id,
             nonce,
             content,
             reply_to,
             attachments,
-        })
+        }
+    }
+
+    fn message_submission_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        content: &str,
+        has_reply: bool,
+        attachments: &[MessageAttachmentUpload],
+    ) -> crate::Result<MessageSendLimits> {
+        let limits =
+            self.message_permission_preflight(channel_id, has_reply, !attachments.is_empty())?;
+        validate_message_payload(content, attachments, limits)?;
+        Ok(limits)
+    }
+
+    fn message_permission_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        has_reply: bool,
+        has_attachments: bool,
+    ) -> crate::Result<MessageSendLimits> {
+        let channel =
+            self.discord
+                .cache
+                .channel(channel_id)
+                .ok_or(AppError::DiscordActionBlocked {
+                    action: DiscordAction::SendMessage,
+                    reason: crate::discord::ActionBlockReason::ChannelDataUnavailable,
+                })?;
+        if let Some(reason) = self
+            .discord
+            .cache
+            .message_send_decision(channel, has_reply, has_attachments)
+            .block_reason()
+        {
+            return Err(AppError::DiscordActionBlocked {
+                action: DiscordAction::SendMessage,
+                reason,
+            });
+        }
+        Ok(self.discord.cache.message_send_limits(channel_id))
+    }
+
+    fn long_message_fallback_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        file_content: &str,
+    ) -> crate::Result<()> {
+        let limits = self.message_permission_preflight(
+            channel_id,
+            self.composer.reply_target_message_id.is_some(),
+            true,
+        )?;
+        let attachment_count = self
+            .composer
+            .pending_composer_attachments
+            .len()
+            .saturating_add(1);
+        let attachments = self
+            .composer
+            .pending_composer_attachments
+            .iter()
+            .map(|attachment| (attachment.filename.as_str(), attachment.size_bytes))
+            .chain(std::iter::once(("message.txt", file_content.len() as u64)));
+        validate_attachment_sizes(attachment_count, attachments, limits.max_attachment_bytes)
+    }
+
+    fn composer_edit_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        content: &str,
+    ) -> crate::Result<()> {
+        self.channel_action_preflight(channel_id, DiscordAction::EditMessage)?;
+        let message = self
+            .discord
+            .cache
+            .messages_for_channel(channel_id)
+            .into_iter()
+            .find(|message| message.id == message_id)
+            .ok_or_else(|| {
+                AppError::DiscordRequest("the message is no longer available".to_owned())
+            })?;
+        if Some(message.author_id) != self.current_user_id() {
+            return Err(AppError::DiscordRequest(
+                "only the message author can edit this message".to_owned(),
+            ));
+        }
+        let limit = self
+            .discord
+            .cache
+            .message_send_limits(channel_id)
+            .max_content_chars;
+        validate_message_content_length(content, limit)
+    }
+
+    fn channel_action_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        action: DiscordAction,
+    ) -> crate::Result<()> {
+        let channel =
+            self.discord
+                .cache
+                .channel(channel_id)
+                .ok_or(AppError::DiscordActionBlocked {
+                    action,
+                    reason: crate::discord::ActionBlockReason::ChannelDataUnavailable,
+                })?;
+        if let Some(reason) = self
+            .discord
+            .cache
+            .channel_action_decision(channel, action)
+            .block_reason()
+        {
+            return Err(AppError::DiscordActionBlocked { action, reason });
+        }
+        Ok(())
+    }
+
+    fn offer_long_message_fallback(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        file_content: String,
+        character_count: usize,
+        character_limit: usize,
+    ) {
+        if let Err(error) = self.long_message_fallback_preflight(channel_id, &file_content) {
+            self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
+            return;
+        }
+        self.popups.confirmation_button = Default::default();
+        self.popups.set_modal(ModalPopup::LongMessageConfirmation(
+            LongMessageConfirmationState::new(
+                channel_id,
+                file_content,
+                character_count,
+                character_limit,
+            ),
+        ));
+    }
+
+    fn clear_submitted_composer(&mut self) {
+        self.clear_submitted_composer_text();
+        self.composer.reply_target_message_id = None;
+        self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
     }
 
     fn clear_submitted_composer_text(&mut self) {
@@ -999,6 +1284,23 @@ impl DashboardState {
             MentionExpansionMode::Command,
         );
         expand_emoji_shortcodes(&expanded).trim().to_owned()
+    }
+
+    fn expanded_composer_message_content(&self) -> String {
+        let expanded = expand_composer_completions(
+            self.composer.composer_input.value(),
+            &self.composer.composer_mention_completions,
+            &self.composer.composer_emoji_completions,
+            MentionExpansionMode::Message,
+        );
+        expand_emoji_shortcodes(&expanded).trim().to_owned()
+    }
+
+    fn composer_channel_id(&self) -> Option<Id<ChannelMarker>> {
+        self.composer
+            .edit_target_message
+            .map(|(channel_id, _)| channel_id)
+            .or_else(|| self.selected_channel_id())
     }
 
     /// Returns the characters typed after the `@` if the picker is open.
@@ -1992,6 +2294,35 @@ enum BuiltinCommandSubmit {
     Incomplete,
     Error(String),
     NotCommand,
+}
+
+fn composer_preflight_error_message(error: &AppError) -> String {
+    match error {
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::PermissionDenied(permission),
+            ..
+        } => format!("{permission} permission is required in this channel"),
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::PermissionDataUnavailable(_),
+            ..
+        } => "Channel permissions are still loading. Your draft was kept.".to_owned(),
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::ChannelDataUnavailable,
+            ..
+        } => "This channel is no longer available. Your draft was kept.".to_owned(),
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::ThreadStateUnavailable,
+            ..
+        } => "Thread details are still loading. Your draft was kept.".to_owned(),
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::ThreadArchived,
+            ..
+        } => "This thread is archived. Your draft was kept.".to_owned(),
+        AppError::DiscordRequest(message) => {
+            format!("{message}. Your draft was kept.")
+        }
+        _ => error.to_string(),
+    }
 }
 
 fn shift_byte_index(index: usize, delta: isize) -> usize {

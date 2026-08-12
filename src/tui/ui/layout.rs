@@ -216,9 +216,9 @@ pub(super) fn composer_height(area: Rect, state: &DashboardState) -> u16 {
             || !state.pending_composer_attachments().is_empty()
             || state.clipboard_paste_pending())
     {
-        composer_content_line_count(state, composer_inner_width(area.width))
+        composer_content_line_count(state, composer_content_width(area.width))
     } else {
-        composer_placeholder_line_count(state, composer_inner_width(area.width))
+        composer_placeholder_line_count(state, composer_content_width(area.width))
     };
     let desired_height = MIN_MESSAGE_INPUT_HEIGHT.max(content_lines.saturating_add(2));
     // Keep enough message history visible while large drafts use the composer
@@ -233,8 +233,10 @@ fn composer_placeholder_line_count(state: &DashboardState, width: u16) -> u16 {
     (wrap_text_lines(&text, usize::from(width.max(1))).len() as u16).max(1)
 }
 
-pub(super) fn composer_inner_width(width: u16) -> u16 {
-    width.saturating_sub(2).max(1)
+/// Keep the rightmost inner column free for the shared vertical scrollbar.
+/// Reserving it at every height avoids rewrapping the draft when overflow starts.
+pub(super) fn composer_content_width(width: u16) -> u16 {
+    width.saturating_sub(3).max(1)
 }
 
 pub(super) fn composer_content_line_count(state: &DashboardState, width: u16) -> u16 {

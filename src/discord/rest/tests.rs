@@ -22,14 +22,20 @@ use crate::{
     AppError,
     discord::{
         ApplicationCommandInfo, ApplicationCommandInteraction, ApplicationCommandInteractionOption,
-        BASE_ATTACHMENT_LIMIT_BYTES, ChannelInfo, GuildFolder, MessageAttachmentUpload,
-        MessageSearchAuthorType, MessageSearchHas, MessageSearchQuery, ReactionEmoji,
-        ReplyReference,
+        BASE_ATTACHMENT_LIMIT_BYTES, BASE_MESSAGE_CHARACTER_LIMIT, ChannelInfo, GuildFolder,
+        MessageAttachmentUpload, MessageSearchAuthorType, MessageSearchHas, MessageSearchQuery,
+        MessageSendLimits, NITRO_MESSAGE_CHARACTER_LIMIT, ReactionEmoji, ReplyReference,
         application_commands::{
             ApplicationCommandAutocompleteInteraction, ApplicationCommandAutocompleteOption,
         },
         fingerprint::{CLIENT_BUILD_NUMBER, ClientFingerprint},
+        validate_message_content, validate_message_payload,
     },
+};
+
+const BASE_MESSAGE_LIMITS: MessageSendLimits = MessageSendLimits {
+    max_content_chars: BASE_MESSAGE_CHARACTER_LIMIT,
+    max_attachment_bytes: BASE_ATTACHMENT_LIMIT_BYTES,
 };
 
 use super::{
@@ -52,7 +58,7 @@ use super::{
     messages::{
         MessageEditRequest, edit_message_request_body, message_multipart_form,
         message_request_body, message_request_body_with_tts, parse_pinned_messages_response,
-        upload_content_type, validate_message_content, validate_message_payload,
+        upload_content_type,
     },
     notification_settings::mute_request_body,
     polls::poll_vote_request_body,
@@ -636,12 +642,29 @@ fn read_request_headers(stream: TcpStream) -> TcpStream {
 
 #[test]
 fn rejects_invalid_message_content() {
-    let error = validate_message_content("   ").expect_err("blank messages must fail");
+    let error = validate_message_content("   ", BASE_MESSAGE_CHARACTER_LIMIT)
+        .expect_err("blank messages must fail");
     assert!(matches!(error, AppError::EmptyMessageContent));
 
-    let content = "x".repeat(2_001);
-    let error = validate_message_content(&content).expect_err("oversized message must fail");
-    assert!(matches!(error, AppError::MessageTooLong { len: 2_001 }));
+    for (limit, len, allowed) in [
+        (BASE_MESSAGE_CHARACTER_LIMIT, 2_000, true),
+        (BASE_MESSAGE_CHARACTER_LIMIT, 2_001, false),
+        (NITRO_MESSAGE_CHARACTER_LIMIT, 4_000, true),
+        (NITRO_MESSAGE_CHARACTER_LIMIT, 4_001, false),
+    ] {
+        let result = validate_message_content(&"x".repeat(len), limit);
+        if allowed {
+            result.expect("content at the account limit should pass");
+        } else {
+            assert!(matches!(
+                result,
+                Err(AppError::MessageTooLong {
+                    len: actual_len,
+                    limit: actual_limit,
+                }) if actual_len == len && actual_limit == limit
+            ));
+        }
+    }
 }
 
 #[test]
@@ -652,7 +675,7 @@ fn validates_attachment_only_message_payload() {
         2_048,
     )];
 
-    validate_message_payload("   ", &attachments, BASE_ATTACHMENT_LIMIT_BYTES)
+    validate_message_payload("   ", &attachments, BASE_MESSAGE_LIMITS)
         .expect("file-only messages should be valid");
 
     let body = message_request_body(
@@ -708,7 +731,7 @@ fn forum_post_request_body_nests_message_and_tags() {
         "The client crashes",
         &[Id::new(101), Id::new(102)],
         &[],
-        BASE_ATTACHMENT_LIMIT_BYTES,
+        BASE_MESSAGE_LIMITS,
     )
     .expect("forum post body should build");
 
@@ -719,11 +742,11 @@ fn forum_post_request_body_nests_message_and_tags() {
 
 #[test]
 fn forum_post_request_body_validates_title_and_message() {
-    let error = create_forum_post_request_body(" ", "body", &[], &[], BASE_ATTACHMENT_LIMIT_BYTES)
+    let error = create_forum_post_request_body(" ", "body", &[], &[], BASE_MESSAGE_LIMITS)
         .expect_err("empty title must fail");
     assert!(matches!(error, AppError::DiscordRequest(_)));
 
-    let error = create_forum_post_request_body("title", " ", &[], &[], BASE_ATTACHMENT_LIMIT_BYTES)
+    let error = create_forum_post_request_body("title", " ", &[], &[], BASE_MESSAGE_LIMITS)
         .expect_err("empty body must fail");
     assert!(matches!(error, AppError::EmptyMessageContent));
 }
@@ -795,11 +818,16 @@ fn guild_folder_settings_proto_includes_name_and_color() {
 
 #[test]
 fn edit_message_request_body_sets_only_requested_fields() {
-    let (content_body, content_action) =
-        edit_message_request_body(MessageEditRequest::Content("hello"))
-            .expect("content edit body should build");
-    let (flags_body, flags_action) = edit_message_request_body(MessageEditRequest::Flags(4_100))
-        .expect("flags edit body should build");
+    let (content_body, content_action) = edit_message_request_body(
+        MessageEditRequest::Content("hello"),
+        BASE_MESSAGE_CHARACTER_LIMIT,
+    )
+    .expect("content edit body should build");
+    let (flags_body, flags_action) = edit_message_request_body(
+        MessageEditRequest::Flags(4_100),
+        BASE_MESSAGE_CHARACTER_LIMIT,
+    )
+    .expect("flags edit body should build");
 
     assert_eq!(content_body, serde_json::json!({ "content": "hello" }));
     assert_eq!(content_action, "edit message");
@@ -991,7 +1019,7 @@ fn enforces_per_file_upload_limit() {
         "large.bin".to_owned(),
         BASE_ATTACHMENT_LIMIT_BYTES + 1,
     )];
-    let error = validate_message_payload("", &too_large_file, BASE_ATTACHMENT_LIMIT_BYTES)
+    let error = validate_message_payload("", &too_large_file, BASE_MESSAGE_LIMITS)
         .expect_err("oversized attachment must fail");
     assert!(matches!(error, AppError::AttachmentTooLarge { .. }));
 
@@ -1005,7 +1033,7 @@ fn enforces_per_file_upload_limit() {
             )
         })
         .collect::<Vec<_>>();
-    validate_message_payload("", &many_sub_limit_files, BASE_ATTACHMENT_LIMIT_BYTES)
+    validate_message_payload("", &many_sub_limit_files, BASE_MESSAGE_LIMITS)
         .expect("files each under the per-file limit are accepted even if their sum exceeds it");
 }
 
