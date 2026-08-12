@@ -28,7 +28,7 @@ use super::super::local_upload_preview::{
     local_upload_preview_view,
 };
 use super::super::request_tracking::LatestMessageHistoryState;
-use super::super::scroll::clamp_list_scroll;
+use super::super::scroll::{VerticalScrollState, clamp_list_scroll};
 use super::super::text_completion::EmojiCompletionState;
 use super::super::{
     ActiveModalPopupKind, CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane,
@@ -68,6 +68,7 @@ const DISCORD_EPOCH_MILLIS: i64 = 1_420_070_400_000;
 #[derive(Debug, Default)]
 pub(in crate::tui::state) struct ComposerUiState {
     pub(in crate::tui::state) composer_input: TextInputState,
+    composer_scroll: VerticalScrollState,
     pub(in crate::tui::state) pending_composer_attachments: Vec<MessageAttachmentUpload>,
     pub(in crate::tui::state) pending_composer_attachment_previews: Vec<LocalUploadPreviewState>,
     pub(in crate::tui::state) pending_composer_attachment_preview_generation: u64,
@@ -242,6 +243,32 @@ impl DashboardState {
 
     pub fn composer_cursor_byte_index(&self) -> usize {
         self.composer.composer_input.cursor_byte_index()
+    }
+
+    pub(in crate::tui) fn sync_composer_scroll(
+        &mut self,
+        view_height: usize,
+        total_lines: usize,
+        cursor_row: usize,
+    ) {
+        self.composer.composer_scroll.set_view_height(view_height);
+        self.composer.composer_scroll.set_total_lines(total_lines);
+        self.composer
+            .composer_scroll
+            .reveal(cursor_row, cursor_row.saturating_add(1));
+    }
+
+    pub(in crate::tui) fn composer_scroll_for(
+        &self,
+        view_height: usize,
+        total_lines: usize,
+        cursor_row: usize,
+    ) -> usize {
+        let mut scroll = self.composer.composer_scroll.clone();
+        scroll.set_view_height(view_height);
+        scroll.set_total_lines(total_lines);
+        scroll.reveal(cursor_row, cursor_row.saturating_add(1));
+        scroll.scroll()
     }
 
     pub fn pending_composer_attachments(&self) -> &[MessageAttachmentUpload] {

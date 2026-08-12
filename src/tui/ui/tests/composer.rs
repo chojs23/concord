@@ -84,6 +84,21 @@ fn sync_view_heights_reserves_space_for_composer_height() {
 }
 
 #[test]
+fn composer_height_is_capped_at_half_the_message_panel() {
+    let mut state = state_with_message();
+    state.start_composer();
+    state.insert_composer_text_at_cursor(&("line\n".repeat(20)));
+
+    let areas = message_areas(Rect::new(0, 0, 80, 20), &state);
+
+    assert_eq!(areas.composer.height, 10);
+    assert_eq!(areas.list.height, 10);
+
+    let short_areas = message_areas(Rect::new(0, 0, 80, 5), &DashboardState::new());
+    assert_eq!(short_areas.composer.height, 3);
+}
+
+#[test]
 fn composer_prompt_line_count_matches_prefixed_multiline_rendering() {
     let mut state = state_with_message();
     state.start_composer();
@@ -411,6 +426,74 @@ fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
     assert_eq!(
         composer_cursor_position(Rect::new(10, 20, 20, 14), &state),
         Some(Position { x: 15, y: 31 })
+    );
+}
+
+#[test]
+fn overflowing_pasted_composer_scrolls_only_at_cursor_viewport_edges() {
+    fn visible_composer_rows(area: Rect, state: &DashboardState) -> Vec<String> {
+        let backend = TestBackend::new(area.width, area.height);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| render_composer(frame, area, state, &[]))
+            .expect("composer should render");
+        let buffer = terminal.backend().buffer();
+        (1..area.height - 1)
+            .map(|row| {
+                (1..area.width - 1)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    let mut state = state_with_message();
+    state.start_composer();
+    state.insert_composer_text_at_cursor("first\nsecond\nthird\nfourth");
+    let area = Rect::new(0, 0, 20, 5);
+    sync_composer_viewport(area, &mut state);
+
+    assert_eq!(
+        visible_composer_rows(area, &state),
+        vec!["  second", "  third", "  fourth"]
+    );
+    assert_eq!(
+        composer_cursor_position(area, &state),
+        Some(Position { x: 9, y: 3 })
+    );
+
+    state.move_composer_cursor_up();
+    sync_composer_viewport(area, &mut state);
+
+    assert_eq!(
+        visible_composer_rows(area, &state),
+        vec!["  second", "  third", "  fourth"]
+    );
+    assert_eq!(
+        composer_cursor_position(area, &state),
+        Some(Position { x: 8, y: 2 })
+    );
+
+    state.move_composer_cursor_up();
+    sync_composer_viewport(area, &mut state);
+
+    assert_eq!(
+        visible_composer_rows(area, &state),
+        vec!["  second", "  third", "  fourth"]
+    );
+
+    state.move_composer_cursor_up();
+    sync_composer_viewport(area, &mut state);
+
+    assert_eq!(
+        visible_composer_rows(area, &state),
+        vec!["> first", "  second", "  third"]
+    );
+    assert_eq!(
+        composer_cursor_position(area, &state),
+        Some(Position { x: 8, y: 1 })
     );
 }
 

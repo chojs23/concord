@@ -11,6 +11,7 @@ pub(in crate::tui::ui) fn render_composer(
     let inner_width = composer_inner_width(area.width);
     let ready_urls = ready_custom_emoji_urls(emoji_images);
     let prompt = composer_lines_with_loaded_custom_emoji_urls(state, inner_width, &ready_urls);
+    let vertical_scroll = composer_vertical_scroll(area, state, &ready_urls, prompt.len());
     let composer_active = state.is_composing() && state.composer_lock().is_none();
     let theme = theme::current();
     let border_style = if composer_active {
@@ -21,6 +22,7 @@ pub(in crate::tui::ui) fn render_composer(
 
     frame.render_widget(
         Paragraph::new(prompt)
+            .scroll((vertical_scroll, 0))
             .style(if composer_active {
                 Style::default()
             } else {
@@ -37,12 +39,15 @@ pub(in crate::tui::ui) fn render_composer(
         area,
     );
     if state.show_custom_emoji() {
-        render_composer_custom_emoji_images(frame, area, state, emoji_images);
+        render_composer_custom_emoji_images(frame, area, state, emoji_images, vertical_scroll);
     }
-    render_composer_attachment_previews(frame, area, state);
-    if let Some(position) =
-        composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &ready_urls)
-    {
+    render_composer_attachment_previews(frame, area, state, vertical_scroll);
+    if let Some(position) = composer_cursor_position_with_loaded_custom_emoji_urls(
+        area,
+        state,
+        &ready_urls,
+        vertical_scroll,
+    ) {
         frame.set_cursor_position(position);
     }
 }
@@ -56,37 +61,27 @@ pub(in crate::tui::ui) fn composer_cursor_position(
     area: Rect,
     state: &DashboardState,
 ) -> Option<Position> {
-    composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &[])
+    let total_lines =
+        composer_lines_with_loaded_custom_emoji_urls(state, composer_inner_width(area.width), &[])
+            .len();
+    let vertical_scroll = composer_vertical_scroll(area, state, &[], total_lines);
+    composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &[], vertical_scroll)
 }
 
 fn composer_cursor_position_with_loaded_custom_emoji_urls(
     area: Rect,
     state: &DashboardState,
     loaded_custom_emoji_urls: &[String],
+    vertical_scroll: u16,
 ) -> Option<Position> {
     if !state.is_composing() || state.composer_lock().is_some() || area.width < 3 || area.height < 3
     {
         return None;
     }
 
-    let inner_width = composer_inner_width(area.width) as usize;
-    let cursor = state.composer_cursor_byte_index();
-    let display_input = composer_display_input(state, loaded_custom_emoji_urls);
-    let display_cursor = display_input
-        .map_byte_index(cursor)
-        .min(display_input.input.len());
-    let text_before_cursor = &display_input.input[..display_cursor];
-    let prefixed = prefixed_composer_input(text_before_cursor);
-    let wrapped = wrap_text_lines(&prefixed, inner_width);
-    let mut prompt_row = wrapped.len().saturating_sub(1);
-    let mut prompt_column = wrapped.last().map(|line| line.width()).unwrap_or_default();
-    if prompt_column >= inner_width {
-        prompt_row = prompt_row.saturating_add(1);
-        prompt_column = 0;
-    }
-
-    let mut content_row = composer_rows_before_input(state);
-    content_row = content_row.saturating_add(prompt_row);
+    let (content_row, prompt_column) =
+        composer_cursor_document_position(area, state, loaded_custom_emoji_urls);
+    let viewport_row = content_row.saturating_sub(usize::from(vertical_scroll));
 
     let x = area
         .x
@@ -95,7 +90,7 @@ fn composer_cursor_position_with_loaded_custom_emoji_urls(
     let y = area
         .y
         .saturating_add(1)
-        .saturating_add(u16::try_from(content_row).unwrap_or(u16::MAX));
+        .saturating_add(u16::try_from(viewport_row).unwrap_or(u16::MAX));
     let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
     let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
     if x >= inner_right || y >= inner_bottom {
@@ -103,6 +98,51 @@ fn composer_cursor_position_with_loaded_custom_emoji_urls(
     }
 
     Some(Position { x, y })
+}
+
+fn composer_vertical_scroll(
+    area: Rect,
+    state: &DashboardState,
+    loaded_custom_emoji_urls: &[String],
+    total_lines: usize,
+) -> u16 {
+    if !state.is_composing() || state.composer_lock().is_some() || area.height < 3 {
+        return 0;
+    }
+
+    let (cursor_row, _) = composer_cursor_document_position(area, state, loaded_custom_emoji_urls);
+    let viewport_height = usize::from(area.height.saturating_sub(2));
+    // Start from the stored viewport and reveal only when the cursor crosses an
+    // edge. Rechecking current render geometry keeps loaded emoji replacements
+    // and terminal resizing safe without forcing the cursor to the bottom.
+    let scroll = state.composer_scroll_for(
+        viewport_height,
+        total_lines.max(cursor_row.saturating_add(1)),
+        cursor_row,
+    );
+    u16::try_from(scroll).unwrap_or(u16::MAX)
+}
+
+fn composer_cursor_document_position(
+    area: Rect,
+    state: &DashboardState,
+    loaded_custom_emoji_urls: &[String],
+) -> (usize, usize) {
+    let cursor = state.composer_cursor_byte_index();
+    let display_input = composer_display_input(state, loaded_custom_emoji_urls);
+    let display_cursor = display_input
+        .map_byte_index(cursor)
+        .min(display_input.input.len());
+    let (prompt_row, prompt_column) = composer_prompt_cursor_position(
+        &display_input.input,
+        display_cursor,
+        composer_inner_width(area.width),
+    );
+
+    (
+        composer_rows_before_input(state).saturating_add(prompt_row),
+        prompt_column,
+    )
 }
 
 pub(in crate::tui::ui) fn render_composer_mention_picker(
@@ -720,6 +760,7 @@ fn render_composer_custom_emoji_images(
     area: Rect,
     state: &DashboardState,
     emoji_images: &[EmojiImage<'_>],
+    vertical_scroll: u16,
 ) {
     if !state.is_composing() || area.width < 3 || area.height < 3 {
         return;
@@ -742,7 +783,9 @@ fn render_composer_custom_emoji_images(
             continue;
         };
         slots.push(EmojiSlot {
-            row_in_list: 1isize.saturating_add(content_row.saturating_add(row) as isize),
+            row_in_list: 1isize
+                .saturating_add(content_row.saturating_add(row) as isize)
+                .saturating_sub(vertical_scroll as isize),
             col: area.x as isize + 1 + column as isize,
             max_width: u16::MAX,
             url: completion.url,
@@ -784,7 +827,12 @@ fn composer_custom_emoji_image_position(
     ))
 }
 
-fn render_composer_attachment_previews(frame: &mut Frame, area: Rect, state: &DashboardState) {
+fn render_composer_attachment_previews(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    vertical_scroll: u16,
+) {
     let previews = state.composer_attachment_previews();
     if previews.is_empty() || composer_upload_preview_line_count(state) == 0 {
         return;
@@ -799,7 +847,13 @@ fn render_composer_attachment_previews(frame: &mut Frame, area: Rect, state: &Da
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let y = inner.y.saturating_add(preview_row);
+    // Image widgets scale into their render area instead of cropping. Once the
+    // viewport starts inside a preview, omit it rather than draw a distorted
+    // partial image over the correctly scrolled placeholder rows.
+    let Some(viewport_row) = preview_row.checked_sub(vertical_scroll) else {
+        return;
+    };
+    let y = inner.y.saturating_add(viewport_row);
     if y >= inner.y.saturating_add(inner.height) {
         return;
     }

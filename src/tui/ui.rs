@@ -51,14 +51,16 @@ mod popups;
 mod types;
 
 pub(crate) use self::hit_test::{focus_pane_at, mouse_target_at};
+#[cfg(test)]
+use self::layout::composer_prompt_line_count;
 use self::layout::{
-    attachment_viewer_image_area, attachment_viewer_popup, centered_rect, dashboard_areas,
-    inline_image_preview_area, inline_image_preview_height, inline_image_preview_width,
-    message_areas, message_list_area, panel_scrollbar_area, reaction_users_visible_line_count,
+    attachment_viewer_image_area, attachment_viewer_popup, centered_rect,
+    composer_content_line_count, composer_inner_width, composer_prompt_cursor_position,
+    composer_rows_before_input, dashboard_areas, inline_image_preview_area,
+    inline_image_preview_height, inline_image_preview_width, message_areas, message_composer_area,
+    message_list_area, panel_scrollbar_area, reaction_users_visible_line_count,
     vertical_scrollbar_visible,
 };
-#[cfg(test)]
-use self::layout::{composer_content_line_count, composer_prompt_line_count};
 use self::message::list::{MessageMedia, render_messages};
 use self::panes::{
     channel_pane_header_height, render_channels, render_guilds, render_header, render_members,
@@ -125,6 +127,7 @@ pub(in crate::tui) use self::popups::user_profile_popup_area;
 pub(in crate::tui::ui) use self::popups::{downloads_popup_area, downloads_popup_lines};
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     let areas = dashboard_areas(area, state);
+    sync_composer_viewport(message_composer_area(areas.messages, state), state);
     let guild_filter_row = usize::from(
         state.is_guild_pane_filter_active() && state.is_pane_visible(FocusPane::Guilds),
     );
@@ -211,6 +214,25 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
     if let Some(layout) = active_selectable_popup_layout(area, state) {
         state.set_active_popup_list_layout(layout.target, layout.scroll, layout.visible_items());
     }
+}
+
+fn sync_composer_viewport(area: Rect, state: &mut DashboardState) {
+    let view_height = usize::from(area.height.saturating_sub(2));
+    if !state.is_composing() || state.composer_lock().is_some() {
+        state.sync_composer_scroll(view_height, 0, 0);
+        return;
+    }
+
+    let inner_width = composer_inner_width(area.width);
+    let (prompt_row, _) = composer_prompt_cursor_position(
+        state.composer_input(),
+        state.composer_cursor_byte_index(),
+        inner_width,
+    );
+    let cursor_row = composer_rows_before_input(state).saturating_add(prompt_row);
+    let total_lines = usize::from(composer_content_line_count(state, inner_width))
+        .max(cursor_row.saturating_add(1));
+    state.sync_composer_scroll(view_height, total_lines, cursor_row);
 }
 
 pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewLayout {

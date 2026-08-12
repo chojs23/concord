@@ -34,8 +34,9 @@ use super::{
     activity::{ActivityRender, build_activity_render, compact_activity_line},
     channel_prefix, channel_unread_decoration, clear_area, dm_presence_dot_span,
     layout::{
-        composer_inner_width, composer_rows_before_input, composer_upload_preview_line_count,
-        panel_scrollbar_area, prefixed_composer_input, vertical_scrollbar_visible,
+        composer_inner_width, composer_prompt_cursor_position, composer_rows_before_input,
+        composer_upload_preview_line_count, panel_scrollbar_area, prefixed_composer_input,
+        vertical_scrollbar_visible,
     },
     panel_block, panel_block_line, render_vertical_scrollbar, selected_discord_text_style,
     selected_presence_style, selected_row_line, selected_text_span, selected_text_style,

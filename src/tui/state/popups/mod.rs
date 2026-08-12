@@ -42,7 +42,7 @@ use voice_participant_audio::{
     VOICE_PARTICIPANT_AUDIO_FIELD_COUNT, VoiceParticipantAudioPopupState,
 };
 
-use super::scroll::clamp_list_scroll;
+use super::scroll::{VerticalScrollState, clamp_list_scroll};
 use super::{
     DashboardState, EmojiReactionItem, FocusPane, MessageUrlItem, PollVotePickerItem,
     ThreadEditField,
@@ -494,80 +494,7 @@ impl SelectablePopupState {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct ScrollablePopupState {
-    scroll: usize,
-    view_height: usize,
-    total_lines: usize,
-}
-
-impl ScrollablePopupState {
-    pub(super) fn scroll(&self) -> usize {
-        self.scroll
-    }
-
-    pub(super) fn set_view_height(&mut self, height: usize) {
-        self.view_height = height;
-        self.clamp_scroll();
-    }
-
-    pub(super) fn set_total_lines(&mut self, total_lines: usize) {
-        self.total_lines = total_lines;
-        self.clamp_scroll();
-    }
-
-    pub(super) fn scroll_down(&mut self) {
-        self.scroll = self.scroll.saturating_add(1);
-        self.clamp_scroll();
-    }
-
-    pub(super) fn scroll_up(&mut self) {
-        self.scroll = self.scroll.saturating_sub(1);
-    }
-
-    pub(super) fn page_down(&mut self) {
-        self.scroll = self.scroll.saturating_add((self.view_height / 2).max(1));
-        self.clamp_scroll();
-    }
-
-    pub(super) fn page_up(&mut self) {
-        self.scroll = self.scroll.saturating_sub((self.view_height / 2).max(1));
-    }
-
-    pub(super) fn page(&mut self, action: SelectionAction) {
-        match action {
-            SelectionAction::Next => self.page_down(),
-            SelectionAction::Previous => self.page_up(),
-        }
-    }
-
-    /// Adjust the scroll offset just enough to bring rows `[start, end)` into
-    /// the viewport, without recentering when the range is already visible.
-    pub(super) fn reveal(&mut self, start: usize, end: usize) {
-        if start < self.scroll {
-            self.scroll = start;
-        } else if self.view_height > 0 && end > self.scroll + self.view_height {
-            self.scroll = end.saturating_sub(self.view_height);
-        }
-        self.clamp_scroll();
-    }
-
-    fn clamp_scroll(&mut self) {
-        let visible = self.view_height.min(self.total_lines);
-        self.scroll = self.scroll.min(self.total_lines.saturating_sub(visible));
-    }
-
-    pub(super) fn scroll_to_top(&mut self) {
-        self.scroll = 0;
-    }
-
-    pub(super) fn is_near_bottom(&self, threshold: usize) -> bool {
-        self.scroll
-            .saturating_add(self.view_height)
-            .saturating_add(threshold)
-            >= self.total_lines
-    }
-}
+type ScrollablePopupState = VerticalScrollState;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MessageActionMenuState {
