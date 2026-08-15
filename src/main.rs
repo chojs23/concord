@@ -11,6 +11,7 @@ enum CliCommand {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    concord::allocator::tune();
     install_rustls_crypto_provider();
 
     match cli_command_from_args(std::env::args_os().skip(1)) {

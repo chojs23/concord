@@ -1,3 +1,4 @@
+pub mod allocator;
 #[cfg(feature = "voice-playback")]
 pub(crate) mod audio_output;
 pub(crate) mod media_player;

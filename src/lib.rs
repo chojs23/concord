@@ -10,4 +10,4 @@ pub use app::App;
 pub use discord::{AppEvent, DiscordClient};
 pub use error::{AppError, Result};
 pub(crate) use support::url_policy;
-pub use support::{paths, token_store, version_check};
+pub use support::{allocator, paths, token_store, version_check};
