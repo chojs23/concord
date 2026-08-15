@@ -8,7 +8,7 @@ use ratatui_image::{
 use tokio::sync::mpsc;
 
 use crate::{
-    config::ImageProtocolPreference,
+    config::{AnimatePreviews, ImageProtocolPreference},
     discord::{AppCommand, AppEvent, MAX_UPLOAD_PREVIEW_BYTES, MessageAttachmentUpload},
     logging,
     tui::{
@@ -376,9 +376,9 @@ impl DashboardMediaRuntime {
                 .is_some_and(|picker| picker.protocol_type() == ProtocolType::Kitty)
     }
 
-    pub(super) fn sync_animation_visibility(&mut self, now: Instant) {
+    pub(super) fn sync_animation_visibility(&mut self, now: Instant, animate: AnimatePreviews) {
         self.image_previews
-            .sync_animation_visibility(&self.image_targets, now);
+            .sync_animation_visibility(&self.image_targets, now, animate);
         self.avatar_images
             .sync_animation_visibility(&self.avatar_targets, now);
         self.emoji_images
@@ -932,6 +932,7 @@ mod tests {
     fn image_preview_target() -> ImagePreviewTarget {
         ImagePreviewTarget {
             viewer: false,
+            selected: false,
             thread_card: false,
             message_index: 0,
             preview_index: 0,

@@ -7,6 +7,7 @@ use crate::discord::ids::{Id, marker::MessageMarker};
 use ratatui_image::picker::Picker;
 
 use crate::{
+    config::AnimatePreviews,
     discord::{AppCommand, AppEvent},
     tui::ui::{ImagePreview, ImagePreviewState},
 };
@@ -371,10 +372,19 @@ impl ImagePreviewCache {
         &mut self,
         targets: &[ImagePreviewTarget],
         now: Instant,
+        animate: AnimatePreviews,
     ) {
+        // Every animated frame costs a fresh protocol build, so the set that
+        // keeps moving is the set the reader is actually looking at. Anything
+        // left out holds the frame it stopped on.
         let visible = targets
             .iter()
-            .map(ImagePreviewTarget::key)
+            .filter(|target| match animate {
+                AnimatePreviews::Always => true,
+                AnimatePreviews::Selected => target.viewer || target.selected,
+                AnimatePreviews::Never => false,
+            })
+            .map(|target| target.key())
             .collect::<HashSet<_>>();
         for (key, entry) in &mut self.cache.entries {
             let ImagePreviewEntry::Ready {

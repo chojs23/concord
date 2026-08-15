@@ -159,6 +159,10 @@ pub(super) async fn run_dashboard(
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
     const RELATIVE_TIMESTAMP_REFRESH_INTERVAL: std::time::Duration =
         std::time::Duration::from_secs(60);
+    // Slow memory growth only shows up over a long session, so the report goes
+    // out on a timer as well as on demand. Debug logging gates it.
+    const MEDIA_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+    let mut last_media_report = std::time::Instant::now();
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut animation_frame_deadline: Option<tokio::time::Instant> = None;
     let mut relative_timestamp_deadline =
@@ -204,8 +208,15 @@ pub(super) async fn run_dashboard(
                 redraw_plan,
             )?;
             media_runtime.commit_placements();
+            if last_media_report.elapsed() >= MEDIA_REPORT_INTERVAL {
+                if logging::debug_logging_enabled() {
+                    media_runtime.log_memory_report();
+                }
+                last_media_report = std::time::Instant::now();
+            }
             if state.terminal_focused() {
-                media_runtime.sync_animation_visibility(std::time::Instant::now());
+                media_runtime
+                    .sync_animation_visibility(std::time::Instant::now(), state.animate_previews());
             } else {
                 media_runtime.pause_animations();
             }
@@ -261,7 +272,13 @@ pub(super) async fn run_dashboard(
                             &mut mouse_clicks,
                         )?;
                         if state.take_terminal_refresh_request() {
+                            // Redrawing alone cannot recover a picture whose
+                            // download failed, so the refresh key drops those
+                            // too and the next frame asks for them again.
+                            media_runtime.forget_failed_media();
+                            media_runtime.log_memory_report();
                             terminal.clear()?;
+                            dirty = true;
                         }
                         if state.take_open_composer_in_editor_request()
                             && let Err(error) = open_composer_in_editor(terminal, &mut state)

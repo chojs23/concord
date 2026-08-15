@@ -354,6 +354,12 @@ image_preview_quality = "balanced"
 # Attachment viewer quality: efficient, balanced, high, or original.
 attachment_viewer_quality = "original"
 
+# Which animated GIF and WebP previews keep playing: always, selected, or never.
+# Each animated frame rebuilds a terminal graphics protocol, so "always" costs
+# roughly 8% of a CPU core per animated preview on screen. Custom emoji animate
+# regardless; theirs are small enough not to matter.
+animate_previews = "selected"
+
 # Render custom Discord emoji as images when possible.
 show_custom_emoji = true
 

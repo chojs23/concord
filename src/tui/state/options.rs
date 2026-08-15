@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::config::{
-    AppOptions, ComposerOptions, CredentialOptions, DisplayOptions, ImagePreviewQualityPreset,
-    KeymapOptions, NotificationOptions, PresenceOptions, ReactionOptions, UiStateOptions,
-    VoiceOptions, VoiceParticipantPlaybackOption,
+    AnimatePreviews, AppOptions, ComposerOptions, CredentialOptions, DisplayOptions,
+    ImagePreviewQualityPreset, KeymapOptions, NotificationOptions, PresenceOptions,
+    ReactionOptions, UiStateOptions, VoiceOptions, VoiceParticipantPlaybackOption,
 };
 use crate::discord::ids::{Id, marker::UserMarker};
 use crate::discord::{AppCommand, VoiceAudioSourceOptions, VoiceParticipantPlaybackSettings};
@@ -318,6 +318,10 @@ impl DashboardState {
 
     pub fn image_preview_quality(&self) -> ImagePreviewQualityPreset {
         self.options.display_options.image_preview_quality
+    }
+
+    pub fn animate_previews(&self) -> AnimatePreviews {
+        self.options.display_options.animate_previews
     }
 
     pub fn attachment_viewer_quality(&self) -> ImagePreviewQualityPreset {

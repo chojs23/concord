@@ -55,6 +55,9 @@ enum YoutubeThumbnailSize {
 #[derive(Clone)]
 pub(in crate::tui) struct ImagePreviewTarget {
     pub(in crate::tui) viewer: bool,
+    /// Whether this preview belongs to the selected message, which decides
+    /// whether it animates under `AnimatePreviews::Selected`.
+    pub(in crate::tui) selected: bool,
     pub(in crate::tui) thread_card: bool,
     pub(in crate::tui) message_index: usize,
     pub(in crate::tui) preview_index: usize,
@@ -162,6 +165,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
         }
         return vec![ImagePreviewTarget {
             viewer: true,
+            selected: true,
             thread_card: false,
             message_index: 0,
             preview_index,
@@ -212,6 +216,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             if cell.width > 0 && cell.height > 0 && visible_top < visible_bottom {
                 targets.push(ImagePreviewTarget {
                     viewer: false,
+                    selected: row.selected,
                     thread_card: false,
                     message_index,
                     preview_index: cell.preview_index,
@@ -280,6 +285,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             let top_clip_rows = u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX);
             targets.push(ImagePreviewTarget {
                 viewer: false,
+                selected: row.selected,
                 thread_card: false,
                 message_index,
                 preview_index: previews.len().saturating_add(slot.section_thumbnail_index),
@@ -314,6 +320,7 @@ fn visible_thread_card_image_preview_targets(
         .saturating_sub(usize::from(scrollbar_visible))
         .max(4);
     let quality = state.image_preview_quality();
+    let focused = state.focused_thread_card_selection();
     let mut rendered_row = 0usize;
     let mut targets = Vec::new();
 
@@ -335,7 +342,10 @@ fn visible_thread_card_image_preview_targets(
             layout.font_size,
             quality,
         ) {
-            targets.push(target);
+            targets.push(ImagePreviewTarget {
+                selected: focused == Some(post_index),
+                ..target
+            });
         }
         rendered_row =
             rendered_row.saturating_add(thread_card::thread_card_height(post, card_width, true));
@@ -363,7 +373,7 @@ fn visible_embedded_thread_card_image_preview_targets(
                 .body_top
                 .saturating_add(row.metrics.header_rows as isize)
                 .saturating_add(1);
-            thread_card_image_preview_target(
+            let target = thread_card_image_preview_target(
                 &post,
                 message_index,
                 card_width,
@@ -372,7 +382,11 @@ fn visible_embedded_thread_card_image_preview_targets(
                 layout.list_height,
                 layout.font_size,
                 quality,
-            )
+            )?;
+            Some(ImagePreviewTarget {
+                selected: row.selected,
+                ..target
+            })
         })
         .collect()
 }
@@ -416,6 +430,7 @@ fn thread_card_image_preview_target(
 
     Some(ImagePreviewTarget {
         viewer: false,
+        selected: false,
         thread_card: true,
         message_index,
         preview_index: 0,

@@ -14,7 +14,7 @@ use image::{
 };
 
 use crate::{
-    config::{DisplayOptions, ImagePreviewQualityPreset},
+    config::{AnimatePreviews, DisplayOptions, ImagePreviewQualityPreset},
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo,
         ChannelInfo, ChannelRecipientInfo, ComponentMediaInfo, ComponentMediaItemInfo,
@@ -1778,6 +1778,63 @@ fn media_decode_queue_pressure_retries_all_consumers() {
 }
 
 #[test]
+fn animate_previews_policy_decides_which_previews_keep_moving() {
+    let selected = image_preview_target(1);
+    let unselected = ImagePreviewTarget {
+        selected: false,
+        message_id: Id::new(2),
+        ..image_preview_target(1)
+    };
+    let targets = [selected.clone(), unselected.clone()];
+
+    let mut cache = ImagePreviewCache::new(Some(ratatui_image::picker::Picker::halfblocks()));
+    for target in &targets {
+        let key = target.key();
+        cache.cache.entries.insert(
+            key.clone(),
+            ImagePreviewEntry::Decoding {
+                filename: target.filename.clone(),
+                generation: 1,
+                protocol_spec: target.protocol_render_spec(),
+                last_used: 1,
+            },
+        );
+        cache.store_decoded(
+            key,
+            1,
+            decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
+        );
+    }
+    // Build every protocol so animation is only gated by the policy.
+    for _ in 0..8 {
+        let _ = cache.render_state(&targets);
+        for job in cache.take_protocol_jobs() {
+            cache.store_protocol(build_media_protocol(job));
+        }
+    }
+
+    let now = Instant::now();
+    let animating = |cache: &ImagePreviewCache, target: &ImagePreviewTarget| {
+        matches!(
+            cache.cache.entries.get(&target.key()),
+            Some(ImagePreviewEntry::Ready { image, .. }) if image.next_frame_deadline().is_some()
+        )
+    };
+
+    cache.sync_animation_visibility(&targets, now, AnimatePreviews::Never);
+    assert!(!animating(&cache, &selected));
+    assert!(!animating(&cache, &unselected));
+
+    cache.sync_animation_visibility(&targets, now, AnimatePreviews::Selected);
+    assert!(animating(&cache, &selected));
+    assert!(!animating(&cache, &unselected));
+
+    cache.sync_animation_visibility(&targets, now, AnimatePreviews::Always);
+    assert!(animating(&cache, &selected));
+    assert!(animating(&cache, &unselected));
+}
+
+#[test]
 fn render_protocols_are_evicted_by_size_not_only_by_count() {
     let picker = ratatui_image::picker::Picker::halfblocks();
     let image = DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4));
@@ -2135,7 +2192,11 @@ fn attachment_preview_waits_for_a_ready_or_failed_next_animation_frame() {
     assert_eq!(jobs.len(), 1);
 
     let started_at = Instant::now();
-    cache.sync_animation_visibility(std::slice::from_ref(&target), started_at);
+    cache.sync_animation_visibility(
+        std::slice::from_ref(&target),
+        started_at,
+        AnimatePreviews::Always,
+    );
     assert_eq!(cache.next_animation_deadline(), None);
 
     for job in jobs {
@@ -2144,7 +2205,11 @@ fn attachment_preview_waits_for_a_ready_or_failed_next_animation_frame() {
     assert_eq!(cache.render_state(std::slice::from_ref(&target)).len(), 1);
     let jobs = cache.take_protocol_jobs();
     assert_eq!(jobs.len(), 1);
-    cache.sync_animation_visibility(std::slice::from_ref(&target), started_at);
+    cache.sync_animation_visibility(
+        std::slice::from_ref(&target),
+        started_at,
+        AnimatePreviews::Always,
+    );
     assert_eq!(cache.next_animation_deadline(), None);
     let mut failed = build_media_protocol(
         jobs.into_iter()
@@ -2170,7 +2235,11 @@ fn attachment_preview_waits_for_a_ready_or_failed_next_animation_frame() {
     assert_eq!(cache.render_state(std::slice::from_ref(&target)).len(), 1);
     assert!(cache.take_protocol_jobs().is_empty());
 
-    cache.sync_animation_visibility(std::slice::from_ref(&target), started_at);
+    cache.sync_animation_visibility(
+        std::slice::from_ref(&target),
+        started_at,
+        AnimatePreviews::Always,
+    );
     let deadline = cache
         .next_animation_deadline()
         .expect("visible attachment should schedule an animation frame");
@@ -2203,7 +2272,7 @@ fn attachment_preview_waits_for_a_ready_or_failed_next_animation_frame() {
         }) if image.current_frame_index() == 0 && protocols.len() == 1
     ));
 
-    cache.sync_animation_visibility(&[], loop_deadline);
+    cache.sync_animation_visibility(&[], loop_deadline, AnimatePreviews::Always);
     assert_eq!(cache.next_animation_deadline(), None);
 }
 
@@ -2992,6 +3061,7 @@ fn push_attachment_message(state: &mut DashboardState, attachment: AttachmentInf
 fn image_preview_target(id: u64) -> ImagePreviewTarget {
     ImagePreviewTarget {
         viewer: false,
+        selected: true,
         thread_card: false,
         message_index: 0,
         preview_index: 0,

@@ -395,16 +395,16 @@ impl EmojiImageCache {
                 ..
             }) if *generation == completed.generation => {
                 let result = match image_size {
-                    EmojiImageSize::Compact => {
-                        protocols
-                            .compact
-                            .store_result(frame_index, completed.result, protocol_bytes)
-                    }
-                    EmojiImageSize::Standalone => {
-                        protocols
-                            .standalone
-                            .store_result(frame_index, completed.result, protocol_bytes)
-                    }
+                    EmojiImageSize::Compact => protocols.compact.store_result(
+                        frame_index,
+                        completed.result,
+                        protocol_bytes,
+                    ),
+                    EmojiImageSize::Standalone => protocols.standalone.store_result(
+                        frame_index,
+                        completed.result,
+                        protocol_bytes,
+                    ),
                 };
                 image_size == EmojiImageSize::Compact && result.is_err()
             }

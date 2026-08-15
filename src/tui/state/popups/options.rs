@@ -1,3 +1,4 @@
+use crate::config::AnimatePreviews;
 use crate::discord::AppCommand;
 use crate::discord::{MicrophoneSensitivityDb, VoiceAudioSourceOptions, VoiceVolumePercent};
 use crate::tui::keybindings::{OptionsCategoryShortcut, SelectionAction};
@@ -7,7 +8,7 @@ use super::{
     ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState, SelectablePopupTarget,
 };
 
-const DISPLAY_OPTION_COUNT: usize = 9;
+const DISPLAY_OPTION_COUNT: usize = 10;
 const COMPOSER_OPTION_COUNT: usize = 1;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = VoiceOption::ALL.len();
@@ -285,6 +286,15 @@ impl DashboardState {
                 effective: options.hour_format_24,
                 description: "Use 24-hour time for message timestamps.",
             },
+            DisplayOptionItem {
+                label: "Animate previews",
+                enabled: options.animate_previews != AnimatePreviews::Never,
+                value: Some(options.animate_previews.label().to_owned()),
+                gauge: None,
+                effective: options.images_visible()
+                    && options.animate_previews != AnimatePreviews::Never,
+                description: "Animated GIF and WebP previews: always, selected message only, or never.",
+            },
         ]
     }
 
@@ -499,6 +509,10 @@ impl DashboardState {
             (OptionsCategory::Display, 8) => {
                 self.options.display_options.hour_format_24 =
                     !self.options.display_options.hour_format_24
+            }
+            (OptionsCategory::Display, 9) => {
+                self.options.display_options.animate_previews =
+                    self.options.display_options.animate_previews.next()
             }
             (OptionsCategory::Composer, 0) => {
                 self.options.composer_options.emojis_as_links =
