@@ -33,6 +33,7 @@ const DMA_BUF_IOCTL_SYNC: libc::c_ulong = 0x4008_6200;
 pub(super) struct DmaBufMapping {
     pointer: NonNull<u8>,
     length: usize,
+    staging: Vec<u8>,
 }
 
 impl DmaBufMapping {
@@ -58,11 +59,29 @@ impl DmaBufMapping {
             let _ = unsafe { libc::munmap(pointer, length) };
             return Err("PipeWire linear DMA-BUF mapping returned a null pointer".to_owned());
         };
-        Ok(Self { pointer, length })
+        Ok(Self {
+            pointer,
+            length,
+            staging: Vec::new(),
+        })
+    }
+
+    /// Copies the mapping into system memory for the pixel conversion.
+    ///
+    /// A DMA-BUF maps as uncached GPU memory, so the per-pixel reads the
+    /// conversion does cost hundreds of nanoseconds each: on radeonsi a single
+    /// 2560x1440 frame takes seconds that way. Those reads happen inside the
+    /// PipeWire `process` callback while it holds a dequeued buffer, so they
+    /// stall the capture loop and starve the compositor of buffers until the
+    /// readiness timeout gives up. One sequential bulk copy costs milliseconds.
+    pub(super) fn refresh(&mut self) {
+        let mapped = unsafe { std::slice::from_raw_parts(self.pointer.as_ptr(), self.length) };
+        self.staging.resize(self.length, 0);
+        self.staging.copy_from_slice(mapped);
     }
 
     pub(super) fn bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.pointer.as_ptr(), self.length) }
+        &self.staging
     }
 }
 

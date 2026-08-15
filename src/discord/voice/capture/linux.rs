@@ -44,6 +44,8 @@ use dmabuf::{
 
 const FRAME_QUEUE_CAPACITY: usize = 2;
 const START_TIMEOUT: Duration = Duration::from_secs(5);
+const PROCESS_FRAME_BUDGET: Duration =
+    Duration::from_nanos(1_000_000_000 / STREAM_CAPTURE_FPS as u64);
 const CANCEL_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(super) struct CaptureSession {
@@ -639,14 +641,35 @@ fn run_pipewire_stream_attempt(
             if datas.is_empty() {
                 return;
             }
-            match pipewire_frame(
+            let started_at = Instant::now();
+            let frame = pipewire_frame(
                 datas,
                 state.format,
                 state.memory,
                 &mut state.dma_buf_mappings,
                 state.dma_buf_importer.as_mut(),
                 &state.buffer_pool,
-            ) {
+            );
+            // PipeWire only gets this buffer back when the callback returns, so
+            // an overrun here starves the compositor instead of just dropping a
+            // frame. Without this line the only symptom is a readiness timeout
+            // and buffer warnings in the compositor's own log.
+            let elapsed = started_at.elapsed();
+            if elapsed > PROCESS_FRAME_BUDGET {
+                logging::debug(
+                    "stream",
+                    format!(
+                        "PipeWire frame processing overran its budget: memory={:?} format={:?} modifier={} size={}x{} elapsed_ms={}",
+                        state.memory,
+                        state.format.format(),
+                        state.format.modifier(),
+                        state.format.size().width,
+                        state.format.size().height,
+                        elapsed.as_millis(),
+                    ),
+                );
+            }
+            match frame {
                 Ok(Some(frame)) => state.queue_frame(frame),
                 Err(error) => {
                     if include_dma_buf && state.memory == PipeWireMemory::DmaBuf {
@@ -736,15 +759,24 @@ fn pipewire_format_params(
     // Concord converts frames on the CPU. Prefer mapped shared memory, retain
     // linear DMA-BUF, then add only the non-linear pairs verified by EGL.
     let mut formats = vec![shared_memory, dma_buf];
-    formats.extend(non_linear_formats.iter().map(|(format, modifiers)| {
-        pipewire_non_linear_format_param(
-            width,
-            height,
-            maximum_width,
-            maximum_height,
-            *format,
-            modifiers,
-        )
+    formats.extend(non_linear_formats.iter().filter_map(|(format, modifiers)| {
+        // The parameter above already offers linear for every format, so
+        // repeating it per format here would only duplicate that offer.
+        let modifiers = modifiers
+            .iter()
+            .copied()
+            .filter(|modifier| *modifier != DRM_FORMAT_MOD_LINEAR)
+            .collect::<Vec<_>>();
+        (!modifiers.is_empty()).then(|| {
+            pipewire_non_linear_format_param(
+                width,
+                height,
+                maximum_width,
+                maximum_height,
+                *format,
+                &modifiers,
+            )
+        })
     }));
     formats
 }
@@ -1160,13 +1192,16 @@ fn pipewire_frame(
             }
             let dma_layouts = dma_buf_plane_layouts(datas, &layouts)?;
 
-            if format.modifier() != DRM_FORMAT_MOD_LINEAR {
+            // Let the GPU do the copy whenever EGL can import the buffer,
+            // linear included. Reading a DMA-BUF with the CPU runs at roughly
+            // 25MB/s on radeonsi, which is ~640ms for one 1440p frame, so the
+            // mapped path below is a last resort for hosts without EGL.
+            let importer = dma_buf_importer
+                .filter(|importer| importer.supports(capture_format, format.modifier()));
+            if let Some(importer) = importer {
                 // EGL DMA-BUF import uses the driver's implicit synchronization.
                 // TODO: Negotiate SPA_META_SyncTimeline when Concord can require
                 // PipeWire 1.2 instead of the current 0.3.33-compatible ABI.
-                let importer = dma_buf_importer.ok_or_else(|| {
-                    "PipeWire negotiated non-linear DMA-BUF without an EGL importer".to_owned()
-                })?;
                 let planes = dma_layouts
                     .iter()
                     .map(|layout| {
@@ -1198,6 +1233,11 @@ fn pipewire_frame(
                     &mut rgba,
                 )?;
                 CaptureFrame::new(width, height, rgba, buffer_pool.clone())
+            } else if format.modifier() != DRM_FORMAT_MOD_LINEAR {
+                // Only a linear buffer has a layout the CPU can read directly.
+                return Err(
+                    "PipeWire negotiated non-linear DMA-BUF without an EGL importer".to_owned(),
+                );
             } else {
                 for fd in fds.iter().copied() {
                     if let std::collections::hash_map::Entry::Vacant(entry) =
@@ -1213,6 +1253,12 @@ fn pipewire_frame(
                     if unique_fds.insert(fd) {
                         synchronized.push(DmaBufReadGuard::begin(fd)?);
                     }
+                }
+                for fd in &unique_fds {
+                    dma_buf_mappings
+                        .get_mut(fd)
+                        .expect("validated DMA-BUF mapping is available")
+                        .refresh();
                 }
                 let sources = fds
                     .iter()
@@ -1500,10 +1546,22 @@ mod tests {
 
     #[test]
     fn pipewire_formats_advertise_only_egl_verified_non_linear_pairs() {
-        let modifiers = [(
-            spa::param::video::VideoFormat::RGBA,
-            vec![0x0102_0304_0506_0708, 0x1112_1314_1516_1718],
-        )];
+        let modifiers = [
+            (
+                spa::param::video::VideoFormat::RGBA,
+                vec![
+                    DRM_FORMAT_MOD_LINEAR,
+                    0x0102_0304_0506_0708,
+                    0x1112_1314_1516_1718,
+                ],
+            ),
+            // EGL reports linear for every format, but the linear parameter
+            // already covers them all, so this pair contributes nothing.
+            (
+                spa::param::video::VideoFormat::BGRx,
+                vec![DRM_FORMAT_MOD_LINEAR],
+            ),
+        ];
         let formats = pipewire_format_params(1920, 1080, 8192, 4320, true, &modifiers);
 
         assert_eq!(formats.len(), 3);
@@ -1532,13 +1590,8 @@ mod tests {
             spa::pod::Value::Choice(spa::pod::ChoiceValue::Long(spa::utils::Choice(
                 spa::utils::ChoiceFlags::empty(),
                 spa::utils::ChoiceEnum::Enum {
-                    default: modifiers[0].1[0] as i64,
-                    alternatives: modifiers[0]
-                        .1
-                        .iter()
-                        .copied()
-                        .map(|modifier| modifier as i64)
-                        .collect(),
+                    default: 0x0102_0304_0506_0708,
+                    alternatives: vec![0x0102_0304_0506_0708, 0x1112_1314_1516_1718],
                 },
             )))
         );

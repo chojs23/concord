@@ -448,7 +448,10 @@ fn query_supported_modifiers(
             .into_iter()
             .zip(external_only)
             .filter_map(|(modifier, external_only)| {
-                (external_only == egl::FALSE && modifier != 0 && modifier != DRM_FORMAT_MOD_INVALID)
+                // Linear stays in: importing it through EGL is what keeps the
+                // CPU from reading GPU memory. Dropping it from the advertised
+                // formats is the caller's job.
+                (external_only == egl::FALSE && modifier != DRM_FORMAT_MOD_INVALID)
                     .then_some(modifier)
             })
             .collect::<Vec<_>>();

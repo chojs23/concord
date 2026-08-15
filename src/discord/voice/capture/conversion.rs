@@ -183,17 +183,53 @@ fn convert_packed(
     let row_length = format
         .packed_row_length(width)?
         .expect("packed capture format has a row length");
+    // Eight-bit packed input differs from the RGBA output only by channel
+    // order, so without color normalization it is a byte swizzle. The float
+    // path below costs ~40ms for one 1440p frame, which does not fit in a
+    // capture frame interval, and the packed cases reach it on every frame.
+    let normalize = requires_color_normalization(color);
     for row in 0..height as usize {
         let source = plane_row(&planes[0], row, row_length, "packed RGB")?;
         let destination = &mut rgba[row * row_length..(row + 1) * row_length];
-        for (source, destination) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
-            let [encoded_red, encoded_green, encoded_blue, alpha] = packed_rgba(source, format);
-            let [red, green, blue] =
-                normalize_rgb([encoded_red, encoded_green, encoded_blue], color);
-            destination.copy_from_slice(&[red, green, blue, to_u8(alpha)]);
+        match format {
+            CapturePixelFormat::Rgba if !normalize => destination.copy_from_slice(source),
+            CapturePixelFormat::Rgbx if !normalize => {
+                swizzle_packed_row(source, destination, |pixel| {
+                    [pixel[0], pixel[1], pixel[2], 255]
+                });
+            }
+            CapturePixelFormat::Bgra if !normalize => {
+                swizzle_packed_row(source, destination, |pixel| {
+                    [pixel[2], pixel[1], pixel[0], pixel[3]]
+                });
+            }
+            CapturePixelFormat::Bgrx if !normalize => {
+                swizzle_packed_row(source, destination, |pixel| {
+                    [pixel[2], pixel[1], pixel[0], 255]
+                });
+            }
+            _ => {
+                for (source, destination) in
+                    source.chunks_exact(4).zip(destination.chunks_exact_mut(4))
+                {
+                    let [encoded_red, encoded_green, encoded_blue, alpha] =
+                        packed_rgba(source, format);
+                    let [red, green, blue] =
+                        normalize_rgb([encoded_red, encoded_green, encoded_blue], color);
+                    destination.copy_from_slice(&[red, green, blue, to_u8(alpha)]);
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Monomorphized per channel order so the indices stay constant and the copy
+/// vectorizes; a runtime index table does not.
+fn swizzle_packed_row(source: &[u8], destination: &mut [u8], swizzle: impl Fn(&[u8]) -> [u8; 4]) {
+    for (source, destination) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
+        destination.copy_from_slice(&swizzle(source));
+    }
 }
 
 fn packed_rgba(source: &[u8], format: CapturePixelFormat) -> [f32; 4] {
@@ -711,6 +747,69 @@ mod tests {
         .expect("bottom-up packed RGB should convert");
 
         assert_eq!(rgba, [0, 255, 0, 255, 255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn packed_byte_swizzle_matches_the_float_path_across_a_row() {
+        // Four pixels so the row copy and the chunked swizzle both run, and one
+        // gray value that survives normalization unchanged only if it is skipped.
+        let cases = [
+            (CapturePixelFormat::Rgba, [10, 20, 30, 40], [10, 20, 30, 40]),
+            (
+                CapturePixelFormat::Rgbx,
+                [10, 20, 30, 40],
+                [10, 20, 30, 255],
+            ),
+            (CapturePixelFormat::Bgra, [10, 20, 30, 40], [30, 20, 10, 40]),
+            (
+                CapturePixelFormat::Bgrx,
+                [10, 20, 30, 40],
+                [30, 20, 10, 255],
+            ),
+        ];
+
+        for (format, pixel, expected) in cases {
+            let source = pixel.repeat(4);
+            let mut rgba = [0; 16];
+            convert_capture_frame(
+                &[CapturePlane {
+                    bytes: &source,
+                    offset: 0,
+                    stride: 8,
+                }],
+                2,
+                2,
+                format,
+                CaptureColorInfo::default(),
+                &mut rgba,
+            )
+            .expect("packed row should convert");
+            assert!(
+                rgba.chunks_exact(4).all(|converted| converted == expected),
+                "format={format:?} rgba={rgba:?}"
+            );
+        }
+
+        // HDR still needs the float path, so the swizzle must not shortcut it.
+        let mut normalized = [0; 16];
+        convert_capture_frame(
+            &[CapturePlane {
+                bytes: &[10, 20, 30, 40].repeat(4),
+                offset: 0,
+                stride: 8,
+            }],
+            2,
+            2,
+            CapturePixelFormat::Bgra,
+            CaptureColorInfo {
+                transfer: CaptureTransferFunction::Pq,
+                primaries: CaptureColorPrimaries::Bt2020,
+                ..CaptureColorInfo::default()
+            },
+            &mut normalized,
+        )
+        .expect("HDR packed row should convert");
+        assert_ne!(&normalized[0..4], &[30, 20, 10, 40]);
     }
 
     #[test]
