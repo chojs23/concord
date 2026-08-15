@@ -18,14 +18,22 @@ use super::{
     work::{MediaWorkError, MediaWorkResult, media_image_job_permits, media_image_work_permits},
 };
 
-const MAX_SHARED_DECODED_MEDIA_IMAGES: usize = 64;
-const MAX_SHARED_DECODED_MEDIA_BYTES: u64 = 256 * 1024 * 1024;
+/// The surface caches hold clones of these images, and `DecodedMediaImage`
+/// shares its frames through an `Arc`, so this cache is what actually pins
+/// decoded pixels in memory: an entry here keeps them alive long after the
+/// preview that asked for them scrolled away. It was the largest single store
+/// in the client.
+const MAX_SHARED_DECODED_MEDIA_IMAGES: usize = 24;
+const MAX_SHARED_DECODED_MEDIA_BYTES: u64 = 64 * 1024 * 1024;
 pub(super) const MAX_DECODED_IMAGE_WIDTH: u32 = 4096;
 pub(super) const MAX_DECODED_IMAGE_HEIGHT: u32 = 4096;
 const MAX_DECODED_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ANIMATION_SOURCE_FRAMES: usize = 4096;
 pub(super) const MAX_RETAINED_ANIMATION_FRAMES: usize = 32;
-const MAX_ANIMATION_DECODE_WORK_BYTES: u64 = 256 * 1024 * 1024;
+/// Peak allocation while one animation is decoding, before compaction trims it
+/// back. Transient, but it still shows up as resident memory and the allocator
+/// is in no hurry to return it.
+const MAX_ANIMATION_DECODE_WORK_BYTES: u64 = 64 * 1024 * 1024;
 pub(super) const MAX_LOTTIE_JSON_BYTES: usize = 1024 * 1024;
 const MIN_ANIMATION_FRAME_DELAY: Duration = Duration::from_millis(50);
 const MAX_UNDERSPECIFIED_FRAME_DELAY: Duration = Duration::from_millis(10);
@@ -272,6 +280,19 @@ impl MediaImageDecodeCache {
         }
 
         deliveries_for_requests(requests, completed.result)
+    }
+
+    /// Ready entries and the decoded bytes they pin. These are the same `Arc`
+    /// buffers the surface caches report, counted once here.
+    pub(in crate::tui) fn retained_stats(&self) -> (usize, u64) {
+        self.entries
+            .values()
+            .fold((0, 0), |(count, bytes), entry| match entry {
+                SharedDecodeEntry::Ready { image, .. } => {
+                    (count + 1, bytes.saturating_add(image.retained_bytes()))
+                }
+                SharedDecodeEntry::Decoding { .. } => (count, bytes),
+            })
     }
 
     fn next_tick(&mut self) -> u64 {

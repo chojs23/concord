@@ -12,6 +12,7 @@ use super::{
     PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH, avatar_preview_url,
     cache::{MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
     decode::{DecodedMediaImage, MediaImageDecodeKey, MediaImageDecodeRequest},
+    estimated_media_protocol_bytes, picker_font_size,
     protocol_job::{MediaProtocolBuildJob, MediaProtocolBuildResult, MediaProtocolBuildTarget},
     work::{MediaWorkError, MediaWorkResult},
 };
@@ -19,7 +20,7 @@ use super::{
 /// Avatar images are small on screen but decoded originals can still add up
 /// as users scroll through large servers. Keep a generous URL-keyed LRU cap.
 pub(super) const MAX_AVATAR_IMAGE_CACHE_ENTRIES: usize = 32;
-const AVATAR_IMAGE_CACHE_DECODED_BYTE_BUDGET: u64 = 32 * 1024 * 1024;
+const AVATAR_IMAGE_CACHE_DECODED_BYTE_BUDGET: u64 = 12 * 1024 * 1024;
 
 pub(in crate::tui) struct AvatarImageCache {
     pub(super) picker: Option<Picker>,
@@ -144,6 +145,17 @@ impl MediaImageCacheEntry for AvatarImageEntry {
 
     fn is_loading(&self) -> bool {
         matches!(self, AvatarImageEntry::Loading { .. })
+    }
+
+    fn is_failed(&self) -> bool {
+        matches!(self, AvatarImageEntry::Failed { .. })
+    }
+
+    fn retained_protocol_bytes(&self) -> u64 {
+        match self {
+            AvatarImageEntry::Ready { protocols, .. } => protocols.retained_bytes(),
+            _ => 0,
+        }
     }
 
     fn decoding_generation(&self) -> Option<u64> {
@@ -448,6 +460,14 @@ impl AvatarImageCache {
         }
     }
 
+    pub(in crate::tui) fn retained_stats(&self) -> (usize, u64, u64) {
+        self.cache.retained_stats()
+    }
+
+    pub(in crate::tui) fn forget_failures(&mut self) {
+        self.cache.forget_failures();
+    }
+
     pub(in crate::tui) fn pause_animations(&mut self) {
         self.cache.pause_animations();
     }
@@ -468,14 +488,16 @@ impl AvatarImageCache {
         let MediaProtocolBuildTarget::Avatar { url, key } = completed.target else {
             return;
         };
+        let font_size = self.picker.as_ref().map_or((10, 20), picker_font_size);
+        let protocol_bytes = estimated_media_protocol_bytes(key.render_spec(), font_size);
         let failed = match self.cache.entries.get_mut(&url) {
             Some(AvatarImageEntry::Ready {
                 generation,
                 protocols,
                 ..
-            }) if *generation == completed.generation => {
-                protocols.store_result(key, completed.result).is_err()
-            }
+            }) if *generation == completed.generation => protocols
+                .store_result(key, completed.result, protocol_bytes)
+                .is_err(),
             _ => false,
         };
         if failed {

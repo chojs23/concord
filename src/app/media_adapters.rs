@@ -23,6 +23,29 @@ const ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const ATTACHMENT_DOWNLOAD_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 const MEDIA_PLAYER_READY_TIMEOUT: Duration = Duration::from_secs(300);
 const MEDIA_PLAYER_IPC_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const MEDIA_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// One pooled client for every media fetch.
+///
+/// `reqwest::get` builds a whole client per call, so a screen of attachments,
+/// avatars, and emoji opened as many TCP connections and TLS handshakes as it
+/// had images. Discord's CDN starts refusing those, which surfaced as
+/// "error sending request" and preview timeouts. Reusing one client keeps the
+/// connection pool alive across requests. Deliberately unauthenticated: these
+/// URLs include proxies for third-party content, which must never see the
+/// session cookies the Discord API client carries.
+fn media_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(MEDIA_CONNECT_TIMEOUT)
+            // Pooling is the point, but the default keeps unlimited idle
+            // connections per host and each one holds TLS buffers.
+            .pool_max_idle_per_host(6)
+            .build()
+            .unwrap_or_default()
+    })
+}
 
 pub(super) async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, String> {
     fetch_limited_bytes(
@@ -42,12 +65,15 @@ pub(super) async fn download_attachment(
     filename: &str,
     source: DownloadAttachmentSource,
 ) -> std::result::Result<PathBuf, String> {
-    let mut response = timeout(ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT, reqwest::get(url))
-        .await
-        .map_err(|_| "download attachment timed out".to_owned())?
-        .map_err(|error| format!("download attachment failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("download attachment failed: {error}"))?;
+    let mut response = timeout(
+        ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT,
+        media_client().get(url).send(),
+    )
+    .await
+    .map_err(|_| "download attachment timed out".to_owned())?
+    .map_err(|error| format!("download attachment failed: {error}"))?
+    .error_for_status()
+    .map_err(|error| format!("download attachment failed: {error}"))?;
     let total_bytes = response.content_length();
     let filename = sanitize_filename(filename);
     let directory = downloads_directory()?;
@@ -113,7 +139,9 @@ async fn fetch_limited_bytes(
     download_error: &str,
     read_error: &str,
 ) -> std::result::Result<Vec<u8>, String> {
-    let response = reqwest::get(url)
+    let response = media_client()
+        .get(url)
+        .send()
         .await
         .map_err(|error| format!("{download_error}: {error}"))?
         .error_for_status()

@@ -11,6 +11,7 @@ use super::{
     EmojiImageTarget,
     cache::{MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
     decode::{DecodedMediaImage, MediaImageDecodeKey, MediaImageDecodeRequest},
+    estimated_media_protocol_bytes, fixed_media_protocol_render_spec, picker_font_size,
     protocol_job::{MediaProtocolBuildJob, MediaProtocolBuildResult, MediaProtocolBuildTarget},
     work::{MediaWorkError, MediaWorkResult},
 };
@@ -19,7 +20,7 @@ use super::{
 /// frames, so the cache must stay bounded even though Discord emoji files are
 /// small on the wire.
 pub(super) const MAX_EMOJI_IMAGE_CACHE_ENTRIES: usize = 128;
-const EMOJI_IMAGE_CACHE_DECODED_BYTE_BUDGET: u64 = 64 * 1024 * 1024;
+const EMOJI_IMAGE_CACHE_DECODED_BYTE_BUDGET: u64 = 24 * 1024 * 1024;
 
 pub(in crate::tui) struct EmojiImageCache {
     pub(super) picker: Option<Picker>,
@@ -57,6 +58,12 @@ impl EmojiProtocolCaches {
             compact: RenderProtocolCache::new(),
             standalone: RenderProtocolCache::new(),
         }
+    }
+
+    fn retained_bytes(&self) -> u64 {
+        self.compact
+            .retained_bytes()
+            .saturating_add(self.standalone.retained_bytes())
     }
 }
 
@@ -99,6 +106,17 @@ impl MediaImageCacheEntry for EmojiImageEntry {
 
     fn is_loading(&self) -> bool {
         matches!(self, EmojiImageEntry::Loading { .. })
+    }
+
+    fn is_failed(&self) -> bool {
+        matches!(self, EmojiImageEntry::Failed { .. })
+    }
+
+    fn retained_protocol_bytes(&self) -> u64 {
+        match self {
+            EmojiImageEntry::Ready { protocols, .. } => protocols.retained_bytes(),
+            _ => 0,
+        }
     }
 
     fn decoding_generation(&self) -> Option<u64> {
@@ -331,6 +349,14 @@ impl EmojiImageCache {
         }
     }
 
+    pub(in crate::tui) fn retained_stats(&self) -> (usize, u64, u64) {
+        self.cache.retained_stats()
+    }
+
+    pub(in crate::tui) fn forget_failures(&mut self) {
+        self.cache.forget_failures();
+    }
+
     pub(in crate::tui) fn pause_animations(&mut self) {
         self.cache.pause_animations();
     }
@@ -356,6 +382,12 @@ impl EmojiImageCache {
         else {
             return;
         };
+        // The cell box the protocol was rendered into; a few KB per protocol.
+        let font_size = self.picker.as_ref().map_or((10, 20), picker_font_size);
+        let protocol_bytes = estimated_media_protocol_bytes(
+            fixed_media_protocol_render_spec(image_size.width(), image_size.height()),
+            font_size,
+        );
         let failed = match self.cache.entries.get_mut(&url) {
             Some(EmojiImageEntry::Ready {
                 generation,
@@ -363,12 +395,16 @@ impl EmojiImageCache {
                 ..
             }) if *generation == completed.generation => {
                 let result = match image_size {
-                    EmojiImageSize::Compact => protocols
-                        .compact
-                        .store_result(frame_index, completed.result),
-                    EmojiImageSize::Standalone => protocols
-                        .standalone
-                        .store_result(frame_index, completed.result),
+                    EmojiImageSize::Compact => {
+                        protocols
+                            .compact
+                            .store_result(frame_index, completed.result, protocol_bytes)
+                    }
+                    EmojiImageSize::Standalone => {
+                        protocols
+                            .standalone
+                            .store_result(frame_index, completed.result, protocol_bytes)
+                    }
                 };
                 image_size == EmojiImageSize::Compact && result.is_err()
             }

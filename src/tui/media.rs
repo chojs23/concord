@@ -34,7 +34,10 @@ pub(super) use targets::{visible_avatar_targets, visible_image_preview_targets};
 pub(in crate::tui) use decode::decode_image_bytes;
 #[cfg(test)]
 use protocol::clipped_media_image;
-use protocol::{AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, avatar_preview_url, emoji_protocol};
+use protocol::{
+    AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, avatar_preview_url, emoji_protocol,
+    estimated_media_protocol_bytes,
+};
 pub(in crate::tui) use protocol::{
     MediaProtocolRenderSpec, clipped_media_protocol, fixed_media_protocol_render_spec,
     picker_font_size, query_image_picker,

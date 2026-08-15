@@ -1518,6 +1518,45 @@ fn image_preview_cache_limits_visible_requests() {
 }
 
 #[test]
+fn a_failed_media_fetch_retries_with_backoff_then_waits_for_a_refresh() {
+    let mut cache = ImagePreviewCache::new(None);
+    let target = image_preview_target(1);
+    let targets = [target.clone()];
+    let key = target.key();
+    let now = Instant::now();
+    let past_every_backoff = now + Duration::from_secs(600);
+
+    assert_eq!(cache.next_requests(&targets).len(), 1);
+
+    // Three tries, each gated by its backoff, then the retries are spent.
+    for attempt in 1..=4 {
+        cache.store_failed(&target.url, "download failed".to_owned());
+        assert!(
+            !cache.cache.take_due_retry(&key, now),
+            "attempt {attempt} must wait out its backoff"
+        );
+        let due = cache.cache.take_due_retry(&key, past_every_backoff);
+        assert_eq!(due, attempt < 4, "attempt {attempt} retry availability");
+        if !due {
+            break;
+        }
+        cache.cache.entries.insert(
+            key.clone(),
+            ImagePreviewEntry::Loading {
+                filename: target.filename.clone(),
+                protocol_spec: target.protocol_render_spec(),
+                last_used: 0,
+            },
+        );
+    }
+
+    // The manual refresh is the way back once the retries are spent.
+    cache.forget_failures();
+    assert!(!cache.cache.entries.contains_key(&key));
+    assert_eq!(cache.next_requests(&targets).len(), 1);
+}
+
+#[test]
 fn image_preview_store_loaded_preserves_existing_non_loading_entries() {
     let mut cache = ImagePreviewCache::new(None);
     let existing = image_preview_target(1).key();
@@ -1739,12 +1778,45 @@ fn media_decode_queue_pressure_retries_all_consumers() {
 }
 
 #[test]
+fn render_protocols_are_evicted_by_size_not_only_by_count() {
+    let picker = ratatui_image::picker::Picker::halfblocks();
+    let image = DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4));
+    let build = || {
+        picker
+            .new_protocol(
+                image.clone(),
+                ratatui::layout::Size::new(2, 1),
+                ratatui_image::Resize::Fit(None),
+            )
+            .expect("test protocol should build")
+    };
+
+    let mut protocols = super::cache::RenderProtocolCache::<usize>::new();
+    // Half the budget each: two fit, the third has to evict the oldest even
+    // though the count cap is nowhere near.
+    let half_budget = super::cache::RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY / 2;
+    for frame in 0..3 {
+        assert!(protocols.request_build(&frame));
+        protocols
+            .store_result(frame, Ok(build()), half_budget)
+            .expect("test protocol should store");
+    }
+
+    assert_eq!(protocols.len(), 2);
+    assert!(protocols.get(&0).is_none(), "the oldest frame should go");
+    assert!(protocols.get(&2).is_some(), "the newest frame must stay");
+}
+
+#[test]
 fn protocol_queue_pressure_does_not_consume_failure_attempts() {
     let mut protocols = super::cache::RenderProtocolCache::<usize>::new();
 
     for _ in 0..3 {
         assert!(protocols.request_build(&0));
-        assert_eq!(protocols.store_result(0, Err(MediaWorkError::Busy)), Ok(()));
+        assert_eq!(
+            protocols.store_result(0, Err(MediaWorkError::Busy), 0),
+            Ok(())
+        );
         assert!(!protocols.is_terminally_failed(&0));
     }
 
@@ -1755,6 +1827,7 @@ fn protocol_queue_pressure_does_not_consume_failure_attempts() {
             Err(MediaWorkError::Failed(
                 "temporary protocol failure".to_owned(),
             )),
+            0,
         ),
         Ok(())
     );
@@ -1767,6 +1840,7 @@ fn protocol_queue_pressure_does_not_consume_failure_attempts() {
             Err(MediaWorkError::Failed(
                 "terminal protocol failure".to_owned(),
             )),
+            0,
         ),
         Err("terminal protocol failure".to_owned())
     );

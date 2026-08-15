@@ -139,6 +139,21 @@ pub(in crate::tui) struct MediaProtocolRenderSpec {
     pub(super) mask_circular: bool,
 }
 
+/// Estimated bytes a built protocol retains. The encoded frame is the resized
+/// RGBA image inflated by the protocol's text encoding (base64 for kitty and
+/// iTerm2), which measures within a few percent of this. It only bounds caches,
+/// so being close is enough.
+pub(in crate::tui) fn estimated_media_protocol_bytes(
+    spec: MediaProtocolRenderSpec,
+    font_size: (u16, u16),
+) -> u64 {
+    let pixels = u64::from(spec.width)
+        .saturating_mul(u64::from(font_size.0))
+        .saturating_mul(u64::from(spec.height))
+        .saturating_mul(u64::from(font_size.1));
+    pixels.saturating_mul(4).saturating_mul(4) / 3
+}
+
 pub(in crate::tui) fn fixed_media_protocol_render_spec(
     width: u16,
     height: u16,

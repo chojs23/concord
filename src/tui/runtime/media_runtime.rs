@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use crate::{
     config::ImageProtocolPreference,
     discord::{AppCommand, AppEvent, MAX_UPLOAD_PREVIEW_BYTES, MessageAttachmentUpload},
+    logging,
     tui::{
         commands as command_helpers,
         media::{
@@ -388,6 +389,39 @@ impl DashboardMediaRuntime {
         self.image_previews.pause_animations();
         self.avatar_images.pause_animations();
         self.emoji_images.pause_animations();
+    }
+
+    /// Reports what the media caches are actually holding, next to the
+    /// process's resident size. Cache totals that stay flat while RSS climbs
+    /// mean the memory is not live data, which is the one thing a bounded
+    /// cache cannot tell you from the outside.
+    pub(super) fn log_memory_report(&self) {
+        let (previews, preview_decoded, preview_protocols) = self.image_previews.retained_stats();
+        let (avatars, avatar_decoded, avatar_protocols) = self.avatar_images.retained_stats();
+        let (emoji, emoji_decoded, emoji_protocols) = self.emoji_images.retained_stats();
+        let (shared, shared_decoded) = self.decoded_images.retained_stats();
+        let protocols = preview_protocols
+            .saturating_add(avatar_protocols)
+            .saturating_add(emoji_protocols);
+        logging::debug(
+            "media",
+            format!(
+                "media cache report: previews={previews}/{preview_decoded} avatars={avatars}/{avatar_decoded} emoji={emoji}/{emoji_decoded} shared={shared}/{shared_decoded} protocol_bytes={protocols} live_bytes={} rss_kib={}",
+                // Surface entries clone the shared images, so the shared total
+                // already covers their decoded bytes.
+                shared_decoded.saturating_add(protocols),
+                resident_kib().unwrap_or(0),
+            ),
+        );
+    }
+
+    /// Drops everything that failed to load so the next frame requests it
+    /// again, however many times it already failed. This is the manual way out
+    /// when a picture stays broken past its automatic retries.
+    pub(super) fn forget_failed_media(&mut self) {
+        self.image_previews.forget_failures();
+        self.avatar_images.forget_failures();
+        self.emoji_images.forget_failures();
     }
 
     pub(super) fn next_animation_deadline(&self) -> Option<Instant> {
@@ -847,6 +881,14 @@ async fn send_commands_until_closed(
         }
     }
     false
+}
+
+/// Resident set size in KiB, for the media cache report. Linux only; other
+/// platforms report zero rather than growing a dependency for a debug line.
+fn resident_kib() -> Option<u64> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages.saturating_mul(4))
 }
 
 #[cfg(test)]
