@@ -72,7 +72,10 @@ pub(super) struct VoiceDaveState {
 }
 
 struct PendingDaveSession {
-    transition_id: u16,
+    /// `None` until Discord announces the transition this session belongs to.
+    /// An epoch prepared through opcode 24 has no transition id yet; the commit
+    /// or welcome that follows carries it.
+    transition_id: Option<u16>,
     protocol_version: NonZeroU16,
     session: DaveSession,
     execute_requested: bool,
@@ -197,7 +200,7 @@ impl VoiceDaveState {
                 self.pending_transitions
                     .insert(transition_id, protocol_version);
                 if self.pending_session.as_ref().is_some_and(|pending| {
-                    pending.transition_id == transition_id
+                    pending.transition_id == Some(transition_id)
                         && pending.protocol_version.get() != protocol_version
                 }) {
                     self.pending_session = None;
@@ -219,7 +222,7 @@ impl VoiceDaveState {
                 } else if self
                     .pending_session
                     .as_ref()
-                    .is_none_or(|pending| pending.transition_id != transition_id)
+                    .is_none_or(|pending| pending.transition_id != Some(transition_id))
                 {
                     send_dave_transition_ready(writer, transition_id).await?;
                 }
@@ -235,20 +238,19 @@ impl VoiceDaveState {
                 let data = value
                     .get("d")
                     .ok_or_else(|| "DAVE prepare epoch missing data".to_owned())?;
-                let transition_id = json_u16(data, "transition_id")?;
+                // This opcode carries only `protocol_version` and `epoch`. It has no
+                // transition id: the commit or welcome that completes the epoch is
+                // what announces one.
                 let epoch = json_u64(data, "epoch")?;
                 if epoch == 1 {
                     let protocol_version = json_u16(data, "protocol_version")
                         .or_else(|_| json_u16(data, "dave_protocol_version"))?;
-                    let key_package = self.prepare_epoch(transition_id, protocol_version, epoch)?;
+                    let key_package = self.prepare_epoch(protocol_version, epoch)?;
                     self.send_key_package(writer, key_package).await?;
                 } else {
                     logging::debug(
                         "voice",
-                        format!(
-                            "DAVE prepare epoch received: transition_id={} epoch={}",
-                            transition_id, epoch
-                        ),
+                        format!("DAVE prepare epoch received: epoch={epoch}"),
                     );
                 }
             }
@@ -390,12 +392,7 @@ impl VoiceDaveState {
         Ok(())
     }
 
-    fn prepare_epoch(
-        &mut self,
-        transition_id: u16,
-        protocol_version: u16,
-        epoch: u64,
-    ) -> Result<Vec<u8>, String> {
+    fn prepare_epoch(&mut self, protocol_version: u16, epoch: u64) -> Result<Vec<u8>, String> {
         let protocol_version = NonZeroU16::new(protocol_version)
             .ok_or_else(|| "DAVE prepare epoch has protocol version 0".to_owned())?;
         let mut session = self.new_session(protocol_version)?;
@@ -405,19 +402,16 @@ impl VoiceDaveState {
 
         // The current session must keep encrypting media until Discord executes the
         // prepared transition. Reinitializing it here creates the broadcast blackout.
-        self.pending_transitions
-            .insert(transition_id, protocol_version.get());
         self.pending_session = Some(PendingDaveSession {
-            transition_id,
+            transition_id: None,
             protocol_version,
             session,
-            execute_requested: transition_id == 0,
+            execute_requested: false,
         });
         logging::debug(
             "voice",
             format!(
-                "DAVE prepare epoch received: transition_id={} epoch={} protocol_version={}",
-                transition_id, epoch, protocol_version
+                "DAVE prepare epoch received: epoch={epoch} protocol_version={protocol_version}"
             ),
         );
         Ok(key_package)
@@ -446,7 +440,7 @@ impl VoiceDaveState {
         if self
             .pending_session
             .as_ref()
-            .is_some_and(|pending| pending.transition_id == transition_id)
+            .is_some_and(|pending| pending.transition_id == Some(transition_id))
         {
             let pending = self
                 .pending_session
@@ -516,7 +510,7 @@ impl VoiceDaveState {
         let pending_protocol_version = self
             .pending_session
             .as_ref()
-            .filter(|pending| pending.transition_id == transition_id)
+            .filter(|pending| pending.transition_id == Some(transition_id))
             .map(|pending| pending.protocol_version.get());
 
         if transition_id != 0 {
@@ -531,7 +525,7 @@ impl VoiceDaveState {
         let should_execute = self
             .pending_session
             .as_ref()
-            .filter(|pending| pending.transition_id == transition_id)
+            .filter(|pending| pending.transition_id == Some(transition_id))
             .is_some_and(|pending| transition_id == 0 || pending.execute_requested);
         if should_execute {
             self.execute_transition(transition_id)?;
@@ -543,7 +537,7 @@ impl VoiceDaveState {
         let pending_protocol_version = self
             .pending_session
             .as_ref()
-            .filter(|pending| pending.transition_id == transition_id)
+            .filter(|pending| pending.transition_id == Some(transition_id))
             .map(|pending| pending.protocol_version);
         if let Some(protocol_version) = pending_protocol_version {
             let session = self.new_session(protocol_version)?;
@@ -598,10 +592,12 @@ impl VoiceDaveState {
             session,
             ..
         } = self;
-        if let Some(pending) = pending_session
-            .as_mut()
-            .filter(|pending| pending.transition_id == transition_id)
-        {
+        // A session prepared for a new epoch adopts the first transition announced
+        // for it, since opcode 24 does not name one.
+        if let Some(pending) = pending_session.as_mut().filter(|pending| {
+            pending.transition_id == Some(transition_id) || pending.transition_id.is_none()
+        }) {
+            pending.transition_id = Some(transition_id);
             return Ok(&mut pending.session);
         }
         session
@@ -935,7 +931,7 @@ mod tests {
             .expect("active DAVE session should exist");
 
         let key_package = state
-            .prepare_epoch(7, 1, 1)
+            .prepare_epoch(1, 1)
             .expect("DAVE epoch should prepare");
 
         assert!(!key_package.is_empty());
@@ -944,13 +940,24 @@ mod tests {
             state.session.as_ref().map(std::ptr::from_ref),
             Some(active_session)
         );
-        assert_eq!(state.pending_transitions.get(&7), Some(&1));
         let pending = state
             .pending_session
             .as_ref()
             .expect("new DAVE epoch should use a separate session");
-        assert_eq!(pending.transition_id, 7);
+        assert_eq!(pending.transition_id, None);
         assert!(!pending.session.is_ready());
+
+        // The commit that completes the epoch is what names the transition.
+        state
+            .transition_session_mut(7)
+            .expect("prepared session should take the announced transition");
+        assert_eq!(
+            state
+                .pending_session
+                .as_ref()
+                .map(|pending| pending.transition_id),
+            Some(Some(7))
+        );
 
         state
             .execute_transition(7)
@@ -973,7 +980,7 @@ mod tests {
         let mut state = test_state();
 
         state
-            .prepare_epoch(9, 1, 1)
+            .prepare_epoch(1, 1)
             .expect("DAVE upgrade should prepare");
 
         assert_eq!(state.protocol_version, None);
