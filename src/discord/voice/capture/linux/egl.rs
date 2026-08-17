@@ -3,7 +3,9 @@ use std::{collections::HashMap, ffi::c_void, mem, ptr};
 use glow::HasContext;
 use khronos_egl as egl;
 
-use super::super::super::conversion::{CaptureColorInfo, CapturePixelFormat, normalize_rgba_color};
+use super::super::super::super::conversion::{
+    CaptureColorInfo, CapturePixelFormat, normalize_rgba_color,
+};
 
 const EGL_PLATFORM_SURFACELESS_MESA: egl::Enum = 0x31dd;
 const EGL_LINUX_DMA_BUF_EXT: egl::Enum = 0x3270;
