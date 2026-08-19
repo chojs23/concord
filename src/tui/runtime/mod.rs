@@ -158,8 +158,10 @@ pub(super) async fn run_dashboard(
     // input responsive. Flicker is no longer a reason to suppress redraws: the
     // image emission tracker re-emits a surface only when it actually changes.
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
+    const RELATIVE_TIMESTAMP_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut animation_frame_deadline: Option<tokio::time::Instant> = None;
+    let mut relative_timestamp_deadline: Option<tokio::time::Instant> = None;
     #[cfg(feature = "voice-playback")]
     let mut push_to_talk = GlobalPushToTalkRuntime::new(client.clone());
     #[cfg(feature = "voice-playback")]
@@ -254,6 +256,13 @@ pub(super) async fn run_dashboard(
             });
         } else {
             animation_frame_deadline = None;
+        }
+        if state.live_relative_timestamps() {
+            relative_timestamp_deadline.get_or_insert_with(|| {
+                tokio::time::Instant::now() + RELATIVE_TIMESTAMP_REFRESH_INTERVAL
+            });
+        } else {
+            relative_timestamp_deadline = None;
         }
 
         tokio::select! {
@@ -511,6 +520,17 @@ pub(super) async fn run_dashboard(
                 state.advance_animation_frame();
                 animation_frame_deadline = Some(
                     tokio::time::Instant::now() + LOADING_ANIMATION_FRAME_INTERVAL,
+                );
+                dirty = true;
+            }
+            _ = async {
+                match relative_timestamp_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                relative_timestamp_deadline = Some(
+                    tokio::time::Instant::now() + RELATIVE_TIMESTAMP_REFRESH_INTERVAL,
                 );
                 dirty = true;
             }

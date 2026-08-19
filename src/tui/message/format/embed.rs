@@ -5,7 +5,9 @@ use crate::{
     discord::EmbedInfo,
     tui::{
         message::time::format_rfc3339_local_time,
-        text::{RenderedText, replace_custom_emoji_markup_in_rendered_with_images},
+        text::{
+            RenderedText, render_discord_timestamps, replace_custom_emoji_markup_in_rendered_with_images,
+        },
         theme,
     },
 };
@@ -245,6 +247,7 @@ fn push_embed_text(
     let Some(value) = value.filter(|value| !value.is_empty()) else {
         return;
     };
+    let value = render_discord_timestamps(value);
     // Skip the mention pass. Embeds never carry user mentions but custom
     // emojis in title/fields/footer must still produce slots.
     let rendered = replace_custom_emoji_markup_in_rendered_with_images(

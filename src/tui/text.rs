@@ -643,5 +643,206 @@ fn parse_mention(value: &str, start: usize) -> Option<(usize, MentionTarget)> {
     Some((index.saturating_add(1), target))
 }
 
+/// Discord timestamp format: `<t:UNIX_SECONDS>` or `<t:UNIX_SECONDS:STYLE>`
+/// where STYLE is one of: t (short time), T (long time), d (short date),
+/// D (long date), f (default date+time), F (full date+time), R (relative).
+pub fn render_discord_timestamps(value: &str) -> String {
+    if !value.contains("<t:") {
+        return value.to_owned();
+    }
+
+    let mut output = String::with_capacity(value.len());
+    let mut cursor = 0usize;
+    while let Some(relative_start) = value[cursor..].find("<t:") {
+        let start = cursor.saturating_add(relative_start);
+        output.push_str(&value[cursor..start]);
+
+        match parse_discord_timestamp(value, start) {
+            Some((end, formatted)) => {
+                output.push_str(&formatted);
+                cursor = end;
+            }
+            None => {
+                output.push('<');
+                cursor = start.saturating_add(1);
+            }
+        }
+    }
+    output.push_str(&value[cursor..]);
+    output
+}
+
+fn parse_discord_timestamp(value: &str, start: usize) -> Option<(usize, String)> {
+    let bytes = value.as_bytes();
+    if bytes.get(start) != Some(&b'<') || bytes.get(start.saturating_add(1)) != Some(&b't')
+        || bytes.get(start.saturating_add(2)) != Some(&b':')
+    {
+        return None;
+    }
+
+    let mut index = start.saturating_add(3);
+    let digits_start = index;
+    while matches!(bytes.get(index), Some(byte) if byte.is_ascii_digit()) {
+        index = index.saturating_add(1);
+    }
+    if index == digits_start {
+        return None;
+    }
+
+    let unix_seconds: i64 = value[digits_start..index].parse().ok()?;
+
+    let style = match bytes.get(index) {
+        Some(&b':') => {
+            index = index.saturating_add(1);
+            match bytes.get(index) {
+                Some(&b't') => {
+                    index = index.saturating_add(1);
+                    't'
+                }
+                Some(&b'T') => {
+                    index = index.saturating_add(1);
+                    'T'
+                }
+                Some(&b'd') => {
+                    index = index.saturating_add(1);
+                    'd'
+                }
+                Some(&b'D') => {
+                    index = index.saturating_add(1);
+                    'D'
+                }
+                Some(&b'f') => {
+                    index = index.saturating_add(1);
+                    'f'
+                }
+                Some(&b'F') => {
+                    index = index.saturating_add(1);
+                    'F'
+                }
+                Some(&b'R') => {
+                    index = index.saturating_add(1);
+                    'R'
+                }
+                _ => return None,
+            }
+        }
+        Some(&b'>') => 'f',
+        _ => return None,
+    };
+
+    if bytes.get(index) != Some(&b'>') {
+        return None;
+    }
+    let end = index.saturating_add(1);
+
+    let formatted = format_discord_timestamp(unix_seconds, style);
+    Some((end, formatted))
+}
+
+fn format_discord_timestamp(unix_seconds: i64, style: char) -> String {
+    let Some(dt) = chrono::DateTime::from_timestamp(unix_seconds, 0) else {
+        return format!("<invalid time>");
+    };
+    let local = dt.with_timezone(&chrono::Local);
+
+    match style {
+        't' => local.format("%I:%M %p").to_string(),
+        'T' => local.format("%I:%M:%S %p").to_string(),
+        'd' => local.format("%m/%d/%Y").to_string(),
+        'D' => local.format("%B %d, %Y").to_string(),
+        'F' => local.format("%A, %B %d, %Y %I:%M %p").to_string(),
+        'f' => local.format("%B %d, %Y %I:%M %p").to_string(),
+        'R' => format_discord_relative(unix_seconds),
+        _ => local.format("%B %d, %Y %I:%M %p").to_string(),
+    }
+}
+
+fn format_discord_relative(unix_seconds: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let diff = unix_seconds - now;
+    if diff >= 0 {
+        format_relative_time_future(diff as u64)
+    } else {
+        format_relative_time_past(diff.unsigned_abs())
+    }
+}
+
+fn format_relative_time_past(seconds: u64) -> String {
+    if seconds < 60 {
+        return "just now".to_owned();
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return relative_unit(minutes, "minute");
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return relative_unit(hours, "hour");
+    }
+    let days = hours / 24;
+    if days < 30 {
+        return relative_unit(days, "day");
+    }
+    let months = days / 30;
+    if months < 12 {
+        return relative_unit(months, "month");
+    }
+    relative_unit((days / 365).max(1), "year")
+}
+
+fn format_relative_time_future(seconds: u64) -> String {
+    if seconds < 60 {
+        return "in less than a minute".to_owned();
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("in {} {}", minutes, minute_suffix(minutes));
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("in {} {}", hours, hour_suffix(hours));
+    }
+    let days = hours / 24;
+    if days < 30 {
+        return format!("in {} {}", days, day_suffix(days));
+    }
+    let months = days / 30;
+    if months < 12 {
+        return format!("in {} {}", months, month_suffix(months));
+    }
+    let years = (days / 365).max(1);
+    format!("in {} {}", years, year_suffix(years))
+}
+
+fn relative_unit(value: u64, unit: &str) -> String {
+    let suffix = if value == 1 { "" } else { "s" };
+    format!("{value} {unit}{suffix} ago")
+}
+
+fn minute_suffix(value: u64) -> &'static str {
+    if value == 1 { "minute" } else { "minutes" }
+}
+
+fn hour_suffix(value: u64) -> &'static str {
+    if value == 1 { "hour" } else { "hours" }
+}
+
+fn day_suffix(value: u64) -> &'static str {
+    if value == 1 { "day" } else { "days" }
+}
+
+fn month_suffix(value: u64) -> &'static str {
+    if value == 1 { "month" } else { "months" }
+}
+
+fn year_suffix(value: u64) -> &'static str {
+    if value == 1 { "year" } else { "years" }
+}
+
 #[cfg(test)]
 mod tests;

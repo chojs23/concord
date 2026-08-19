@@ -10,7 +10,7 @@ use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::{MessageKind, MessageSnapshotInfo, MessageState};
 use crate::tui::message::time as message_time;
 use crate::tui::state::{DashboardState, apply_discord_foreground, normal_text_style};
-use crate::tui::text::{truncate_display_width, truncate_text};
+use crate::tui::text::{render_discord_timestamps, truncate_display_width, truncate_text};
 use crate::tui::theme;
 use crate::tui::ui::thread_card::{thread_card_lines, thread_card_width_in_message};
 
@@ -271,6 +271,7 @@ pub(super) fn format_forwarded_snapshot(
     if let Some(content) =
         display_text_with_stickers(snapshot.content.as_deref(), &snapshot.sticker_names)
     {
+        let content = render_discord_timestamps(&content);
         let content_width = width.saturating_sub(2).max(1);
         let content = state.render_user_mentions_with_highlights(
             state.forwarded_snapshot_mention_guild_id(snapshot),
