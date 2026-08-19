@@ -6,7 +6,8 @@ use crate::{
     tui::{
         message::time::format_rfc3339_local_time,
         text::{
-            RenderedText, render_discord_timestamps, replace_custom_emoji_markup_in_rendered_with_images,
+            RenderedText, render_discord_timestamps,
+            replace_custom_emoji_markup_in_rendered_with_images,
         },
         theme,
     },

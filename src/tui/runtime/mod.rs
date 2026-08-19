@@ -158,7 +158,8 @@ pub(super) async fn run_dashboard(
     // input responsive. Flicker is no longer a reason to suppress redraws: the
     // image emission tracker re-emits a surface only when it actually changes.
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
-    const RELATIVE_TIMESTAMP_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+    const RELATIVE_TIMESTAMP_REFRESH_INTERVAL: std::time::Duration =
+        std::time::Duration::from_secs(60);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut animation_frame_deadline: Option<tokio::time::Instant> = None;
     let mut relative_timestamp_deadline: Option<tokio::time::Instant> = None;

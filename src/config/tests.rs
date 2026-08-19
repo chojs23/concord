@@ -39,10 +39,10 @@ fn global_disable_overrides_individual_toggles() {
         attachment_viewer_quality: ImagePreviewQualityPreset::Original,
         image_protocol: ImageProtocolPreference::Auto,
         show_custom_emoji: true,
-circular_avatars: false,
-            hour_format_24: true,
-            live_relative_timestamps: false,
-        };
+        circular_avatars: false,
+        hour_format_24: true,
+        live_relative_timestamps: false,
+    };
 
     assert!(!options.avatars_visible());
     assert!(!options.images_visible());

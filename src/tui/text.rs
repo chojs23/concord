@@ -674,7 +674,8 @@ pub fn render_discord_timestamps(value: &str) -> String {
 
 fn parse_discord_timestamp(value: &str, start: usize) -> Option<(usize, String)> {
     let bytes = value.as_bytes();
-    if bytes.get(start) != Some(&b'<') || bytes.get(start.saturating_add(1)) != Some(&b't')
+    if bytes.get(start) != Some(&b'<')
+        || bytes.get(start.saturating_add(1)) != Some(&b't')
         || bytes.get(start.saturating_add(2)) != Some(&b':')
     {
         return None;
@@ -741,7 +742,7 @@ fn parse_discord_timestamp(value: &str, start: usize) -> Option<(usize, String)>
 
 fn format_discord_timestamp(unix_seconds: i64, style: char) -> String {
     let Some(dt) = chrono::DateTime::from_timestamp(unix_seconds, 0) else {
-        return format!("<invalid time>");
+        return "<invalid time>".to_string();
     };
     let local = dt.with_timezone(&chrono::Local);
 
