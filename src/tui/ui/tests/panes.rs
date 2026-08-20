@@ -1174,7 +1174,7 @@ fn forum_post_lines_render_title_author_and_preview() {
 
     assert_eq!(texts.len(), 8);
     assert_eq!(texts[0].trim_end(), "Active posts");
-    assert!(texts[1].starts_with("› ┏"));
+    assert!(texts[1].starts_with("▸ ┏"));
     assert!(texts[2].starts_with("  ┃ "));
     assert!(texts.iter().all(|text| text.width() == 80));
     assert!(texts[2].contains("A useful Rust crate"));
@@ -1433,12 +1433,31 @@ fn forum_post_lines_can_reserve_scrollbar_column() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    assert!(texts[0].starts_with("› ╭"));
+    assert!(texts[0].starts_with("▸ ╭"));
     assert!(texts[0].ends_with("╮"));
     assert!(texts[1].ends_with("│"));
     // The untagged post has no tags row, so the card is six rows.
     assert!(texts[5].ends_with("╯"));
     assert!(texts.iter().all(|text| text.width() == 79));
+}
+
+#[test]
+fn forum_post_cards_align_with_a_wide_configured_selection_marker() {
+    let (options, parse_warnings) =
+        crate::config::parse_theme_options_for_test("[ui.indicator]\nselection = \"界 \"\n")
+            .expect("selection marker config should parse");
+    assert!(parse_warnings.is_empty());
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+    let post = ChannelThreadItem::test(Id::new(30));
+
+    let lines = theme::with_test_theme(custom, || {
+        thread_card_viewport_lines(&[post], Some(0), 40, false)
+    });
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(texts[0].starts_with("界 ╭"));
+    assert!(texts[1].starts_with("   │ "));
+    assert!(texts.iter().all(|text| text.width() == 40));
 }
 
 #[test]

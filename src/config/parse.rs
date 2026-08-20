@@ -1,6 +1,8 @@
 //! Tolerant config parsing: invalid values are dropped one field (or one
 //! keybinding) at a time with a warning instead of discarding the file.
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::Result;
 
 use super::{
@@ -162,17 +164,56 @@ struct ThemeLeafParser {
 impl ThemeLeafParser {
     fn parse_ui(&mut self, table: &toml::Table) {
         for (field, value) in table {
-            if field != "border" {
+            match field.as_str() {
+                "border" => {
+                    let Some(fields) = value.as_table() else {
+                        self.warnings
+                            .push("[ui.border] must be a table and was ignored".to_owned());
+                        continue;
+                    };
+                    self.parse_border_shapes(fields);
+                }
+                "indicator" => {
+                    let Some(fields) = value.as_table() else {
+                        self.warnings
+                            .push("[ui.indicator] must be a table and was ignored".to_owned());
+                        continue;
+                    };
+                    self.parse_indicators(fields);
+                }
+                _ => self
+                    .warnings
+                    .push(format!("[ui] {field} is unknown and was ignored")),
+            }
+        }
+    }
+
+    fn parse_indicators(&mut self, fields: &toml::Table) {
+        for (field, value) in fields {
+            if field != "selection" {
                 self.warnings
-                    .push(format!("[ui] {field} is unknown and was ignored"));
+                    .push(format!("[ui.indicator] {field} is unknown and was ignored"));
                 continue;
             }
-            let Some(fields) = value.as_table() else {
+            let Some(raw) = value.as_str() else {
                 self.warnings
-                    .push("[ui.border] must be a table and was ignored".to_owned());
+                    .push("[ui.indicator] selection must be a string and was ignored".to_owned());
                 continue;
             };
-            self.parse_border_shapes(fields);
+            if raw.contains(['\n', '\r']) {
+                self.warnings.push(
+                    "[ui.indicator] selection must be a single line and was ignored".to_owned(),
+                );
+                continue;
+            }
+            if raw.width() == 0 {
+                self.warnings.push(
+                    "[ui.indicator] selection must have non-zero display width and was ignored"
+                        .to_owned(),
+                );
+                continue;
+            }
+            self.options.set_selection_marker(raw.to_owned());
         }
     }
 

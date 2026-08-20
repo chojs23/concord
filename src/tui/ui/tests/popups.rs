@@ -394,7 +394,7 @@ fn options_popup_lines_show_selected_toggle_state() {
             text(&lines[0]).trim_end(),
             "  [ ] Disable all image previews"
         );
-        assert_eq!(lines[1].spans[0].content, "› ");
+        assert_eq!(lines[1].spans[0].content, "▸ ");
         assert_eq!(lines[1].spans[1].content, "[x] ");
         assert_eq!(lines[1].spans[4].style.bg, Some(description_background));
         assert_eq!(lines[2].spans[1].content, "[balanced] ");
@@ -585,7 +585,7 @@ fn options_popup_render_keeps_selected_row_visible_when_short() {
 
     assert!(
         dump.iter()
-            .any(|row| row.contains("›") && row.contains("Desktop notifications")),
+            .any(|row| row.contains("▸") && row.contains("Desktop notifications")),
         "{rendered}"
     );
 }
@@ -903,10 +903,10 @@ fn current_user_profile_settings_render_contract() {
 
     assert!(picker_texts.iter().any(|line| line.contains("Status")));
     assert!(picker_texts.iter().any(|line| line == "Choose status"));
-    assert!(picker_texts.iter().any(|line| line == "› Idle"));
+    assert!(picker_texts.iter().any(|line| line == "▸ Idle"));
     let selected_status = picker_lines
         .iter()
-        .find(|line| line.to_string() == "› Idle")
+        .find(|line| line.to_string() == "▸ Idle")
         .expect("selected status row");
     assert_eq!(
         selected_status.spans[1].style.fg,
@@ -1313,7 +1313,7 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
         line_texts_from_ratatui(&lines),
         vec![
             "  [y] copy message",
-            "› [u] Show reacted users (no reactions)",
+            "▸ [u] Show reacted users (no reactions)",
             "  [c] Choose poll votes",
         ]
     );
@@ -1326,7 +1326,7 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
     };
     let lines = message_action_menu_lines_with_keymap_options(&actions, 0, &disabled_copy_keymap);
 
-    assert_eq!(line_texts_from_ratatui(&lines)[0], "› [] copy message");
+    assert_eq!(line_texts_from_ratatui(&lines)[0], "▸ [] copy message");
 }
 
 #[test]
@@ -1348,8 +1348,36 @@ fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["› [1] Show cat users", "  [2] Show dog users"]
+        vec!["▸ [1] Show cat users", "  [2] Show dog users"]
     );
+}
+
+#[test]
+fn popup_lists_use_the_configured_selection_marker() {
+    let (options, parse_warnings) =
+        crate::config::parse_theme_options_for_test("[ui.indicator]\nselection = \"❯ \"\n")
+            .expect("selection marker config should parse");
+    assert!(parse_warnings.is_empty());
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+    let actions = vec![
+        MessageActionItem::new(
+            MessageActionKind::CopyContent,
+            "copy message",
+            ActionAvailability::Enabled,
+        ),
+        MessageActionItem::new(
+            MessageActionKind::OpenPollVotePicker,
+            "Choose poll votes",
+            ActionAvailability::Enabled,
+        ),
+    ];
+
+    theme::with_test_theme(custom, || {
+        let lines = message_action_menu_lines(&actions, 1);
+
+        assert_eq!(lines[0].spans[0].content, "  ");
+        assert_eq!(lines[1].spans[0].content, "❯ ");
+    });
 }
 
 #[test]
@@ -1363,7 +1391,7 @@ fn message_url_picker_truncates_fragment_urls_to_menu_width() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["› [1] https://thisis.com/a...."]
+        vec!["▸ [1] https://thisis.com/a...."]
     );
 }
 
@@ -1388,7 +1416,7 @@ fn emoji_reaction_picker_marks_selected_reaction() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["  [1] 👍 Thumbs up", "› [2] :party: Party",]
+        vec!["  [1] 👍 Thumbs up", "▸ [2] :party: Party",]
     );
 }
 
@@ -1448,7 +1476,7 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["  [1] [x] Soup", "› [2] [ ] Noodles"]
+        vec!["  [1] [x] Soup", "▸ [2] [ ] Noodles"]
     );
     assert_eq!(
         lines[0].spans[2].style.fg,
@@ -1464,7 +1492,7 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
 
 #[test]
 fn reaction_users_popup_lists_reactions() {
-    // The selected row gets the `› ` marker. A custom emoji with no ready
+    // The selected row gets the shared marker. A custom emoji with no ready
     // thumbnail falls back to `:name:`.
     let popup = ReactionUsersPopupState::test_list(
         Id::new(2),
@@ -1488,7 +1516,7 @@ fn reaction_users_popup_lists_reactions() {
         .into_iter()
         .map(|line| line.trim_end().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(trimmed, vec!["› 👍 55", "  :party: 23"]);
+    assert_eq!(trimmed, vec!["▸ 👍 55", "  :party: 23"]);
     assert_eq!(
         lines[0].spans[1].style.fg,
         theme::current()
@@ -1703,7 +1731,7 @@ fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
         &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
     );
 
-    assert_eq!(line_texts_from_ratatui(&lines), vec!["› [1]    Party"]);
+    assert_eq!(line_texts_from_ratatui(&lines), vec!["▸ [1]    Party"]);
 }
 
 #[test]
@@ -1728,7 +1756,7 @@ fn emoji_reaction_picker_truncates_long_rows_to_inner_width() {
     }
     assert_eq!(
         line_texts_from_ratatui(&lines)[0].trim_end(),
-        "› [1] :this_is_a_very..."
+        "▸ [1] :this_is_a_very..."
     );
 }
 
@@ -1753,7 +1781,7 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
         vec![
             "      :emoji_10: Emoji 10",
             "      :emoji_11: Emoji 11",
-            "›     :emoji_12: Emoji 12",
+            "▸     :emoji_12: Emoji 12",
             "      :emoji_13: Emoji 13",
             "      :emoji_14: Emoji 14",
         ]
@@ -1775,7 +1803,7 @@ fn emoji_reaction_picker_shows_active_filter() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["› [1] :this: This goose", "Filter /thi",]
+        vec!["▸ [1] :this: This goose", "Filter /thi",]
     );
 }
 

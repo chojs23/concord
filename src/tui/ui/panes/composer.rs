@@ -393,12 +393,16 @@ fn mention_picker_lines(
     selected: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let max_label_width = width.saturating_sub(4).max(1);
+    let max_label_width = width
+        .saturating_sub(selection_marker_width())
+        .saturating_sub(2)
+        .max(1);
     candidates
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let cursor = if index == selected { "› " } else { "  " };
+            let selected = index == selected;
+            let cursor = selection_marker(selected);
             // Show the raw username next to the alias when they differ so the
             // user can see which row matched their query when they typed
             // against the username instead of the alias.
@@ -420,7 +424,6 @@ fn mention_picker_lines(
                     .saturating_sub(bot_width)
                     .saturating_sub(label.width()),
             );
-            let selected = index == selected;
             let role_color = match entry.target {
                 MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => entry.role_color,
                 MentionPickerTarget::User(_) | MentionPickerTarget::Channel(_) => None,
@@ -441,7 +444,7 @@ fn mention_picker_lines(
                 row_style
             };
             let mut spans = vec![
-                Span::styled(cursor, row_style),
+                cursor,
                 Span::styled(marker, marker_style),
                 Span::styled(" ", row_style),
                 Span::styled(label, row_style),
@@ -526,7 +529,8 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let cursor = selection_marker_with("› ", index == selected);
+            let cursor = selection_marker(index == selected);
+            let cursor_width = cursor.content.width();
             let custom_image_ready = show_custom_emoji
                 && entry
                     .custom_image_url
@@ -538,7 +542,7 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
                 .map(|value| value.width().saturating_add(" - ".width()))
                 .unwrap_or_default();
             let max_label_width = width
-                .saturating_sub(2)
+                .saturating_sub(cursor_width)
                 .saturating_sub(prefix_width)
                 .saturating_sub(description_width)
                 .max(1);

@@ -579,8 +579,8 @@ ToggleReplyPing = "<A-p>"
 
 ### Theme
 
-See [Theme options](./docs/theme-options.md) for available groups, values, and
-border shapes.
+See [Theme options](./docs/theme-options.md) for available groups, values,
+border shapes, and selection marker settings.
 
 <details>
 <summary>Default theme config</summary>
@@ -605,6 +605,11 @@ default = "plain"
 composer = "rounded"
 message = "rounded"
 forum = "rounded"
+
+# Selection markers are UI glyphs. This value is shared by list panes and
+# pickers, while `highlight.SelectionMarker` controls its style.
+[ui.indicator]
+selection = "▸ "
 
 [highlight.Normal]
 foreground = "terminal_default"

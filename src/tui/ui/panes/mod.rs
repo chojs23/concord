@@ -40,7 +40,7 @@ use super::{
     },
     panel_block, panel_block_line, render_vertical_scrollbar, selected_discord_text_style,
     selected_presence_style, selected_row_line, selected_text_span, selected_text_style,
-    selection_marker, selection_marker_with, styled_list_item, theme,
+    selection_marker, selection_marker_width, styled_list_item, theme,
     types::{EmojiImage, MessageAreas},
 };
 

@@ -359,7 +359,7 @@ fn valid_config_reports_no_warnings() {
         ));
     }
     content.push_str(
-        "\n[ui.border]\ndefault = \"plain\"\ncomposer = \"rounded\"\nmodal = \"thick\"\n",
+        "\n[ui.border]\ndefault = \"plain\"\ncomposer = \"rounded\"\nmodal = \"thick\"\n\n[ui.indicator]\nselection = \"❯ \"\n",
     );
     let (theme, warnings) =
         parse_theme_options(&content).expect("the highlight inventory should parse");
@@ -373,7 +373,37 @@ fn valid_config_reports_no_warnings() {
         theme.border_shapes().get(BorderSurface::Modal),
         Some(BorderShape::Thick)
     );
+    assert_eq!(theme.selection_marker(), Some("❯ "));
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn theme_selection_marker_parses_from_ui_indicator() {
+    let (theme, warnings) = parse_theme_options("[ui.indicator]\nselection = \"❯ \"\n")
+        .expect("selection marker config should parse");
+
+    assert_eq!(theme.selection_marker(), Some("❯ "));
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn invalid_theme_selection_markers_warn_and_fall_back() {
+    for (selection, expected_warning) in [
+        ("", "non-zero display width"),
+        ("\u{0301}", "non-zero display width"),
+        ("first\nsecond", "single line"),
+    ] {
+        let content = format!(
+            "[ui.indicator]\nselection = {}\n",
+            toml::Value::String(selection.to_owned())
+        );
+        let (theme, warnings) =
+            parse_theme_options(&content).expect("invalid selection marker TOML should parse");
+
+        assert_eq!(theme.selection_marker(), None, "{selection:?}");
+        assert_eq!(warnings.len(), 1, "{selection:?}");
+        assert!(warnings[0].contains(expected_warning), "{warnings:?}");
+    }
 }
 
 #[test]

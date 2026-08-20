@@ -621,13 +621,12 @@ fn push_profile_status_picker_lines(
     )));
     for (status, selected) in rows {
         let style = selected_presence_style(*selected, *status);
+        let marker = selectable_popup_marker(*selected);
+        let label_width = width.saturating_sub(marker.content.width());
         lines.push(selected_row_line(
             Line::from(vec![
-                selectable_popup_marker(*selected),
-                Span::styled(
-                    truncate_display_width(status.label(), width.saturating_sub(2)),
-                    style,
-                ),
+                marker,
+                Span::styled(truncate_display_width(status.label(), label_width), style),
             ]),
             *selected,
         ));
@@ -645,11 +644,13 @@ fn push_profile_activity_picker_lines(
         theme::current().style(theme::HighlightGroup::Heading),
     )));
     for (label, selected) in rows {
+        let marker = selectable_popup_marker(*selected);
+        let label_width = width.saturating_sub(marker.content.width());
         lines.push(selected_row_line(
             Line::from(vec![
-                selectable_popup_marker(*selected),
+                marker,
                 Span::styled(
-                    truncate_display_width(label, width.saturating_sub(2)),
+                    truncate_display_width(label, label_width),
                     selected_text_style(*selected, Style::default()),
                 ),
             ]),

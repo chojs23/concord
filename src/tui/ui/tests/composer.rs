@@ -714,6 +714,8 @@ fn mention_picker_selection_keeps_presence_foreground_and_base_background() {
     theme::with_test_theme(custom, || {
         let lines = mention_picker_lines_for_test(&entries, 1, 80);
 
+        assert_eq!(lines[0].spans[0].content, "  ");
+        assert_eq!(lines[1].spans[0].content, "▸ ");
         assert_eq!(lines[0].spans[1].style.fg, Some(Color::Green));
         assert_eq!(lines[0].spans[3].style.fg, None);
         assert_eq!(lines[0].spans[4].style.fg, None);

@@ -251,6 +251,7 @@ pub struct AppOptions {
 pub struct ThemeOptions {
     highlights: BTreeMap<HighlightGroup, HighlightDefinitionOptions>,
     border_shapes: BorderShapeOptions,
+    selection_marker: Option<String>,
 }
 
 impl ThemeOptions {
@@ -264,6 +265,14 @@ impl ThemeOptions {
 
     pub(crate) const fn border_shapes_mut(&mut self) -> &mut BorderShapeOptions {
         &mut self.border_shapes
+    }
+
+    pub(crate) fn selection_marker(&self) -> Option<&str> {
+        self.selection_marker.as_deref()
+    }
+
+    pub(crate) fn set_selection_marker(&mut self, marker: String) {
+        self.selection_marker = Some(marker);
     }
 
     pub(crate) fn highlight_mut(

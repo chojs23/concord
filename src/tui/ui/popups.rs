@@ -801,7 +801,7 @@ fn push_wrapped_styled_popup_text(
 }
 
 fn selectable_popup_marker(selected: bool) -> Span<'static> {
-    selection_marker_with("› ", selected)
+    selection_marker(selected)
 }
 
 fn editable_field_marker(active: bool) -> &'static str {

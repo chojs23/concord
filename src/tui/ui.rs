@@ -437,18 +437,23 @@ pub(in crate::tui) fn avatar_gutter_width(show_avatars: bool) -> u16 {
 }
 
 fn selection_marker(selected: bool) -> Span<'static> {
-    selection_marker_with("▸ ", selected)
+    selection_marker_with_style(
+        selected,
+        theme::current().style(theme::HighlightGroup::SelectionMarker),
+    )
 }
 
-fn selection_marker_with(symbol: &'static str, selected: bool) -> Span<'static> {
+fn selection_marker_with_style(selected: bool, style: Style) -> Span<'static> {
+    let symbol = theme::current().selection_marker();
     if selected {
-        Span::styled(
-            symbol,
-            theme::current().style(theme::HighlightGroup::SelectionMarker),
-        )
+        Span::styled(symbol, style)
     } else {
         Span::raw(" ".repeat(symbol.width()))
     }
+}
+
+fn selection_marker_width() -> usize {
+    theme::current().selection_marker().width()
 }
 
 fn active_text_style(active: bool, style: Style) -> Style {

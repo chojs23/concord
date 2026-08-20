@@ -189,6 +189,24 @@ fn focused_structural_border_is_separate_from_selection_color() {
 }
 
 #[test]
+fn selection_marker_uses_the_theme_glyph_and_reserves_its_display_width() {
+    let (options, parse_warnings) =
+        crate::config::parse_theme_options_for_test("[ui.indicator]\nselection = \"界 \"\n")
+            .expect("selection marker config should parse");
+    assert!(parse_warnings.is_empty());
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+
+    theme::with_test_theme(custom, || {
+        let selected = selection_marker(true);
+        let unselected = selection_marker(false);
+
+        assert_eq!(selected.content, "界 ");
+        assert_eq!(unselected.content, "   ");
+        assert_eq!(selected.content.width(), unselected.content.width());
+    });
+}
+
+#[test]
 fn later_history_does_not_clear_loaded_pin_state() {
     let mut state = state_with_message();
     state.push_event(AppEvent::PinnedMessagesLoaded {
