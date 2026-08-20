@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::discord::{
-    AppCommand, ChannelState, ChannelUnreadState, MessageInfo,
+    AppCommand, ChannelState, ChannelUnreadState, MessageInfo, StickerInfo,
     ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
@@ -997,7 +997,7 @@ impl DashboardState {
             .filter(|message| {
                 message.content.is_some()
                     || !message.attachments.is_empty()
-                    || !message.sticker_names.is_empty()
+                    || !message.stickers.is_empty()
                     || !message.embeds.is_empty()
             })
             .collect::<Vec<_>>();
@@ -1018,7 +1018,7 @@ impl DashboardState {
                     &message.mentions,
                     message.content.as_deref(),
                     !message.attachments.is_empty(),
-                    &message.sticker_names,
+                    &message.stickers,
                     !message.embeds.is_empty(),
                 ),
             })
@@ -1075,7 +1075,7 @@ impl DashboardState {
             &message.mentions,
             message.content.as_deref(),
             !message.attachments.is_empty(),
-            &message.sticker_names,
+            &message.stickers,
             !message.embeds.is_empty(),
         );
         NotificationInboxMessage {
@@ -1095,7 +1095,7 @@ impl DashboardState {
         mentions: &[crate::discord::MentionInfo],
         content: Option<&str>,
         has_attachments: bool,
-        sticker_names: &[String],
+        stickers: &[StickerInfo],
         has_embeds: bool,
     ) -> String {
         match content.map(str::trim).filter(|content| !content.is_empty()) {
@@ -1105,8 +1105,8 @@ impl DashboardState {
                 .collect::<Vec<_>>()
                 .join(" "),
             None if has_attachments => "[attachment]".to_owned(),
-            None if !sticker_names.is_empty() => {
-                format!("[sticker] {}", sticker_names.join(", "))
+            None if !stickers.is_empty() => {
+                format!("[sticker] {}", StickerInfo::names(stickers).join(", "))
             }
             None if has_embeds => "[embed]".to_owned(),
             None => "<empty message>".to_owned(),

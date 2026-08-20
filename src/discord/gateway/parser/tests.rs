@@ -10,7 +10,7 @@ use crate::discord::{
     ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
     GuildMemberListItem, GuildMemberListOperation, GuildOnboardingMode, GuildVerificationLevel,
     MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo, PremiumTier,
-    PresenceStatus, ReactionEmoji, ReplyInfo,
+    PresenceStatus, ReactionEmoji, ReplyInfo, StickerInfo,
 };
 
 #[test]
@@ -3087,7 +3087,7 @@ fn message_create_parser_keeps_reply_preview() {
             author_id: Some(Id::new(31)),
             author: "Alex".to_owned(),
             content: Some("잘되는군".to_owned()),
-            sticker_names: Vec::new(),
+            stickers: Vec::new(),
             mentions: Vec::new(),
         })
     );
@@ -3316,12 +3316,12 @@ fn message_create_parser_keeps_animated_media_flags() {
 }
 
 #[test]
-fn message_create_parser_preserves_content_and_sticker_names() {
+fn message_create_parser_preserves_content_and_sticker_items() {
     let cases = [
         (
             "",
             vec![json!({ "id": "11", "name": "Wave", "format_type": 1 })],
-            vec!["Wave"],
+            vec![StickerInfo::test(11, "Wave")],
         ),
         (
             "hello",
@@ -3329,7 +3329,10 @@ fn message_create_parser_preserves_content_and_sticker_names() {
                 json!({ "id": "11", "name": "Wave", "format_type": 1 }),
                 json!({ "id": "12", "name": "Heart", "format_type": 1 }),
             ],
-            vec!["Wave", "Heart"],
+            vec![
+                StickerInfo::test(11, "Wave"),
+                StickerInfo::test(12, "Heart"),
+            ],
         ),
     ];
 
@@ -3346,13 +3349,7 @@ fn message_create_parser_preserves_content_and_sticker_names() {
             panic!("expected message create event");
         };
         assert_eq!(message.content.as_deref(), Some(raw_content));
-        assert_eq!(
-            message.sticker_names,
-            expected_stickers
-                .into_iter()
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(message.stickers, expected_stickers);
     }
 }
 
@@ -3413,8 +3410,8 @@ fn message_create_parser_keeps_forwarded_snapshot_fields() {
         vec![mention_info(40, "alice")]
     );
     assert_eq!(
-        message.forwarded_snapshots[0].sticker_names,
-        vec!["Wave".to_owned()]
+        message.forwarded_snapshots[0].stickers,
+        vec![StickerInfo::test(42, "Wave")]
     );
     assert_eq!(message.forwarded_snapshots[0].attachments.len(), 1);
     assert_eq!(

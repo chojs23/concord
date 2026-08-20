@@ -96,7 +96,7 @@ pub use message::{
     AttachmentInfo, AttachmentMediaType, AttachmentUpdate, EmbedFieldInfo, EmbedInfo,
     InlinePreviewInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MentionInfo, MessageInfo,
     MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo,
-    PollInfo, ReactionInfo, ReactionUserInfo, ReplyInfo,
+    PollInfo, ReactionInfo, ReactionUserInfo, ReplyInfo, StickerFormat, StickerInfo,
 };
 pub(crate) use message_policy::{
     validate_attachment_sizes, validate_message_content, validate_message_content_length,

@@ -7,10 +7,14 @@ use crate::discord::commands::ReactionEmoji;
 use crate::discord::ids::{
     Id,
     marker::{
-        AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker,
-        WebhookMarker,
+        AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, RoleMarker, StickerMarker,
+        UserMarker, WebhookMarker,
     },
 };
+
+const STICKER_MEDIA_PROXY_BASE: &str = "https://media.discordapp.net/stickers";
+const STICKER_PREVIEW_SIZE: u64 = 160;
+const STICKER_NATIVE_PIXEL_SIZE: u64 = 320;
 
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
 const MEDIA_FLAG_IS_ANIMATED: u64 = 1 << 5;
@@ -57,6 +61,104 @@ pub enum AttachmentMediaType {
     Image,
     Video,
     Audio,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StickerFormat {
+    Png,
+    Apng,
+    Lottie,
+    Gif,
+}
+
+impl StickerFormat {
+    pub fn from_discord(value: Option<u64>) -> Self {
+        match value {
+            Some(2) => Self::Apng,
+            Some(3) => Self::Lottie,
+            Some(4) => Self::Gif,
+            _ => Self::Png,
+        }
+    }
+
+    pub fn is_animated(self) -> bool {
+        matches!(self, Self::Apng | Self::Gif)
+    }
+
+    fn extension(self) -> Option<&'static str> {
+        match self {
+            Self::Png | Self::Apng => Some("png"),
+            Self::Gif => Some("gif"),
+            Self::Lottie => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StickerInfo {
+    pub id: Id<StickerMarker>,
+    pub name: String,
+    pub format: StickerFormat,
+    url: Option<String>,
+    proxy_url: Option<String>,
+}
+
+impl StickerInfo {
+    pub fn new(id: Id<StickerMarker>, name: impl Into<String>, format: StickerFormat) -> Self {
+        let name = name.into();
+        let (url, proxy_url) = sticker_raster_urls(id, format);
+        Self {
+            id,
+            name,
+            format,
+            url,
+            proxy_url,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test(id: u64, name: impl Into<String>) -> Self {
+        Self::new(Id::new(id), name, StickerFormat::Png)
+    }
+
+    pub fn names(stickers: &[Self]) -> Vec<String> {
+        stickers
+            .iter()
+            .map(|sticker| sticker.name.clone())
+            .collect()
+    }
+
+    pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
+        Some(InlinePreviewInfo {
+            url: self.url.as_deref()?,
+            proxy_url: self.proxy_url.as_deref(),
+            filename: self.name.as_str(),
+            width: Some(STICKER_NATIVE_PIXEL_SIZE),
+            height: Some(STICKER_NATIVE_PIXEL_SIZE),
+            accent_color: None,
+            animated: self.format.is_animated(),
+            proxy_preview_only: false,
+            show_play_marker: false,
+        })
+    }
+}
+
+fn sticker_raster_urls(
+    id: Id<StickerMarker>,
+    format: StickerFormat,
+) -> (Option<String>, Option<String>) {
+    let Some(extension) = format.extension() else {
+        return (None, None);
+    };
+    let passthrough = if format.is_animated() {
+        "true"
+    } else {
+        "false"
+    };
+    let proxy_url = format!(
+        "{STICKER_MEDIA_PROXY_BASE}/{id}.{extension}?size={STICKER_PREVIEW_SIZE}&passthrough={passthrough}"
+    );
+    (Some(proxy_url.clone()), Some(proxy_url))
 }
 
 #[cfg(test)]
@@ -248,7 +350,7 @@ impl Default for MessageKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageSnapshotInfo {
     pub content: Option<String>,
-    pub sticker_names: Vec<String>,
+    pub stickers: Vec<StickerInfo>,
     pub mentions: Vec<MentionInfo>,
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
@@ -262,7 +364,7 @@ impl MessageSnapshotInfo {
     pub(crate) fn test() -> Self {
         Self {
             content: None,
-            sticker_names: Vec::new(),
+            stickers: Vec::new(),
             mentions: Vec::new(),
             attachments: Vec::new(),
             embeds: Vec::new(),
@@ -277,7 +379,7 @@ pub struct ReplyInfo {
     pub author_id: Option<Id<UserMarker>>,
     pub author: String,
     pub content: Option<String>,
-    pub sticker_names: Vec<String>,
+    pub stickers: Vec<StickerInfo>,
     pub mentions: Vec<MentionInfo>,
 }
 
@@ -289,7 +391,7 @@ impl ReplyInfo {
             author_id: None,
             author: author.into(),
             content: None,
-            sticker_names: Vec::new(),
+            stickers: Vec::new(),
             mentions: Vec::new(),
         }
     }
@@ -434,7 +536,7 @@ pub struct MessageInfo {
     pub pinned: bool,
     pub reactions: Vec<ReactionInfo>,
     pub content: Option<String>,
-    pub sticker_names: Vec<String>,
+    pub stickers: Vec<StickerInfo>,
     pub mentions: Vec<MentionInfo>,
     pub mention_everyone: bool,
     pub mention_roles: Vec<Id<RoleMarker>>,
@@ -467,7 +569,7 @@ impl Default for MessageInfo {
             pinned: false,
             reactions: Vec::new(),
             content: None,
-            sticker_names: Vec::new(),
+            stickers: Vec::new(),
             mentions: Vec::new(),
             mention_everyone: false,
             mention_roles: Vec::new(),
@@ -645,4 +747,53 @@ fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
             .iter()
             .any(|value| extension.eq_ignore_ascii_case(value))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StickerFormat, StickerInfo};
+    use crate::discord::ids::Id;
+
+    #[test]
+    fn raster_guild_sticker_builds_media_proxy_preview_url() {
+        let sticker = StickerInfo::new(Id::new(11), "Laugh", StickerFormat::Png);
+        let preview = sticker
+            .inline_preview_info()
+            .expect("png sticker should have a raster preview");
+
+        assert_eq!(
+            preview.url,
+            "https://media.discordapp.net/stickers/11.png?size=160&passthrough=false"
+        );
+        assert_eq!(
+            preview.proxy_url,
+            Some("https://media.discordapp.net/stickers/11.png?size=160&passthrough=false")
+        );
+        assert!(!preview.animated);
+        assert_eq!(preview.filename, "Laugh");
+    }
+
+    #[test]
+    fn lottie_sticker_has_no_raster_preview() {
+        let sticker = StickerInfo::new(Id::new(12), "Wumpus", StickerFormat::Lottie);
+        assert!(sticker.inline_preview_info().is_none());
+    }
+
+    #[test]
+    fn gif_sticker_uses_gif_media_and_is_animated() {
+        let sticker = StickerInfo::new(Id::new(13), "Dance", StickerFormat::Gif);
+        let preview = sticker
+            .inline_preview_info()
+            .expect("gif sticker should have a raster preview");
+
+        assert_eq!(
+            preview.url,
+            "https://media.discordapp.net/stickers/13.gif?size=160&passthrough=true"
+        );
+        assert_eq!(
+            preview.proxy_url,
+            Some("https://media.discordapp.net/stickers/13.gif?size=160&passthrough=true")
+        );
+        assert!(preview.animated);
+    }
 }

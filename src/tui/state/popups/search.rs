@@ -1003,8 +1003,8 @@ fn message_search_content_label(message: &MessageInfo) -> String {
     if !message.attachments.is_empty() {
         return format!("{} attachment(s)", message.attachments.len());
     }
-    if !message.sticker_names.is_empty() {
-        return format!("{} sticker(s)", message.sticker_names.len());
+    if !message.stickers.is_empty() {
+        return format!("{} sticker(s)", message.stickers.len());
     }
     if !message.embeds.is_empty() {
         return format!("{} embed(s)", message.embeds.len());

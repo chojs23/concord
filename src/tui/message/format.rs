@@ -42,7 +42,7 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::discord::{MessageState, ReplyInfo, unicode_emoji_image_url};
+use crate::discord::{MessageState, ReplyInfo, StickerInfo, unicode_emoji_image_url};
 use crate::tui::{
     state::{DashboardState, apply_discord_foreground, discord_role_mention_background},
     text::{
@@ -337,18 +337,16 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
     {
         lines.push(line);
     } else if let Some(poll) = message.poll.as_ref() {
-        let content =
-            display_text_with_stickers(message.content.as_deref(), &message.sticker_names).map(
-                |value| {
-                    state.render_user_mentions_with_highlights(
-                        message.guild_id,
-                        &message.mentions,
-                        message.mention_everyone,
-                        &message.mention_roles,
-                        &value,
-                    )
-                },
-            );
+        let content = display_text_with_stickers(message.content.as_deref(), &message.stickers)
+            .map(|value| {
+                state.render_user_mentions_with_highlights(
+                    message.guild_id,
+                    &message.mentions,
+                    message.mention_everyone,
+                    &message.mention_roles,
+                    &value,
+                )
+            });
         lines.extend(format_poll_lines(
             poll,
             content,
@@ -363,7 +361,7 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
 
     let mut last_standalone_emoji_row = None;
     let standalone_content = (!renders_poll_card)
-        .then(|| display_text_with_stickers(message.content.as_deref(), &message.sticker_names))
+        .then(|| display_text_with_stickers(message.content.as_deref(), &message.stickers))
         .flatten();
     if let Some(value) = standalone_content {
         let rendered = state.render_user_mentions_with_highlights(
@@ -896,7 +894,7 @@ fn format_reply_line(
     state: &DashboardState,
     width: usize,
 ) -> MessageContentLine {
-    let content = display_text_with_stickers(reply.content.as_deref(), &reply.sticker_names)
+    let content = display_text_with_stickers(reply.content.as_deref(), &reply.stickers)
         .unwrap_or_else(|| "<empty message>".to_owned());
     let content =
         state.render_user_mentions_with_highlights(guild_id, &reply.mentions, false, &[], &content);
@@ -907,9 +905,9 @@ fn format_reply_line(
     )
 }
 
-fn display_text_with_stickers(content: Option<&str>, sticker_names: &[String]) -> Option<String> {
+fn display_text_with_stickers(content: Option<&str>, stickers: &[StickerInfo]) -> Option<String> {
     let content = content.filter(|value| !value.is_empty());
-    let stickers = sticker_display_text(sticker_names);
+    let stickers = sticker_display_text(stickers);
     match (content, stickers) {
         (Some(content), Some(stickers)) => Some(format!("{content}\n{stickers}")),
         (Some(content), None) => Some(content.to_owned()),
@@ -918,11 +916,11 @@ fn display_text_with_stickers(content: Option<&str>, sticker_names: &[String]) -
     }
 }
 
-fn sticker_display_text(sticker_names: &[String]) -> Option<String> {
-    (!sticker_names.is_empty()).then(|| {
-        sticker_names
+fn sticker_display_text(stickers: &[StickerInfo]) -> Option<String> {
+    (!stickers.is_empty()).then(|| {
+        stickers
             .iter()
-            .map(|name| format!("[Sticker: {name}]"))
+            .map(|sticker| format!("[Sticker: {}]", sticker.name))
             .collect::<Vec<_>>()
             .join(" ")
     })
@@ -991,6 +989,22 @@ mod tests {
         assert_eq!(
             spans[2].style.bg,
             mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
+    }
+
+    #[test]
+    fn sticker_only_message_renders_sticker_label() {
+        let message = MessageState {
+            stickers: vec![StickerInfo::test(11, "Laugh")],
+            ..Default::default()
+        };
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+        assert_eq!(
+            lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["[Sticker: Laugh]"]
         );
     }
 }

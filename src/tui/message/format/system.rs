@@ -269,7 +269,7 @@ pub(super) fn format_forwarded_snapshot(
     };
     let mut lines = vec![MessageContentLine::plain("↱ Forwarded".to_owned())];
     if let Some(content) =
-        display_text_with_stickers(snapshot.content.as_deref(), &snapshot.sticker_names)
+        display_text_with_stickers(snapshot.content.as_deref(), &snapshot.stickers)
     {
         let content_width = width.saturating_sub(2).max(1);
         let content = state.render_user_mentions_with_highlights(

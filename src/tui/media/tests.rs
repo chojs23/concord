@@ -19,7 +19,7 @@ use crate::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo,
         ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedInfo, ForumPostDataInfo,
         MessageInfo, MessageSnapshotInfo, PresenceEventFields, PresenceStatus, ProfileAvatarUpload,
-        ReactionEmoji, ReactionInfo,
+        ReactionEmoji, ReactionInfo, StickerFormat, StickerInfo,
     },
     tui::{
         message::time::test_message_id_for_unix_millis,
@@ -1031,6 +1031,50 @@ fn image_preview_targets_include_forwarded_image_attachments() {
 
     assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
     assert_eq!(targets[0].url, "https://cdn.discordapp.com/image-2.png");
+}
+
+#[test]
+fn image_preview_targets_include_guild_stickers() {
+    let mut state = state_with_image_messages(0, &[]);
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some(String::new()),
+            stickers: vec![StickerInfo::new(Id::new(11), "Laugh", StickerFormat::Png)],
+            ..guild_message_create_fixture()
+        },
+    );
+
+    let targets = visible_image_preview_targets(&state, layout(12));
+
+    assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    assert_eq!(
+        targets[0].url,
+        "https://media.discordapp.net/stickers/11.png?size=160&passthrough=false"
+    );
+    assert_eq!(targets[0].filename, "Laugh");
+}
+
+#[test]
+fn image_preview_targets_skip_lottie_stickers() {
+    let mut state = state_with_image_messages(0, &[]);
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some(String::new()),
+            stickers: vec![StickerInfo::new(
+                Id::new(12),
+                "Wumpus",
+                StickerFormat::Lottie,
+            )],
+            ..guild_message_create_fixture()
+        },
+    );
+
+    let targets = visible_image_preview_targets(&state, layout(12));
+    assert!(targets.is_empty());
 }
 
 #[test]

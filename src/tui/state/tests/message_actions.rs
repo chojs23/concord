@@ -956,7 +956,7 @@ fn message_action_detects_urls_in_reply_quote_and_forwarded_snapshot() {
                 author_id: None,
                 author: "alice".to_owned(),
                 content: Some("check https://reply.example/page".to_owned()),
-                sticker_names: Vec::new(),
+                stickers: Vec::new(),
                 mentions: Vec::new(),
             }),
             forwarded_snapshots: vec![MessageSnapshotInfo {

@@ -302,7 +302,7 @@ impl DashboardState {
         };
         let body = message_notification_body(
             message.content.as_deref(),
-            message.sticker_names.len(),
+            message.stickers.len(),
             message.attachments.len(),
             message.embeds.len(),
         );
