@@ -1603,12 +1603,13 @@ fn media_decoder_preserves_and_plays_gif_and_webp_animation_frames() {
     let gif_20_ms = encoded_two_frame_gif(20);
     let gif_30_ms = encoded_two_frame_gif(30);
     let gif_40_ms = encoded_two_frame_gif(40);
-    let cases: [(&str, &[u8]); 5] = [
+    let cases: [(&str, &[u8]); 6] = [
         ("10 ms GIF", &gif_10_ms),
         ("20 ms GIF", &gif_20_ms),
         ("30 ms GIF", &gif_30_ms),
         ("40 ms GIF", &gif_40_ms),
         ("WebP", include_bytes!("testdata/two-frame.webp")),
+        ("APNG", include_bytes!("testdata/two-frame.apng")),
     ];
 
     for (label, bytes) in cases {
@@ -1650,6 +1651,13 @@ fn media_decoder_preserves_and_plays_gif_and_webp_animation_frames() {
         Err(error) => error,
     };
     assert!(error.starts_with("decode failed at animation frame 2:"));
+}
+
+#[test]
+fn media_decoder_keeps_static_png_still() {
+    let image = decode_media_image_bytes(&encoded_png(2, 2)).expect("static PNG should decode");
+    assert!(!image.is_animated());
+    assert_eq!(image.frame_count(), 1);
 }
 
 #[test]

@@ -8,7 +8,7 @@ use std::{
 use image::{
     AnimationDecoder as _, DynamicImage, Frame, ImageDecoder as _, ImageFormat, ImageReader,
     Limits,
-    codecs::{gif::GifDecoder, webp::WebPDecoder},
+    codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder},
 };
 use tokio::{sync::mpsc, task};
 
@@ -398,6 +398,7 @@ pub(in crate::tui) fn decode_media_image_bytes(
     match reader.format() {
         Some(ImageFormat::Gif) => decode_gif_animation(bytes),
         Some(ImageFormat::WebP) => decode_webp_animation(bytes),
+        Some(ImageFormat::Png) => decode_png_animation(bytes),
         _ => decode_image_bytes(bytes).map(DecodedMediaImage::still),
     }
 }
@@ -421,6 +422,24 @@ fn decode_webp_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage,
         return decode_image_bytes(bytes).map(DecodedMediaImage::still);
     }
     decode_animation_frames(decoder.into_frames())
+}
+
+fn decode_png_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
+    let mut decoder =
+        PngDecoder::new(Cursor::new(bytes)).map_err(|error| format!("decode failed: {error}"))?;
+    decoder
+        .set_limits(decode_limits())
+        .map_err(|error| format!("decode failed: {error}"))?;
+    if !decoder
+        .is_apng()
+        .map_err(|error| format!("decode failed: {error}"))?
+    {
+        return decode_image_bytes(bytes).map(DecodedMediaImage::still);
+    }
+    let apng = decoder
+        .apng()
+        .map_err(|error| format!("decode failed: {error}"))?;
+    decode_animation_frames(apng.into_frames())
 }
 
 fn decode_animation_frames(
