@@ -216,10 +216,10 @@ impl VoiceDaveState {
                 }
                 if transition_id == 0 {
                     self.execute_transition(transition_id)?;
-                } else if !self
+                } else if self
                     .pending_session
                     .as_ref()
-                    .is_some_and(|pending| pending.transition_id == transition_id)
+                    .is_none_or(|pending| pending.transition_id != transition_id)
                 {
                     send_dave_transition_ready(writer, transition_id).await?;
                 }
