@@ -68,6 +68,7 @@ pub(in crate::tui) struct MessageContentLine {
     mention_highlights: Vec<TextHighlight>,
     styled_prefixes: Vec<StyledPrefix>,
     pub(in crate::tui) image_slots: Vec<MessageContentImageSlot>,
+    emoji_row_gap: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -102,6 +103,7 @@ impl MessageContentLine {
             mention_highlights,
             styled_prefixes: Vec::new(),
             image_slots: Vec::new(),
+            emoji_row_gap: false,
         }
     }
 
@@ -530,23 +532,19 @@ fn format_standalone_emoji_lines(
         lines.push(
             MessageContentLine::styled_text(text, style, Vec::new()).with_image_slots(image_slots),
         );
-        lines.push(MessageContentLine::styled_text(
-            String::new(),
-            style,
-            Vec::new(),
-        ));
     }
 
-    lines
+    with_emoji_image_row_gaps(lines)
 }
 
 fn append_edited_marker(lines: &mut Vec<MessageContentLine>, width: usize) {
     let marker_style = theme::current().style(theme::HighlightGroup::Edited);
     let marker_width = EDITED_MARKER.width();
-    if let Some(line) = lines.last_mut()
-        && line.text.width().saturating_add(marker_width) <= width
+    if let Some(index) = lines.iter().rposition(|line| {
+        !line.emoji_row_gap && (!line.text.is_empty() || !line.image_slots.is_empty())
+    }) && lines[index].text.width().saturating_add(marker_width) <= width
     {
-        line.append_styled_suffix(EDITED_MARKER, marker_style);
+        lines[index].append_styled_suffix(EDITED_MARKER, marker_style);
         return;
     }
     lines.push(MessageContentLine::styled_text(
@@ -607,7 +605,7 @@ fn wrap_rendered_text_lines_with_styled_ranges(
     styled_ranges: &[StyledPrefix],
 ) -> Vec<MessageContentLine> {
     let rendered = rendered_text_with_url_highlights(rendered);
-    wrap_text_with_metadata(
+    let lines = wrap_text_with_metadata(
         &rendered.text,
         &rendered.highlights,
         &rendered.emoji_slots,
@@ -625,7 +623,31 @@ fn wrap_rendered_text_lines_with_styled_ranges(
         }
         line
     })
-    .collect()
+    .collect();
+    with_emoji_image_row_gaps(lines)
+}
+
+/// Standalone body emoji is taller than one row. Keep empty lines under each
+/// slot so the overlay does not cover the next content row.
+fn with_emoji_image_row_gaps(lines: Vec<MessageContentLine>) -> Vec<MessageContentLine> {
+    let mut output = Vec::with_capacity(lines.len());
+    for line in lines {
+        let extra_rows = line
+            .image_slots
+            .iter()
+            .map(|slot| usize::from(slot.image_size.height()))
+            .max()
+            .unwrap_or(1)
+            .saturating_sub(1);
+        let style = line.style;
+        output.push(line);
+        for _ in 0..extra_rows {
+            let mut gap = MessageContentLine::styled_text(String::new(), style, Vec::new());
+            gap.emoji_row_gap = true;
+            output.push(gap);
+        }
+    }
+    output
 }
 
 fn rendered_text_without_prefix(rendered: RenderedText, prefix_len: usize) -> RenderedText {
@@ -710,7 +732,7 @@ fn rendered_text_with_loaded_custom_emoji_placeholders(
         output.push_str(&text[cursor..start]);
         let new_start = output.len();
         if loaded_custom_emoji_urls.iter().any(|url| url == &slot.url) {
-            let placeholder = " ".repeat(usize::from(EmojiImageSize::Compact.width()));
+            let placeholder = " ".repeat(usize::from(EmojiImageSize::Standalone.width()));
             output.push_str(&placeholder);
             replacements.push(LoadedEmojiReplacement {
                 start,
@@ -721,7 +743,7 @@ fn rendered_text_with_loaded_custom_emoji_placeholders(
             slot_updates[index] = Some(InlineEmojiSlot {
                 byte_start: new_start,
                 byte_len: placeholder.len(),
-                display_width: EmojiImageSize::Compact.width(),
+                display_width: EmojiImageSize::Standalone.width(),
                 url: slot.url.clone(),
             });
         } else {
@@ -975,6 +997,7 @@ mod tests {
                 patch_base: false,
             }],
             image_slots: Vec::new(),
+            emoji_row_gap: false,
         };
 
         let spans = line.spans();

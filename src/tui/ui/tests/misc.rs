@@ -879,23 +879,32 @@ fn standalone_custom_emoji_reserves_a_large_two_row_image() {
     let state = seed_channel_message(DashboardState::new(), Id::new(1), "  <:solo:42>  ");
     let message = state.messages()[0];
     let url = "https://cdn.discordapp.com/emojis/42.png".to_owned();
+    let width = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
 
     let fallback_lines =
         format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, 80, &[]);
-    assert_eq!(fallback_lines.len(), 2);
-    assert_eq!(fallback_lines[0].text.width(), 4);
+    assert_eq!(fallback_lines.len(), height);
+    assert_eq!(fallback_lines[0].text.width(), width);
     assert_eq!(fallback_lines[0].image_slots.len(), 1);
     assert_eq!(
         fallback_lines[0].image_slots[0].image_size,
         EmojiImageSize::Standalone
     );
-    assert!(fallback_lines[1].text.is_empty());
+    assert!(
+        fallback_lines[1..]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
 
     let loaded_lines =
         format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, 80, &[url]);
-    assert_eq!(loaded_lines.len(), 2);
-    assert_eq!(loaded_lines[0].text, "    ");
-    assert_eq!(state.message_base_line_count_for_width(message, 80), 3);
+    assert_eq!(loaded_lines.len(), height);
+    assert_eq!(loaded_lines[0].text, " ".repeat(width));
+    assert_eq!(
+        state.message_base_line_count_for_width(message, 80),
+        1 + height
+    );
 
     let narrow_state = seed_channel_message(
         DashboardState::new(),
@@ -915,8 +924,8 @@ fn standalone_custom_emoji_reserves_a_large_two_row_image() {
         8,
         &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
     );
-    assert_eq!(fallback_lines.len(), 2);
-    assert_eq!(loaded_lines.len(), 2);
+    assert_eq!(fallback_lines.len(), height);
+    assert_eq!(loaded_lines.len(), height);
 }
 
 #[test]
@@ -928,12 +937,22 @@ fn emoji_only_messages_enlarge_unicode_and_custom_emoji() {
         "https://cdn.discordapp.com/emojis/42.png".to_owned(),
         "https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/72x72/2764.png".to_owned(),
     ];
-    let lines =
-        format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, 12, &urls);
+    let cell = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        message,
+        &state,
+        cell * 3,
+        &urls,
+    );
 
-    assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0].text, "            ");
-    assert!(lines[1].text.is_empty());
+    assert_eq!(lines.len(), height);
+    assert_eq!(lines[0].text, " ".repeat(cell * 3));
+    assert!(
+        lines[1..]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
     assert_eq!(lines[0].image_slots.len(), 3);
     assert_eq!(
         lines[0]
@@ -943,8 +962,12 @@ fn emoji_only_messages_enlarge_unicode_and_custom_emoji() {
             .collect::<Vec<_>>(),
         vec![
             (0, EmojiImageSize::Standalone, urls[0].as_str()),
-            (4, EmojiImageSize::Standalone, urls[1].as_str()),
-            (8, EmojiImageSize::Standalone, urls[2].as_str()),
+            (cell as u16, EmojiImageSize::Standalone, urls[1].as_str()),
+            (
+                (cell * 2) as u16,
+                EmojiImageSize::Standalone,
+                urls[2].as_str()
+            ),
         ]
     );
 }
@@ -953,13 +976,28 @@ fn emoji_only_messages_enlarge_unicode_and_custom_emoji() {
 fn emoji_only_messages_wrap_large_grapheme_sequences_by_cell_width() {
     let state = seed_channel_message(DashboardState::new(), Id::new(1), "👍🏽 👨‍❤️‍👨 🇰🇷 #️⃣");
     let message = state.messages()[0];
-    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, 8, &[]);
+    let cell = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        message,
+        &state,
+        cell * 2,
+        &[],
+    );
 
-    assert_eq!(lines.len(), 4);
+    assert_eq!(lines.len(), height * 2);
     assert_eq!(lines[0].image_slots.len(), 2);
-    assert!(lines[1].text.is_empty());
-    assert_eq!(lines[2].image_slots.len(), 2);
-    assert!(lines[3].text.is_empty());
+    assert!(
+        lines[1..height]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
+    assert_eq!(lines[height].image_slots.len(), 2);
+    assert!(
+        lines[height + 1..]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
     assert!(
         lines
             .iter()
@@ -969,34 +1007,47 @@ fn emoji_only_messages_wrap_large_grapheme_sequences_by_cell_width() {
 }
 
 #[test]
-fn emoji_mixed_with_text_keeps_the_existing_rendering() {
-    let cases = [
-        (
-            "hello <:inline:42>",
-            vec!["https://cdn.discordapp.com/emojis/42.png".to_owned()],
-            1,
-        ),
-        ("hello 😀", Vec::new(), 0),
-    ];
+fn emoji_mixed_with_text_uses_standalone_size() {
+    let state = seed_channel_message(DashboardState::new(), Id::new(1), "hello <:inline:42>");
+    let url = "https://cdn.discordapp.com/emojis/42.png".to_owned();
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        state.messages()[0],
+        &state,
+        80,
+        &[url.clone()],
+    );
 
-    for (content, loaded_urls, expected_slots) in cases {
-        let state = seed_channel_message(DashboardState::new(), Id::new(1), content);
-        let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-            state.messages()[0],
-            &state,
-            80,
-            &loaded_urls,
-        );
+    let width = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
 
-        assert_eq!(lines.len(), 1, "{content}");
-        assert_eq!(lines[0].image_slots.len(), expected_slots, "{content}");
-        assert!(
-            lines[0]
-                .image_slots
-                .iter()
-                .all(|slot| slot.image_size == EmojiImageSize::Compact)
-        );
-    }
+    assert_eq!(lines.len(), height);
+    assert_eq!(lines[0].text, format!("hello {}", " ".repeat(width)));
+    assert_eq!(lines[0].image_slots.len(), 1);
+    assert_eq!(lines[0].image_slots[0].col, 6);
+    assert_eq!(
+        lines[0].image_slots[0].image_size,
+        EmojiImageSize::Standalone
+    );
+    assert_eq!(lines[0].image_slots[0].url, url);
+    assert!(
+        lines[1..]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
+}
+
+#[test]
+fn unicode_mixed_with_text_stays_inline_glyphs() {
+    let state = seed_channel_message(DashboardState::new(), Id::new(1), "hello 😀");
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        state.messages()[0],
+        &state,
+        80,
+        &[],
+    );
+
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].image_slots.is_empty());
 }
 
 #[test]
@@ -1017,10 +1068,17 @@ fn edited_marker_stays_outside_the_standalone_emoji_image_rows() {
         &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
     );
 
-    assert_eq!(lines.len(), 3);
-    assert_eq!(lines[0].text, "    ");
-    assert!(lines[1].text.is_empty());
-    assert_eq!(lines[2].text, "(edited)");
+    let width = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
+
+    assert_eq!(lines.len(), height + 1);
+    assert_eq!(lines[0].text, " ".repeat(width));
+    assert!(
+        lines[1..height]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
+    assert_eq!(lines[height].text, "(edited)");
 }
 
 #[test]

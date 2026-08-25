@@ -722,9 +722,17 @@ fn message_content_applies_supported_markdown_formatting() {
         200,
         &loaded_urls,
     );
-    assert_eq!(line_texts(&emoji_lines), vec!["  "]);
+    let cell = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
+    let mut expected = vec![" ".repeat(cell)];
+    expected.extend(std::iter::repeat_n(String::new(), height.saturating_sub(1)));
+    assert_eq!(line_texts(&emoji_lines), expected);
     assert_eq!(emoji_lines[0].image_slots[0].col, 0);
     assert_eq!(emoji_lines[0].image_slots[0].byte_start, 0);
+    assert_eq!(
+        emoji_lines[0].image_slots[0].image_size,
+        EmojiImageSize::Standalone
+    );
 
     let quote = message_with_content(Some("> **bold quote**".to_owned()));
     let quote_lines = format_message_content_lines(&quote, &DashboardState::new(), 200);
