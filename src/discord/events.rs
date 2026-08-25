@@ -258,6 +258,7 @@ pub enum AppEvent {
     GuildCreate {
         guild_id: Id<GuildMarker>,
         name: String,
+        icon_hash: Option<String>,
         member_count: Option<u64>,
         /// Snowflake of the guild owner. The owner short-circuits permission
         /// checks (sees every channel regardless of overwrites).
@@ -282,6 +283,7 @@ pub enum AppEvent {
     GuildUpdate {
         guild_id: Id<GuildMarker>,
         name: String,
+        icon_hash: Option<String>,
         owner_id: Option<Id<UserMarker>>,
         // `Some` only when this GUILD_UPDATE payload actually carried the field,
         // so a rename does not reset a guild's boost state to unboosted.
@@ -1080,6 +1082,7 @@ pub(crate) mod test_builders {
     pub(crate) struct GuildCreateFixture {
         pub(crate) guild_id: Id<GuildMarker>,
         pub(crate) name: String,
+        pub(crate) icon_hash: Option<String>,
         pub(crate) member_count: Option<u64>,
         pub(crate) owner_id: Option<Id<UserMarker>>,
         pub(crate) boost_tier: GuildBoostTier,
@@ -1102,6 +1105,7 @@ pub(crate) mod test_builders {
             Self {
                 guild_id,
                 name: "guild".to_owned(),
+                icon_hash: None,
                 member_count: None,
                 owner_id: None,
                 boost_tier: GuildBoostTier::None,
@@ -1125,6 +1129,7 @@ pub(crate) mod test_builders {
         AppEvent::GuildCreate {
             guild_id: event.guild_id,
             name: event.name,
+            icon_hash: event.icon_hash,
             member_count: event.member_count,
             owner_id: event.owner_id,
             boost_tier: event.boost_tier,
@@ -1529,6 +1534,7 @@ pub(crate) mod test_builders {
     pub(crate) struct GuildUpdateFixture {
         pub(crate) guild_id: Id<GuildMarker>,
         pub(crate) name: String,
+        pub(crate) icon_hash: Option<String>,
         pub(crate) owner_id: Option<Id<UserMarker>>,
         pub(crate) boost_tier: Option<GuildBoostTier>,
         pub(crate) boost_count: Option<u32>,
@@ -1545,6 +1551,7 @@ pub(crate) mod test_builders {
             Self {
                 guild_id: Id::new(1),
                 name: String::new(),
+                icon_hash: None,
                 owner_id: None,
                 boost_tier: None,
                 boost_count: None,
@@ -1562,6 +1569,7 @@ pub(crate) mod test_builders {
         AppEvent::GuildUpdate {
             guild_id: f.guild_id,
             name: f.name,
+            icon_hash: f.icon_hash,
             owner_id: f.owner_id,
             boost_tier: f.boost_tier,
             boost_count: f.boost_count,

@@ -48,6 +48,7 @@ pub use application_commands::{
     application_command_option_scope, parsed_application_command_option_names,
 };
 pub(crate) use auth_http::DiscordAuthSession;
+pub(crate) use avatar::guild_icon_url;
 pub use builtin_commands::{
     BuiltinSlashCommandInfo, BuiltinSlashCommandParse, BuiltinSlashCommandSubmit,
     builtin_slash_commands, parse_builtin_slash_command,

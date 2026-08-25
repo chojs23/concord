@@ -736,6 +736,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildUpdate {
             guild_id: Id::new(100),
             name: "guild".to_owned(),
+            icon_hash: None,
             owner_id: None,
             boost_tier: None,
             boost_count: None,
@@ -803,6 +804,7 @@ mod tests {
         state.apply_event(&AppEvent::GuildCreate {
             guild_id,
             name: "guild".to_owned(),
+            icon_hash: None,
             member_count: Some(1),
             owner_id: None,
             boost_tier: GuildBoostTier::None,
