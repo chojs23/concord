@@ -2,7 +2,7 @@
 //! fenced code boxes with syntax highlight, and inline marker styling.
 
 use ratatui::style::{Modifier, Style};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::tui::state::DashboardState;
 use crate::tui::text::{InlineEmojiSlot, RenderedText, TextHighlight, truncate_display_width};
@@ -18,6 +18,7 @@ use super::{
 const MARKDOWN_QUOTE_PREFIX: &str = "▎ ";
 const MARKDOWN_BULLET_PREFIX: &str = "• ";
 const MARKDOWN_BULLET_CONTINUATION_PREFIX: &str = "  ";
+const CODE_TAB_WIDTH: usize = 4;
 
 struct InlineMarkdownText {
     rendered: RenderedText,
@@ -187,16 +188,19 @@ fn wrap_code_block_lines_and_highlight(
     label: Option<String>,
 ) -> Vec<MessageContentLine> {
     let style = markdown_code_style();
+    let text_lines = code_lines
+        .into_iter()
+        .map(|rt| expand_tabs(&rt.text, CODE_TAB_WIDTH))
+        .collect::<Vec<_>>();
     let highlighted_lines = {
         if let Some(language) = label.as_ref().filter(|l| !l.is_empty()) {
-            let text_lines = code_lines.into_iter().map(|rt| rt.text).collect::<Vec<_>>();
             state
                 .syntax_highlight_cache
                 .highlight(&text_lines, language)
         } else {
-            code_lines
+            text_lines
                 .into_iter()
-                .map(|rt| vec![(style, rt.text)])
+                .map(|text| vec![(style, text)])
                 .collect()
         }
     };
@@ -363,6 +367,23 @@ fn markdown_code_fence_closing_content_end(value: &str) -> Option<usize> {
 
 fn markdown_code_style() -> Style {
     Style::default()
+}
+
+fn expand_tabs(line: &str, tab_width: usize) -> String {
+    let tab_width = tab_width.max(1);
+    let mut out = String::with_capacity(line.len());
+    let mut col = 0usize;
+    for ch in line.chars() {
+        if ch == '\t' {
+            let spaces = tab_width - (col % tab_width);
+            out.extend(std::iter::repeat_n(' ', spaces));
+            col += spaces;
+        } else {
+            out.push(ch);
+            col = col.saturating_add(ch.width().unwrap_or(0));
+        }
+    }
+    out
 }
 
 fn inline_code_style() -> Style {

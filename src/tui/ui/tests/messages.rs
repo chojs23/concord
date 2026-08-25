@@ -810,6 +810,42 @@ fn message_content_applies_supported_markdown_formatting() {
 }
 
 #[test]
+fn fenced_code_block_preserves_space_indentation() {
+    let message = message_with_content(Some("```\nfunc f() {\n    return\n}\n```".to_owned()));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭────────────╮",
+            "│ func f() { │",
+            "│     return │",
+            "│ }          │",
+            "╰────────────╯",
+        ]
+    );
+}
+
+#[test]
+fn fenced_code_block_expands_tabs_like_discord() {
+    let message = message_with_content(Some(
+        "```\nfunc f() {\n\tif ok {\n\t\treturn\n\t}\n}\n```".to_owned(),
+    ));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭────────────────╮",
+            "│ func f() {     │",
+            "│     if ok {    │",
+            "│         return │",
+            "│     }          │",
+            "│ }              │",
+            "╰────────────────╯",
+        ]
+    );
+}
+
+#[test]
 fn wrapped_markdown_bullets_use_indented_continuation_lines() {
     let message = message_with_content(Some("- alpha beta\n* gamma delta".to_owned()));
 
