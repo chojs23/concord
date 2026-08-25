@@ -38,7 +38,10 @@ use media_runtime::{
     DashboardMediaRuntime, LocalUploadPreviewResult, drain_pending_commands_after_draw,
     schedule_media_loads_after_draw, store_local_upload_preview_result,
 };
-use redraw::{DashboardRedrawState, draw_dashboard_transaction};
+use redraw::{
+    DashboardRedrawState, INPUT_REDRAW_INTERVAL, draw_dashboard_transaction, redraw_is_due,
+    schedule_redraw,
+};
 use scheduler::DashboardCommandScheduler;
 
 type ClipboardPasteResult = std::result::Result<
@@ -177,7 +180,8 @@ pub(super) async fn run_dashboard(
     // events only schedule a redraw when this moves (see `redraw_gate`).
     let mut last_view_signature = redraw_gate::view_signature(&state);
     while !state.should_quit() {
-        if dirty {
+        if dirty && redraw_is_due(pending_redraw_deadline, tokio::time::Instant::now()) {
+            pending_redraw_deadline = None;
             let size = terminal.size()?;
             let area = Rect::new(0, 0, size.width, size.height);
             // Resolve where every overlay image lands this frame and diff it
@@ -353,6 +357,11 @@ pub(super) async fn run_dashboard(
                         if outcome.dirty {
                             dirty = true;
                         }
+                        schedule_redraw(
+                            &mut pending_redraw_deadline,
+                            tokio::time::Instant::now(),
+                            INPUT_REDRAW_INTERVAL,
+                        );
                     }
                     Some(Err(error)) => return Err(error.into()),
                     None => {
@@ -643,9 +652,11 @@ fn schedule_background_redraw(
     pending_redraw_deadline: &mut Option<tokio::time::Instant>,
     debounce: std::time::Duration,
 ) {
-    if pending_redraw_deadline.is_none() {
-        *pending_redraw_deadline = Some(tokio::time::Instant::now() + debounce);
-    }
+    schedule_redraw(
+        pending_redraw_deadline,
+        tokio::time::Instant::now(),
+        debounce,
+    );
 }
 
 fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardPasteResult) {
