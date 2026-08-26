@@ -357,7 +357,7 @@ fn image_preview_quality_does_not_change_avatar_or_custom_emoji_requests() {
         visible_emoji_image_targets(&state),
         vec![EmojiImageTarget {
             url: "https://cdn.discordapp.com/emojis/50.png".to_owned(),
-            image_size: EmojiImageSize::Standalone,
+            image_size: EmojiImageSize::Compact,
         }]
     );
 }

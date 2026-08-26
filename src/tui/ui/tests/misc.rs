@@ -978,12 +978,8 @@ fn emoji_only_messages_wrap_large_grapheme_sequences_by_cell_width() {
     let message = state.messages()[0];
     let cell = usize::from(EmojiImageSize::Standalone.width());
     let height = usize::from(EmojiImageSize::Standalone.height());
-    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-        message,
-        &state,
-        cell * 2,
-        &[],
-    );
+    let lines =
+        format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, cell * 2, &[]);
 
     assert_eq!(lines.len(), height * 2);
     assert_eq!(lines[0].image_slots.len(), 2);
@@ -1007,33 +1003,24 @@ fn emoji_only_messages_wrap_large_grapheme_sequences_by_cell_width() {
 }
 
 #[test]
-fn emoji_mixed_with_text_uses_standalone_size() {
+fn emoji_mixed_with_text_keeps_compact_size() {
     let state = seed_channel_message(DashboardState::new(), Id::new(1), "hello <:inline:42>");
     let url = "https://cdn.discordapp.com/emojis/42.png".to_owned();
     let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
         state.messages()[0],
         &state,
         80,
-        &[url.clone()],
+        std::slice::from_ref(&url),
     );
 
-    let width = usize::from(EmojiImageSize::Standalone.width());
-    let height = usize::from(EmojiImageSize::Standalone.height());
+    let width = usize::from(EmojiImageSize::Compact.width());
 
-    assert_eq!(lines.len(), height);
+    assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].text, format!("hello {}", " ".repeat(width)));
     assert_eq!(lines[0].image_slots.len(), 1);
     assert_eq!(lines[0].image_slots[0].col, 6);
-    assert_eq!(
-        lines[0].image_slots[0].image_size,
-        EmojiImageSize::Standalone
-    );
+    assert_eq!(lines[0].image_slots[0].image_size, EmojiImageSize::Compact);
     assert_eq!(lines[0].image_slots[0].url, url);
-    assert!(
-        lines[1..]
-            .iter()
-            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
-    );
 }
 
 #[test]

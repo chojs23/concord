@@ -263,7 +263,7 @@ pub(in crate::tui) fn wrap_text_with_metadata(
                     col: u16::try_from(current_width).unwrap_or(u16::MAX),
                     byte_start: line_byte_start,
                     byte_len: slot.byte_len,
-                    image_size: crate::tui::text::EmojiImageSize::Standalone,
+                    image_size: crate::tui::text::EmojiImageSize::Compact,
                     url: slot.url.clone(),
                 });
             }

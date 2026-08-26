@@ -732,7 +732,7 @@ fn rendered_text_with_loaded_custom_emoji_placeholders(
         output.push_str(&text[cursor..start]);
         let new_start = output.len();
         if loaded_custom_emoji_urls.iter().any(|url| url == &slot.url) {
-            let placeholder = " ".repeat(usize::from(EmojiImageSize::Standalone.width()));
+            let placeholder = " ".repeat(usize::from(EmojiImageSize::Compact.width()));
             output.push_str(&placeholder);
             replacements.push(LoadedEmojiReplacement {
                 start,
@@ -743,7 +743,7 @@ fn rendered_text_with_loaded_custom_emoji_placeholders(
             slot_updates[index] = Some(InlineEmojiSlot {
                 byte_start: new_start,
                 byte_len: placeholder.len(),
-                display_width: EmojiImageSize::Standalone.width(),
+                display_width: EmojiImageSize::Compact.width(),
                 url: slot.url.clone(),
             });
         } else {

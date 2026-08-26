@@ -27,12 +27,7 @@ fn loaded_custom_emoji_message_uses_image_width() {
     let message = message_with_content(Some("<:long_custom:42>text".to_owned()));
     let loaded_urls = vec!["https://cdn.discordapp.com/emojis/42.png".to_owned()];
 
-    let cell = usize::from(EmojiImageSize::Standalone.width());
-    let height = usize::from(EmojiImageSize::Standalone.height());
-    let placeholder = " ".repeat(cell);
-    let gaps = vec![""; height.saturating_sub(1)];
-
-    for width in [200, cell] {
+    for width in [200, 6] {
         let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
             &message,
             &DashboardState::new(),
@@ -40,21 +35,9 @@ fn loaded_custom_emoji_message_uses_image_width() {
             &loaded_urls,
         );
 
+        assert_eq!(line_texts(&lines), vec!["  text"]);
         assert_eq!(lines[0].image_slots[0].col, 0);
-        assert_eq!(
-            lines[0].image_slots[0].image_size,
-            EmojiImageSize::Standalone
-        );
-        if width == 200 {
-            let mut expected = vec![format!("{placeholder}text")];
-            expected.extend(gaps.iter().map(|gap| gap.to_string()));
-            assert_eq!(line_texts(&lines), expected);
-        } else {
-            let mut expected = vec![placeholder.clone()];
-            expected.extend(gaps.iter().map(|gap| gap.to_string()));
-            expected.push("text".to_owned());
-            assert_eq!(line_texts(&lines), expected);
-        }
+        assert_eq!(lines[0].image_slots[0].image_size, EmojiImageSize::Compact);
     }
 }
 
