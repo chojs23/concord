@@ -303,9 +303,6 @@ fn wrap_prefixed_markdown_line(
         .into_iter()
         .enumerate()
         .map(|(index, line)| {
-            if line.emoji_row_gap {
-                return line;
-            }
             let line_prefix = if index == 0 {
                 prefix
             } else {

@@ -68,7 +68,6 @@ pub(in crate::tui) struct MessageContentLine {
     mention_highlights: Vec<TextHighlight>,
     styled_prefixes: Vec<StyledPrefix>,
     pub(in crate::tui) image_slots: Vec<MessageContentImageSlot>,
-    emoji_row_gap: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -103,7 +102,6 @@ impl MessageContentLine {
             mention_highlights,
             styled_prefixes: Vec::new(),
             image_slots: Vec::new(),
-            emoji_row_gap: false,
         }
     }
 
@@ -448,8 +446,8 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
 }
 
 /// Discord treats emoji-only messages as media rather than inline text. Keep
-/// that decision in the formatter so scroll metrics reserve every second image
-/// row before the image protocols finish loading.
+/// that decision in the formatter so scroll metrics reserve the full image
+/// height before the image protocols finish loading.
 struct StandaloneEmoji {
     fallback: String,
     url: String,
@@ -532,19 +530,25 @@ fn format_standalone_emoji_lines(
         lines.push(
             MessageContentLine::styled_text(text, style, Vec::new()).with_image_slots(image_slots),
         );
+        for _ in 1..EmojiImageSize::Standalone.height() {
+            lines.push(MessageContentLine::styled_text(
+                String::new(),
+                style,
+                Vec::new(),
+            ));
+        }
     }
 
-    with_emoji_image_row_gaps(lines)
+    lines
 }
 
 fn append_edited_marker(lines: &mut Vec<MessageContentLine>, width: usize) {
     let marker_style = theme::current().style(theme::HighlightGroup::Edited);
     let marker_width = EDITED_MARKER.width();
-    if let Some(index) = lines.iter().rposition(|line| {
-        !line.emoji_row_gap && (!line.text.is_empty() || !line.image_slots.is_empty())
-    }) && lines[index].text.width().saturating_add(marker_width) <= width
+    if let Some(line) = lines.last_mut()
+        && line.text.width().saturating_add(marker_width) <= width
     {
-        lines[index].append_styled_suffix(EDITED_MARKER, marker_style);
+        line.append_styled_suffix(EDITED_MARKER, marker_style);
         return;
     }
     lines.push(MessageContentLine::styled_text(
@@ -568,8 +572,8 @@ fn append_standalone_emoji_edited_marker(
         return;
     }
 
-    // The row immediately after the emoji is occupied by the image. Insert a
-    // separate marker below it instead of letting the image cover the text.
+    // The rows below the anchor are occupied by the image. Insert a separate
+    // marker below them instead of letting the image cover the text.
     let marker_index = line_index
         .saturating_add(usize::from(EmojiImageSize::Standalone.height()))
         .min(lines.len());
@@ -605,7 +609,7 @@ fn wrap_rendered_text_lines_with_styled_ranges(
     styled_ranges: &[StyledPrefix],
 ) -> Vec<MessageContentLine> {
     let rendered = rendered_text_with_url_highlights(rendered);
-    let lines = wrap_text_with_metadata(
+    wrap_text_with_metadata(
         &rendered.text,
         &rendered.highlights,
         &rendered.emoji_slots,
@@ -623,31 +627,7 @@ fn wrap_rendered_text_lines_with_styled_ranges(
         }
         line
     })
-    .collect();
-    with_emoji_image_row_gaps(lines)
-}
-
-/// Standalone body emoji is taller than one row. Keep empty lines under each
-/// slot so the overlay does not cover the next content row.
-fn with_emoji_image_row_gaps(lines: Vec<MessageContentLine>) -> Vec<MessageContentLine> {
-    let mut output = Vec::with_capacity(lines.len());
-    for line in lines {
-        let extra_rows = line
-            .image_slots
-            .iter()
-            .map(|slot| usize::from(slot.image_size.height()))
-            .max()
-            .unwrap_or(1)
-            .saturating_sub(1);
-        let style = line.style;
-        output.push(line);
-        for _ in 0..extra_rows {
-            let mut gap = MessageContentLine::styled_text(String::new(), style, Vec::new());
-            gap.emoji_row_gap = true;
-            output.push(gap);
-        }
-    }
-    output
+    .collect()
 }
 
 fn rendered_text_without_prefix(rendered: RenderedText, prefix_len: usize) -> RenderedText {
@@ -997,7 +977,6 @@ mod tests {
                 patch_base: false,
             }],
             image_slots: Vec::new(),
-            emoji_row_gap: false,
         };
 
         let spans = line.spans();

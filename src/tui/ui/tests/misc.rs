@@ -875,12 +875,14 @@ fn grouped_continuation_custom_emoji_image_uses_body_row() {
 }
 
 #[test]
-fn standalone_custom_emoji_reserves_a_large_two_row_image() {
+fn standalone_custom_emoji_reserves_a_large_four_row_image() {
     let state = seed_channel_message(DashboardState::new(), Id::new(1), "  <:solo:42>  ");
     let message = state.messages()[0];
     let url = "https://cdn.discordapp.com/emojis/42.png".to_owned();
     let width = usize::from(EmojiImageSize::Standalone.width());
     let height = usize::from(EmojiImageSize::Standalone.height());
+    assert_eq!(width, 8);
+    assert_eq!(height, 4);
 
     let fallback_lines =
         format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, 80, &[]);
