@@ -2,6 +2,7 @@
 //! fenced code boxes with syntax highlight, and inline marker styling.
 
 use ratatui::style::{Modifier, Style};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::state::DashboardState;
@@ -18,6 +19,7 @@ use super::{
 const MARKDOWN_QUOTE_PREFIX: &str = "▎ ";
 const MARKDOWN_BULLET_PREFIX: &str = "• ";
 const MARKDOWN_BULLET_CONTINUATION_PREFIX: &str = "  ";
+const CODE_TAB_WIDTH: usize = 4;
 
 struct InlineMarkdownText {
     rendered: RenderedText,
@@ -187,19 +189,27 @@ fn wrap_code_block_lines_and_highlight(
     label: Option<String>,
 ) -> Vec<MessageContentLine> {
     let style = markdown_code_style();
+    let text_lines = code_lines
+        .into_iter()
+        .map(|rendered| rendered.text)
+        .collect::<Vec<_>>();
+    // Tab-sensitive grammars need the original source. Expand tabs only after
+    // syntax highlighting has assigned styles to the raw text.
     let highlighted_lines = {
         if let Some(language) = label.as_ref().filter(|l| !l.is_empty()) {
-            let text_lines = code_lines.into_iter().map(|rt| rt.text).collect::<Vec<_>>();
             state
                 .syntax_highlight_cache
                 .highlight(&text_lines, language)
         } else {
-            code_lines
+            text_lines
                 .into_iter()
-                .map(|rt| vec![(style, rt.text)])
+                .map(|text| vec![(style, text)])
                 .collect()
         }
-    };
+    }
+    .into_iter()
+    .map(|regions| expand_tabs_in_styled_regions(regions, CODE_TAB_WIDTH))
+    .collect::<Vec<_>>();
 
     let inner_width = width.saturating_sub(4).max(1);
     let mut body_lines = Vec::new();
@@ -363,6 +373,33 @@ fn markdown_code_fence_closing_content_end(value: &str) -> Option<usize> {
 
 fn markdown_code_style() -> Style {
     Style::default()
+}
+
+fn expand_tabs_in_styled_regions(
+    regions: Vec<(Style, String)>,
+    tab_width: usize,
+) -> Vec<(Style, String)> {
+    let tab_width = tab_width.max(1);
+    // A tab can follow a syntax token boundary, so the display column belongs
+    // to the whole line rather than to each styled region.
+    let mut col = 0usize;
+    regions
+        .into_iter()
+        .map(|(style, text)| {
+            let mut expanded = String::with_capacity(text.len());
+            for grapheme in text.graphemes(true) {
+                if grapheme == "\t" {
+                    let spaces = tab_width - (col % tab_width);
+                    expanded.extend(std::iter::repeat_n(' ', spaces));
+                    col += spaces;
+                } else {
+                    expanded.push_str(grapheme);
+                    col = col.saturating_add(grapheme.width());
+                }
+            }
+            (style, expanded)
+        })
+        .collect()
 }
 
 fn inline_code_style() -> Style {

@@ -446,8 +446,8 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
 }
 
 /// Discord treats emoji-only messages as media rather than inline text. Keep
-/// that decision in the formatter so scroll metrics reserve every second image
-/// row before the image protocols finish loading.
+/// that decision in the formatter so scroll metrics reserve the full image
+/// height before the image protocols finish loading.
 struct StandaloneEmoji {
     fallback: String,
     url: String,
@@ -530,11 +530,13 @@ fn format_standalone_emoji_lines(
         lines.push(
             MessageContentLine::styled_text(text, style, Vec::new()).with_image_slots(image_slots),
         );
-        lines.push(MessageContentLine::styled_text(
-            String::new(),
-            style,
-            Vec::new(),
-        ));
+        for _ in 1..EmojiImageSize::Standalone.height() {
+            lines.push(MessageContentLine::styled_text(
+                String::new(),
+                style,
+                Vec::new(),
+            ));
+        }
     }
 
     lines
@@ -570,8 +572,8 @@ fn append_standalone_emoji_edited_marker(
         return;
     }
 
-    // The row immediately after the emoji is occupied by the image. Insert a
-    // separate marker below it instead of letting the image cover the text.
+    // The rows below the anchor are occupied by the image. Insert a separate
+    // marker below them instead of letting the image cover the text.
     let marker_index = line_index
         .saturating_add(usize::from(EmojiImageSize::Standalone.height()))
         .min(lines.len());

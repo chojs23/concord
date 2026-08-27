@@ -725,6 +725,10 @@ fn message_content_applies_supported_markdown_formatting() {
     assert_eq!(line_texts(&emoji_lines), vec!["  "]);
     assert_eq!(emoji_lines[0].image_slots[0].col, 0);
     assert_eq!(emoji_lines[0].image_slots[0].byte_start, 0);
+    assert_eq!(
+        emoji_lines[0].image_slots[0].image_size,
+        EmojiImageSize::Compact
+    );
 
     let quote = message_with_content(Some("> **bold quote**".to_owned()));
     let quote_lines = format_message_content_lines(&quote, &DashboardState::new(), 200);
@@ -807,6 +811,69 @@ fn message_content_applies_supported_markdown_formatting() {
     );
     assert!(lines.iter().all(|line| line.image_slots.is_empty()));
     assert_eq!(lines[1].spans()[1].style.fg, None);
+}
+
+#[test]
+fn fenced_code_block_preserves_space_indentation() {
+    let message = message_with_content(Some("```\nfunc f() {\n    return\n}\n```".to_owned()));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭────────────╮",
+            "│ func f() { │",
+            "│     return │",
+            "│ }          │",
+            "╰────────────╯",
+        ]
+    );
+}
+
+#[test]
+fn fenced_code_block_expands_tabs_at_display_column_stops() {
+    let message = message_with_content(Some(
+        "```\nfunc f() {\n\tif ok {\n\t\treturn\n\t}\n}\na\tX\nab\tX\nabcd\tX\n漢\tX\n👩‍💻\tX\n```"
+            .to_owned(),
+    ));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭────────────────╮",
+            "│ func f() {     │",
+            "│     if ok {    │",
+            "│         return │",
+            "│     }          │",
+            "│ }              │",
+            "│ a   X          │",
+            "│ ab  X          │",
+            "│ abcd    X      │",
+            "│ 漢  X          │",
+            "│ 👩‍💻  X          │",
+            "╰────────────────╯",
+        ]
+    );
+}
+
+#[test]
+fn fenced_code_block_preserves_tab_sensitive_syntax_highlighting() {
+    let message = message_with_content(Some(
+        "```make\ntarget:\n\t@echo one\n    @echo two\n```".to_owned(),
+    ));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+
+    let recipe_echo = lines[2]
+        .spans()
+        .into_iter()
+        .find(|span| span.content == "echo")
+        .expect("tab-indented recipe should use shell highlighting");
+    let inconsistent_echo = lines[3]
+        .spans()
+        .into_iter()
+        .find(|span| span.content == "echo two")
+        .expect("space-indented recipe should keep inconsistent highlighting");
+
+    assert_ne!(recipe_echo.style.fg, inconsistent_echo.style.fg);
 }
 
 #[test]
