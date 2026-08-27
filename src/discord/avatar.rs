@@ -43,11 +43,6 @@ pub(crate) fn default_avatar_url(user_id: Id<UserMarker>, discriminator: u16) ->
     format!("https://cdn.discordapp.com/embed/avatars/{index}.png")
 }
 
-pub(crate) fn guild_icon_url(guild_id: Id<GuildMarker>, icon_hash: &str) -> String {
-    let extension = avatar_hash_extension(icon_hash);
-    format!("https://cdn.discordapp.com/icons/{guild_id}/{icon_hash}.{extension}?size=64")
-}
-
 pub(crate) fn avatar_hash_extension(hash: &str) -> &'static str {
     if hash.starts_with("a_") { "gif" } else { "png" }
 }
@@ -68,23 +63,4 @@ fn discriminator(user: &Value) -> u16 {
                 .or_else(|| value.as_u64().and_then(|value| u16::try_from(value).ok()))
         })
         .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::guild_icon_url;
-    use crate::discord::ids::Id;
-
-    #[test]
-    fn guild_icon_url_uses_thumbnail_size_and_hash_animation() {
-        let guild_id = Id::new(42);
-        assert_eq!(
-            guild_icon_url(guild_id, "static_hash"),
-            "https://cdn.discordapp.com/icons/42/static_hash.png?size=64"
-        );
-        assert_eq!(
-            guild_icon_url(guild_id, "a_animated_hash"),
-            "https://cdn.discordapp.com/icons/42/a_animated_hash.gif?size=64"
-        );
-    }
 }
