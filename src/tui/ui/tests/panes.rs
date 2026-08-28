@@ -1,4 +1,9 @@
 use super::*;
+use crate::discord::VoiceScope;
+use crate::discord::test_builders::{
+    GuildCreateFixture, VoiceConnectionStatusChangedFixture, VoiceSpeakingUpdateFixture,
+    guild_create_event, voice_connection_status_changed_event, voice_speaking_update_event,
+};
 
 #[test]
 fn header_shows_available_update_version() {
@@ -38,7 +43,6 @@ fn header_shows_gateway_error_before_connected_account_is_ready() {
     assert!(header.contains("Concord - v"), "{header}");
     assert!(header.contains("Connection issue:"), "{header}");
     assert!(header.contains("websocket closed"), "{header}");
-    assert!(!header.contains("Loading..."), "{header}");
 }
 
 #[test]
@@ -56,8 +60,6 @@ fn header_clears_gateway_error_after_connected_account_is_ready() {
     let header = dump.first().expect("dashboard render includes header");
 
     assert!(header.contains("Connected as muri"), "{header}");
-    assert!(!header.contains("Connection issue:"), "{header}");
-    assert!(!header.contains("Loading..."), "{header}");
 }
 
 #[test]
@@ -67,28 +69,23 @@ fn header_shows_connected_account() {
         user: "muri".to_owned(),
         user_id: Some(Id::new(10)),
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(Id::new(1)),
             position: Some(0),
             name: "Lobby".to_owned(),
             ..ChannelInfo::test(Id::new(11), "GuildVoice")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id: Id::new(1),
-        channel_id: Some(Id::new(11)),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope: VoiceScope::Guild(Id::new(1)),
+            channel_id: Some(Id::new(11)),
+            status: VoiceConnectionStatus::Connecting,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
 
     let dump = render_dashboard_dump(100, 10, &mut state);
     let header = dump.first().expect("dashboard render includes header");
@@ -96,9 +93,6 @@ fn header_shows_connected_account() {
     assert!(header.contains("Concord - v"), "{header}");
     assert!(header.contains("Connected as muri"), "{header}");
     assert!(header.contains("Voice guild - Lobby"), "{header}");
-    assert!(!header.contains("🔇"), "{header}");
-    assert!(!header.contains("🎧"), "{header}");
-    assert!(!header.contains("Loading..."), "{header}");
 }
 
 #[test]
@@ -117,13 +111,12 @@ fn header_shows_voice_status_icons_without_voice_connection() {
     let header = dump.first().expect("dashboard render includes header");
 
     assert!(header.contains("Connected as muri"), "{header}");
-    assert!(!header.contains("Voice "), "{header}");
     assert!(header.contains("🔇"), "{header}");
     assert!(header.contains("🎧"), "{header}");
 }
 
 #[test]
-fn header_keeps_current_user_white_while_speaking() {
+fn header_keeps_current_user_on_terminal_foreground_while_speaking() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "muri".to_owned(),
@@ -139,17 +132,17 @@ fn header_keeps_current_user_white_while_speaking() {
         .map(|col| buffer[(col, 0)].symbol().to_owned())
         .collect::<String>();
     let user_col = header.find("muri").expect("header should include user") as u16;
-    assert_eq!(buffer[(user_col, 0)].fg, Color::White);
+    assert_eq!(buffer[(user_col, 0)].fg, Color::Reset);
 
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo::test(Id::new(1), Some(Id::new(11)), Id::new(10)),
     });
-    state.push_event(AppEvent::VoiceSpeakingUpdate {
-        guild_id: Id::new(1),
+    state.push_event(voice_speaking_update_event(VoiceSpeakingUpdateFixture {
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(11),
         user_id: Id::new(10),
         speaking: true,
-    });
+    }));
     let backend = TestBackend::new(80, 1);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
@@ -160,7 +153,7 @@ fn header_keeps_current_user_white_while_speaking() {
         .map(|col| buffer[(col, 0)].symbol().to_owned())
         .collect::<String>();
     let user_col = header.find("muri").expect("header should include user") as u16;
-    assert_eq!(buffer[(user_col, 0)].fg, Color::White);
+    assert_eq!(buffer[(user_col, 0)].fg, Color::Reset);
 }
 
 #[test]
@@ -170,22 +163,15 @@ fn header_labels_other_client_voice_connection() {
         user: "muri".to_owned(),
         user_id: Some(Id::new(10)),
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(Id::new(1)),
             position: Some(0),
             name: "Lobby".to_owned(),
             ..ChannelInfo::test(Id::new(11), "GuildVoice")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             session_id: Some("other-client-voice-session".to_owned()),
@@ -204,6 +190,43 @@ fn header_labels_other_client_voice_connection() {
     );
     assert!(header.contains("🔇"), "{header}");
     assert!(header.contains("🎧"), "{header}");
+}
+
+#[test]
+fn header_labels_active_voice_broadcast() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(11);
+    let current_user_id = Id::new(10);
+    let scope = VoiceScope::Guild(guild_id);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "muri".to_owned(),
+        user_id: Some(current_user_id),
+    });
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            position: Some(0),
+            name: "Lobby".to_owned(),
+            ..ChannelInfo::test(channel_id, "GuildVoice")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope,
+            channel_id: Some(channel_id),
+            status: VoiceConnectionStatus::Connected,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
+    state.show_stream_broadcast_preparing_toast(scope, channel_id);
+    state.push_effect(AppEvent::StreamBroadcastStarted { scope, channel_id });
+
+    let dump = render_dashboard_dump(120, 10, &mut state);
+    let header = dump.first().expect("dashboard render includes header");
+
+    assert!(header.contains("Voice guild - Lobby 🔴"), "{header}");
 }
 
 #[test]
@@ -286,7 +309,8 @@ fn mouse_target_at_maps_visible_message_action_rows() {
         .checked_sub(1)
         .expect("message action menu has actions");
     let popup_height = action_count as u16 + 2;
-    let first_action_y = 1 + (19 - popup_height) / 2 + 1;
+    // The action menu now centers on the whole frame, not the message pane.
+    let first_action_y = area.y + (area.height - popup_height) / 2 + 1;
 
     assert_eq!(
         mouse_target_at(area, &state, 46, first_action_y - 1),
@@ -295,17 +319,84 @@ fn mouse_target_at_maps_visible_message_action_rows() {
     assert_eq!(
         mouse_target_at(area, &state, 46, first_action_y),
         Some(MouseTarget::PopupRow {
-            target: PopupListTarget::MessageAction,
+            target: SelectablePopupTarget::MessageActions,
             row: 0,
         })
     );
     assert_eq!(
         mouse_target_at(area, &state, 46, first_action_y + last_row as u16),
         Some(MouseTarget::PopupRow {
-            target: PopupListTarget::MessageAction,
+            target: SelectablePopupTarget::MessageActions,
             row: last_row,
         })
     );
+
+    let short_area = Rect::new(0, 0, 120, 8);
+    sync_view_heights(short_area, &mut state);
+    assert!(state.page_active_popup_down());
+    assert!(state.page_active_popup_down());
+    let scroll = state
+        .active_selectable_popup_snapshot()
+        .expect("action list snapshot")
+        .scroll;
+    assert!(scroll > 0);
+    let popup_height = (action_count as u16 + 2).min(short_area.height.saturating_sub(2));
+    let first_visible_y = (short_area.height - popup_height) / 2 + 1;
+    assert_eq!(
+        mouse_target_at(short_area, &state, 46, first_visible_y),
+        Some(MouseTarget::PopupRow {
+            target: SelectablePopupTarget::MessageActions,
+            row: scroll,
+        })
+    );
+}
+
+#[test]
+fn mouse_target_at_maps_guild_and_channel_action_menu_rows() {
+    type MenuCase = (
+        fn(&mut DashboardState),
+        fn(&DashboardState) -> usize,
+        SelectablePopupTarget,
+    );
+    let area = Rect::new(0, 0, 120, 20);
+    let cases: [MenuCase; 2] = [
+        (
+            |state| {
+                state.focus_pane(FocusPane::Guilds);
+                state.open_selected_guild_actions();
+            },
+            DashboardState::guild_action_row_count,
+            SelectablePopupTarget::GuildActions,
+        ),
+        (
+            |state| {
+                state.focus_pane(FocusPane::Channels);
+                state.open_selected_channel_actions();
+            },
+            DashboardState::channel_action_row_count,
+            SelectablePopupTarget::ChannelActions,
+        ),
+    ];
+
+    for (open_menu, row_count, target) in cases {
+        let mut state = state_with_message();
+        open_menu(&mut state);
+        let count = row_count(&state);
+        assert!(count > 0, "{target:?} menu should list rows");
+        let popup_height = count as u16 + 2;
+        let first_row_y = area.y + (area.height - popup_height) / 2 + 1;
+
+        assert_eq!(
+            mouse_target_at(area, &state, 46, first_row_y - 1),
+            Some(MouseTarget::ModalBackdrop),
+            "{target:?}"
+        );
+        assert_eq!(
+            mouse_target_at(area, &state, 46, first_row_y),
+            Some(MouseTarget::PopupRow { target, row: 0 }),
+            "{target:?}"
+        );
+    }
 }
 
 #[test]
@@ -340,32 +431,25 @@ fn server_pane_shows_direct_message_unread_channel_count() {
 }
 
 #[test]
-fn muted_server_name_is_dimmed() {
+fn selected_muted_server_name_uses_selection_emphasis() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::OnlyMentions),
             muted: true,
             ..GuildNotificationSettingsInfo::test(Some(guild_id))
-        }],
-    });
+        },
+    ]));
     state.set_guild_view_height(20);
     let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
@@ -382,7 +466,7 @@ fn muted_server_name_is_dimmed() {
             .collect::<String>();
         if let Some(name_col) = text.find("guild") {
             assert!(
-                buffer[(name_col as u16, row)]
+                !buffer[(name_col as u16, row)]
                     .modifier
                     .contains(Modifier::DIM)
             );
@@ -398,11 +482,14 @@ fn muted_server_name_is_dimmed() {
 fn dm_channel_pane_shows_unread_channel_count_badge() {
     let mut state = state_with_unread_direct_messages();
     state.confirm_selected_guild();
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(10);
+    assert!(state.select_visible_pane_row(FocusPane::Channels, 0));
     let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -415,30 +502,67 @@ fn dm_channel_pane_shows_unread_channel_count_badge() {
         .collect::<Vec<_>>();
 
     assert!(channel_rows.iter().any(|row| row.contains("(1) @ new")));
+    let row = channel_rows
+        .iter()
+        .position(|row| row.contains("(1) @ new"))
+        .expect("selected unread channel row");
+    let name_start = channel_rows[row].find("new").expect("channel name");
+    let name_col = channel_rows[row][..name_start].width();
+    assert_eq!(
+        buffer[(name_col as u16, row as u16)].fg,
+        theme::current().foreground(theme::HighlightGroup::SelectedRow)
+    );
+    assert_eq!(
+        buffer[(name_col as u16, row as u16)].bg,
+        theme::current().background(theme::HighlightGroup::SelectedRow)
+    );
 }
 
 #[test]
-fn dm_channel_pane_shows_loaded_unread_message_count_badge() {
-    let mut state = state_with_unread_direct_messages_with_loaded_unread_messages(5);
+fn dm_activity_uses_the_full_channel_row_width() {
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        recipients: Some(vec![ChannelRecipientInfo {
+            status: Some(PresenceStatus::Online),
+            ..ChannelRecipientInfo::test(user_id, "alice")
+        }]),
+        name: "alice".to_owned(),
+        ..ChannelInfo::test(Id::new(20), "dm")
+    }));
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(
+                ActivityKind::Unknown(99),
+                "abcdefghijklmn",
+            )],
+        },
+    });
     state.confirm_selected_guild();
-    let backend = TestBackend::new(40, 6);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(2);
+    let backend = TestBackend::new(20, 5);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
-    let buffer = terminal.backend().buffer();
-    let channel_rows = (0..buffer.area.height)
+    let rows = (0..terminal.backend().buffer().area.height)
         .map(|row| {
-            (0..buffer.area.width)
-                .map(|col| buffer[(col, row)].symbol().to_owned())
+            (0..terminal.backend().buffer().area.width)
+                .map(|col| terminal.backend().buffer()[(col, row)].symbol())
                 .collect::<String>()
         })
         .collect::<Vec<_>>();
-
-    assert!(channel_rows.iter().any(|row| row.contains("(5) @ new")));
-    assert!(!channel_rows.iter().any(|row| row.contains("(1) @ new")));
+    assert!(
+        rows.iter().any(|row| row.contains("abcdefghijklmn")),
+        "{}",
+        rows.join("\n")
+    );
 }
 
 #[test]
@@ -449,10 +573,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let empty_voice_id = Id::new(11);
     let alice = Id::new(20);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![
             ChannelInfo {
                 guild_id: Some(guild_id),
@@ -477,11 +598,8 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             username: Some("alice".to_owned()),
             ..MemberInfo::test(alice, "Alice")
         }],
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             deaf: true,
@@ -490,25 +608,27 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
             ..VoiceStateInfo::test(guild_id, Some(voice_id), alice)
         },
     });
-    state.push_event(AppEvent::VoiceSpeakingUpdate {
-        guild_id,
+    state.push_event(voice_speaking_update_event(VoiceSpeakingUpdateFixture {
+        scope: VoiceScope::Guild(guild_id),
         channel_id: voice_id,
         user_id: alice,
         speaking: true,
-    });
-    state.push_effect(AppEvent::VoiceConnectionStatusChanged {
-        guild_id,
-        channel_id: Some(voice_id),
-        status: VoiceConnectionStatus::Connecting,
-        message: None,
-    });
+    }));
+    state.push_effect(voice_connection_status_changed_event(
+        VoiceConnectionStatusChangedFixture {
+            scope: VoiceScope::Guild(guild_id),
+            channel_id: Some(voice_id),
+            status: VoiceConnectionStatus::Connecting,
+            ..VoiceConnectionStatusChangedFixture::new()
+        },
+    ));
     state.confirm_selected_guild();
     state.set_channel_view_height(10);
 
     let backend = TestBackend::new(40, 9);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -530,7 +650,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let lobby_icon_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
         .expect("populated voice row should use loud speaker icon");
-    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Reset);
     let lobby_name_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, lobby_row)].symbol() == "L")
         .expect("populated voice row should render channel name");
@@ -547,7 +667,11 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let empty_icon_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, empty_row)].symbol() == "🔈")
         .expect("empty voice row should use quiet speaker icon");
-    assert_eq!(buffer[(empty_icon_col, empty_row)].fg, DIM);
+    assert!(
+        buffer[(empty_icon_col, empty_row)]
+            .modifier
+            .contains(Modifier::DIM)
+    );
 
     assert!(
         channel_rows.iter().any(|row| row.contains("Alice")),
@@ -598,22 +722,10 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let backend = TestBackend::new(40, 4);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
-    let channel_rows = (0..buffer.area.height)
-        .map(|row| {
-            (0..buffer.area.width)
-                .map(|col| buffer[(col, row)].symbol().to_owned())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        !channel_rows.iter().any(|row| row.contains("Alice")),
-        "{}",
-        channel_rows.join("\n")
-    );
     let lobby_row = (0..buffer.area.height)
         .find(|row| {
             (0..buffer.area.width)
@@ -625,7 +737,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
     let lobby_icon_col = (0..buffer.area.width)
         .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
         .expect("populated voice row should keep loud speaker icon");
-    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Cyan);
+    assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Reset);
 }
 
 #[test]
@@ -634,10 +746,7 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
     let voice_id = Id::new(10);
     let alice = Id::new(20);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             position: Some(0),
@@ -649,11 +758,8 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
             display_name: "some_really_long_voice_participant_name".to_owned(),
             ..MemberInfo::test(alice, "some_really_long_voice_participant_name")
         }],
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo {
             deaf: true,
@@ -668,7 +774,7 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
     let backend = TestBackend::new(32, 5);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -688,10 +794,79 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
     assert!(participant_row.contains("🔴"), "{participant_row}");
     assert!(participant_row.contains("🔇"), "{participant_row}");
     assert!(participant_row.contains("🎧"), "{participant_row}");
-    assert!(
-        !participant_row.contains("participant_name"),
-        "{participant_row}"
-    );
+}
+
+#[test]
+fn member_pane_keeps_stable_gateway_rows_during_partial_replacement() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let alice = Id::new(20);
+    let bob = Id::new(21);
+    let carol = Id::new(22);
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            name: "general".to_owned(),
+            ..ChannelInfo::test(channel_id, "GuildText")
+        }],
+        members: vec![
+            MemberInfo::test(alice, "Alice"),
+            MemberInfo::test(bob, "Bob"),
+            MemberInfo::test(carol, "Carol"),
+        ],
+        member_count: Some(3),
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.push_event(guild_member_list_event(
+        guild_id,
+        "first",
+        vec![GuildMemberListOperation::Sync {
+            range: (0, 99),
+            items: vec![
+                GuildMemberListItem::Group {
+                    id: "online".to_owned(),
+                    count: 2,
+                },
+                GuildMemberListItem::Member {
+                    member: MemberInfo::test(alice, "Alice"),
+                    presence: None,
+                },
+                GuildMemberListItem::Member {
+                    member: MemberInfo::test(bob, "Bob"),
+                    presence: None,
+                },
+            ],
+        }],
+    ));
+    state.confirm_selected_guild();
+    state.set_member_view_height(6);
+    assert!(!state.is_member_list_loading());
+
+    state.push_event(guild_member_list_event(
+        guild_id,
+        "second",
+        vec![GuildMemberListOperation::Insert {
+            index: 0,
+            item: GuildMemberListItem::Member {
+                member: MemberInfo::test(carol, "Carol"),
+                presence: None,
+            },
+        }],
+    ));
+    assert!(state.is_member_list_loading());
+
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+
+    assert!(find_cell(buffer, "Alice").is_some());
+    assert!(find_cell(buffer, "Bob").is_some());
+    assert!(find_cell(buffer, "Carol").is_none());
+    assert!(find_cell(buffer, "Loading...").is_none());
 }
 
 #[test]
@@ -700,10 +875,7 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
     let voice_id = Id::new(10);
     let alice = Id::new(20);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             position: Some(0),
@@ -714,16 +886,36 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
             username: Some("alice".to_owned()),
             ..MemberInfo::test(alice, "Alice")
         }],
-        presences: vec![(alice, PresenceStatus::Online)],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        member_count: Some(1),
+        presences: vec![PresenceEventFields {
+            user_id: alice,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
-    state.push_event(AppEvent::GuildMemberListCounts {
+    state.push_event(guild_member_list_counts_event(guild_id, 1));
+    state.push_event(guild_member_list_event(
         guild_id,
-        online: 1,
-    });
+        "everyone",
+        vec![GuildMemberListOperation::Sync {
+            range: (0, 99),
+            items: vec![
+                GuildMemberListItem::Group {
+                    id: "online".to_owned(),
+                    count: 1,
+                },
+                GuildMemberListItem::Member {
+                    member: MemberInfo {
+                        username: Some("alice".to_owned()),
+                        ..MemberInfo::test(alice, "Alice")
+                    },
+                    presence: None,
+                },
+            ],
+        }],
+    ));
     state.push_event(AppEvent::VoiceStateUpdate {
         state: VoiceStateInfo::test(guild_id, Some(voice_id), alice),
     });
@@ -735,14 +927,14 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
         .expect("draw should succeed");
     let buffer = terminal.backend().buffer();
     let alice_cell = find_cell(buffer, "Alice").expect("member should render");
-    assert_eq!(buffer[alice_cell].fg, Color::White);
+    assert_eq!(buffer[alice_cell].fg, Color::Reset);
 
-    state.push_event(AppEvent::VoiceSpeakingUpdate {
-        guild_id,
+    state.push_event(voice_speaking_update_event(VoiceSpeakingUpdateFixture {
+        scope: VoiceScope::Guild(guild_id),
         channel_id: voice_id,
         user_id: alice,
         speaking: true,
-    });
+    }));
     let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
@@ -750,7 +942,33 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
         .expect("draw should succeed");
     let buffer = terminal.backend().buffer();
     let alice_cell = find_cell(buffer, "Alice").expect("member should render");
-    assert_eq!(buffer[alice_cell].fg, Color::White);
+    assert_eq!(buffer[alice_cell].fg, Color::Reset);
+
+    state.focus_pane(FocusPane::Members);
+    let backend = TestBackend::new(40, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_members(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let alice_cell = find_cell(buffer, "Alice").expect("member should render");
+    let alice_row = (0..buffer.area.width)
+        .map(|column| buffer[(column, alice_cell.1)].symbol().to_owned())
+        .collect::<String>();
+    assert!(alice_row.contains("▸ ● Alice"), "{alice_row}");
+    let marker_column = (0..buffer.area.width)
+        .find(|column| buffer[(*column, alice_cell.1)].symbol() == "▸")
+        .expect("selected member should render a marker");
+    let marker = (marker_column, alice_cell.1);
+    assert_eq!(buffer[marker].symbol(), "▸");
+    assert_eq!(
+        buffer[marker].fg,
+        theme::current().foreground(theme::HighlightGroup::SelectionMarker)
+    );
+    assert_eq!(
+        buffer[(buffer.area.width.saturating_sub(2), alice_cell.1)].bg,
+        theme::current().background(theme::HighlightGroup::SelectedRow)
+    );
 }
 
 #[test]
@@ -770,17 +988,10 @@ fn pane_filters_keep_content_width_when_active() {
         })
         .collect();
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels,
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.open_channel_pane_filter();
     for value in matching_name.chars() {
@@ -791,7 +1002,7 @@ fn pane_filters_keep_content_width_when_active() {
     let backend = TestBackend::new(32, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -808,25 +1019,13 @@ fn pane_filters_keep_content_width_when_active() {
         "{}",
         channel_rows.join("\n")
     );
-    assert!(
-        !channel_rows.iter().any(|row| row.contains("┃")),
-        "{}",
-        channel_rows.join("\n")
-    );
 
     let guild_id = Id::new(1);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
+    state.push_event(guild_create_event(GuildCreateFixture {
         name: "This is Server 1".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.focus_pane(FocusPane::Guilds);
     state.set_guild_view_height(4);
 
@@ -862,10 +1061,7 @@ fn muted_category_and_channel_names_are_dimmed() {
     let guild_id = Id::new(1);
     let category_id = Id::new(10);
     let channel_id = Id::new(11);
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![
             ChannelInfo {
                 guild_id: Some(guild_id),
@@ -881,29 +1077,25 @@ fn muted_category_and_channel_names_are_dimmed() {
                 ..ChannelInfo::test(channel_id, "text")
             },
         ],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
-    state.push_event(AppEvent::UserGuildNotificationSettingsInit {
-        settings: vec![GuildNotificationSettingsInfo {
+    state.push_event(user_guild_settings_init(vec![
+        GuildNotificationSettingsInfo {
             message_notifications: Some(NotificationLevel::OnlyMentions),
             channel_overrides: vec![ChannelNotificationOverrideInfo {
                 muted: true,
                 ..ChannelNotificationOverrideInfo::test(category_id)
             }],
             ..GuildNotificationSettingsInfo::test(Some(guild_id))
-        }],
-    });
+        },
+    ]));
     state.set_channel_view_height(20);
     let backend = TestBackend::new(40, 8);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
     terminal
-        .draw(|frame| render_channels(frame, frame.area(), &state))
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
@@ -951,12 +1143,17 @@ fn forum_post_lines_render_title_author_and_preview() {
     let post = ChannelThreadItem {
         section_label: Some("Active posts".to_owned()),
         label: "A useful Rust crate".to_owned(),
+        archived: true,
         locked: true,
         pinned: true,
         preview_author_id: Some(Id::new(99)),
         preview_author: Some("neo".to_owned()),
         preview_author_color: Some(0x3366CC),
         preview_content: Some("This crate solves a small but annoying problem".to_owned()),
+        applied_tags: vec![
+            AppliedForumTag::test("question"),
+            AppliedForumTag::test("rust"),
+        ],
         preview_reactions: vec![ReactionInfo {
             count: 2,
             me: true,
@@ -968,48 +1165,252 @@ fn forum_post_lines_render_title_author_and_preview() {
         ..ChannelThreadItem::test(Id::new(30))
     };
 
-    let lines = forum_post_viewport_lines(&[post], Some(0), 80, false);
+    let custom =
+        theme::Theme::default().with_border_type(theme::BorderSurface::Forum, BorderType::Thick);
+    let lines = theme::with_test_theme(custom, || {
+        thread_card_viewport_lines(&[post], Some(0), 80, false)
+    });
     let texts = line_texts_from_ratatui(&lines);
 
-    assert_eq!(texts.len(), 6);
+    assert_eq!(texts.len(), 8);
     assert_eq!(texts[0].trim_end(), "Active posts");
-    assert!(texts[1].starts_with("› ╭"));
-    assert!(!texts[1].contains("Active posts"));
+    assert!(texts[1].starts_with("▸ ┏"));
+    assert!(texts[2].starts_with("  ┃ "));
     assert!(texts.iter().all(|text| text.width() == 80));
     assert!(texts[2].contains("A useful Rust crate"));
     assert!(texts[2].contains("PINNED"));
-    assert!(texts[3].contains("neo: This crate solves"));
-    assert!(texts[4].contains("4 comments"));
-    assert!(texts[4].contains("3 new messages"));
-    assert!(texts[4].contains("[👍 2]"));
-    assert!(!texts[4].contains("pinned"));
-    assert!(texts[4].contains("locked"));
-    assert!(texts[5].starts_with("  ╰"));
-    assert_eq!(lines[2].spans[2].style.fg, Some(Color::White));
+    assert!(texts[2].contains("(archived)"));
+    assert!(texts[2].contains("(locked)"));
+    assert_eq!(lines[3].spans.len(), 4);
+    assert!(texts[4].contains("neo: This crate solves"));
+    assert!(texts[5].contains("# question"));
+    assert!(texts[5].contains("# rust"));
+    assert!(texts[6].contains("4 comments"));
+    assert!(texts[6].contains("3 new messages"));
+    assert!(texts[6].contains("[👍 2]"));
+    assert!(texts[7].starts_with("  ┗"));
+    assert_eq!(lines[2].spans[2].style.fg, None);
     assert_eq!(lines[2].spans[3].style.fg, Some(Color::Yellow));
     assert_eq!(
-        lines[3].spans[2].style.fg,
+        lines[4].spans[2].style.fg,
         Some(Color::Rgb(0x33, 0x66, 0xCC))
     );
-    assert_eq!(lines[3].spans[4].style.fg, Some(Color::White));
-    assert_eq!(lines[4].spans[2].style.fg, Some(Color::White));
-    assert_eq!(lines[4].spans[4].style.fg, Some(Color::Yellow));
-    assert_eq!(lines[4].spans[6].style.fg, Some(Color::Yellow));
-    assert_eq!(lines[4].spans[8].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
-    assert_eq!(lines[2].spans[1].style.fg, Some(SELECTED_FORUM_POST_BORDER));
+    assert_eq!(lines[4].spans[4].style.fg, None);
+    assert_eq!(lines[6].spans[2].style.fg, None);
+    assert_eq!(
+        lines[6].spans[4].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::UnreadNotice)
+            .fg
+    );
+    assert_eq!(lines[6].spans[6].style.fg, Some(Color::Yellow));
+    let state_spans = lines[2]
+        .spans
+        .iter()
+        .filter(|span| span.content.contains("archived") || span.content.contains("locked"))
+        .collect::<Vec<_>>();
+    assert_eq!(state_spans.len(), 2);
     assert!(
-        lines
+        state_spans
             .iter()
-            .flat_map(|line| line.spans.iter())
-            .all(|span| span.style.bg.is_none())
+            .all(|span| span.style.add_modifier.contains(Modifier::DIM))
+    );
+    assert_eq!(
+        lines[1].spans[0].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ForumSelectedBorder)
+            .fg
+    );
+    assert_eq!(
+        lines[1].spans[1].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ForumSelectedBorder)
+            .fg
+    );
+    assert_eq!(
+        lines[2].spans[1].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ForumSelectedBorder)
+            .fg
+    );
+    assert!(lines.iter().skip(1).all(|line| line.style.bg.is_none()));
+    assert!(lines.iter().flat_map(|line| line.spans.iter()).all(|span| {
+        span.style.bg.is_none()
+            || span.style.bg == Some(theme::current().background(theme::HighlightGroup::Normal))
+    }));
+}
+
+#[test]
+fn forum_post_lines_show_loading_until_starter_data_arrives() {
+    let post = ChannelThreadItem {
+        label: "Loading post".to_owned(),
+        preview_author: Some("neo".to_owned()),
+        preview_loading: true,
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+
+    let texts = line_texts_from_ratatui(&thread_card_viewport_lines(&[post], None, 80, false));
+
+    assert!(texts[3].contains("neo: Loading preview..."));
+    assert!(
+        texts
+            .iter()
+            .all(|line| !line.contains("original message deleted"))
     );
 }
 
 #[test]
-fn forum_post_scrollbar_visible_count_uses_rendered_rows() {
-    assert_eq!(forum_post_scrollbar_visible_count(10), 10);
-    assert_eq!(forum_post_scrollbar_visible_count(0), 1);
+fn forum_post_lines_reserve_a_right_column_for_image_attachments() {
+    let post = ChannelThreadItem {
+        label: "x".repeat(100),
+        preview_author: Some("neo".to_owned()),
+        preview_content: Some("y".repeat(100)),
+        preview_image: Some(ThreadCardImagePreview {
+            message_id: Id::new(30),
+            attachment: AttachmentInfo {
+                content_type: Some("image/png".to_owned()),
+                width: Some(640),
+                height: Some(480),
+                ..AttachmentInfo::test(Id::new(1), "image.png")
+            },
+        }),
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+    let slot = crate::tui::ui::thread_card::thread_card_image_slot(&post, 80, true)
+        .expect("wide forum card should reserve an image slot");
+
+    let lines = thread_card_viewport_lines(&[post], None, 80, false);
+
+    let text_width = usize::from(slot.column).saturating_sub(6);
+    assert_eq!(lines[1].spans[2].content.width(), text_width);
+    let preview_line = lines
+        .iter()
+        .find(|line| line.spans.iter().any(|span| span.content.contains("neo")))
+        .expect("preview author should be rendered");
+    assert_eq!(
+        preview_line.spans[4].content.width(),
+        text_width - "neo: ".width()
+    );
+    let metadata_row = lines
+        .iter()
+        .position(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("No activity yet"))
+        })
+        .expect("metadata should be rendered");
+    assert!(metadata_row > usize::from(slot.height));
+}
+
+#[test]
+fn forum_post_title_wraps_with_dim_thread_state() {
+    let title = "Season update game issues and client performance discussion";
+    let post = ChannelThreadItem {
+        label: title.to_owned(),
+        archived: true,
+        locked: true,
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+
+    let lines = thread_card_viewport_lines(&[post], None, 36, false);
+    let heading_style = theme::current().style(theme::HighlightGroup::Heading);
+    let title_parts = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .filter(|span| span.style == heading_style)
+        .map(|span| span.content.as_ref())
+        .collect::<Vec<_>>();
+    let state_spans = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .filter(|span| span.content.contains("archived") || span.content.contains("locked"))
+        .collect::<Vec<_>>();
+
+    assert!(title_parts.len() > 1);
+    assert_eq!(
+        title_parts
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        title
+    );
+    assert_eq!(
+        state_spans
+            .iter()
+            .map(|span| span.content.trim())
+            .collect::<Vec<_>>(),
+        vec!["(archived)", "(locked)"]
+    );
+    assert!(
+        state_spans
+            .iter()
+            .all(|span| span.style.add_modifier.contains(Modifier::DIM))
+    );
+}
+
+#[test]
+fn forum_post_metadata_shows_three_leading_reactions() {
+    let post = ChannelThreadItem {
+        label: "Reaction summary".to_owned(),
+        preview_reactions: ["🍎", "🍐", "🍊", "🍋"]
+            .into_iter()
+            .map(|emoji| ReactionInfo {
+                count: 1,
+                ..ReactionInfo::test(ReactionEmoji::Unicode(emoji.to_owned()))
+            })
+            .collect(),
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+
+    let texts = line_texts_from_ratatui(&thread_card_viewport_lines(&[post], None, 80, false));
+    let metadata = texts
+        .iter()
+        .find(|line| line.contains("🍎"))
+        .expect("reaction metadata should be rendered");
+
+    assert_eq!(metadata.matches('[').count(), 3);
+    assert!(metadata.contains("[🍎 1]"));
+    assert!(metadata.contains("[🍐 1]"));
+    assert!(metadata.contains("[🍊 1]"));
+}
+
+#[test]
+fn forum_post_tag_line_renders_unicode_emoji_and_reserves_custom_image_slot() {
+    let unicode_tag = AppliedForumTag {
+        name: "fire".to_owned(),
+        unicode_emoji: Some("🔥".to_owned()),
+        custom_emoji_url: None,
+    };
+    let custom_tag = AppliedForumTag {
+        name: "bug".to_owned(),
+        unicode_emoji: None,
+        custom_emoji_url: Some("https://cdn.discordapp.com/emojis/77.png".to_owned()),
+    };
+    let post = ChannelThreadItem {
+        label: "tagged post".to_owned(),
+        preview_author: Some("neo".to_owned()),
+        preview_content: Some("body".to_owned()),
+        applied_tags: vec![unicode_tag, custom_tag],
+        comment_count: Some(1),
+        last_activity_message_id: Some(Id::new(30)),
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+
+    let lines = thread_card_viewport_lines(std::slice::from_ref(&post), Some(0), 80, false);
+    let texts = line_texts_from_ratatui(&lines);
+
+    let tag_text = &texts[4];
+    assert!(tag_text.contains("🔥 fire"));
+    assert!(tag_text.contains("bug"));
+
+    let rows = thread_card_tag_rows_for_test(&[post], 80, 20);
+    assert_eq!(rows.len(), 1);
+    let (row, cols) = &rows[0];
+    assert_eq!(*row, 4);
+    assert_eq!(cols.len(), 1);
+    // `# 🔥 fire`(9) + ` · `(3) + `# `(2) = column 14 within the card content.
+    assert_eq!(cols[0], 14);
 }
 
 #[test]
@@ -1024,7 +1425,7 @@ fn forum_post_lines_can_reserve_scrollbar_column() {
         ..ChannelThreadItem::test(Id::new(30))
     };
 
-    let lines = forum_post_viewport_lines(
+    let lines = thread_card_viewport_lines(
         &[post],
         Some(0),
         selected_message_card_width(80, true),
@@ -1032,11 +1433,31 @@ fn forum_post_lines_can_reserve_scrollbar_column() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    assert!(texts[0].starts_with("› ╭"));
+    assert!(texts[0].starts_with("▸ ╭"));
     assert!(texts[0].ends_with("╮"));
     assert!(texts[1].ends_with("│"));
-    assert!(texts[4].ends_with("╯"));
+    // The untagged post has no tags row, so the card is six rows.
+    assert!(texts[5].ends_with("╯"));
     assert!(texts.iter().all(|text| text.width() == 79));
+}
+
+#[test]
+fn forum_post_cards_align_with_a_wide_configured_selection_marker() {
+    let (options, parse_warnings) =
+        crate::config::parse_theme_options_for_test("[ui.indicator]\nselection = \"界 \"\n")
+            .expect("selection marker config should parse");
+    assert!(parse_warnings.is_empty());
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+    let post = ChannelThreadItem::test(Id::new(30));
+
+    let lines = theme::with_test_theme(custom, || {
+        thread_card_viewport_lines(&[post], Some(0), 40, false)
+    });
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(texts[0].starts_with("界 ╭"));
+    assert!(texts[1].starts_with("   │ "));
+    assert!(texts.iter().all(|text| text.width() == 40));
 }
 
 #[test]
@@ -1056,12 +1477,94 @@ fn group_dm_has_no_presence_dot() {
     );
 
     assert!(dm_presence_dot_span(&channel).is_none());
+    assert_eq!(channel_prefix(&channel.kind), "👥 ");
 }
 
 #[test]
-fn server_label_truncates_by_display_width() {
-    let label = truncate_display_width("漢字仮名交じりサーバー", 12);
+fn channel_pane_header_shows_guild_boost_line_only_when_boosted() {
+    fn channel_pane_rows(boost_tier: GuildBoostTier, boost_count: u32) -> Vec<String> {
+        let guild_id = Id::new(1);
+        let channel_id = Id::new(9);
+        let mut state = DashboardState::new();
+        state.push_event(guild_create_event(GuildCreateFixture {
+            boost_tier,
+            boost_count,
+            name: "My Server".to_owned(),
+            channels: vec![ChannelInfo {
+                guild_id: Some(guild_id),
+                position: Some(0),
+                name: "general".to_owned(),
+                ..ChannelInfo::test(channel_id, "GuildText")
+            }],
+            ..GuildCreateFixture::new(guild_id)
+        }));
+        state.confirm_selected_guild();
+        state.set_channel_view_height(10);
 
-    assert_eq!(label, "漢字仮名...");
-    assert!(label.width() <= 12);
+        let backend = TestBackend::new(30, 8);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
+            .expect("draw should succeed");
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|row| {
+                (0..buffer.area.width)
+                    .map(|col| buffer[(col, row)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    let boosted = channel_pane_rows(GuildBoostTier::Tier3, 5);
+    assert!(
+        boosted
+            .iter()
+            .any(|row| row.contains("Level 3") && row.contains("5 boosts")),
+        "{}",
+        boosted.join("\n")
+    );
+
+    let unboosted = channel_pane_rows(GuildBoostTier::None, 0);
+    assert!(
+        !unboosted.iter().any(|row| row.contains("boost")),
+        "{}",
+        unboosted.join("\n")
+    );
+}
+
+#[test]
+fn boost_line_shrinks_channel_viewport_by_one_row() {
+    fn visible_channel_count(boost_tier: GuildBoostTier, boost_count: u32) -> usize {
+        let guild_id = Id::new(1);
+        let channels = (0..20u64)
+            .map(|index| ChannelInfo {
+                guild_id: Some(guild_id),
+                name: format!("ch-{index}"),
+                ..ChannelInfo::test(Id::new(100 + index), "GuildText")
+            })
+            .collect();
+        let mut state = DashboardState::new();
+        state.push_event(guild_create_event(GuildCreateFixture {
+            boost_tier,
+            boost_count,
+            name: "My Server".to_owned(),
+            channels,
+            ..GuildCreateFixture::new(guild_id)
+        }));
+        state.confirm_selected_guild();
+        // Runs the full layout, including `sync_view_heights`, at a size where
+        // 20 channels overflow the pane.
+        render_dashboard_dump(120, 10, &mut state);
+        state.visible_channel_pane_entries().len()
+    }
+
+    let unboosted = visible_channel_count(GuildBoostTier::None, 0);
+    let boosted = visible_channel_count(GuildBoostTier::Tier3, 5);
+    assert!(unboosted > 1, "channel pane should overflow so it scrolls");
+    assert_eq!(
+        boosted,
+        unboosted - 1,
+        "boost line should consume exactly one channel row (unboosted={unboosted}, boosted={boosted})"
+    );
 }

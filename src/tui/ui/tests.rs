@@ -1,8 +1,12 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::BTreeMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::discord::ids::{Id, marker::MessageMarker};
 use crate::discord::test_builders::{
-    MessageCreateFixture, guild_message_create_fixture, message_create_event,
+    GuildCreateFixture, MessageCreateFixture, empty_latest_message_history_loaded_event,
+    guild_create_event, guild_message_create_fixture, message_create_event,
 };
 use ratatui::{
     Terminal,
@@ -10,53 +14,61 @@ use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
+    widgets::BorderType,
 };
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    ACCENT, DIM, ImagePreview, ImagePreviewState, MENTION_ORANGE, MemberEntry, READ_DIM,
-    SELECTED_FORUM_POST_BORDER, SELECTED_MESSAGE_BORDER, UNREAD_BRIGHT,
-    attachment_viewer_image_area, attachment_viewer_popup, centered_viewer_preview_area,
-    channel_switcher_cursor_position, channel_switcher_lines, channel_unread_decoration,
-    composer_content_line_count, composer_cursor_position, composer_lines,
-    composer_lines_with_loaded_custom_emoji_urls, composer_prompt_line_count, composer_text,
-    date_separator_line, debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines,
-    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-    emoji_reaction_picker_lines_with_existing, emoji_reaction_picker_lines_with_own_reactions,
-    filtered_emoji_reaction_picker_lines, focus_pane_at, format_message_sent_time,
-    forum_post_reaction_summary, forum_post_scrollbar_visible_count, forum_post_viewport_lines,
-    inline_image_preview_area, inline_image_preview_row, keymap_help_popup_lines,
-    leader_action_lines_for_test, member_display_label, member_name_style,
-    message_action_menu_lines, message_author_style, message_body_custom_emoji_rows,
-    message_delete_confirmation_lines, message_item_lines, message_pin_confirmation_lines,
+    DisplayOptionGauge, ImagePreview, ImagePreviewState, MESSAGE_AVATAR_OFFSET, MemberEntry,
+    active_selectable_popup_layout, attachment_viewer_image_area, attachment_viewer_popup,
+    background_media_occlusion_areas, centered_viewer_preview_area,
+    channel_action_menu_lines_for_test, channel_prefix, channel_switcher_cursor_position,
+    channel_switcher_lines, channel_unread_decoration, clear_area, composer_content_line_count,
+    composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
+    composer_prompt_line_count, composer_text, dashboard_areas, date_separator_line,
+    debug_log_popup_lines, dm_presence_dot_span, emoji_picker_lines, emoji_reaction_picker_lines,
+    emoji_reaction_picker_lines_for_width, emoji_reaction_picker_lines_with_own_reactions,
+    filtered_emoji_reaction_picker_lines, focus_pane_at, folder_settings_input_line_for_test,
+    format_message_sent_time, highlight_style, inline_image_preview_area, inline_image_preview_row,
+    keymap_help_popup_lines, long_message_confirmation_lines_for_test, member_display_label,
+    member_name_style, mention_picker_lines_for_test, message_action_menu_lines,
+    message_action_menu_lines_with_keymap_options, message_areas, message_author_style,
+    message_body_custom_emoji_rows, message_delete_confirmation_lines, message_item_lines,
+    message_pin_confirmation_lines, message_remove_embeds_confirmation_lines,
     message_url_picker_lines_for_width, message_viewport_layout, message_viewport_lines,
-    new_messages_notice_line, options_popup_lines, poll_vote_picker_lines,
-    primary_activity_summary, quit_confirmation_lines, reaction_users_popup_lines,
-    reaction_users_visible_line_count, render_channels, render_guilds, render_header,
-    render_members, selected_avatar_x_offset, selected_message_card_width,
-    selected_message_content_x_offset, sync_view_heights, toast_area, toast_line,
+    new_messages_notice_line, options_popup_lines, panel_block, poll_vote_picker_lines,
+    primary_activity_summary, quit_confirmation_lines, reaction_list_lines_with_ready_urls,
+    reaction_users_popup_lines, reaction_users_visible_line_count, render, render_channels,
+    render_composer, render_guilds, render_header, render_members, selected_avatar_x_offset,
+    selected_message_card_width, selected_message_content_x_offset, selection_marker,
+    stream_info_area, stream_info_lines, stream_info_lines_for_width, sync_composer_viewport,
+    sync_view_heights, theme, thread_card_reaction_summary, thread_card_tag_rows_for_test,
+    thread_card_viewport_lines, toast_line, user_profile_popup_avatar_viewport,
     user_profile_popup_has_avatar, user_profile_popup_lines,
-    user_profile_popup_lines_with_activities, user_profile_popup_text_geometry,
+    user_profile_popup_lines_with_activities, user_profile_popup_text,
+    user_profile_popup_text_geometry, verification_composer_text,
 };
 use crate::tui::message::time::{
     discord_epoch_unix_millis, format_unix_millis_with_offset, message_starts_new_day,
     test_message_id_for_unix_millis,
 };
 use crate::{
-    config::{DisplayOptions, UiStateOptions, VoiceOptions},
+    config::{DisplayOptions, KeymapBinding, KeymapOptions, UiStateOptions, VoiceOptions},
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppEvent, ApplicationCommandInfo,
         ApplicationCommandOptionInfo, AttachmentDownloadId, AttachmentInfo, ChannelInfo,
-        ChannelNotificationOverrideInfo, ChannelRecipientState, ChannelState, ChannelUnreadState,
-        ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, GuildMemberState,
-        GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageAttachmentUpload,
-        MessageInfo, MessageInteractionInfo, MessageKind, MessageSearchPage, MessageSearchQuery,
-        MessageSnapshotInfo, MessageState, MutualGuildInfo, NotificationLevel, PollAnswerInfo,
-        PollInfo, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReactionUsersInfo,
-        ReadStateInfo, ReplyInfo, RoleInfo, UserProfileInfo, VoiceConnectionStatus, VoiceStateInfo,
+        ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelRecipientState, ChannelState,
+        ChannelUnreadState, ChannelVisibilityStats, CustomEmojiInfo, EmbedInfo, ForumTagInfo,
+        GuildBoostTier, GuildFolder, GuildMemberListItem, GuildMemberListOperation,
+        GuildMemberListUpdateInfo, GuildMemberState, GuildNotificationSettingsInfo, MemberInfo,
+        MentionInfo, MessageAttachmentUpload, MessageInfo, MessageInteractionInfo, MessageKind,
+        MessageSearchPage, MessageSearchQuery, MessageSnapshotInfo, MessageState, MutualFriendInfo,
+        MutualGuildInfo, NotificationLevel, PollAnswerInfo, PollInfo, PresenceEventFields,
+        PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReadStateInfo, ReplyInfo,
+        RoleInfo, ThreadMetadataInfo, UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo,
+        VoiceConnectionStatus, VoiceStateInfo,
     },
     tui::{
-        format::{TextHighlightKind, truncate_display_width, truncate_display_width_from},
         message::format::{
             MessageContentLine, format_message_content, format_message_content_lines,
             format_message_content_lines_with_loaded_custom_emoji_urls, lay_out_reaction_chips,
@@ -64,11 +76,14 @@ use crate::{
             reaction_line_test_spans, wrap_text_lines,
         },
         state::{
-            AttachmentDownloadProgressView, AttachmentViewerZoom, ChannelSwitcherItem,
-            ChannelThreadItem, DashboardState, DisplayOptionItem, EmojiPickerEntry,
-            EmojiReactionItem, FocusPane, MessageActionItem, MessageActionKind, PollVotePickerItem,
+            AppliedForumTag, AttachmentDownloadProgressView, AttachmentViewerZoom,
+            ChannelSwitcherItem, ChannelThreadItem, ComposerLock, DashboardState,
+            DisplayOptionItem, EmojiPickerEntry, EmojiReactionItem, FocusPane, MentionPickerEntry,
+            MentionPickerTarget, MessageActionItem, MessageActionKind, PollVotePickerItem,
+            SelectablePopupTarget, ThreadCardImagePreview, presence_style,
         },
-        ui::{MouseTarget, PopupListTarget, mouse_target_at},
+        text::{EmojiImageSize, TextHighlightKind, truncate_display_width_from},
+        ui::{MouseTarget, mouse_target_at},
     },
 };
 
@@ -80,13 +95,60 @@ mod misc;
 mod panes;
 mod popups;
 
+fn user_guild_settings_init(settings: Vec<GuildNotificationSettingsInfo>) -> AppEvent {
+    AppEvent::UserGuildSettingsInit {
+        settings: settings
+            .into_iter()
+            .map(|notification_settings| UserGuildSettingsInfo {
+                notification_settings,
+                extra_fields: BTreeMap::new(),
+            })
+            .collect(),
+    }
+}
+
+fn guild_member_list_counts_event(
+    guild_id: Id<crate::discord::ids::marker::GuildMarker>,
+    online: u32,
+) -> AppEvent {
+    AppEvent::GuildMemberListUpdate {
+        update: GuildMemberListUpdateInfo {
+            guild_id,
+            list_id: None,
+            member_count: None,
+            online_count: Some(online),
+            groups: Vec::new(),
+            ops: Vec::new(),
+            extra_fields: BTreeMap::new(),
+        },
+    }
+}
+
+fn guild_member_list_event(
+    guild_id: Id<crate::discord::ids::marker::GuildMarker>,
+    list_id: &str,
+    ops: Vec<GuildMemberListOperation>,
+) -> AppEvent {
+    AppEvent::GuildMemberListUpdate {
+        update: GuildMemberListUpdateInfo {
+            guild_id,
+            list_id: Some(list_id.to_owned()),
+            member_count: None,
+            online_count: None,
+            groups: Vec::new(),
+            ops,
+            extra_fields: BTreeMap::new(),
+        },
+    }
+}
+
 fn find_cell(buffer: &Buffer, text: &str) -> Option<(u16, u16)> {
     for row in 0..buffer.area.height {
         let line = (0..buffer.area.width)
             .map(|col| buffer[(col, row)].symbol().to_owned())
             .collect::<String>();
-        if let Some(col) = line.find(text) {
-            return Some((col as u16, row));
+        if let Some(byte) = line.find(text) {
+            return Some((line[..byte].width() as u16, row));
         }
     }
     None
@@ -249,86 +311,109 @@ fn state_with_file_attachment_message() -> DashboardState {
 }
 
 fn state_with_message_id(message_id: Id<MessageMarker>, content: &str) -> DashboardState {
+    seed_channel_message(DashboardState::new(), message_id, content)
+}
+
+fn seed_channel_message(
+    state: DashboardState,
+    message_id: Id<MessageMarker>,
+    content: &str,
+) -> DashboardState {
+    seed_channel_message_fixture(
+        state,
+        MessageCreateFixture {
+            message_id,
+            content: Some(content.to_owned()),
+            ..guild_message_create_fixture()
+        },
+    )
+}
+
+fn seed_channel_message_fixture(
+    mut state: DashboardState,
+    message: MessageCreateFixture,
+) -> DashboardState {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
-    let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Messages);
     state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(guild_id),
         channel_id,
-        message_id,
-        content: Some(content.to_owned()),
-        ..guild_message_create_fixture()
+        ..message
     }));
+    state.push_event(empty_latest_message_history_loaded_event(channel_id));
+    state
+}
+
+fn state_with_folder_settings() -> DashboardState {
+    let first_guild = Id::new(1);
+    let second_guild = Id::new(2);
+    let mut state = DashboardState::new();
+
+    for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
+        state.push_event(guild_create_event(GuildCreateFixture {
+            name: name.to_owned(),
+            ..GuildCreateFixture::new(guild_id)
+        }));
+    }
+    state.push_event(AppEvent::UserSettingsUpdate {
+        settings: UserSettingsInfo {
+            guild_folders: Some(vec![GuildFolder {
+                id: Some(42),
+                name: Some("folder".to_owned()),
+                color: Some(0x00aaff),
+                guild_ids: vec![first_guild, second_guild],
+            }]),
+            ..UserSettingsInfo::default()
+        },
+    });
+    state.focus_pane(FocusPane::Guilds);
+    state.open_selected_folder_settings();
     state
 }
 
 fn state_with_forum_posts(post_count: usize) -> DashboardState {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
-    let mut state = DashboardState::new();
-
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: vec![ChannelInfo {
+    let mut channels = vec![ChannelInfo {
+        guild_id: Some(guild_id),
+        name: "forum".to_owned(),
+        ..ChannelInfo::test(forum_id, "GuildForum")
+    }];
+    channels.extend((0..post_count).map(|index| {
+        let id = 100 + u64::try_from(index).expect("post index should fit u64");
+        ChannelInfo {
             guild_id: Some(guild_id),
-            name: "forum".to_owned(),
-            ..ChannelInfo::test(forum_id, "GuildForum")
-        }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+            parent_id: Some(forum_id),
+            last_message_id: Some(Id::new(10_000 + id)),
+            name: format!("post {index}"),
+            message_count: Some(0),
+            total_message_sent: Some(1),
+            thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
+            flags: Some(0),
+            ..ChannelInfo::test(Id::new(id), "GuildPublicThread")
+        }
+    }));
+
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels,
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Messages);
-
-    let threads: Vec<_> = (0..post_count)
-        .map(|index| {
-            let id = 100 + u64::try_from(index).expect("post index should fit u64");
-            ChannelInfo {
-                guild_id: Some(guild_id),
-                parent_id: Some(forum_id),
-                last_message_id: Some(Id::new(10_000 + id)),
-                name: format!("post {index}"),
-                message_count: Some(0),
-                total_message_sent: Some(1),
-                thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
-                flags: Some(0),
-                ..ChannelInfo::test(Id::new(id), "GuildPublicThread")
-            }
-        })
-        .collect();
-    state.push_event(AppEvent::ForumPostsLoaded {
-        channel_id: forum_id,
-        archive_state: crate::discord::ForumPostArchiveState::Active,
-        offset: 0,
-        next_offset: threads.len(),
-        threads,
-        first_messages: Vec::new(),
-        has_more: false,
-    });
     state
 }
 
@@ -356,24 +441,6 @@ fn state_with_unread_direct_messages() -> DashboardState {
                 ..ReadStateInfo::test(Id::new(20))
             },
         ],
-    });
-    state
-}
-
-fn state_with_unread_direct_messages_with_loaded_unread_messages(count: u64) -> DashboardState {
-    let mut state = state_with_unread_direct_messages();
-    state.push_event(AppEvent::MessageHistoryLoaded {
-        channel_id: Id::new(20),
-        before: None,
-        messages: (0..count)
-            .map(|offset| MessageInfo {
-                guild_id: None,
-                author_id: Id::new(99),
-                author: "neo".to_owned(),
-                content: Some(format!("dm {offset}")),
-                ..MessageInfo::test(Id::new(20), Id::new(101 + offset))
-            })
-            .collect(),
     });
     state
 }
@@ -458,37 +525,47 @@ fn forwarded_snapshot(
 }
 
 fn state_with_member(user_id: u64, display_name: &str) -> DashboardState {
+    let guild_id = Id::new(1);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         members: vec![member_info(user_id, display_name)],
-        presences: vec![(Id::new(user_id), PresenceStatus::Online)],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        presences: vec![PresenceEventFields {
+            user_id: Id::new(user_id),
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.push_event(guild_member_list_event(
+        guild_id,
+        "everyone",
+        vec![GuildMemberListOperation::Sync {
+            range: (0, 99),
+            items: vec![
+                GuildMemberListItem::Group {
+                    id: "online".to_owned(),
+                    count: 1,
+                },
+                GuildMemberListItem::Member {
+                    member: member_info(user_id, display_name),
+                    presence: None,
+                },
+            ],
+        }],
+    ));
     state
 }
 
-fn state_with_role(role_id: u64, name: &str) -> DashboardState {
+fn state_with_role(role_id: u64, name: &str, color: Option<u32>) -> DashboardState {
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
-        members: Vec::new(),
-        presences: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         roles: vec![RoleInfo {
+            color,
             position: 1,
             ..RoleInfo::test(Id::new(role_id), name)
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state
 }
 
@@ -526,7 +603,9 @@ fn channel_with_recipients(kind: &str, statuses: &[PresenceStatus]) -> ChannelSt
         total_message_sent: None,
         thread_metadata: None,
         flags: None,
-        current_user_joined_thread: false,
+        rate_limit_per_user: None,
+        available_tags: Vec::new(),
+        applied_tags: Vec::new(),
         recipients: statuses
             .iter()
             .enumerate()
@@ -540,6 +619,8 @@ fn channel_with_recipients(kind: &str, statuses: &[PresenceStatus]) -> ChannelSt
             })
             .collect(),
         permission_overwrites: Vec::new(),
+        is_message_request: None,
+        is_spam: None,
     }
 }
 

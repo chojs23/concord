@@ -1,43 +1,55 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 mod primitives;
 
-use primitives::{LastSelection, TimedRequestSet};
+use primitives::{CursorRequests, OnDemandRequests, TimedRequestSet};
 
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use crate::discord::{AppEvent, ForumPostArchiveState, MessageHistoryLoadTarget};
+use crate::discord::{
+    AppEvent, ArchivedThreadPageCursor, MessageHistoryAfterMode, MessageHistoryLoadTarget,
+    member::normalize_member_search_query,
+};
+
+const APPLICATION_COMMAND_REQUEST_TTL: Duration = Duration::from_secs(15 * 60);
+const MAX_APPLICATION_COMMAND_REQUESTS: usize = 1_024;
+const FORUM_POST_DATA_BATCH_LIMIT: usize = 5;
 
 #[derive(Debug, Default)]
 pub(super) struct HistoryRequests {
-    requests: HashMap<Id<ChannelMarker>, HistoryRequestState>,
-    last_channel: LastSelection<Id<ChannelMarker>>,
+    requests: OnDemandRequests<Id<ChannelMarker>>,
 }
 
 #[derive(Debug, Default)]
-pub(super) struct ForumPostRequests {
-    requests: HashMap<Id<ChannelMarker>, ForumPostRequestState>,
-    last_channel: LastSelection<Id<ChannelMarker>>,
+pub(super) struct ForumPostDataRequests {
+    in_flight: HashSet<(Id<ChannelMarker>, Id<ChannelMarker>)>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ArchivedThreadRequests {
+    last_channel: Option<Id<ChannelMarker>>,
+    in_flight: HashSet<(Id<ChannelMarker>, ArchivedThreadPageCursor)>,
+    completed: HashSet<(Id<ChannelMarker>, ArchivedThreadPageCursor)>,
+    failed: HashSet<(Id<ChannelMarker>, ArchivedThreadPageCursor)>,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct PinnedMessageRequests {
-    requests: HashMap<Id<ChannelMarker>, PinnedMessageRequestState>,
-    last_channel: LastSelection<Id<ChannelMarker>>,
+    requests: OnDemandRequests<Id<ChannelMarker>>,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct OlderHistoryRequests {
-    requests: HashMap<Id<ChannelMarker>, OlderHistoryRequestState>,
+    requests: CursorRequests<Id<ChannelMarker>, Id<MessageMarker>>,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct NewerHistoryRequests {
-    requests: HashMap<Id<ChannelMarker>, NewerHistoryRequestState>,
+    requests: CursorRequests<Id<ChannelMarker>, Id<MessageMarker>>,
 }
 
 #[derive(Debug, Default)]
@@ -45,34 +57,71 @@ pub(super) struct ReadAckRequests {
     pending: HashMap<Id<ChannelMarker>, PendingReadAck>,
 }
 
-#[derive(Debug)]
-pub(crate) struct ForumPostRequestTarget {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ForumPostDataRequestTarget {
     pub(crate) guild_id: Id<GuildMarker>,
     pub(crate) channel_id: Id<ChannelMarker>,
-    pub(crate) should_load_more: bool,
+    pub(crate) thread_ids: Vec<Id<ChannelMarker>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct MentionMemberSearchTarget {
+pub(crate) struct ArchivedThreadRequestTarget {
+    pub(crate) guild_id: Id<GuildMarker>,
+    pub(crate) channel_id: Id<ChannelMarker>,
+    pub(crate) cursor: ArchivedThreadPageCursor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GuildMemberSearchTarget {
     pub(crate) guild_id: Id<GuildMarker>,
     pub(crate) query: String,
 }
 
-#[derive(Debug)]
-pub(super) struct MessageAuthorMemberRequests {
-    requested: TimedRequestSet<MessageAuthorMemberRequestKey>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GuildMemberSearchSurface {
+    Autocomplete,
+    Popup,
 }
 
-#[derive(Debug)]
-pub(super) struct InitialUnknownMemberRequests {
-    requested: TimedRequestSet<InitialUnknownMemberRequestKey>,
+impl GuildMemberSearchSurface {
+    const COUNT: usize = 2;
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    const fn min_query_chars(self) -> usize {
+        match self {
+            Self::Autocomplete => 2,
+            Self::Popup => 1,
+        }
+    }
+
+    pub(crate) const fn result_limit(self) -> u16 {
+        match self {
+            Self::Autocomplete => 10,
+            Self::Popup => 100,
+        }
+    }
 }
 
+/// Batch member fetches deduped per (guild, user) with a TTL so lost
+/// responses eventually retry. Every feature shares this coordinator so a
+/// voice, typing, message, or permission demand cannot issue duplicate work.
 #[derive(Debug)]
+pub(super) struct MemberBatchRequests {
+    requested: TimedRequestSet<(Id<GuildMarker>, Id<UserMarker>)>,
+}
+
+type OrderedUserIds = (BTreeSet<Id<UserMarker>>, Vec<Id<UserMarker>>);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct MemberListSubscriptionTarget {
     pub(crate) guild_id: Id<GuildMarker>,
     pub(crate) channel_id: Id<ChannelMarker>,
+    pub(crate) thread_id: Option<Id<ChannelMarker>>,
     pub(crate) bucket: u32,
+    pub(crate) refresh_generation: u64,
     pub(crate) ranges: Vec<(u32, u32)>,
 }
 
@@ -82,10 +131,10 @@ pub(super) struct MemberListSubscriptionRequests {
     pending: Option<PendingMemberListSubscription>,
 }
 
-#[derive(Debug)]
-pub(super) struct MentionMemberSearchRequests {
-    requested: TimedRequestSet<MentionMemberSearchKey>,
-    pending: Option<PendingMentionMemberSearch>,
+#[derive(Debug, Default)]
+pub(super) struct GuildMemberSearchRequests {
+    active_key: Option<GuildMemberSearchKey>,
+    pending: Option<PendingGuildMemberSearch>,
 }
 
 #[derive(Debug, Default)]
@@ -98,35 +147,111 @@ pub(super) struct UserNoteRequests {
     in_flight: HashSet<Id<UserMarker>>,
 }
 
+#[derive(Debug)]
+struct ApplicationCommandRequests {
+    pending: TimedRequestSet<String>,
+}
+
+impl Default for ApplicationCommandRequests {
+    fn default() -> Self {
+        Self {
+            pending: TimedRequestSet::new(
+                APPLICATION_COMMAND_REQUEST_TTL,
+                MAX_APPLICATION_COMMAND_REQUESTS,
+            ),
+        }
+    }
+}
+
+impl ApplicationCommandRequests {
+    fn begin(&mut self, nonce: String, now: Instant) {
+        self.pending.insert(nonce, now);
+    }
+
+    fn clear(&mut self, nonce: &str) {
+        self.pending.remove(&nonce.to_owned());
+    }
+
+    fn correlate(&mut self, nonce: &str, now: Instant) -> bool {
+        self.pending.prune(now);
+        let nonce = nonce.to_owned();
+        let correlated = self.pending.contains(&nonce);
+        if correlated {
+            self.pending.remove(&nonce);
+        }
+        correlated
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct RequestLifecycle {
     history: HistoryRequests,
-    forum_posts: ForumPostRequests,
+    forum_post_data: ForumPostDataRequests,
+    archived_threads: ArchivedThreadRequests,
     pinned_messages: PinnedMessageRequests,
     older_history: OlderHistoryRequests,
     newer_history: NewerHistoryRequests,
     read_acks: ReadAckRequests,
-    message_author_members: MessageAuthorMemberRequests,
-    initial_unknown_members: InitialUnknownMemberRequests,
+    member_hydration: MemberBatchRequests,
     member_list_subscriptions: MemberListSubscriptionRequests,
-    mention_member_searches: MentionMemberSearchRequests,
-    members: MemberRequests,
+    member_searches: [GuildMemberSearchRequests; GuildMemberSearchSurface::COUNT],
     thread_previews: ThreadPreviewRequests,
     user_profiles: UserProfileRequests,
     user_notes: UserNoteRequests,
+    pending_application_commands: ApplicationCommandRequests,
 }
 
 impl RequestLifecycle {
     pub(crate) fn record_event(&mut self, event: &AppEvent) {
+        if matches!(event, AppEvent::GatewayReidentified) {
+            self.reset_gateway_session();
+        }
         self.history.record_event(event);
         self.older_history.record_event(event);
         self.newer_history.record_event(event);
-        self.forum_posts.record_event(event);
+        self.forum_post_data.record_event(event);
+        self.archived_threads.record_event(event);
         self.pinned_messages.record_event(event);
-        self.message_author_members.record_event(event);
+        self.member_hydration.record_event(event);
         self.thread_previews.record_event(event);
         self.user_profiles.record_event(event);
         self.user_notes.record_event(event);
+    }
+
+    fn reset_gateway_session(&mut self) {
+        self.member_hydration = MemberBatchRequests::default();
+        self.forum_post_data = ForumPostDataRequests::default();
+        self.archived_threads = ArchivedThreadRequests::default();
+        self.member_list_subscriptions = MemberListSubscriptionRequests::default();
+        self.member_searches = Default::default();
+        self.pending_application_commands = ApplicationCommandRequests::default();
+    }
+
+    pub(crate) fn begin_application_command(&mut self, nonce: String, now: Instant) {
+        self.pending_application_commands.begin(nonce, now);
+    }
+
+    pub(crate) fn clear_application_command(&mut self, nonce: &str) {
+        self.pending_application_commands.clear(nonce);
+    }
+
+    pub(crate) fn correlate_interaction_event(&mut self, event: &mut AppEvent) {
+        self.correlate_interaction_event_at(event, Instant::now());
+    }
+
+    fn correlate_interaction_event_at(&mut self, event: &mut AppEvent, now: Instant) {
+        let (nonce, correlated) = match event {
+            AppEvent::InteractionSucceeded {
+                nonce, correlated, ..
+            }
+            | AppEvent::InteractionFailed {
+                nonce, correlated, ..
+            } => (nonce, correlated),
+            _ => return,
+        };
+        *correlated = nonce
+            .as_deref()
+            .is_some_and(|nonce| self.pending_application_commands.correlate(nonce, now));
     }
 
     pub(crate) fn next_history_request(
@@ -149,44 +274,43 @@ impl RequestLifecycle {
         self.older_history.begin_request(channel_id, before)
     }
 
-    pub(crate) fn begin_newer_history_request(
+    pub(crate) fn begin_history_after_request(
         &mut self,
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
+        mode: MessageHistoryAfterMode,
     ) -> bool {
-        self.newer_history
-            .begin_request(channel_id, after, NewerHistoryRequestMode::GapFill)
+        self.newer_history.begin_request(channel_id, after, mode)
     }
 
-    pub(crate) fn begin_catch_up_history_request(
+    pub(crate) fn next_forum_post_data_request(
+        &mut self,
+        target: Option<ForumPostDataRequestTarget>,
+    ) -> Option<ForumPostDataRequestTarget> {
+        self.forum_post_data.next(target)
+    }
+
+    pub(crate) fn mark_forum_post_data_failed(
         &mut self,
         channel_id: Id<ChannelMarker>,
-        after: Id<MessageMarker>,
-    ) -> bool {
-        self.newer_history
-            .begin_request(channel_id, after, NewerHistoryRequestMode::CatchUp)
-    }
-
-    pub(crate) fn next_forum_post_request(
-        &mut self,
-        target: Option<ForumPostRequestTarget>,
-    ) -> Option<(
-        Id<GuildMarker>,
-        Id<ChannelMarker>,
-        ForumPostArchiveState,
-        usize,
-    )> {
-        self.forum_posts.next(target)
-    }
-
-    pub(crate) fn mark_forum_post_failed(
-        &mut self,
-        channel_id: Id<ChannelMarker>,
-        archive_state: ForumPostArchiveState,
-        offset: usize,
+        thread_ids: &[Id<ChannelMarker>],
     ) {
-        self.forum_posts
-            .mark_failed(channel_id, archive_state, offset);
+        self.forum_post_data.release(channel_id, thread_ids);
+    }
+
+    pub(crate) fn next_archived_thread_request(
+        &mut self,
+        target: Option<ArchivedThreadRequestTarget>,
+    ) -> Option<ArchivedThreadRequestTarget> {
+        self.archived_threads.next(target)
+    }
+
+    pub(crate) fn mark_archived_thread_request_send_failed(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        cursor: &ArchivedThreadPageCursor,
+    ) {
+        self.archived_threads.release(channel_id, cursor);
     }
 
     pub(crate) fn next_pinned_message_request(
@@ -200,50 +324,36 @@ impl RequestLifecycle {
         self.pinned_messages.mark_failed(channel_id);
     }
 
-    pub(crate) fn next_message_author_member_requests(
+    pub(crate) fn next_member_hydration_requests(
         &mut self,
         missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
         now: Instant,
     ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
-        self.message_author_members.next(missing, now)
+        self.member_hydration.next(missing, now)
     }
 
-    pub(crate) fn next_initial_unknown_member_requests(
+    pub(crate) fn set_guild_member_search_target(
         &mut self,
-        missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
-        now: Instant,
-    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
-        self.initial_unknown_members.next(missing, now)
-    }
-
-    pub(crate) fn next_member_request(
-        &mut self,
-        guild_id: Option<Id<GuildMarker>>,
-    ) -> Option<Id<GuildMarker>> {
-        self.members.next(guild_id)
-    }
-
-    pub(crate) fn remove_member_request(&mut self, guild_id: Id<GuildMarker>) {
-        self.members.remove(guild_id);
-    }
-
-    pub(crate) fn set_mention_member_search_target(
-        &mut self,
-        target: Option<MentionMemberSearchTarget>,
+        surface: GuildMemberSearchSurface,
+        target: Option<GuildMemberSearchTarget>,
         now: Instant,
     ) {
-        self.mention_member_searches.set_target(target, now);
+        self.member_searches[surface.index()].set_target(target, surface.min_query_chars(), now);
     }
 
-    pub(crate) fn mention_member_search_deadline(&self) -> Option<Instant> {
-        self.mention_member_searches.pending_deadline()
+    pub(crate) fn guild_member_search_deadline(
+        &self,
+        surface: GuildMemberSearchSurface,
+    ) -> Option<Instant> {
+        self.member_searches[surface.index()].pending_deadline()
     }
 
-    pub(crate) fn next_due_mention_member_search(
+    pub(crate) fn next_due_guild_member_search(
         &mut self,
+        surface: GuildMemberSearchSurface,
         now: Instant,
-    ) -> Option<MentionMemberSearchTarget> {
-        self.mention_member_searches.next_due(now)
+    ) -> Option<GuildMemberSearchTarget> {
+        self.member_searches[surface.index()].next_due(now)
     }
 
     pub(crate) fn set_member_list_subscription_target(
@@ -385,8 +495,7 @@ impl HistoryRequests {
                 ..
             }
             | AppEvent::MessageHistoryRefreshed { channel_id, .. } => {
-                self.requests
-                    .insert(*channel_id, HistoryRequestState::Loaded);
+                self.requests.mark_loaded(*channel_id);
             }
             AppEvent::MessageHistoryLoadFailed {
                 channel_id,
@@ -404,66 +513,90 @@ impl HistoryRequests {
         channel_id: Option<Id<ChannelMarker>>,
         force_reload: bool,
     ) -> Option<Id<ChannelMarker>> {
-        let Some(channel_id) = channel_id else {
-            self.last_channel.clear();
-            return None;
-        };
-        let channel_changed = self.last_channel.select(channel_id);
-
-        match self.requests.get(&channel_id).copied() {
-            None => {
-                self.requests
-                    .insert(channel_id, HistoryRequestState::Requested);
-                Some(channel_id)
-            }
-            Some(HistoryRequestState::Failed) if channel_changed => {
-                self.requests
-                    .insert(channel_id, HistoryRequestState::Requested);
-                Some(channel_id)
-            }
-            Some(HistoryRequestState::Loaded) if force_reload && channel_changed => {
-                self.requests
-                    .insert(channel_id, HistoryRequestState::Requested);
-                Some(channel_id)
-            }
-            Some(
-                HistoryRequestState::Requested
-                | HistoryRequestState::Loaded
-                | HistoryRequestState::Failed,
-            ) => None,
-        }
+        self.requests.next(channel_id, force_reload)
     }
 
     pub(super) fn mark_failed(&mut self, channel_id: Id<ChannelMarker>) {
-        self.requests
-            .insert(channel_id, HistoryRequestState::Failed);
+        self.requests.mark_failed(channel_id);
     }
 }
 
-impl ForumPostRequests {
+impl ForumPostDataRequests {
     pub(super) fn record_event(&mut self, event: &AppEvent) {
         match event {
-            AppEvent::ForumPostsLoaded {
+            AppEvent::ForumPostDataLoaded {
                 channel_id,
-                archive_state,
-                offset: _,
-                next_offset,
-                has_more,
+                requested_thread_ids,
                 ..
-            } => {
-                self.requests.entry(*channel_id).or_default().set_loaded(
-                    *archive_state,
-                    *next_offset,
-                    *has_more,
-                );
+            } => self.release(*channel_id, requested_thread_ids),
+            AppEvent::ForumPostDataLoadFailed {
+                channel_id,
+                thread_ids,
+                ..
+            } => self.release(*channel_id, thread_ids),
+            _ => {}
+        }
+    }
+
+    pub(super) fn next(
+        &mut self,
+        target: Option<ForumPostDataRequestTarget>,
+    ) -> Option<ForumPostDataRequestTarget> {
+        let ForumPostDataRequestTarget {
+            guild_id,
+            channel_id,
+            thread_ids,
+        } = target?;
+        let mut batch = Vec::with_capacity(FORUM_POST_DATA_BATCH_LIMIT);
+        for thread_id in thread_ids {
+            if batch.len() == FORUM_POST_DATA_BATCH_LIMIT {
+                break;
             }
-            AppEvent::ForumPostsLoadFailed {
-                channel_id,
-                archive_state,
-                offset,
-                ..
+            if self.in_flight.insert((channel_id, thread_id)) {
+                batch.push(thread_id);
+            }
+        }
+        (!batch.is_empty()).then_some(ForumPostDataRequestTarget {
+            guild_id,
+            channel_id,
+            thread_ids: batch,
+        })
+    }
+
+    pub(super) fn release(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        thread_ids: &[Id<ChannelMarker>],
+    ) {
+        for thread_id in thread_ids {
+            self.in_flight.remove(&(channel_id, *thread_id));
+        }
+    }
+}
+
+impl ArchivedThreadRequests {
+    pub(super) fn record_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::ArchivedThreadsLoaded {
+                channel_id, before, ..
             } => {
-                self.mark_failed(*channel_id, *archive_state, *offset);
+                let key = (
+                    *channel_id,
+                    ArchivedThreadPageCursor::from_before(before.clone()),
+                );
+                self.in_flight.remove(&key);
+                self.failed.remove(&key);
+                self.completed.insert(key);
+            }
+            AppEvent::ArchivedThreadsLoadFailed {
+                channel_id, before, ..
+            } => {
+                let key = (
+                    *channel_id,
+                    ArchivedThreadPageCursor::from_before(before.clone()),
+                );
+                self.in_flight.remove(&key);
+                self.failed.insert(key);
             }
             _ => {}
         }
@@ -471,39 +604,35 @@ impl ForumPostRequests {
 
     pub(super) fn next(
         &mut self,
-        target: Option<ForumPostRequestTarget>,
-    ) -> Option<(
-        Id<GuildMarker>,
-        Id<ChannelMarker>,
-        ForumPostArchiveState,
-        usize,
-    )> {
-        let Some(ForumPostRequestTarget {
-            guild_id,
-            channel_id,
-            should_load_more,
-        }) = target
-        else {
-            self.last_channel.clear();
+        target: Option<ArchivedThreadRequestTarget>,
+    ) -> Option<ArchivedThreadRequestTarget> {
+        let Some(target) = target else {
+            self.last_channel = None;
             return None;
         };
-        let channel_changed = self.last_channel.select(channel_id);
+        let channel_changed =
+            self.last_channel.replace(target.channel_id) != Some(target.channel_id);
+        if channel_changed {
+            self.failed
+                .retain(|(channel_id, _)| *channel_id != target.channel_id);
+        }
 
-        let state = self.requests.entry(channel_id).or_default();
-        let next = state.next(channel_changed, should_load_more)?;
-        Some((guild_id, channel_id, next.archive_state, next.offset))
+        let key = (target.channel_id, target.cursor.clone());
+        if self.completed.contains(&key)
+            || self.failed.contains(&key)
+            || !self.in_flight.insert(key)
+        {
+            return None;
+        }
+        Some(target)
     }
 
-    pub(super) fn mark_failed(
+    pub(super) fn release(
         &mut self,
         channel_id: Id<ChannelMarker>,
-        archive_state: ForumPostArchiveState,
-        offset: usize,
+        cursor: &ArchivedThreadPageCursor,
     ) {
-        self.requests
-            .entry(channel_id)
-            .or_default()
-            .set_failed(archive_state, offset);
+        self.in_flight.remove(&(channel_id, cursor.clone()));
     }
 }
 
@@ -511,14 +640,14 @@ impl PinnedMessageRequests {
     pub(super) fn record_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::PinnedMessagesLoaded { channel_id, .. } => {
-                self.requests
-                    .insert(*channel_id, PinnedMessageRequestState::Loaded);
+                self.requests.mark_loaded(*channel_id);
             }
             AppEvent::PinnedMessagesLoadFailed { channel_id, .. } => {
                 self.mark_failed(*channel_id);
             }
+            // The pin set changed, so the next selection reloads it.
             AppEvent::ChannelPinsUpdate { channel_id, .. } => {
-                self.requests.remove(channel_id);
+                self.requests.reset(channel_id);
             }
             _ => {}
         }
@@ -528,34 +657,11 @@ impl PinnedMessageRequests {
         &mut self,
         channel_id: Option<Id<ChannelMarker>>,
     ) -> Option<Id<ChannelMarker>> {
-        let Some(channel_id) = channel_id else {
-            self.last_channel.clear();
-            return None;
-        };
-        let channel_changed = self.last_channel.select(channel_id);
-
-        match self.requests.get(&channel_id).copied() {
-            None => {
-                self.requests
-                    .insert(channel_id, PinnedMessageRequestState::Requested);
-                Some(channel_id)
-            }
-            Some(PinnedMessageRequestState::Failed) if channel_changed => {
-                self.requests
-                    .insert(channel_id, PinnedMessageRequestState::Requested);
-                Some(channel_id)
-            }
-            Some(
-                PinnedMessageRequestState::Requested
-                | PinnedMessageRequestState::Loaded
-                | PinnedMessageRequestState::Failed,
-            ) => None,
-        }
+        self.requests.next(channel_id, false)
     }
 
     pub(super) fn mark_failed(&mut self, channel_id: Id<ChannelMarker>) {
-        self.requests
-            .insert(channel_id, PinnedMessageRequestState::Failed);
+        self.requests.mark_failed(channel_id);
     }
 }
 
@@ -566,65 +672,24 @@ impl OlderHistoryRequests {
                 channel_id,
                 before: Some(response_before),
                 messages,
-            } => self.record_loaded(*channel_id, *response_before, messages.is_empty()),
+            } => {
+                self.requests
+                    .record_loaded(*channel_id, *response_before, messages.is_empty());
+            }
             AppEvent::MessageHistoryLoadFailed {
                 channel_id,
                 target: MessageHistoryLoadTarget::Older { before },
                 ..
             } => {
-                self.record_failed(*channel_id, *before);
+                self.requests.record_failed(*channel_id, *before);
             }
             _ => {}
         }
     }
 
     fn begin_request(&mut self, channel_id: Id<ChannelMarker>, before: Id<MessageMarker>) -> bool {
-        match self.requests.get(&channel_id) {
-            Some(OlderHistoryRequestState::Requested { .. }) => false,
-            Some(OlderHistoryRequestState::Exhausted { before: exhausted })
-                if *exhausted == before =>
-            {
-                false
-            }
-            _ => {
-                self.requests
-                    .insert(channel_id, OlderHistoryRequestState::Requested { before });
-                true
-            }
-        }
-    }
-
-    fn record_loaded(
-        &mut self,
-        channel_id: Id<ChannelMarker>,
-        response_before: Id<MessageMarker>,
-        is_empty: bool,
-    ) {
-        let Some(OlderHistoryRequestState::Requested { before }) =
-            self.requests.get(&channel_id).copied()
-        else {
-            return;
-        };
-        if response_before != before {
-            return;
-        }
-        if is_empty {
-            self.requests
-                .insert(channel_id, OlderHistoryRequestState::Exhausted { before });
-        } else {
-            self.requests.remove(&channel_id);
-        }
-    }
-
-    fn record_failed(&mut self, channel_id: Id<ChannelMarker>, response_before: Id<MessageMarker>) {
-        let Some(OlderHistoryRequestState::Requested { before }) =
-            self.requests.get(&channel_id).copied()
-        else {
-            return;
-        };
-        if response_before == before {
-            self.requests.remove(&channel_id);
-        }
+        // An empty page always means the top of the history was reached.
+        self.requests.begin_request(channel_id, before, true)
     }
 }
 
@@ -636,19 +701,16 @@ impl NewerHistoryRequests {
                 after: response_after,
                 messages,
                 ..
+            } => {
+                self.requests
+                    .record_loaded(*channel_id, *response_after, messages.is_empty());
             }
-            | AppEvent::MessageHistoryCatchUpLoaded {
-                channel_id,
-                after: response_after,
-                messages,
-                ..
-            } => self.record_loaded(*channel_id, *response_after, messages.is_empty()),
             AppEvent::MessageHistoryLoadFailed {
                 channel_id,
                 target: MessageHistoryLoadTarget::Newer { after },
                 ..
             } => {
-                self.record_failed(*channel_id, *after);
+                self.requests.record_failed(*channel_id, *after);
             }
             _ => {}
         }
@@ -658,68 +720,50 @@ impl NewerHistoryRequests {
         &mut self,
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
-        mode: NewerHistoryRequestMode,
+        mode: MessageHistoryAfterMode,
     ) -> bool {
-        match self.requests.get(&channel_id) {
-            Some(NewerHistoryRequestState::Requested { .. }) => false,
-            Some(NewerHistoryRequestState::Exhausted { after: exhausted })
-                if *exhausted == after =>
-            {
-                false
-            }
-            _ => {
-                self.requests.insert(
-                    channel_id,
-                    NewerHistoryRequestState::Requested { after, mode },
-                );
-                true
-            }
-        }
-    }
-
-    fn record_loaded(
-        &mut self,
-        channel_id: Id<ChannelMarker>,
-        response_after: Id<MessageMarker>,
-        is_empty: bool,
-    ) {
-        let Some(NewerHistoryRequestState::Requested { after, mode }) =
-            self.requests.get(&channel_id).copied()
-        else {
-            return;
-        };
-        if response_after != after {
-            return;
-        }
-        if is_empty && mode.exhausts_on_empty() {
-            self.requests
-                .insert(channel_id, NewerHistoryRequestState::Exhausted { after });
-        } else {
-            self.requests.remove(&channel_id);
-        }
-    }
-
-    fn record_failed(&mut self, channel_id: Id<ChannelMarker>, response_after: Id<MessageMarker>) {
-        let Some(NewerHistoryRequestState::Requested { after, .. }) =
-            self.requests.get(&channel_id).copied()
-        else {
-            return;
-        };
-        if response_after == after {
-            self.requests.remove(&channel_id);
-        }
+        self.requests
+            .begin_request(channel_id, after, mode.exhausts_on_empty())
     }
 }
 
-impl MessageAuthorMemberRequests {
+impl MemberBatchRequests {
     const REQUEST_TTL: Duration = Duration::from_secs(30);
     const MAX_REQUESTED: usize = 4096;
 
+    /// Clears the dedupe entry when the member arrives through the gateway.
     pub(super) fn record_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::GuildMemberUpsert { guild_id, member }
             | AppEvent::GuildMemberAdd { guild_id, member } => {
-                self.remove((*guild_id, member.user_id));
+                self.requested.remove(&(*guild_id, member.user_id));
+            }
+            AppEvent::GuildMembersChunk { chunk } => {
+                for member in &chunk.members {
+                    self.requested.remove(&(chunk.guild_id, member.user_id));
+                }
+            }
+            AppEvent::GuildMemberListUpdate { update } => {
+                for (member, _) in update
+                    .ops
+                    .iter()
+                    .flat_map(|operation| operation.items())
+                    .filter_map(|item| item.member())
+                {
+                    self.requested.remove(&(update.guild_id, member.user_id));
+                }
+            }
+            AppEvent::VoiceStateUpdate { state } => {
+                if let (Some(guild_id), Some(member)) = (state.guild_id, state.member.as_ref()) {
+                    self.requested.remove(&(guild_id, member.user_id));
+                }
+            }
+            AppEvent::TypingStart {
+                guild_id: Some(guild_id),
+                member: Some(member),
+                ..
+            } => {
+                self.requested.remove(&(*guild_id, member.user_id));
             }
             _ => {}
         }
@@ -732,58 +776,29 @@ impl MessageAuthorMemberRequests {
     ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
         self.requested.prune(now);
 
-        let mut requests = Vec::new();
+        let mut by_guild: BTreeMap<Id<GuildMarker>, OrderedUserIds> = BTreeMap::new();
         for (guild_id, user_ids) in missing {
-            let fresh_user_ids = user_ids
-                .into_iter()
-                .filter(|user_id| self.requested.insert((guild_id, *user_id), now))
-                .collect::<Vec<_>>();
-            if !fresh_user_ids.is_empty() {
-                requests.push((guild_id, fresh_user_ids));
+            for user_id in user_ids {
+                let (seen, ordered) = by_guild.entry(guild_id).or_default();
+                if seen.insert(user_id) {
+                    ordered.push(user_id);
+                }
             }
         }
-        requests
-    }
-
-    fn remove(&mut self, key: MessageAuthorMemberRequestKey) {
-        self.requested.remove(&key);
-    }
-}
-
-impl Default for MessageAuthorMemberRequests {
-    fn default() -> Self {
-        Self {
-            requested: TimedRequestSet::new(Self::REQUEST_TTL, Self::MAX_REQUESTED),
-        }
+        by_guild
+            .into_iter()
+            .filter_map(|(guild_id, (_, ordered_user_ids))| {
+                let fresh_user_ids = ordered_user_ids
+                    .into_iter()
+                    .filter(|user_id| self.requested.insert((guild_id, *user_id), now))
+                    .collect::<Vec<_>>();
+                (!fresh_user_ids.is_empty()).then_some((guild_id, fresh_user_ids))
+            })
+            .collect()
     }
 }
 
-impl InitialUnknownMemberRequests {
-    const REQUEST_TTL: Duration = Duration::from_secs(30);
-    const MAX_REQUESTED: usize = 4096;
-
-    pub(super) fn next(
-        &mut self,
-        missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
-        now: Instant,
-    ) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
-        self.requested.prune(now);
-
-        let mut requests = Vec::new();
-        for (guild_id, user_ids) in missing {
-            let fresh_user_ids = user_ids
-                .into_iter()
-                .filter(|user_id| self.requested.insert((guild_id, *user_id), now))
-                .collect::<Vec<_>>();
-            if !fresh_user_ids.is_empty() {
-                requests.push((guild_id, fresh_user_ids));
-            }
-        }
-        requests
-    }
-}
-
-impl Default for InitialUnknownMemberRequests {
+impl Default for MemberBatchRequests {
     fn default() -> Self {
         Self {
             requested: TimedRequestSet::new(Self::REQUEST_TTL, Self::MAX_REQUESTED),
@@ -806,12 +821,6 @@ impl MemberListSubscriptionRequests {
         };
         let key = target.key();
 
-        // The initial guild subscription already covers bucket 0. Only send a
-        // bucket-0 update when it resets a previously wider subscription.
-        if self.last_sent.is_none() && key.bucket == 0 {
-            self.pending = None;
-            return;
-        }
         if self.last_sent.as_ref() == Some(&key) {
             self.pending = None;
             return;
@@ -845,25 +854,9 @@ impl MemberListSubscriptionRequests {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct MemberRequests {
-    requests: HashSet<Id<GuildMarker>>,
-}
-
-#[derive(Debug, Default)]
 pub(super) struct ThreadPreviewRequests {
     requested: HashSet<(Id<ChannelMarker>, Id<MessageMarker>)>,
     failed: HashSet<(Id<ChannelMarker>, Id<MessageMarker>)>,
-}
-
-impl MemberRequests {
-    pub(super) fn next(&mut self, guild_id: Option<Id<GuildMarker>>) -> Option<Id<GuildMarker>> {
-        let guild_id = guild_id?;
-        self.requests.insert(guild_id).then_some(guild_id)
-    }
-
-    pub(super) fn remove(&mut self, guild_id: Id<GuildMarker>) {
-        self.requests.remove(&guild_id);
-    }
 }
 
 impl ThreadPreviewRequests {
@@ -907,32 +900,28 @@ impl ThreadPreviewRequests {
     }
 }
 
-impl MentionMemberSearchRequests {
-    const MIN_QUERY_CHARS: usize = 2;
-    const MAX_QUERY_CHARS: usize = 64;
+impl GuildMemberSearchRequests {
     const DEBOUNCE: Duration = Duration::from_millis(250);
-    const REQUEST_TTL: Duration = Duration::from_secs(30);
-    const MAX_REQUESTED: usize = 128;
 
-    pub(super) fn set_target(&mut self, target: Option<MentionMemberSearchTarget>, now: Instant) {
-        self.requested.prune(now);
-        let Some(target) = target.and_then(normalize_mention_member_search_target) else {
+    pub(super) fn set_target(
+        &mut self,
+        target: Option<GuildMemberSearchTarget>,
+        min_query_chars: usize,
+        now: Instant,
+    ) {
+        let Some(target) =
+            target.and_then(|target| normalize_guild_member_search_target(target, min_query_chars))
+        else {
+            self.active_key = None;
             self.pending = None;
             return;
         };
         let key = target.key();
-        if self.requested.contains(&key) {
-            self.pending = None;
+        if self.active_key.as_ref() == Some(&key) {
             return;
         }
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.target.key() == key)
-        {
-            return;
-        }
-        self.pending = Some(PendingMentionMemberSearch {
+        self.active_key = Some(key);
+        self.pending = Some(PendingGuildMemberSearch {
             target,
             ready_at: now + Self::DEBOUNCE,
         });
@@ -942,33 +931,16 @@ impl MentionMemberSearchRequests {
         self.pending.as_ref().map(|pending| pending.ready_at)
     }
 
-    pub(super) fn next_due(&mut self, now: Instant) -> Option<MentionMemberSearchTarget> {
-        self.requested.prune(now);
+    pub(super) fn next_due(&mut self, now: Instant) -> Option<GuildMemberSearchTarget> {
         let pending = self.pending.as_ref()?;
         if pending.ready_at > now {
             return None;
         }
-        let pending = self.pending.take()?;
-        let key = pending.target.key();
-        if !self.requested.insert(key, now) {
-            return None;
-        }
-        Some(pending.target)
+        self.pending.take().map(|pending| pending.target)
     }
 }
 
-impl Default for MentionMemberSearchRequests {
-    fn default() -> Self {
-        Self {
-            requested: TimedRequestSet::new(Self::REQUEST_TTL, Self::MAX_REQUESTED),
-            pending: None,
-        }
-    }
-}
-
-type MentionMemberSearchKey = (Id<GuildMarker>, String);
-type MessageAuthorMemberRequestKey = (Id<GuildMarker>, Id<UserMarker>);
-type InitialUnknownMemberRequestKey = (Id<GuildMarker>, Id<UserMarker>);
+type GuildMemberSearchKey = (Id<GuildMarker>, String);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct UserProfileRequestKey {
@@ -977,35 +949,6 @@ struct UserProfileRequestKey {
 }
 
 const READ_ACK_DEBOUNCE: Duration = Duration::from_millis(1000);
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OlderHistoryRequestState {
-    Requested { before: Id<MessageMarker> },
-    Exhausted { before: Id<MessageMarker> },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NewerHistoryRequestState {
-    Requested {
-        after: Id<MessageMarker>,
-        mode: NewerHistoryRequestMode,
-    },
-    Exhausted {
-        after: Id<MessageMarker>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NewerHistoryRequestMode {
-    GapFill,
-    CatchUp,
-}
-
-impl NewerHistoryRequestMode {
-    fn exhausts_on_empty(self) -> bool {
-        matches!(self, Self::GapFill)
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PendingReadAck {
@@ -1017,12 +960,14 @@ struct PendingReadAck {
 struct MemberListSubscriptionKey {
     guild_id: Id<GuildMarker>,
     channel_id: Id<ChannelMarker>,
+    thread_id: Option<Id<ChannelMarker>>,
     bucket: u32,
+    refresh_generation: u64,
 }
 
 #[derive(Debug)]
-struct PendingMentionMemberSearch {
-    target: MentionMemberSearchTarget,
+struct PendingGuildMemberSearch {
+    target: GuildMemberSearchTarget,
     ready_at: Instant,
 }
 
@@ -1073,8 +1018,8 @@ impl ReadAckRequests {
     }
 }
 
-impl MentionMemberSearchTarget {
-    fn key(&self) -> MentionMemberSearchKey {
+impl GuildMemberSearchTarget {
+    fn key(&self) -> GuildMemberSearchKey {
         (self.guild_id, self.query.clone())
     }
 }
@@ -1084,817 +1029,23 @@ impl MemberListSubscriptionTarget {
         MemberListSubscriptionKey {
             guild_id: self.guild_id,
             channel_id: self.channel_id,
+            thread_id: self.thread_id,
             bucket: self.bucket,
+            refresh_generation: self.refresh_generation,
         }
     }
 }
 
-fn normalize_mention_member_search_target(
-    target: MentionMemberSearchTarget,
-) -> Option<MentionMemberSearchTarget> {
-    let query = normalize_mention_member_search_query(&target.query);
-    (query.chars().count() >= MentionMemberSearchRequests::MIN_QUERY_CHARS).then_some(
-        MentionMemberSearchTarget {
-            guild_id: target.guild_id,
-            query,
-        },
-    )
-}
-
-fn normalize_mention_member_search_query(query: &str) -> String {
-    let mut normalized = String::new();
-    let mut count = 0usize;
-    for ch in query.trim().chars() {
-        for lowered in ch.to_lowercase() {
-            if count >= MentionMemberSearchRequests::MAX_QUERY_CHARS {
-                return normalized;
-            }
-            normalized.push(lowered);
-            count += 1;
-        }
-    }
-    normalized
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HistoryRequestState {
-    Requested,
-    Loaded,
-    Failed,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ForumPostRequestCursor {
-    archive_state: ForumPostArchiveState,
-    offset: usize,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct ForumPostRequestState {
-    active: ForumPostPageRequestState,
-    archived: ForumPostPageRequestState,
-}
-
-impl ForumPostRequestState {
-    fn next(
-        &mut self,
-        channel_changed: bool,
-        should_load_more: bool,
-    ) -> Option<ForumPostRequestCursor> {
-        if let Some(offset) = self.active.next(channel_changed, true, should_load_more) {
-            return Some(ForumPostRequestCursor {
-                archive_state: ForumPostArchiveState::Active,
-                offset,
-            });
-        }
-        if let Some(offset) =
-            self.archived
-                .next(channel_changed, should_load_more, should_load_more)
-        {
-            return Some(ForumPostRequestCursor {
-                archive_state: ForumPostArchiveState::Archived,
-                offset,
-            });
-        }
-        None
-    }
-
-    fn set_loaded(
-        &mut self,
-        archive_state: ForumPostArchiveState,
-        next_offset: usize,
-        has_more: bool,
-    ) {
-        self.page_mut(archive_state)
-            .set_loaded(next_offset, has_more);
-    }
-
-    fn set_failed(&mut self, archive_state: ForumPostArchiveState, offset: usize) {
-        self.page_mut(archive_state).set_failed(offset);
-    }
-
-    fn page_mut(&mut self, archive_state: ForumPostArchiveState) -> &mut ForumPostPageRequestState {
-        match archive_state {
-            ForumPostArchiveState::Active => &mut self.active,
-            ForumPostArchiveState::Archived => &mut self.archived,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum ForumPostPageRequestState {
-    #[default]
-    NotRequested,
-    Requested {
-        offset: usize,
-    },
-    Loaded {
-        next_offset: usize,
-        has_more: bool,
-    },
-    Failed {
-        offset: usize,
-    },
-}
-
-impl ForumPostPageRequestState {
-    fn next(
-        &mut self,
-        channel_changed: bool,
-        allow_initial: bool,
-        should_load_more: bool,
-    ) -> Option<usize> {
-        match *self {
-            Self::NotRequested if allow_initial => {
-                *self = Self::Requested { offset: 0 };
-                Some(0)
-            }
-            Self::Failed { offset } if channel_changed => {
-                *self = Self::Requested { offset };
-                Some(offset)
-            }
-            Self::Loaded {
-                next_offset,
-                has_more: true,
-            } if should_load_more => {
-                *self = Self::Requested {
-                    offset: next_offset,
-                };
-                Some(next_offset)
-            }
-            Self::NotRequested
-            | Self::Requested { .. }
-            | Self::Loaded { .. }
-            | Self::Failed { .. } => None,
-        }
-    }
-
-    fn set_loaded(&mut self, next_offset: usize, has_more: bool) {
-        *self = Self::Loaded {
-            next_offset,
-            has_more,
-        };
-    }
-
-    fn set_failed(&mut self, offset: usize) {
-        *self = Self::Failed { offset };
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PinnedMessageRequestState {
-    Requested,
-    Loaded,
-    Failed,
+fn normalize_guild_member_search_target(
+    target: GuildMemberSearchTarget,
+    min_query_chars: usize,
+) -> Option<GuildMemberSearchTarget> {
+    let query = normalize_member_search_query(&target.query, min_query_chars)?;
+    Some(GuildMemberSearchTarget {
+        guild_id: target.guild_id,
+        query,
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::discord::ids::Id;
-
-    use crate::discord::{
-        AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo, MessageHistoryLoadTarget,
-        UserProfileInfo,
-    };
-
-    use super::{
-        ForumPostRequestTarget, ForumPostRequests, HistoryRequests, MemberListSubscriptionRequests,
-        MemberListSubscriptionTarget, MemberRequests, MentionMemberSearchRequests,
-        MentionMemberSearchTarget, MessageAuthorMemberRequests, PinnedMessageRequests,
-        RequestLifecycle, ThreadPreviewRequests, UserNoteRequests, UserProfileRequests,
-    };
-
-    #[test]
-    fn history_request_is_sent_once_and_retries_failed_channel_after_reselect() {
-        let mut requests = HistoryRequests::default();
-        let first = Id::new(1);
-        let second = Id::new(2);
-
-        assert_eq!(requests.next(None, false), None);
-        assert_eq!(requests.next(Some(first), false), Some(first));
-        assert_eq!(requests.next(Some(first), false), None);
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id: first,
-            target: MessageHistoryLoadTarget::Latest,
-            message: "temporary failure".to_owned(),
-        });
-        assert_eq!(requests.next(Some(first), false), None);
-        assert_eq!(requests.next(Some(second), false), Some(second));
-        assert_eq!(requests.next(Some(first), false), Some(first));
-
-        let mut requests = HistoryRequests::default();
-        let first = Id::new(1);
-        let second = Id::new(2);
-
-        assert_eq!(requests.next(Some(first), false), Some(first));
-        requests.record_event(&AppEvent::MessageHistoryLoaded {
-            channel_id: first,
-            before: None,
-            messages: Vec::new(),
-        });
-        assert_eq!(requests.next(Some(first), true), None);
-        assert_eq!(requests.next(Some(second), false), Some(second));
-        assert_eq!(requests.next(Some(first), true), Some(first));
-    }
-
-    #[test]
-    fn pinned_message_request_is_on_demand_and_retries_failed_channel_after_reselect() {
-        let mut requests = PinnedMessageRequests::default();
-        let first = Id::new(1);
-        let second = Id::new(2);
-
-        assert_eq!(requests.next(None), None);
-        assert_eq!(requests.next(Some(first)), Some(first));
-        assert_eq!(requests.next(Some(first)), None);
-        requests.record_event(&AppEvent::PinnedMessagesLoaded {
-            channel_id: first,
-            messages: Vec::new(),
-        });
-        assert_eq!(requests.next(Some(first)), None);
-        assert_eq!(requests.next(Some(second)), Some(second));
-        assert_eq!(requests.next(Some(first)), None);
-
-        let mut requests = PinnedMessageRequests::default();
-        assert_eq!(requests.next(Some(first)), Some(first));
-        requests.record_event(&AppEvent::PinnedMessagesLoadFailed {
-            channel_id: first,
-            message: "temporary failure".to_owned(),
-        });
-        assert_eq!(requests.next(Some(first)), None);
-        assert_eq!(requests.next(Some(second)), Some(second));
-        assert_eq!(requests.next(Some(first)), Some(first));
-    }
-
-    #[test]
-    fn pinned_message_request_reloads_after_channel_pins_update() {
-        let mut requests = PinnedMessageRequests::default();
-        let channel_id = Id::new(1);
-
-        assert_eq!(requests.next(Some(channel_id)), Some(channel_id));
-        requests.record_event(&AppEvent::PinnedMessagesLoaded {
-            channel_id,
-            messages: Vec::new(),
-        });
-        assert_eq!(requests.next(Some(channel_id)), None);
-
-        requests.record_event(&AppEvent::ChannelPinsUpdate {
-            guild_id: None,
-            channel_id,
-            last_pin_timestamp: None,
-        });
-
-        assert_eq!(requests.next(Some(channel_id)), Some(channel_id));
-    }
-
-    #[test]
-    fn forum_post_request_is_sent_once_per_channel() {
-        let mut requests = ForumPostRequests::default();
-        let guild = Id::new(100);
-        let first = Id::new(1);
-        let second = Id::new(2);
-
-        assert_eq!(requests.next(None), None);
-        assert_eq!(
-            requests.next(Some(target(guild, first, false))),
-            Some((guild, first, ForumPostArchiveState::Active, 0))
-        );
-        assert_eq!(requests.next(Some(target(guild, first, false))), None);
-        assert_eq!(
-            requests.next(Some(target(guild, second, false))),
-            Some((guild, second, ForumPostArchiveState::Active, 0))
-        );
-    }
-
-    #[test]
-    fn forum_post_request_retries_failed_channel_after_reselect() {
-        let mut requests = ForumPostRequests::default();
-        let guild = Id::new(100);
-        let first = Id::new(1);
-        let second = Id::new(2);
-
-        assert_eq!(
-            requests.next(Some(target(guild, first, false))),
-            Some((guild, first, ForumPostArchiveState::Active, 0))
-        );
-        requests.record_event(&AppEvent::ForumPostsLoadFailed {
-            channel_id: first,
-            archive_state: ForumPostArchiveState::Active,
-            offset: 0,
-            message: "temporary failure".to_owned(),
-        });
-        assert_eq!(requests.next(Some(target(guild, first, false))), None);
-        assert_eq!(
-            requests.next(Some(target(guild, second, false))),
-            Some((guild, second, ForumPostArchiveState::Active, 0))
-        );
-        assert_eq!(
-            requests.next(Some(target(guild, first, false))),
-            Some((guild, first, ForumPostArchiveState::Active, 0))
-        );
-    }
-
-    #[test]
-    fn forum_post_request_tracks_active_archived_and_server_offsets() {
-        let mut requests = ForumPostRequests::default();
-        let guild = Id::new(100);
-        let channel = Id::new(1);
-
-        assert_eq!(
-            requests.next(Some(target(guild, channel, false))),
-            Some((guild, channel, ForumPostArchiveState::Active, 0))
-        );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
-            channel_id: channel,
-            archive_state: ForumPostArchiveState::Active,
-            offset: 0,
-            next_offset: 2,
-            threads: vec![forum_post(channel, 10), forum_post(channel, 11)],
-            first_messages: Vec::new(),
-            has_more: true,
-        });
-
-        assert_eq!(requests.next(Some(target(guild, channel, false))), None);
-        assert_eq!(
-            requests.next(Some(target(guild, channel, true))),
-            Some((guild, channel, ForumPostArchiveState::Active, 2))
-        );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
-            channel_id: channel,
-            archive_state: ForumPostArchiveState::Active,
-            offset: 2,
-            next_offset: 3,
-            threads: vec![forum_post(channel, 12)],
-            first_messages: Vec::new(),
-            has_more: false,
-        });
-
-        assert_eq!(requests.next(Some(target(guild, channel, false))), None);
-        assert_eq!(
-            requests.next(Some(target(guild, channel, true))),
-            Some((guild, channel, ForumPostArchiveState::Archived, 0))
-        );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
-            channel_id: channel,
-            archive_state: ForumPostArchiveState::Archived,
-            offset: 0,
-            next_offset: 2,
-            threads: vec![forum_post(channel, 11), forum_post(channel, 12)],
-            first_messages: Vec::new(),
-            has_more: true,
-        });
-
-        assert_eq!(
-            requests.next(Some(target(guild, channel, true))),
-            Some((guild, channel, ForumPostArchiveState::Archived, 2))
-        );
-
-        let mut requests = ForumPostRequests::default();
-        let channel = Id::new(2);
-
-        assert_eq!(
-            requests.next(Some(target(guild, channel, false))),
-            Some((guild, channel, ForumPostArchiveState::Active, 0))
-        );
-        requests.record_event(&AppEvent::ForumPostsLoaded {
-            channel_id: channel,
-            archive_state: ForumPostArchiveState::Active,
-            offset: 0,
-            next_offset: 25,
-            threads: vec![forum_post(channel, 10), forum_post(channel, 11)],
-            first_messages: Vec::new(),
-            has_more: true,
-        });
-
-        assert_eq!(
-            requests.next(Some(target(guild, channel, true))),
-            Some((guild, channel, ForumPostArchiveState::Active, 25))
-        );
-    }
-
-    fn target(
-        guild_id: Id<crate::discord::ids::marker::GuildMarker>,
-        channel_id: Id<crate::discord::ids::marker::ChannelMarker>,
-        should_load_more: bool,
-    ) -> ForumPostRequestTarget {
-        ForumPostRequestTarget {
-            guild_id,
-            channel_id,
-            should_load_more,
-        }
-    }
-
-    fn forum_post(
-        forum_id: Id<crate::discord::ids::marker::ChannelMarker>,
-        channel_id: u64,
-    ) -> ChannelInfo {
-        ChannelInfo {
-            guild_id: Some(Id::new(100)),
-            parent_id: Some(forum_id),
-            name: format!("post {channel_id}"),
-            thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
-            ..ChannelInfo::test(Id::new(channel_id), "GuildPublicThread")
-        }
-    }
-
-    fn subscription_target(bucket: u32) -> MemberListSubscriptionTarget {
-        let ranges = if bucket == 0 {
-            vec![(0, 99)]
-        } else {
-            vec![(0, 99), (bucket * 100, bucket * 100 + 99)]
-        };
-        MemberListSubscriptionTarget {
-            guild_id: Id::new(1),
-            channel_id: Id::new(2),
-            bucket,
-            ranges,
-        }
-    }
-
-    fn user_profile(user_id: Id<crate::discord::ids::marker::UserMarker>) -> UserProfileInfo {
-        UserProfileInfo::test(user_id, "neo")
-    }
-
-    #[test]
-    fn member_request_is_sent_once_per_active_guild() {
-        let mut requests = MemberRequests::default();
-        let first = Id::new(1);
-        let second = Id::new(2);
-
-        assert_eq!(requests.next(None), None);
-        assert_eq!(requests.next(Some(first)), Some(first));
-        assert_eq!(requests.next(Some(first)), None);
-        assert_eq!(requests.next(Some(second)), Some(second));
-        assert_eq!(requests.next(Some(first)), None);
-    }
-
-    #[test]
-    fn member_request_can_retry_after_remove() {
-        let mut requests = MemberRequests::default();
-        let guild_id = Id::new(1);
-
-        assert_eq!(requests.next(Some(guild_id)), Some(guild_id));
-        requests.remove(guild_id);
-
-        assert_eq!(requests.next(Some(guild_id)), Some(guild_id));
-    }
-
-    #[test]
-    fn user_profile_request_dedupes_until_success_or_failure() {
-        let mut requests = UserProfileRequests::default();
-        let user_id = Id::new(10);
-        let guild_id = Some(Id::new(1));
-
-        assert!(requests.begin_request(user_id, guild_id));
-        assert!(!requests.begin_request(user_id, guild_id));
-
-        requests.record_event(&AppEvent::UserProfileLoaded {
-            guild_id,
-            profile: user_profile(user_id),
-        });
-        assert!(requests.begin_request(user_id, guild_id));
-
-        requests.record_event(&AppEvent::UserProfileLoadFailed {
-            user_id,
-            guild_id,
-            message: "temporary failure".to_owned(),
-        });
-        assert!(requests.begin_request(user_id, guild_id));
-    }
-
-    #[test]
-    fn user_note_request_dedupes_until_success_or_failure() {
-        let mut requests = UserNoteRequests::default();
-        let user_id = Id::new(10);
-
-        assert!(requests.begin_request(user_id));
-        assert!(!requests.begin_request(user_id));
-
-        requests.record_event(&AppEvent::UserNoteLoaded {
-            user_id,
-            note: Some("note".to_owned()),
-        });
-        assert!(requests.begin_request(user_id));
-
-        requests.mark_failed(user_id);
-        assert!(requests.begin_request(user_id));
-    }
-
-    #[test]
-    fn message_author_member_request_dedupes_until_member_arrives_or_ttl_expires() {
-        let mut requests = MessageAuthorMemberRequests::default();
-        let guild_id = Id::new(1);
-        let user_id = Id::new(10);
-        let other_user_id = Id::new(20);
-        let now = std::time::Instant::now();
-
-        assert_eq!(
-            requests.next(vec![(guild_id, vec![user_id, other_user_id])], now),
-            vec![(guild_id, vec![user_id, other_user_id])]
-        );
-        assert_eq!(
-            requests.next(vec![(guild_id, vec![user_id, other_user_id])], now),
-            Vec::new()
-        );
-
-        requests.record_event(&AppEvent::GuildMemberUpsert {
-            guild_id,
-            member: MemberInfo {
-                username: Some("neo".to_owned()),
-                ..MemberInfo::test(user_id, "neo")
-            },
-        });
-        assert_eq!(
-            requests.next(vec![(guild_id, vec![user_id, other_user_id])], now),
-            vec![(guild_id, vec![user_id])]
-        );
-
-        let retry_at =
-            now + MessageAuthorMemberRequests::REQUEST_TTL + std::time::Duration::from_millis(1);
-        assert_eq!(
-            requests.next(vec![(guild_id, vec![other_user_id])], retry_at),
-            vec![(guild_id, vec![other_user_id])]
-        );
-    }
-
-    #[test]
-    fn member_list_subscription_debounces_and_coalesces_bucket_updates() {
-        let mut requests = MemberListSubscriptionRequests::default();
-        let now = std::time::Instant::now();
-
-        requests.set_target(Some(subscription_target(0)), now);
-        assert_eq!(requests.pending_deadline(), None);
-
-        requests.set_target(Some(subscription_target(1)), now);
-        let first_deadline = requests
-            .pending_deadline()
-            .expect("bucket one should arm debounce");
-        assert!(
-            requests
-                .next_due(first_deadline - std::time::Duration::from_millis(1))
-                .is_none()
-        );
-
-        requests.set_target(
-            Some(subscription_target(2)),
-            now + std::time::Duration::from_millis(1),
-        );
-        let second_deadline = requests
-            .pending_deadline()
-            .expect("latest bucket should stay pending");
-        let target = requests
-            .next_due(second_deadline)
-            .expect("latest bucket should be sent after debounce");
-        assert_eq!(target.bucket, 2);
-        assert_eq!(target.ranges, vec![(0, 99), (200, 299)]);
-
-        requests.set_target(Some(subscription_target(2)), second_deadline);
-        assert_eq!(requests.pending_deadline(), None);
-
-        requests.set_target(Some(subscription_target(0)), second_deadline);
-        assert!(requests.pending_deadline().is_some());
-    }
-
-    #[test]
-    fn mention_member_search_debounces_bounds_and_retries_queries() {
-        let mut requests = MentionMemberSearchRequests::default();
-        let guild_id = Id::new(1);
-        let now = std::time::Instant::now();
-
-        requests.set_target(
-            Some(MentionMemberSearchTarget {
-                guild_id,
-                query: "A".to_owned(),
-            }),
-            now,
-        );
-        assert_eq!(requests.pending_deadline(), None);
-
-        requests.set_target(
-            Some(MentionMemberSearchTarget {
-                guild_id,
-                query: " Alice ".to_owned(),
-            }),
-            now,
-        );
-        let deadline = requests
-            .pending_deadline()
-            .expect("valid query should arm debounce");
-        assert_eq!(
-            requests.next_due(deadline - std::time::Duration::from_millis(1)),
-            None
-        );
-        assert_eq!(
-            requests.next_due(deadline),
-            Some(MentionMemberSearchTarget {
-                guild_id,
-                query: "alice".to_owned(),
-            })
-        );
-
-        requests.set_target(
-            Some(MentionMemberSearchTarget {
-                guild_id,
-                query: "ALICE".to_owned(),
-            }),
-            now + std::time::Duration::from_secs(1),
-        );
-        assert_eq!(requests.pending_deadline(), None);
-
-        let retry_at = deadline
-            + MentionMemberSearchRequests::REQUEST_TTL
-            + std::time::Duration::from_millis(1);
-        requests.set_target(
-            Some(MentionMemberSearchTarget {
-                guild_id,
-                query: "alice".to_owned(),
-            }),
-            retry_at,
-        );
-        assert!(requests.pending_deadline().is_some());
-
-        let long_query = "A".repeat(MentionMemberSearchRequests::MAX_QUERY_CHARS + 10);
-        requests.set_target(
-            Some(MentionMemberSearchTarget {
-                guild_id,
-                query: long_query,
-            }),
-            retry_at + std::time::Duration::from_millis(1),
-        );
-        let deadline = requests
-            .pending_deadline()
-            .expect("long query should still search by capped prefix");
-        let target = requests
-            .next_due(deadline)
-            .expect("capped query should be due");
-        assert_eq!(
-            target.query.chars().count(),
-            MentionMemberSearchRequests::MAX_QUERY_CHARS
-        );
-        assert!(target.query.chars().all(|ch| ch == 'a'));
-
-        let expanding_query = "İ".repeat(MentionMemberSearchRequests::MAX_QUERY_CHARS + 10);
-        requests.set_target(
-            Some(MentionMemberSearchTarget {
-                guild_id,
-                query: expanding_query,
-            }),
-            retry_at + std::time::Duration::from_millis(2),
-        );
-        let deadline = requests
-            .pending_deadline()
-            .expect("expanding query should still search by capped prefix");
-        let target = requests
-            .next_due(deadline)
-            .expect("expanded lowercase query should be due");
-        assert_eq!(
-            target.query.chars().count(),
-            MentionMemberSearchRequests::MAX_QUERY_CHARS
-        );
-    }
-
-    #[test]
-    fn thread_preview_request_retries_after_failed_card_is_revisited() {
-        let mut requests = ThreadPreviewRequests::default();
-        let key = (Id::new(10), Id::new(30));
-
-        assert_eq!(requests.next(vec![key]), vec![key]);
-        requests.record_event(&AppEvent::ThreadPreviewLoadFailed {
-            channel_id: key.0,
-            message_id: key.1,
-        });
-
-        assert_eq!(requests.next(vec![key]), Vec::new());
-        assert_eq!(requests.next(Vec::new()), Vec::new());
-        assert_eq!(requests.next(vec![key]), vec![key]);
-    }
-
-    #[test]
-    fn older_history_request_dedupes_and_tracks_exhausted_cursor() {
-        let mut requests = RequestLifecycle::default();
-        let channel_id = Id::new(10);
-        let before = Id::new(30);
-
-        assert!(requests.begin_older_history_request(channel_id, before));
-        assert!(!requests.begin_older_history_request(channel_id, before));
-
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Newer { after: Id::new(40) },
-            message: "unrelated newer failure".to_owned(),
-        });
-        assert!(!requests.begin_older_history_request(channel_id, before));
-
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Older {
-                before: Id::new(31),
-            },
-            message: "stale older failure".to_owned(),
-        });
-        assert!(!requests.begin_older_history_request(channel_id, before));
-
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Older { before },
-            message: "temporary failure".to_owned(),
-        });
-        assert!(requests.begin_older_history_request(channel_id, before));
-
-        requests.record_event(&AppEvent::MessageHistoryLoaded {
-            channel_id,
-            before: Some(before),
-            messages: Vec::new(),
-        });
-        assert!(!requests.begin_older_history_request(channel_id, before));
-        assert!(requests.begin_older_history_request(channel_id, Id::new(20)));
-    }
-
-    #[test]
-    fn newer_history_request_dedupes_and_tracks_exhausted_cursor() {
-        let mut requests = RequestLifecycle::default();
-        let channel_id = Id::new(10);
-        let after = Id::new(30);
-
-        assert!(requests.begin_newer_history_request(channel_id, after));
-        assert!(!requests.begin_newer_history_request(channel_id, after));
-
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Older {
-                before: Id::new(20),
-            },
-            message: "unrelated older failure".to_owned(),
-        });
-        assert!(!requests.begin_newer_history_request(channel_id, after));
-
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Newer { after: Id::new(31) },
-            message: "stale newer failure".to_owned(),
-        });
-        assert!(!requests.begin_newer_history_request(channel_id, after));
-
-        requests.record_event(&AppEvent::MessageHistoryLoadFailed {
-            channel_id,
-            target: MessageHistoryLoadTarget::Newer { after },
-            message: "temporary failure".to_owned(),
-        });
-        assert!(requests.begin_newer_history_request(channel_id, after));
-
-        requests.record_event(&AppEvent::MessageHistoryAfterLoaded {
-            channel_id,
-            after,
-            messages: Vec::new(),
-            has_more: false,
-        });
-        assert!(!requests.begin_newer_history_request(channel_id, after));
-        assert!(requests.begin_newer_history_request(channel_id, Id::new(31)));
-    }
-
-    #[test]
-    fn catch_up_history_request_dedupes_without_exhausting_empty_cursor() {
-        let mut requests = RequestLifecycle::default();
-        let channel_id = Id::new(10);
-        let after = Id::new(30);
-
-        assert!(requests.begin_catch_up_history_request(channel_id, after));
-        assert!(!requests.begin_catch_up_history_request(channel_id, after));
-
-        requests.record_event(&AppEvent::MessageHistoryCatchUpLoaded {
-            channel_id,
-            after,
-            messages: Vec::new(),
-            has_more: false,
-        });
-
-        assert!(requests.begin_catch_up_history_request(channel_id, after));
-    }
-
-    #[test]
-    fn read_ack_request_debounces_and_coalesces_by_channel() {
-        let mut requests = RequestLifecycle::default();
-        let now = std::time::Instant::now();
-        let channel_id = Id::new(10);
-
-        requests.schedule_read_ack(channel_id, Id::new(30), now);
-        requests.schedule_read_ack(
-            channel_id,
-            Id::new(31),
-            now + std::time::Duration::from_millis(1),
-        );
-        let deadline = requests
-            .next_read_ack_deadline()
-            .expect("read ack deadline should be armed");
-
-        assert!(
-            requests
-                .flush_due_read_acks(deadline - std::time::Duration::from_millis(1))
-                .is_empty()
-        );
-        assert_eq!(
-            requests.flush_due_read_acks(deadline),
-            vec![(channel_id, Id::new(31))]
-        );
-        assert_eq!(requests.next_read_ack_deadline(), None);
-    }
-}
+mod tests;

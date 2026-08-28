@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
 pub(in crate::tui::ui) fn render_members(
     frame: &mut Frame,
@@ -7,34 +8,35 @@ pub(in crate::tui::ui) fn render_members(
     emoji_images: &[EmojiImage<'_>],
 ) {
     let loading_members = state.is_member_list_loading();
-    let groups = if loading_members {
-        Vec::new()
-    } else {
-        state.members_grouped()
-    };
+    let groups = state.members_grouped();
     let scroll = state.member_scroll();
     let content_height = state.member_content_height();
     let visible_end = scroll.saturating_add(content_height);
     let mut lines: Vec<Line<'static>> = Vec::new();
-    // (absolute_line_index, cdn_url) for activity rows that have a loaded emoji image.
-    let mut emoji_line_urls: Vec<(usize, String)> = Vec::new();
+    // (absolute_line_index, relative_column, cdn_url) for loaded activity emoji images.
+    let mut emoji_line_urls: Vec<(usize, usize, String)> = Vec::new();
     let content_width = (area.width as usize).saturating_sub(2);
-    let max_name_width = (area.width as usize).saturating_sub(6).max(8);
+    let marker_width = selection_marker_width();
+    let max_name_width = (area.width as usize)
+        .saturating_sub(marker_width)
+        .saturating_sub(5)
+        .max(8);
+    let activity_leading_width = marker_width.saturating_add(2);
     let selected_line = state
         .focused_member_selection_line_in_groups(&groups)
         .map(|line| line + state.member_scroll());
     let focused = state.focus() == FocusPane::Members;
     let mut line_index = 0usize;
 
-    if loading_members {
+    if loading_members && groups.is_empty() {
         lines.push(Line::from(Span::styled(
             "Loading...",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Loading),
         )));
     } else if groups.is_empty() {
         lines.push(Line::from(Span::styled(
             "No members loaded yet.",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     }
 
@@ -53,7 +55,7 @@ pub(in crate::tui::ui) fn render_members(
             let member = *member;
             if line_index >= scroll && line_index < visible_end {
                 let is_selected = focused && selected_line == Some(line_index);
-                let marker_style = Style::default().fg(presence_color(member.status()));
+                let marker_style = selected_presence_style(is_selected, member.status());
                 let name_style =
                     member_name_style(member, state.member_role_color(member), is_selected);
 
@@ -64,13 +66,33 @@ pub(in crate::tui::ui) fn render_members(
                     state.member_horizontal_scroll(),
                     max_name_width,
                 );
-                lines.push(Line::from(vec![
+                let mut spans = vec![
+                    selection_marker(is_selected),
                     Span::styled(
-                        format!(" {} ", presence_marker(member.status())),
+                        format!("{} ", presence_marker(member.status())),
                         marker_style,
                     ),
-                    Span::styled(display, name_style),
-                ]));
+                ];
+                if member.is_bot()
+                    && let Some(name) = display.strip_suffix(" [bot]")
+                {
+                    spans.push(Span::styled(name.to_owned(), name_style));
+                    spans.push(Span::styled(
+                        " [bot]",
+                        selected_text_style(
+                            is_selected,
+                            theme::current().style(theme::HighlightGroup::Emphasis),
+                        ),
+                    ));
+                } else {
+                    spans.push(Span::styled(display, name_style));
+                }
+                let mut line = Line::from(spans);
+                let padding = content_width.saturating_sub(line.width());
+                if padding > 0 {
+                    line.spans.push(Span::raw(" ".repeat(padding)));
+                }
+                lines.push(selected_row_line(line, is_selected));
             }
             line_index += 1;
 
@@ -85,48 +107,16 @@ pub(in crate::tui::ui) fn render_members(
                         && line_index < visible_end
                         && let Some(render) = primary_activity_summary(activities, emoji_images)
                     {
-                        let line = match render.leading {
-                            ActivityLeading::Image(url) => {
-                                let body = truncate_display_width_from(
-                                    &render.body,
-                                    h_scroll,
-                                    max_name_width.saturating_sub(3),
-                                );
-                                emoji_line_urls.push((line_index, url));
-                                Line::from(vec![
-                                    Span::raw("     "),
-                                    Span::styled(body, Style::default().fg(DIM)),
-                                ])
-                            }
-                            ActivityLeading::Icon(icon) => {
-                                let body = truncate_display_width_from(
-                                    &render.body,
-                                    h_scroll,
-                                    max_name_width.saturating_sub(2),
-                                );
-                                Line::from(vec![
-                                    Span::raw("   "),
-                                    Span::styled(
-                                        icon.to_string(),
-                                        Style::default().fg(Color::Green),
-                                    ),
-                                    Span::raw(" "),
-                                    Span::styled(body, Style::default().fg(DIM)),
-                                ])
-                            }
-                            ActivityLeading::None => {
-                                let body = truncate_display_width_from(
-                                    &render.body,
-                                    h_scroll,
-                                    max_name_width,
-                                );
-                                Line::from(vec![
-                                    Span::raw("   "),
-                                    Span::styled(body, Style::default().fg(DIM)),
-                                ])
-                            }
-                        };
-                        lines.push(line);
+                        let activity_line = compact_activity_line(
+                            render,
+                            activity_leading_width,
+                            activity_leading_width.saturating_add(max_name_width),
+                            h_scroll,
+                        );
+                        if let Some(image) = activity_line.image {
+                            emoji_line_urls.push((line_index, image.column, image.url));
+                        }
+                        lines.push(activity_line.line);
                     }
                     line_index += 1;
                 }
@@ -138,24 +128,26 @@ pub(in crate::tui::ui) fn render_members(
     let content_area = block.inner(area);
     frame.render_widget(Paragraph::new(lines).block(block), area);
 
-    // Overlay custom emoji images on top of their placeholder cells.
     if state.show_custom_emoji() {
-        for (line_idx, url) in &emoji_line_urls {
-            let Some(image) = emoji_images.iter().find(|img| img.url == *url) else {
-                continue;
-            };
-            let Some(visible_offset) = line_idx.checked_sub(scroll) else {
-                continue;
-            };
-            if visible_offset >= content_height {
-                continue;
-            }
-            let y = content_area.y.saturating_add(visible_offset as u16);
-            frame.render_widget(
-                ratatui_image::Image::new(image.protocol),
-                Rect::new(content_area.x.saturating_add(3), y, 2, 1),
-            );
-        }
+        let list = Rect {
+            height: content_height as u16,
+            ..content_area
+        };
+        overlay_emoji_slots(
+            frame,
+            list,
+            emoji_images,
+            &[],
+            emoji_line_urls
+                .iter()
+                .map(|(line_idx, column, url)| EmojiSlot {
+                    row_in_list: *line_idx as isize - scroll as isize,
+                    col: content_area.x as isize + *column as isize,
+                    max_width: u16::MAX,
+                    image_size: crate::tui::text::EmojiImageSize::Compact,
+                    url: url.clone(),
+                }),
+        );
     }
 
     render_vertical_scrollbar(
@@ -168,17 +160,25 @@ pub(in crate::tui::ui) fn render_members(
 }
 
 fn member_group_header(group: &MemberGroup<'_>, content_width: usize) -> Line<'static> {
-    let count_suffix = format!(" - {}", group.entries.len());
+    let count_suffix = format!(" - {}", group.count);
     let label_max = content_width.saturating_sub(count_suffix.width());
     let label = truncate_display_width(&sanitize_for_display_width(&group.label), label_max);
-    Line::from(vec![
-        Span::styled(
-            label,
-            Style::default()
-                .fg(discord_color(group.color, DIM))
-                .add_modifier(Modifier::BOLD),
+    let style = match group.color {
+        Some(color) if color != 0 => apply_discord_foreground(
+            theme::current().apply(
+                theme::HighlightGroup::MemberGroupHeading,
+                normal_text_style(),
+            ),
+            Some(color),
         ),
-        Span::styled(count_suffix, Style::default().fg(DIM)),
+        _ => theme::current().apply(
+            theme::HighlightGroup::Muted,
+            theme::current().style(theme::HighlightGroup::MemberGroupHeading),
+        ),
+    };
+    Line::from(vec![
+        Span::styled(label, style),
+        Span::styled(count_suffix, style),
     ])
 }
 
@@ -187,22 +187,17 @@ pub(in crate::tui::ui) fn member_name_style(
     role_color: Option<u32>,
     is_selected: bool,
 ) -> Style {
-    let mut style = Style::default().fg(discord_color(role_color, Color::White));
+    let mut style = apply_discord_foreground(normal_text_style(), role_color);
     if matches!(
         member.status(),
         PresenceStatus::Offline | PresenceStatus::Unknown
     ) {
-        style = style.add_modifier(Modifier::DIM);
+        style = theme::current().apply(theme::HighlightGroup::Muted, style);
     }
     if member.is_bot() {
-        style = style.add_modifier(Modifier::ITALIC);
+        style = theme::current().apply(theme::HighlightGroup::Emphasis, style);
     }
-    if is_selected {
-        style = style
-            .bg(Color::Rgb(24, 54, 65))
-            .add_modifier(Modifier::BOLD);
-    }
-    style
+    selected_discord_text_style(is_selected, style, role_color)
 }
 
 pub(in crate::tui::ui) fn member_display_label(
@@ -237,38 +232,12 @@ pub(in crate::tui::ui) fn member_display_label(
     )
 }
 
-/// Priority: Custom > Streaming > Listening > Playing > Watching > Competing > Unknown.
-/// Returns `(display_text, Option<cdn_url>)`. When the cdn_url is `Some`, the
-/// text contains a 2-space placeholder at the start for the image overlay.
+/// Compact ordering prefers live game signals before a custom status:
+/// Streaming > Playing > Listening > Watching > Competing > Custom > Unknown.
 pub(in crate::tui::ui) fn primary_activity_summary(
     activities: &[ActivityInfo],
     emoji_images: &[EmojiImage<'_>],
 ) -> Option<ActivityRender> {
-    let mut sorted: Vec<&ActivityInfo> = activities.iter().collect();
-    sorted.sort_by_key(|a| activity_priority(a.kind));
-    let mut image_only_fallback: Option<ActivityRender> = None;
-    for activity in sorted {
-        let render = build_activity_render(activity, emoji_images, true);
-        if !render.body.trim().is_empty() {
-            return Some(render);
-        }
-        if matches!(render.leading, ActivityLeading::Image(_)) && image_only_fallback.is_none() {
-            image_only_fallback = Some(render);
-        }
-    }
-    image_only_fallback
-}
-
-/// Member-list ordering. Intentionally differs from
-/// `popups::activity_priority`: see [`primary_activity_summary`].
-fn activity_priority(kind: ActivityKind) -> u8 {
-    match kind {
-        ActivityKind::Streaming => 0,
-        ActivityKind::Playing => 1,
-        ActivityKind::Listening => 2,
-        ActivityKind::Watching => 3,
-        ActivityKind::Competing => 4,
-        ActivityKind::Custom => 5,
-        ActivityKind::Unknown => 6,
-    }
+    primary_compact_activity(activities)
+        .map(|activity| build_activity_render(activity, emoji_images, true))
 }

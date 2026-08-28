@@ -1,14 +1,18 @@
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker},
+    marker::{ChannelMarker, MessageMarker},
 };
-use crate::discord::{AppEvent, VoiceConnectionStatus};
+use crate::discord::{
+    AppEvent, MessageHistoryLoadTarget, MessageInfo, VoiceAudioSourceOptions,
+    VoiceConnectionStatus, VoiceScope,
+};
 use crate::logging;
 
+use super::popups::{ChannelActionMenuState, ModalPopup};
 use super::{
-    ActiveGuildScope, DashboardState, ModalPopup, ReactionUsersPopupState, VoiceConnectionUiState,
+    ChannelPaneCursor, DashboardState, MINIMUM_ESTABLISHED_DM_MESSAGES, VoiceConnectionUiState,
 };
 
 struct EventViewportContext {
@@ -18,7 +22,21 @@ struct EventViewportContext {
     active_new_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
     selected_message_id: Option<Id<MessageMarker>>,
     scroll_message_id: Option<Id<MessageMarker>>,
-    channel_cursor_id: Option<Id<ChannelMarker>>,
+    channel_cursor: Option<ChannelPaneCursor>,
+}
+
+fn interaction_failure_reason(reason_code: u64) -> &'static str {
+    match reason_code {
+        1 => "Discord returned an unknown interaction error",
+        2 => "the command timed out",
+        3 => "the application is unknown",
+        16 => "the activity is not released on this platform",
+        17 => "the activity failed to launch",
+        18 => "the user does not have access to the activity",
+        19 => "the activity cannot launch from this location",
+        20 => "the activity is not supported in this region",
+        _ => "Discord returned an interaction error",
+    }
 }
 
 impl EventViewportContext {
@@ -67,13 +85,13 @@ impl EventViewportContext {
                         .map(|message| message.id)
                 })
                 .flatten(),
-            channel_cursor_id: state.selected_channel_cursor_id(),
+            channel_cursor: state.selected_channel_cursor(),
         }
     }
 
     fn repair_after_event(self, state: &mut DashboardState, event: &AppEvent) {
         state.clamp_active_selection();
-        state.restore_channel_cursor(self.channel_cursor_id);
+        state.restore_channel_pane_cursor(self.channel_cursor);
         state.clamp_selection_indices();
         state.clear_missing_new_messages_marker();
 
@@ -128,22 +146,16 @@ impl EventViewportContext {
 }
 
 impl DashboardState {
-    pub(super) fn push_event_inner(&mut self, event: AppEvent, apply_discord: bool) {
-        let mut viewport = EventViewportContext::capture(self, &event);
+    pub(super) fn push_event_inner(&mut self, event: AppEvent) {
+        let viewport = EventViewportContext::capture(self, &event);
 
-        self.apply_event_ui_effects(&event, &mut viewport.channel_cursor_id);
-        if apply_discord {
-            self.apply_event_to_discord_cache(&event);
-        }
+        self.apply_event_ui_effects(&event);
+        self.close_composer_for_safety_lock();
         self.refresh_event_derived_ui(&event);
         viewport.repair_after_event(self, &event);
     }
 
-    fn apply_event_ui_effects(
-        &mut self,
-        event: &AppEvent,
-        channel_cursor_id: &mut Option<Id<ChannelMarker>>,
-    ) {
+    fn apply_event_ui_effects(&mut self, event: &AppEvent) {
         match event {
             AppEvent::Ready { user, user_id } => {
                 self.discord.current_user = Some(user.clone());
@@ -155,17 +167,180 @@ impl DashboardState {
                 self.runtime.gateway_error = Some(message.clone());
                 self.show_error_toast(message, Instant::now());
             }
+            AppEvent::CaptchaRequired { action } => {
+                self.show_captcha_toast(
+                    format!(
+                        "Discord needs a CAPTCHA to {action}. Finish it in the official Discord app, then try again."
+                    ),
+                    Instant::now(),
+                );
+            }
+            AppEvent::MessageSendRateLimited {
+                channel_id,
+                retry_after_millis,
+            } => {
+                self.record_slow_mode_deadline(
+                    *channel_id,
+                    std::time::Duration::from_millis(*retry_after_millis),
+                );
+                self.show_error_toast(
+                    "Discord rate limited this channel. Wait for the composer timer.",
+                    Instant::now(),
+                );
+            }
+            AppEvent::MessageSendCooldownStarted {
+                channel_id,
+                duration_millis,
+            } => {
+                self.record_slow_mode_deadline(
+                    *channel_id,
+                    std::time::Duration::from_millis(*duration_millis),
+                );
+            }
+            AppEvent::MessageSendFailed { channel_id, nonce } => {
+                self.remove_pending_message(*channel_id, *nonce);
+            }
             AppEvent::MediaPlaybackWindowReady { request_id, .. } => {
                 self.clear_media_playback_preparing(*request_id);
             }
-            AppEvent::CurrentUserCapabilities { has_nitro } => {
-                self.discord.current_user_has_nitro = Some(*has_nitro);
+            AppEvent::StreamPlaybackWindowReady {
+                scope,
+                channel_id,
+                user_id,
+            } => {
+                self.clear_stream_playback_preparing(*scope, *channel_id, *user_id);
             }
+            AppEvent::StreamPlaybackEnded {
+                scope,
+                channel_id,
+                user_id,
+                reconnecting,
+            } => {
+                self.record_stream_playback_ended(*scope, *channel_id, *user_id, *reconnecting);
+            }
+            AppEvent::StreamCaptureTargetsLoaded {
+                request_id,
+                scope,
+                channel_id,
+                targets,
+                error,
+            } => {
+                let matches_request = self
+                    .runtime
+                    .stream_capture_targets_request
+                    .as_ref()
+                    .is_some_and(|request| {
+                        request.request_id == *request_id
+                            && request.target.matches(*scope, *channel_id)
+                    });
+                if !matches_request {
+                    return;
+                }
+                self.runtime.stream_capture_targets_request = None;
+                self.clear_stream_capture_targets_loading_toast();
+                if let Some(error) = error {
+                    self.show_error_toast(error, Instant::now());
+                } else if targets.is_empty() {
+                    self.show_error_toast(
+                        "No displays or shareable windows were found.",
+                        Instant::now(),
+                    );
+                } else if self.popups.modal.is_none()
+                    && self.runtime.voice_connection.is_some_and(|voice| {
+                        voice.scope == *scope && voice.channel_id == Some(*channel_id)
+                    })
+                {
+                    self.popups.set_modal(ModalPopup::ChannelActionMenu(
+                        ChannelActionMenuState::StreamTargets {
+                            scope: *scope,
+                            channel_id: *channel_id,
+                            targets: targets.clone(),
+                            selection: Default::default(),
+                        },
+                    ));
+                }
+            }
+            AppEvent::VoiceAudioSourcesLoaded {
+                request_id,
+                inputs,
+                outputs,
+                error,
+            } => {
+                if self.options.voice_audio_sources_request_id != Some(*request_id) {
+                    return;
+                }
+                self.options.voice_audio_sources_request_id = None;
+                if let Some(error) = error {
+                    // Keep no list rather than the previous one, so rows cannot
+                    // show device names from an enumeration that just failed.
+                    self.options.voice_audio_source_options = VoiceAudioSourceOptions::default();
+                    self.show_error_toast(error, Instant::now());
+                } else {
+                    self.options.voice_audio_source_options =
+                        VoiceAudioSourceOptions::from_parts(inputs.clone(), outputs.clone());
+                }
+            }
+            AppEvent::VoiceAudioSourcesApplyFailed {
+                requested_input_source,
+                requested_output_source,
+                active_input_source,
+                active_output_source,
+                message,
+            } => {
+                let failed_request_is_current = self.options.voice_options.input_source
+                    == *requested_input_source
+                    && self.options.voice_options.output_source == *requested_output_source;
+                if failed_request_is_current {
+                    self.options.voice_options.input_source = active_input_source.clone();
+                    self.options.voice_options.output_source = active_output_source.clone();
+                    self.options.config_save_pending = true;
+                }
+                self.show_error_toast(message, Instant::now());
+            }
+            AppEvent::StreamBroadcastStarted { scope, channel_id } => {
+                self.clear_stream_broadcast_preparing(*scope, *channel_id);
+            }
+            AppEvent::StreamBroadcastAudioUnavailable { message } => {
+                self.show_error_toast(message, Instant::now());
+            }
+            AppEvent::StreamBroadcastStartFailed { scope, channel_id } => {
+                self.cancel_stream_broadcast_preparing(*scope, *channel_id);
+            }
+            AppEvent::StreamBroadcastEnded { scope, channel_id } => {
+                self.record_stream_broadcast_ended(*scope, *channel_id);
+            }
+            AppEvent::CurrentUserCapabilities { premium_tier } => {
+                self.discord.current_user_premium_tier = Some(*premium_tier);
+            }
+            AppEvent::CurrentUserVerification { .. } => {}
             AppEvent::ApplicationCommandsLoaded { guild_id, commands } => {
                 self.discord
                     .application_commands
                     .insert(*guild_id, commands.clone());
                 self.refresh_active_mention_query();
+            }
+            AppEvent::ApplicationCommandIndexUpdated { guild_id } => {
+                self.discord.application_commands.remove(&Some(*guild_id));
+                self.invalidate_application_command_autocomplete();
+                self.queue_application_command_load(Some(*guild_id));
+            }
+            AppEvent::InteractionFailed {
+                reason_code,
+                correlated: true,
+                ..
+            } => {
+                self.show_error_toast(
+                    format!(
+                        "Discord could not complete the application command: {}.",
+                        interaction_failure_reason(*reason_code)
+                    ),
+                    Instant::now(),
+                );
+            }
+            AppEvent::InteractionFailed { .. } => {}
+            AppEvent::InteractionSucceeded { .. } => {}
+            AppEvent::ApplicationCommandAutocompleteResponse { nonce, choices } => {
+                self.apply_application_command_autocomplete_response(nonce.as_deref(), choices);
             }
             AppEvent::AttachmentDownloadStarted {
                 id,
@@ -211,38 +386,96 @@ impl DashboardState {
             AppEvent::ReactionUsersLoaded {
                 channel_id,
                 message_id,
-                reactions,
+                emoji,
+                users,
+                next_after,
+                after,
             } => {
-                self.popups.modal = Some(ModalPopup::ReactionUsers(ReactionUsersPopupState::new(
-                    *channel_id,
-                    *message_id,
-                    reactions.clone(),
-                )));
+                if let Some(popup) = self.popups.reaction_users_popup_mut() {
+                    popup.apply_loaded(
+                        *channel_id,
+                        *message_id,
+                        emoji,
+                        users.clone(),
+                        *next_after,
+                        *after,
+                    );
+                }
             }
-            AppEvent::MessageHistoryLoadFailed { .. } => {}
-            AppEvent::ForumPostsLoaded {
+            AppEvent::ReactionUsersLoadFailed {
                 channel_id,
-                archive_state,
-                offset,
-                next_offset: _,
-                threads,
-                has_more,
+                message_id,
+                emoji,
+            } => {
+                if let Some(popup) = self.popups.reaction_users_popup_mut() {
+                    popup.apply_load_failed(*channel_id, *message_id, emoji);
+                }
+            }
+            AppEvent::MessageHistoryLoadFailed {
+                channel_id,
+                target: MessageHistoryLoadTarget::Latest,
                 ..
             } => {
-                self.record_forum_posts_loaded(
-                    *channel_id,
-                    *archive_state,
-                    *offset,
-                    threads,
-                    *has_more,
-                );
+                self.record_latest_message_history_failed(*channel_id);
+            }
+            AppEvent::MessageHistoryLoadFailed { .. } => {}
+            AppEvent::ForumPostDataLoaded { channel_id, .. } => {
+                self.apply_inbox_forum_post_data_loaded(*channel_id);
+            }
+            AppEvent::ForumPostDataLoadFailed { channel_id, .. } => {
+                self.apply_inbox_forum_post_data_load_failed(*channel_id);
+            }
+            AppEvent::ArchivedThreadsLoadFailed { message, .. } => {
+                self.show_error_toast(message, Instant::now());
             }
             AppEvent::MessageSearchLoaded { .. } | AppEvent::MessageSearchLoadFailed { .. } => {
                 self.record_search_event(event);
             }
-            AppEvent::MessageHistoryLoaded { .. }
-            | AppEvent::MessageHistoryCatchUpLoaded { .. } => {}
-            AppEvent::MessageHistoryRefreshed { channel_id, .. } => {
+            AppEvent::MessageHistoryLoaded {
+                channel_id,
+                before: None,
+                messages,
+            } => {
+                self.record_latest_message_history_loaded(*channel_id);
+                self.record_dm_established_from_messages(*channel_id, messages);
+            }
+            AppEvent::MessageHistoryLoaded { .. } | AppEvent::MessageHistoryAfterLoaded { .. } => {}
+            AppEvent::InboxMentionsLoaded {
+                request_id,
+                before,
+                messages,
+                has_more,
+            } => {
+                self.apply_inbox_mentions_loaded(*request_id, *before, messages, *has_more);
+            }
+            AppEvent::InboxMentionsLoadFailed { request_id, before } => {
+                self.apply_inbox_mentions_load_failed(*request_id, *before);
+            }
+            AppEvent::InboxRecentMentionDeleted { message_id } => {
+                self.apply_inbox_recent_mention_deleted(*message_id);
+            }
+            AppEvent::InboxRecentMentionDeleteFailed { message, .. } => {
+                self.show_error_toast(message, Instant::now());
+            }
+            AppEvent::InboxChannelMessagesLoaded {
+                request_id,
+                channel_id,
+                messages,
+            } => {
+                self.apply_inbox_channel_messages_loaded(*request_id, *channel_id, messages);
+            }
+            AppEvent::InboxChannelMessagesLoadFailed {
+                request_id,
+                channel_id,
+            } => {
+                self.apply_inbox_channel_messages_load_failed(*request_id, *channel_id);
+            }
+            AppEvent::MessageHistoryRefreshed {
+                channel_id,
+                messages,
+            } => {
+                self.record_latest_message_history_loaded(*channel_id);
+                self.record_dm_established_from_messages(*channel_id, messages);
                 self.record_message_history_refreshed(*channel_id);
             }
             AppEvent::UserProfileLoaded { guild_id, profile } => {
@@ -260,9 +493,9 @@ impl DashboardState {
                     popup.load_error = Some(message.clone());
                     if popup.settings.saving {
                         popup.settings.saving = false;
-                        popup.settings.status = Some(format!(
+                        popup.set_settings_status(Some(format!(
                             "Save succeeded, but profile reload failed: {message}"
-                        ));
+                        )));
                     }
                 }
             }
@@ -273,78 +506,117 @@ impl DashboardState {
             } => {
                 self.record_user_profile_update_failed(*user_id, *guild_id, message);
             }
-            AppEvent::ActivateChannel { channel_id } => {
-                self.activate_event_channel(*channel_id, channel_cursor_id);
-            }
             AppEvent::VoiceConnectionStatusChanged {
-                guild_id,
+                scope,
                 channel_id,
                 status,
                 message,
             } => {
-                self.record_voice_connection_status(*guild_id, *channel_id, *status, message);
+                self.record_voice_connection_status(*scope, *channel_id, *status, message);
             }
-            AppEvent::ChannelUpsert(channel) => {
-                self.record_thread_channel_upserted(channel);
+            AppEvent::MessageCreate { message } => {
+                if let Some(nonce) = message.nonce {
+                    self.remove_pending_message(message.channel_id, nonce);
+                }
+                self.record_dm_established_from_messages(
+                    message.channel_id,
+                    std::slice::from_ref(message),
+                );
+                self.record_slow_mode_after_self_message(message);
             }
             _ => {}
         }
     }
 
-    fn activate_event_channel(
-        &mut self,
-        channel_id: Id<ChannelMarker>,
-        channel_cursor_id: &mut Option<Id<ChannelMarker>>,
-    ) {
-        let scope = self
+    fn record_slow_mode_after_self_message(&mut self, message: &MessageInfo) {
+        if self.current_user_id() != Some(message.author_id) {
+            return;
+        }
+        let slow_mode = self
             .discord
             .cache
-            .channel(channel_id)
-            .map(|channel| match channel.guild_id {
-                Some(guild_id) => ActiveGuildScope::Guild(guild_id),
-                None => ActiveGuildScope::DirectMessages,
-            });
-        if let Some(scope) = scope {
-            self.activate_guild(scope);
-            self.activate_channel(channel_id);
-            self.navigation.channels.keep_selection_visible();
-            *channel_cursor_id = Some(channel_id);
+            .channel(message.channel_id)
+            .filter(|channel| !self.discord.cache.bypasses_slow_mode(channel))
+            .and_then(|channel| channel.rate_limit_per_user)
+            .filter(|seconds| *seconds > 0)
+            .map(std::time::Duration::from_secs);
+        if let Some(slow_mode) = slow_mode {
+            self.record_slow_mode_deadline(message.channel_id, slow_mode);
+        }
+    }
+
+    fn record_dm_established_from_messages(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        messages: &[MessageInfo],
+    ) {
+        if self
+            .navigation
+            .channels
+            .established_dms
+            .contains(&channel_id)
+            || !self
+                .discord
+                .cache
+                .channel(channel_id)
+                .is_some_and(|channel| channel.is_dm())
+        {
+            return;
+        }
+        let Some(current_user_id) = self.current_user_id() else {
+            return;
+        };
+        let mut current_user_message_ids: HashSet<_> = self
+            .discord
+            .cache
+            .messages_for_channel(channel_id)
+            .into_iter()
+            .filter(|message| message.author_id == current_user_id)
+            .map(|message| message.id)
+            .collect();
+        current_user_message_ids.extend(
+            messages
+                .iter()
+                .filter(|message| message.author_id == current_user_id)
+                .map(|message| message.message_id),
+        );
+        if current_user_message_ids.len() >= MINIMUM_ESTABLISHED_DM_MESSAGES {
+            self.record_dm_established(channel_id);
         }
     }
 
     fn record_voice_connection_status(
         &mut self,
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Option<Id<ChannelMarker>>,
         status: VoiceConnectionStatus,
         message: &Option<String>,
     ) {
         match status {
             VoiceConnectionStatus::Connecting => {
-                self.runtime.voice_connection = Some(VoiceConnectionUiState {
-                    guild_id,
-                    channel_id,
-                });
+                self.runtime.voice_connection = Some(VoiceConnectionUiState { scope, channel_id });
                 self.show_success_toast(
                     message.as_deref().unwrap_or("Voice join requested"),
                     Instant::now(),
                 );
             }
             VoiceConnectionStatus::Connected => {
-                self.runtime.voice_connection = Some(VoiceConnectionUiState {
-                    guild_id,
-                    channel_id,
-                });
+                self.runtime.voice_connection = Some(VoiceConnectionUiState { scope, channel_id });
                 self.show_success_toast(
                     message.as_deref().unwrap_or("Voice connected"),
                     Instant::now(),
                 );
             }
             VoiceConnectionStatus::Disconnected => {
+                self.runtime.stream_capture_targets_request = None;
+                self.runtime.stream_playback_preparing = None;
+                self.runtime.active_stream_playback = None;
+                self.runtime.stream_broadcast_preparing = None;
+                self.runtime.active_stream_broadcast = None;
                 if self
                     .runtime
                     .voice_connection
-                    .is_some_and(|voice| voice.guild_id == guild_id)
+                    .is_some_and(|voice| voice.scope == scope)
                 {
                     self.runtime.voice_connection = None;
                 }
@@ -354,10 +626,15 @@ impl DashboardState {
                 );
             }
             VoiceConnectionStatus::Failed => {
+                self.runtime.stream_capture_targets_request = None;
+                self.runtime.stream_playback_preparing = None;
+                self.runtime.active_stream_playback = None;
+                self.runtime.stream_broadcast_preparing = None;
+                self.runtime.active_stream_broadcast = None;
                 if self
                     .runtime
                     .voice_connection
-                    .is_some_and(|voice| voice.guild_id == guild_id)
+                    .is_some_and(|voice| voice.scope == scope)
                 {
                     self.runtime.voice_connection = None;
                 }
@@ -366,14 +643,6 @@ impl DashboardState {
                     Instant::now(),
                 );
             }
-        }
-    }
-
-    fn apply_event_to_discord_cache(&mut self, event: &AppEvent) {
-        let discord_event = self.discord_event_for_apply(event);
-        self.discord.cache.apply_event(&discord_event);
-        if Self::event_affects_message_row_content_metrics(&discord_event) {
-            self.clear_message_row_content_metrics_cache();
         }
     }
 

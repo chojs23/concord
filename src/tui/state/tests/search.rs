@@ -1,10 +1,21 @@
 use super::*;
+use crate::discord::test_builders::guild_create_event;
 use crate::discord::{MessageSearchAuthorType, MessageSearchHas};
 use crate::tui::state::SearchSuggestionItem;
 
 #[test]
 fn message_search_builds_query_and_jumps_to_selected_result() {
     let mut state = state_with_writable_channel();
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![message_info(Id::new(2), 1), message_info(Id::new(2), 2)],
+    ));
+    state.focus_pane(FocusPane::Messages);
+    state.move_up();
+    assert_eq!(
+        state.selected_message_state().map(|message| message.id),
+        Some(Id::new(1))
+    );
     state.open_search_popup_for_focus(FocusPane::Messages);
 
     type_search_text(&mut state, "needle");
@@ -18,8 +29,11 @@ fn message_search_builds_query_and_jumps_to_selected_result() {
     assert_eq!(query.guild_id, Some(Id::new(1)));
     assert_eq!(query.content.as_deref(), Some("needle"));
     assert_eq!(query.offset, 0);
+    assert!(state.needs_animation_frame());
 
     let mut result = message_info(Id::new(2), 42);
+    result.author_id = Id::new(99);
+    result.author = "unknown".to_owned();
     result.content = Some("needle in a haystack".to_owned());
     state.push_event(AppEvent::MessageSearchLoaded {
         page: MessageSearchPage {
@@ -29,11 +43,19 @@ fn message_search_builds_query_and_jumps_to_selected_result() {
             has_more: false,
         },
     });
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(1),
+        member: member_with_username(Id::new(99), "Search Alias", "search-user"),
+    });
+    assert!(!state.needs_animation_frame());
 
     let view = state.search_popup_view().expect("search popup view");
     assert_eq!(view.results.len(), 1);
     match &view.results[0] {
-        SearchResultItem::Message(item) => assert_eq!(item.content, "needle in a haystack"),
+        SearchResultItem::Message(item) => {
+            assert_eq!(item.author, "Search Alias");
+            assert_eq!(item.content, "needle in a haystack");
+        }
         SearchResultItem::Member(_) => panic!("expected message result"),
     }
 
@@ -45,6 +67,10 @@ fn message_search_builds_query_and_jumps_to_selected_result() {
         })
     );
     assert_eq!(state.focus(), FocusPane::Messages);
+    assert_eq!(
+        state.selected_message_state().map(|message| message.id),
+        Some(Id::new(1))
+    );
 }
 
 #[test]
@@ -107,7 +133,7 @@ fn message_search_suggestions_show_names_and_use_selected_ids() {
         let view = state.search_popup_view().expect("search popup view");
         assert_eq!(view.fields[1].value, "Sally");
         assert!(view.suggestions.is_empty());
-        assert_eq!(state.search_popup_member_query(), None);
+        assert_eq!(state.message_search_member_query(), None);
 
         let AppCommand::SearchMessages { query } = run_search(&mut state) else {
             panic!("expected search command");
@@ -132,7 +158,7 @@ fn message_search_suggestions_show_names_and_use_selected_ids() {
         assert_eq!(state.activate_search_popup(), None);
         let view = state.search_popup_view().expect("search popup view");
         assert_eq!(view.fields[4].value, "Sammy");
-        assert_eq!(state.search_popup_member_query(), None);
+        assert_eq!(state.message_search_member_query(), None);
 
         let AppCommand::SearchMessages { query } = run_search(&mut state) else {
             panic!("expected search command");
@@ -165,20 +191,23 @@ fn message_search_suggestions_show_names_and_use_selected_ids() {
 }
 
 #[test]
-fn search_popup_member_query_uses_member_and_message_user_fields() {
+fn member_popup_and_message_member_queries_are_exposed_separately() {
     let mut state = state_with_writable_channel_and_members();
     state.focus_pane(FocusPane::Members);
     state.open_search_popup_for_focus(FocusPane::Members);
     type_search_text(&mut state, "alice");
-    assert_eq!(state.search_popup_member_query(), Some("alice"));
+    assert_eq!(state.member_search_popup_query(), Some("alice"));
+    assert_eq!(state.message_search_member_query(), None);
 
     state.open_search_popup_for_focus(FocusPane::Messages);
     type_search_text(&mut state, "hello");
-    assert_eq!(state.search_popup_member_query(), None);
+    assert_eq!(state.member_search_popup_query(), None);
+    assert_eq!(state.message_search_member_query(), None);
 
     state.cycle_search_field_next();
     type_search_text(&mut state, "sally");
-    assert_eq!(state.search_popup_member_query(), Some("sally"));
+    assert_eq!(state.member_search_popup_query(), None);
+    assert_eq!(state.message_search_member_query(), Some("sally"));
 }
 
 #[test]
@@ -187,23 +216,27 @@ fn member_search_filters_loaded_members_and_opens_profile() {
     let alice = Id::new(10);
     let bob = Id::new(20);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(2),
-        owner_id: None,
         channels: vec![text_channel_info(guild_id, Id::new(2), "general")],
         members: vec![
             member_with_username(alice, "Alice A", "alice"),
             member_with_username(bob, "Bob B", "bob"),
         ],
         presences: vec![
-            (alice, PresenceStatus::Online),
-            (bob, PresenceStatus::Offline),
+            PresenceEventFields {
+                user_id: alice,
+                status: PresenceStatus::Online,
+                activities: Vec::new(),
+            },
+            PresenceEventFields {
+                user_id: bob,
+                status: PresenceStatus::Offline,
+                activities: Vec::new(),
+            },
         ],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.activate_guild(ActiveGuildScope::Guild(guild_id));
     state.focus_pane(FocusPane::Members);
 
@@ -223,6 +256,64 @@ fn member_search_filters_loaded_members_and_opens_profile() {
             user_id: alice,
             guild_id: Some(guild_id),
         })
+    );
+}
+
+#[test]
+fn member_search_matches_cached_display_names_and_usernames() {
+    let guild_id = Id::new(1);
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(GuildCreateFixture {
+        member_count: Some(1),
+        members: vec![member_with_username(user_id, "WonderGlobal", "alicehandle")],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.activate_guild(ActiveGuildScope::Guild(guild_id));
+    state.focus_pane(FocusPane::Members);
+
+    state.open_search_popup_for_focus(FocusPane::Members);
+    type_search_text(&mut state, "wonder");
+    assert_eq!(
+        state
+            .search_popup_view()
+            .expect("member search view")
+            .results
+            .len(),
+        1,
+        "cached global display names remain locally searchable"
+    );
+
+    state.close_search_popup();
+    state.open_search_popup_for_focus(FocusPane::Members);
+    type_search_text(&mut state, "handle");
+    assert_eq!(
+        state
+            .search_popup_view()
+            .expect("member search view")
+            .results
+            .len(),
+        1,
+        "cached usernames support fuzzy local matching"
+    );
+
+    let mut nicknamed = member_with_username(user_id, "WonderNick", "alicehandle");
+    nicknamed.nickname = Some("WonderNick".to_owned());
+    nicknamed.nickname_present = true;
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id,
+        member: nicknamed,
+    });
+    state.close_search_popup();
+    state.open_search_popup_for_focus(FocusPane::Members);
+    type_search_text(&mut state, "nick");
+    assert_eq!(
+        state
+            .search_popup_view()
+            .expect("member search view")
+            .results
+            .len(),
+        1
     );
 }
 

@@ -12,6 +12,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use crate::{
     AppError, Result,
     discord::{
+        DiscordAuthSession,
         password_auth::{self, MfaMethod, PasswordAuthEvent},
         qr_auth::{self, QrEvent},
     },
@@ -24,7 +25,10 @@ use self::{
 };
 use super::terminal::TerminalRestoreGuard;
 
-pub async fn prompt_login(notice: Option<String>) -> Result<String> {
+pub async fn prompt_login(
+    notice: Option<String>,
+    auth_session: DiscordAuthSession,
+) -> Result<String> {
     let mut terminal = ratatui::init();
     let _restore_guard = match TerminalRestoreGuard::new() {
         Ok(guard) => guard,
@@ -64,7 +68,12 @@ pub async fn prompt_login(notice: Option<String>) -> Result<String> {
                             handle.handle.abort();
                         }
                         let (tx, rx) = mpsc::channel(8);
-                        let handle = password_auth::spawn_login(login, password, tx);
+                        let handle = password_auth::spawn_login_with_auth_session(
+                            login,
+                            password,
+                            auth_session.clone(),
+                            tx,
+                        );
                         password_handle = Some(PasswordAuthHandle { rx, handle });
                         state.password.in_progress = true;
                         state.password.status = "Authenticating with Discord...".to_string();
@@ -75,7 +84,14 @@ pub async fn prompt_login(notice: Option<String>) -> Result<String> {
                             handle.handle.abort();
                         }
                         let (tx, rx) = mpsc::channel(8);
-                        let handle = password_auth::spawn_mfa_verify(method, code, ticket, login_instance_id, tx);
+                        let handle = password_auth::spawn_mfa_verify_with_auth_session(
+                            method,
+                            code,
+                            ticket,
+                            login_instance_id,
+                            auth_session.clone(),
+                            tx,
+                        );
                         password_handle = Some(PasswordAuthHandle { rx, handle });
                         state.password.in_progress = true;
                         state.password.status = "Verifying multi-factor authentication...".to_string();
@@ -86,7 +102,11 @@ pub async fn prompt_login(notice: Option<String>) -> Result<String> {
                             handle.handle.abort();
                         }
                         let (tx, rx) = mpsc::channel(8);
-                        let handle = password_auth::spawn_sms_send(ticket, tx);
+                        let handle = password_auth::spawn_sms_send_with_auth_session(
+                            ticket,
+                            auth_session.clone(),
+                            tx,
+                        );
                         password_handle = Some(PasswordAuthHandle { rx, handle });
                         state.password.in_progress = true;
                         state.password.status = "Requesting SMS code from Discord...".to_string();
@@ -100,7 +120,7 @@ pub async fn prompt_login(notice: Option<String>) -> Result<String> {
                     }
                     Some(LoginAction::StartQr) => {
                         let (tx, rx) = mpsc::channel(8);
-                        let handle = qr_auth::spawn(tx);
+                        let handle = qr_auth::spawn_with_auth_session(auth_session.clone(), tx);
                         qr_handle = Some(QrHandle { rx, handle });
                         state.qr.reset();
                         state.qr.status = "Starting QR login...".to_string();
@@ -152,6 +172,21 @@ pub async fn prompt_login(notice: Option<String>) -> Result<String> {
                             None => "SMS sent. Enter the code below.".to_string(),
                         };
                         state.screen = LoginScreen::MfaCode;
+                    }
+                    PasswordAuthEvent::RequiredActions(actions) => {
+                        password_handle = None;
+                        state.password.reset_sensitive();
+                        let actions = actions
+                            .into_iter()
+                            .map(|action| match action.as_str() {
+                                "update_password" => "update the account password".to_owned(),
+                                _ => action,
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        state.error = Some(format!(
+                            "Discord requires you to {actions} in the official client before Concord can continue."
+                        ));
                     }
                     PasswordAuthEvent::Token(token) => {
                         if let Some(handle) = password_handle.take() {

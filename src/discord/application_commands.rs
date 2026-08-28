@@ -92,6 +92,7 @@ pub struct ApplicationCommandChoiceInfo {
 pub struct ApplicationCommandInteraction {
     pub guild_id: Option<Id<GuildMarker>>,
     pub channel_id: Id<ChannelMarker>,
+    pub nonce: String,
     pub command: ApplicationCommandInfo,
     pub options: Vec<ApplicationCommandInteractionOption>,
 }
@@ -103,6 +104,36 @@ pub struct ApplicationCommandInvocation {
     pub command_identity: Option<ApplicationCommandIdentity>,
     pub command_name: String,
     pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationCommandAutocompleteInvocation {
+    pub guild_id: Option<Id<GuildMarker>>,
+    pub channel_id: Id<ChannelMarker>,
+    pub command_identity: ApplicationCommandIdentity,
+    pub command_version: String,
+    pub command_name: String,
+    pub content: String,
+    pub focused_option_name: String,
+    pub nonce: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::discord) struct ApplicationCommandAutocompleteInteraction {
+    pub(in crate::discord) guild_id: Option<Id<GuildMarker>>,
+    pub(in crate::discord) channel_id: Id<ChannelMarker>,
+    pub(in crate::discord) nonce: String,
+    pub(in crate::discord) command: ApplicationCommandInfo,
+    pub(in crate::discord) options: Vec<ApplicationCommandAutocompleteOption>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::discord) struct ApplicationCommandAutocompleteOption {
+    pub(in crate::discord) kind: u64,
+    pub(in crate::discord) name: String,
+    pub(in crate::discord) value: Option<Value>,
+    pub(in crate::discord) options: Vec<ApplicationCommandAutocompleteOption>,
+    pub(in crate::discord) focused: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -136,8 +167,29 @@ pub fn application_command_interaction_from_invocation(
     Some(ApplicationCommandInteraction {
         guild_id: invocation.guild_id,
         channel_id: invocation.channel_id,
+        nonce: super::commands::next_message_nonce().to_string(),
         command: command.clone(),
         options: parsed_application_command_options(&invocation.content, command)?,
+    })
+}
+
+pub(in crate::discord) fn application_command_autocomplete_from_invocation(
+    invocation: &ApplicationCommandAutocompleteInvocation,
+    command: &ApplicationCommandInfo,
+) -> Option<ApplicationCommandAutocompleteInteraction> {
+    (command.identity() == invocation.command_identity).then_some(())?;
+    (command.version == invocation.command_version).then_some(())?;
+    (command.name == invocation.command_name).then_some(())?;
+    Some(ApplicationCommandAutocompleteInteraction {
+        guild_id: invocation.guild_id,
+        channel_id: invocation.channel_id,
+        nonce: invocation.nonce.clone(),
+        command: command.clone(),
+        options: parsed_application_command_autocomplete_options(
+            &invocation.content,
+            command,
+            &invocation.focused_option_name,
+        )?,
     })
 }
 
@@ -219,6 +271,162 @@ fn parsed_application_command_options(
 
     let parts = parts.collect::<Vec<_>>();
     parsed_application_command_options_from_parts(&parts, command)
+}
+
+fn parsed_application_command_autocomplete_options(
+    content: &str,
+    command: &ApplicationCommandInfo,
+    focused_option_name: &str,
+) -> Option<Vec<ApplicationCommandAutocompleteOption>> {
+    let rest = content.strip_prefix('/')?;
+    let mut parts = rest.split_whitespace();
+    if parts.next() != Some(command.name.as_str()) {
+        return None;
+    }
+    let parts = parts.collect::<Vec<_>>();
+
+    if let Some(first) = parts.first().copied().filter(|part| !part.contains(':')) {
+        if let Some(group) = command.options.iter().find(|option| {
+            option.kind == APPLICATION_COMMAND_SUBCOMMAND_GROUP_KIND && option.name == first
+        }) {
+            let subcommand_name = parts.get(1).copied().filter(|part| !part.contains(':'))?;
+            let subcommand = group.options.iter().find(|option| {
+                option.kind == APPLICATION_COMMAND_SUBCOMMAND_KIND && option.name == subcommand_name
+            })?;
+            let options = parse_leaf_application_command_autocomplete_options(
+                &parts[2..],
+                &subcommand.options,
+                focused_option_name,
+            )?;
+            return Some(vec![structural_autocomplete_option(
+                group,
+                vec![structural_autocomplete_option(subcommand, options)],
+            )]);
+        }
+
+        if let Some(subcommand) = command.options.iter().find(|option| {
+            option.kind == APPLICATION_COMMAND_SUBCOMMAND_KIND && option.name == first
+        }) {
+            let options = parse_leaf_application_command_autocomplete_options(
+                &parts[1..],
+                &subcommand.options,
+                focused_option_name,
+            )?;
+            return Some(vec![structural_autocomplete_option(subcommand, options)]);
+        }
+    }
+
+    if command.options.iter().any(is_structural_command_option) {
+        return None;
+    }
+    parse_leaf_application_command_autocomplete_options(
+        &parts,
+        &command.options,
+        focused_option_name,
+    )
+}
+
+fn parse_leaf_application_command_autocomplete_options(
+    parts: &[&str],
+    options: &[ApplicationCommandOptionInfo],
+    focused_option_name: &str,
+) -> Option<Vec<ApplicationCommandAutocompleteOption>> {
+    let focused_option = options.iter().find(|option| {
+        !is_structural_command_option(option)
+            && option.autocomplete
+            && option.name == focused_option_name
+    })?;
+    let mut parsed = Vec::new();
+    let mut current: Option<(&ApplicationCommandOptionInfo, String)> = None;
+
+    for part in parts {
+        if let Some((name, raw_value)) = part.split_once(':')
+            && let Some(option) = options
+                .iter()
+                .find(|option| !is_structural_command_option(option) && option.name == name)
+        {
+            push_leaf_application_command_autocomplete_option(
+                &mut parsed,
+                current.take(),
+                focused_option_name,
+            )?;
+            current = Some((option, raw_value.to_owned()));
+            continue;
+        }
+
+        if let Some((_, value)) = current.as_mut() {
+            if !value.is_empty() {
+                value.push(' ');
+            }
+            value.push_str(part);
+        }
+    }
+
+    push_leaf_application_command_autocomplete_option(
+        &mut parsed,
+        current.take(),
+        focused_option_name,
+    )?;
+    parsed
+        .iter()
+        .any(|option| option.focused && option.name == focused_option.name)
+        .then_some(parsed)
+}
+
+fn push_leaf_application_command_autocomplete_option(
+    parsed: &mut Vec<ApplicationCommandAutocompleteOption>,
+    current: Option<(&ApplicationCommandOptionInfo, String)>,
+    focused_option_name: &str,
+) -> Option<()> {
+    let Some((option, raw_value)) = current else {
+        return Some(());
+    };
+    let focused = option.name == focused_option_name;
+    let value = if focused {
+        application_command_autocomplete_focused_value(option, &raw_value)?
+    } else {
+        let raw_value = raw_value.trim();
+        if raw_value.is_empty() {
+            return None;
+        }
+        application_command_option_value(option, raw_value)?
+    };
+    parsed.push(ApplicationCommandAutocompleteOption {
+        kind: option.kind,
+        name: option.name.clone(),
+        value: Some(value),
+        options: Vec::new(),
+        focused,
+    });
+    Some(())
+}
+
+fn application_command_autocomplete_focused_value(
+    option: &ApplicationCommandOptionInfo,
+    raw_value: &str,
+) -> Option<Value> {
+    let raw_value = raw_value.trim();
+    match option.kind {
+        APPLICATION_COMMAND_STRING_KIND => Some(Value::String(raw_value.to_owned())),
+        APPLICATION_COMMAND_INTEGER_KIND | APPLICATION_COMMAND_NUMBER_KIND => {
+            application_command_option_value(option, raw_value)?;
+            Some(Value::String(raw_value.to_owned()))
+        }
+        _ => None,
+    }
+}
+
+fn structural_autocomplete_option(
+    option: &ApplicationCommandOptionInfo,
+    options: Vec<ApplicationCommandAutocompleteOption>,
+) -> ApplicationCommandAutocompleteOption {
+    ApplicationCommandAutocompleteOption {
+        kind: option.kind,
+        name: option.name.clone(),
+        value: None,
+        options,
+        focused: false,
+    }
 }
 
 fn parsed_application_command_options_from_parts(
@@ -499,8 +707,10 @@ mod tests {
     use crate::discord::ids::Id;
 
     use super::{
-        ApplicationCommandInfo, ApplicationCommandInteractionOption, ApplicationCommandInvocation,
-        ApplicationCommandOptionInfo, application_command_interaction_from_invocation,
+        ApplicationCommandAutocompleteInvocation, ApplicationCommandInfo,
+        ApplicationCommandInteractionOption, ApplicationCommandInvocation,
+        ApplicationCommandOptionInfo, application_command_autocomplete_from_invocation,
+        application_command_interaction_from_invocation,
     };
 
     fn application_command(
@@ -635,6 +845,84 @@ mod tests {
                 }],
             }]
         );
+    }
+
+    #[test]
+    fn autocomplete_builds_partial_focused_option_as_a_string() {
+        let command = application_command(
+            "search",
+            vec![ApplicationCommandOptionInfo {
+                autocomplete: true,
+                ..application_command_option(3, "query", true, Vec::new())
+            }],
+        );
+        let invocation = ApplicationCommandAutocompleteInvocation {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            command_identity: command.identity(),
+            command_version: command.version.clone(),
+            command_name: "search".to_owned(),
+            content: "/search query:ne".to_owned(),
+            focused_option_name: "query".to_owned(),
+            nonce: "autocomplete-nonce".to_owned(),
+        };
+
+        let interaction = application_command_autocomplete_from_invocation(&invocation, &command)
+            .expect("valid autocomplete input should build an interaction");
+
+        assert_eq!(interaction.options.len(), 1);
+        assert_eq!(interaction.options[0].name, "query");
+        assert_eq!(
+            interaction.options[0].value,
+            Some(Value::String("ne".to_owned()))
+        );
+        assert!(interaction.options[0].focused);
+    }
+
+    #[test]
+    fn autocomplete_rejects_invalid_numeric_partial_value() {
+        let command = application_command(
+            "roll",
+            vec![ApplicationCommandOptionInfo {
+                autocomplete: true,
+                ..application_command_option(4, "sides", true, Vec::new())
+            }],
+        );
+        let invocation = ApplicationCommandAutocompleteInvocation {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            command_identity: command.identity(),
+            command_version: command.version.clone(),
+            command_name: "roll".to_owned(),
+            content: "/roll sides:many".to_owned(),
+            focused_option_name: "sides".to_owned(),
+            nonce: "autocomplete-nonce".to_owned(),
+        };
+
+        assert!(application_command_autocomplete_from_invocation(&invocation, &command).is_none());
+    }
+
+    #[test]
+    fn autocomplete_rejects_stale_command_version() {
+        let command = application_command(
+            "search",
+            vec![ApplicationCommandOptionInfo {
+                autocomplete: true,
+                ..application_command_option(3, "query", true, Vec::new())
+            }],
+        );
+        let invocation = ApplicationCommandAutocompleteInvocation {
+            guild_id: Some(Id::new(1)),
+            channel_id: Id::new(2),
+            command_identity: command.identity(),
+            command_version: "stale".to_owned(),
+            command_name: "search".to_owned(),
+            content: "/search query:ne".to_owned(),
+            focused_option_name: "query".to_owned(),
+            nonce: "autocomplete-nonce".to_owned(),
+        };
+
+        assert!(application_command_autocomplete_from_invocation(&invocation, &command).is_none());
     }
 
     #[test]

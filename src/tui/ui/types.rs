@@ -1,11 +1,8 @@
-use ratatui::{layout::Rect, style::Color, text::Line};
-use ratatui_image::protocol::{Protocol, StatefulProtocol};
+use ratatui::{layout::Rect, text::Line};
+use ratatui_image::protocol::Protocol;
 
-use super::super::state::FocusPane;
+use super::super::state::{FocusPane, SelectablePopupTarget};
 
-pub(super) const ACCENT: Color = Color::Cyan;
-pub(super) const DIM: Color = Color::DarkGray;
-pub(super) const SCROLLBAR_THUMB: Color = Color::Rgb(170, 170, 170);
 pub(super) const MIN_MESSAGE_INPUT_HEIGHT: u16 = 3;
 pub(super) const IMAGE_PREVIEW_HEIGHT: u16 = 10;
 pub(super) const IMAGE_PREVIEW_WIDTH: u16 = 72;
@@ -15,17 +12,16 @@ pub(super) const MESSAGE_AVATAR_OFFSET: u16 =
     MESSAGE_SELECTION_PREFIX_WIDTH + MESSAGE_AVATAR_PLACEHOLDER.len() as u16 + 2;
 pub(super) const EMBED_PREVIEW_GUTTER_PREFIX: &str = "  ▎ ";
 pub(super) const MAX_REACTION_USERS_VISIBLE_LINES: usize = 14;
-pub(super) const SELECTED_FORUM_POST_BORDER: Color = Color::Green;
-pub(super) const SELECTED_MESSAGE_BORDER: Color = Color::Green;
 
 pub struct ImagePreview<'a> {
     pub viewer: bool,
+    pub thread_card: bool,
     pub message_index: usize,
     pub preview_x_offset_columns: u16,
     pub preview_y_offset_rows: usize,
     pub preview_width: u16,
     pub preview_height: u16,
-    pub preview_overflow_count: usize,
+    pub visible_preview_height: u16,
     pub accent_color: Option<u32>,
     pub state: ImagePreviewState<'a>,
 }
@@ -39,11 +35,13 @@ pub struct AvatarImage<'a> {
 pub struct EmojiImage<'a> {
     pub url: String,
     pub protocol: &'a Protocol,
+    pub standalone_protocol: Option<&'a Protocol>,
 }
 
 #[derive(Clone, Copy)]
 pub struct ImagePreviewLayout {
     pub list_height: usize,
+    pub list_width: u16,
     pub content_width: usize,
     pub preview_width: u16,
     pub max_preview_height: u16,
@@ -64,7 +62,7 @@ pub(super) struct MessageViewportLayout {
 pub enum ImagePreviewState<'a> {
     Loading { filename: String },
     Failed { filename: String, message: String },
-    Ready { protocol: &'a mut StatefulProtocol },
+    Ready { protocol: &'a Protocol },
 }
 
 #[derive(Clone, Copy)]
@@ -93,21 +91,22 @@ pub(super) struct MessageAreas {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MouseTarget {
     Pane(FocusPane),
-    PaneRow { pane: FocusPane, row: usize },
+    PaneRow {
+        pane: FocusPane,
+        row: usize,
+    },
     Composer,
-    PopupRow { target: PopupListTarget, row: usize },
-    ChannelSwitcherRow { row: usize },
+    PopupRow {
+        target: SelectablePopupTarget,
+        row: usize,
+    },
     ModalBackdrop,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PopupListTarget {
-    MessageAction,
-    MessageUrl,
 }
 
 pub(super) struct UserProfilePopupText {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) emoji_overlays: Vec<(usize, String)>,
     pub(super) cursor: Option<(usize, usize)>,
+    pub(super) reveal_rows: Option<std::ops::Range<usize>>,
+    pub(super) picker_rows: Option<std::ops::Range<usize>>,
 }

@@ -3,16 +3,18 @@ use crate::discord::ids::{
     marker::{ChannelMarker, MessageMarker},
 };
 use crate::discord::{
-    AppCommand, EmbedInfo, MediaPlaybackSource, MediaPlaybackTarget, MessageState, ReactionEmoji,
+    AppCommand, AttachmentMediaType, DiscordAction, EmbedInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS,
+    MediaPlaybackSource, MediaPlaybackTarget, MessageState, ReactionEmoji,
 };
-use crate::tui::format::detected_urls;
-use crate::tui::keybindings::KeyChord;
+use crate::tui::keybindings::{KeyChord, SelectionAction};
+use crate::tui::text::detected_urls;
 
 use super::super::{
-    ActiveGuildScope, DashboardState, FocusPane, MessageActionItem, MessageActionKind,
-    MessageActionMenuState, MessageUrlItem, MessageUrlPickerState, popups,
+    ActiveGuildScope, ComposerLock, DashboardState, FocusPane, MessageActionItem,
+    MessageActionKind, MessageActionMenuState, MessageConfirmationKind, MessageUrlItem,
+    MessageUrlPickerState, popups,
 };
-use crate::tui::state::popups::{ActiveModalPopupKind, LeaderActionState, ModalPopup};
+use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupTarget};
 
 const PLAYABLE_VIDEO_EXTENSIONS: &[&str] = &["m4v", "mov", "mp4", "webm"];
 
@@ -24,45 +26,40 @@ pub(super) struct ReferencedMessageTarget {
 
 impl DashboardState {
     pub fn activate_selected_message_pane_item(&mut self) -> Option<AppCommand> {
-        if self.message_pane_uses_forum_posts() {
-            return self.activate_selected_forum_post();
+        if self.message_pane_uses_thread_cards() {
+            return self.activate_selected_thread_card();
         }
         self.open_selected_message_actions();
         None
     }
 
     pub fn open_selected_message_actions(&mut self) {
-        if self.navigation.focus == FocusPane::Messages && self.selected_message_state().is_some() {
-            self.popups.modal = Some(ModalPopup::MessageActionMenu(
+        if self.navigation.focus == FocusPane::Messages
+            && self
+                .selected_message_state()
+                .is_some_and(|message| !self.message_is_pending(message))
+        {
+            self.popups.set_modal(ModalPopup::MessageActionMenu(
                 MessageActionMenuState::default(),
             ));
         }
     }
 
     pub fn close_message_action_menu(&mut self) {
-        if matches!(
-            self.popups.modal,
-            Some(ModalPopup::MessageActionMenu(_))
-                | Some(ModalPopup::Leader(super::LeaderPopupState {
-                    action: Some(LeaderActionState::Message(_)),
-                    ..
-                }))
-        ) {
+        if self.is_message_action_menu_active() {
             self.popups.clear_modal();
         }
     }
 
     pub fn move_message_action_down(&mut self) {
-        let actions_len = self.selected_message_action_items().len();
-        if let Some(menu) = self.popups.message_action_menu_mut() {
-            menu.selection.move_down(actions_len);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::MessageActions, SelectionAction::Next);
     }
 
     pub fn move_message_action_up(&mut self) {
-        if let Some(menu) = self.popups.message_action_menu_mut() {
-            menu.selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::MessageActions,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn select_message_action_row(&mut self, row: usize) -> bool {
@@ -80,83 +77,211 @@ impl DashboardState {
         let Some(message) = self.selected_message_state() else {
             return Vec::new();
         };
-        let poll_voting_enabled = message
-            .poll
-            .as_ref()
-            .is_some_and(|poll| !poll.results_finalized.unwrap_or(false));
-        vec![
-            MessageActionItem {
-                kind: MessageActionKind::CopyContent,
-                label: "copy message".to_owned(),
-                enabled: message.content.is_some(),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::OpenReactionPicker,
-                label: "react".to_owned(),
-                enabled: self.can_open_reaction_picker(message),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::Reply,
-                label: "reply".to_owned(),
-                enabled: self.can_send_in_selected_channel(),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::OpenDeleteConfirmation,
-                label: "delete message".to_owned(),
-                enabled: self.can_delete_message(message),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::Edit,
-                label: "edit message".to_owned(),
-                enabled: self.can_edit_message(message),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::OpenUrl,
-                label: "open URL".to_owned(),
-                enabled: !message_url_items(message).is_empty(),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::PlayMedia,
-                label: "play media".to_owned(),
-                enabled: !message_media_playback_items(message).is_empty(),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::ViewAttachment,
-                label: "view attachment".to_owned(),
-                enabled: message.attachments_in_display_order().next().is_some(),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::GoToReferencedMessage,
-                label: "go to referenced message".to_owned(),
-                enabled: self.referenced_message_target(message).is_some(),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::ShowProfile,
-                label: "show message sender profile".to_owned(),
-                enabled: true,
-            },
-            MessageActionItem {
-                kind: MessageActionKind::OpenPinConfirmation,
-                label: "pin message".to_owned(),
-                enabled: self.can_pin_messages_for_message(message),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::OpenThread,
-                label: "open thread".to_owned(),
-                enabled: self.thread_summary_for_message(message).is_some(),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::ShowReactionUsers,
-                label: "show reacted users".to_owned(),
-                enabled: !message.reactions.is_empty()
-                    && self.can_show_reaction_users_for_message(message),
-            },
-            MessageActionItem {
-                kind: MessageActionKind::OpenPollVotePicker,
-                label: "choose poll votes".to_owned(),
-                enabled: poll_voting_enabled,
-            },
+        if self.message_is_pending(message) {
+            return Vec::new();
+        }
+        [
+            (MessageActionKind::CopyContent, "copy message"),
+            (MessageActionKind::OpenReactionPicker, "react"),
+            (MessageActionKind::Reply, "reply"),
+            (MessageActionKind::OpenDeleteConfirmation, "delete message"),
+            (MessageActionKind::Edit, "edit message"),
+            (MessageActionKind::OpenUrl, "open URL"),
+            (MessageActionKind::RemoveEmbeds, "remove embeds"),
+            (MessageActionKind::PlayMedia, "play media"),
+            (MessageActionKind::ViewAttachment, "view attachment"),
+            (
+                MessageActionKind::GoToReferencedMessage,
+                "go to referenced message",
+            ),
+            (
+                MessageActionKind::ShowProfile,
+                "show message sender profile",
+            ),
+            (MessageActionKind::OpenPinConfirmation, "pin message"),
+            (MessageActionKind::OpenThread, "open thread"),
+            (MessageActionKind::ShowReactionUsers, "show reacted users"),
+            (MessageActionKind::OpenPollVotePicker, "choose poll votes"),
         ]
+        .into_iter()
+        .map(|(kind, label)| {
+            MessageActionItem::new(
+                kind,
+                label,
+                self.message_action_disabled_reason(message, kind),
+            )
+        })
+        .collect()
+    }
+
+    fn message_action_disabled_reason(
+        &self,
+        message: &MessageState,
+        kind: MessageActionKind,
+    ) -> Option<String> {
+        let server_policy_reason = || {
+            kind.discord_action().and_then(|action| {
+                self.discord_action_block_reason_in_channel(message.channel_id, action)
+            })
+        };
+        match kind {
+            MessageActionKind::CopyContent => message
+                .content
+                .is_none()
+                .then(|| "no message text".to_owned()),
+            MessageActionKind::OpenReactionPicker => {
+                if self.can_open_reaction_picker(message) {
+                    return None;
+                }
+                server_policy_reason().or_else(|| {
+                    self.discord
+                        .cache
+                        .channel(message.channel_id)
+                        .map(|channel| {
+                            if !self
+                                .discord
+                                .cache
+                                .can_read_message_history_in_channel(channel)
+                            {
+                                "Read Message History required"
+                            } else {
+                                "Add Reactions required"
+                            }
+                            .to_owned()
+                        })
+                })
+            }
+            MessageActionKind::Reply => {
+                if self.can_reply_to_selected_message() {
+                    return None;
+                }
+                if let Some(reason) = server_policy_reason() {
+                    return Some(reason);
+                }
+                let channel = self.discord.cache.channel(message.channel_id)?;
+                if channel.is_forum() {
+                    return Some("create a forum post instead".to_owned());
+                }
+                if !self.discord.cache.can_send_in_channel(channel) {
+                    return Some("Send Messages required".to_owned());
+                }
+                if let Some(lock) = self.composer_lock() {
+                    return Some(match lock {
+                        ComposerLock::LoadingMessages => "messages still loading".to_owned(),
+                        ComposerLock::MessageLoadFailed => "message load failed".to_owned(),
+                        ComposerLock::Spam => "spam channel blocked".to_owned(),
+                        ComposerLock::MessageRequest => "accept message request first".to_owned(),
+                        ComposerLock::NewConversation => "start conversation first".to_owned(),
+                        ComposerLock::EmptyChannel => "no messages yet".to_owned(),
+                        ComposerLock::SlowMode { remaining_seconds } => {
+                            format!("slow mode, wait {remaining_seconds}s")
+                        }
+                        ComposerLock::Verification(_) => "verification required".to_owned(),
+                    });
+                }
+                (!self
+                    .discord
+                    .cache
+                    .can_read_message_history_in_channel(channel))
+                .then(|| "Read Message History required".to_owned())
+            }
+            MessageActionKind::OpenDeleteConfirmation => {
+                if self.can_delete_message(message) {
+                    None
+                } else {
+                    server_policy_reason().or_else(|| Some("Manage Messages required".to_owned()))
+                }
+            }
+            MessageActionKind::Edit => {
+                if self.can_edit_message(message) {
+                    return None;
+                }
+                server_policy_reason().or_else(|| {
+                    if Some(message.author_id) != self.discord.current_user_id {
+                        Some("only the author can edit".to_owned())
+                    } else if !message.message_kind.is_regular_or_reply() {
+                        Some("message type cannot be edited".to_owned())
+                    } else {
+                        Some("no editable text".to_owned())
+                    }
+                })
+            }
+            MessageActionKind::OpenUrl => message_url_items(message)
+                .is_empty()
+                .then(|| "no URL".to_owned()),
+            MessageActionKind::RemoveEmbeds => {
+                if self.can_remove_message_embeds(message) {
+                    return None;
+                }
+                server_policy_reason().or_else(|| {
+                    if message.embeds.is_empty() {
+                        Some("no embeds".to_owned())
+                    } else if message.flags & MESSAGE_FLAG_SUPPRESS_EMBEDS != 0 {
+                        Some("embeds already removed".to_owned())
+                    } else {
+                        Some("Manage Messages required".to_owned())
+                    }
+                })
+            }
+            MessageActionKind::PlayMedia => {
+                if !self.media_playback_enabled() {
+                    Some("media playback disabled".to_owned())
+                } else {
+                    message_media_playback_items(message)
+                        .is_empty()
+                        .then(|| "no playable media".to_owned())
+                }
+            }
+            MessageActionKind::ViewAttachment => message
+                .attachments_in_display_order()
+                .next()
+                .is_none()
+                .then(|| "no attachment".to_owned()),
+            MessageActionKind::GoToReferencedMessage => {
+                if self.referenced_message_target(message).is_some() {
+                    None
+                } else if message.reference.is_some() {
+                    Some("referenced message not accessible".to_owned())
+                } else {
+                    Some("no referenced message".to_owned())
+                }
+            }
+            MessageActionKind::ShowProfile => None,
+            MessageActionKind::OpenPinConfirmation => {
+                if self.can_pin_messages_for_message(message) {
+                    None
+                } else {
+                    server_policy_reason().or_else(|| Some("Pin Messages required".to_owned()))
+                }
+            }
+            MessageActionKind::OpenThread => self
+                .thread_summary_for_message(message)
+                .is_none()
+                .then(|| "no thread".to_owned()),
+            MessageActionKind::ShowReactionUsers => {
+                if message.reactions.is_empty() {
+                    Some("no reactions".to_owned())
+                } else if self.can_show_reaction_users_for_message(message) {
+                    None
+                } else {
+                    Some("Read Message History required".to_owned())
+                }
+            }
+            MessageActionKind::OpenPollVotePicker => {
+                let Some(poll) = message.poll.as_ref() else {
+                    return Some("no poll".to_owned());
+                };
+                if poll.results_finalized.unwrap_or(false) {
+                    return Some("poll closed".to_owned());
+                }
+                if self.can_vote_in_message_poll(message) {
+                    None
+                } else {
+                    server_policy_reason()
+                        .or_else(|| Some("Read Message History required".to_owned()))
+                }
+            }
+        }
     }
 
     pub fn selected_message_action_index(&self) -> Option<usize> {
@@ -182,15 +307,14 @@ impl DashboardState {
     }
 
     pub fn move_message_url_picker_down(&mut self) {
-        if let Some(picker) = self.popups.message_url_picker_mut() {
-            picker.selection.move_down(picker.items.len());
-        }
+        self.move_selectable_popup(SelectablePopupTarget::MessageUrls, SelectionAction::Next);
     }
 
     pub fn move_message_url_picker_up(&mut self) {
-        if let Some(picker) = self.popups.message_url_picker_mut() {
-            picker.selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::MessageUrls,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn select_message_url_row(&mut self, row: usize) -> bool {
@@ -211,7 +335,10 @@ impl DashboardState {
 
     pub fn activate_selected_message_action(&mut self) -> Option<AppCommand> {
         let action = self.selected_message_action()?;
-        if !action.enabled {
+        if !action.is_enabled() {
+            if action.kind == MessageActionKind::PlayMedia && !self.media_playback_enabled() {
+                self.show_media_playback_disabled_toast(std::time::Instant::now());
+            }
             return None;
         }
         self.close_message_action_menu();
@@ -226,6 +353,9 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
+        if !self.discord_action_allowed_in_channel(message.channel_id, DiscordAction::AddReaction) {
+            return false;
+        }
         if !self
             .discord
             .cache
@@ -233,17 +363,28 @@ impl DashboardState {
         {
             return false;
         }
-        message
+        if channel.is_thread() && channel.thread_archived().unwrap_or(false) {
+            return false;
+        }
+        let can_add_reaction = message
             .reactions
             .iter()
             .any(|reaction| &reaction.emoji == emoji)
-            || self.discord.cache.can_add_reactions_in_channel(channel)
+            || self.discord.cache.can_add_reactions_in_channel(channel);
+        can_add_reaction
+            && self
+                .discord
+                .cache
+                .can_use_reaction_emoji_in_channel(channel, emoji)
     }
 
     pub(super) fn can_open_reaction_picker(&self, message: &MessageState) -> bool {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
+        if !self.discord_action_allowed_in_channel(message.channel_id, DiscordAction::AddReaction) {
+            return false;
+        }
         self.discord
             .cache
             .can_read_message_history_in_channel(channel)
@@ -255,6 +396,12 @@ impl DashboardState {
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
+        if !self.discord_action_allowed_in_channel(message.channel_id, DiscordAction::AddReaction) {
+            return false;
+        }
+        if channel.is_thread() && channel.thread_archived().unwrap_or(false) {
+            return false;
+        }
         self.discord.cache.can_add_reactions_in_channel(channel)
     }
 
@@ -267,7 +414,23 @@ impl DashboardState {
             .can_read_message_history_in_channel(channel)
     }
 
+    fn can_vote_in_message_poll(&self, message: &MessageState) -> bool {
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
+            return true;
+        };
+        if !self.discord_action_allowed_in_channel(message.channel_id, DiscordAction::VotePoll) {
+            return false;
+        }
+        self.discord
+            .cache
+            .can_read_message_history_in_channel(channel)
+    }
+
     fn can_delete_message(&self, message: &MessageState) -> bool {
+        if !self.discord_action_allowed_in_channel(message.channel_id, DiscordAction::DeleteMessage)
+        {
+            return false;
+        }
         if Some(message.author_id) == self.discord.current_user_id {
             return true;
         }
@@ -277,17 +440,34 @@ impl DashboardState {
         self.discord.cache.can_manage_messages_in_channel(channel)
     }
 
-    fn can_edit_message(&self, message: &MessageState) -> bool {
-        Some(message.author_id) == self.discord.current_user_id
+    pub(in crate::tui::state) fn can_edit_message(&self, message: &MessageState) -> bool {
+        self.discord_action_allowed_in_channel(message.channel_id, DiscordAction::EditMessage)
+            && Some(message.author_id) == self.discord.current_user_id
             && message.message_kind.is_regular_or_reply()
             && message.content.is_some()
     }
 
-    fn can_pin_messages_for_message(&self, message: &MessageState) -> bool {
+    fn can_remove_message_embeds(&self, message: &MessageState) -> bool {
+        if !self.discord_action_allowed_in_channel(
+            message.channel_id,
+            DiscordAction::RemoveMessageEmbeds,
+        ) {
+            return false;
+        }
+        if message.embeds.is_empty() || message.flags & MESSAGE_FLAG_SUPPRESS_EMBEDS != 0 {
+            return false;
+        }
+        if Some(message.author_id) == self.discord.current_user_id {
+            return true;
+        }
         let Some(channel) = self.discord.cache.channel(message.channel_id) else {
             return true;
         };
-        self.discord.cache.can_pin_messages_in_channel(channel)
+        self.discord.cache.can_manage_messages_in_channel(channel)
+    }
+
+    fn can_pin_messages_for_message(&self, message: &MessageState) -> bool {
+        self.discord_action_allowed_in_channel(message.channel_id, DiscordAction::PinMessage)
     }
 
     fn referenced_message_target(&self, message: &MessageState) -> Option<ReferencedMessageTarget> {
@@ -311,12 +491,26 @@ impl DashboardState {
 
     pub fn activate_message_action_shortcut(&mut self, shortcut: KeyChord) -> Option<AppCommand> {
         let actions = self.selected_message_action_items();
-        let index = self.options.key_bindings().matching_action_shortcut_index(
+        let key_bindings = self.options.key_bindings();
+        let Some(index) = key_bindings.matching_action_shortcut_index(
             &actions,
             shortcut,
             |key_bindings, actions, index| key_bindings.message_action_shortcuts(actions, index),
-            |action| action.enabled,
-        )?;
+            |action| action.is_enabled(),
+        ) else {
+            if !self.media_playback_enabled()
+                && actions.iter().enumerate().any(|(index, action)| {
+                    action.kind == MessageActionKind::PlayMedia
+                        && key_bindings
+                            .message_action_shortcuts(&actions, index)
+                            .iter()
+                            .any(|candidate| candidate.matches_chord(shortcut))
+                })
+            {
+                self.show_media_playback_disabled_toast(std::time::Instant::now());
+            }
+            return None;
+        };
         self.select_message_action_row(index);
         self.activate_selected_message_action()
     }
@@ -326,7 +520,10 @@ impl DashboardState {
             .selected_message_action_items()
             .into_iter()
             .find(|action| action.kind == kind)?;
-        if !action.enabled {
+        if !action.is_enabled() {
+            if kind == MessageActionKind::PlayMedia && !self.media_playback_enabled() {
+                self.show_media_playback_disabled_toast(std::time::Instant::now());
+            }
             return None;
         }
         self.close_message_action_menu();
@@ -356,6 +553,10 @@ impl DashboardState {
                 None
             }
             MessageActionKind::OpenUrl => self.direct_open_selected_message_url(),
+            MessageActionKind::RemoveEmbeds => {
+                self.direct_open_selected_message_remove_embeds_confirmation();
+                None
+            }
             MessageActionKind::PlayMedia => self.direct_play_selected_message_media(),
             MessageActionKind::ViewAttachment => {
                 self.direct_open_selected_message_attachment_viewer();
@@ -385,16 +586,13 @@ impl DashboardState {
                 let reactions = message
                     .reactions
                     .iter()
-                    .map(|reaction| reaction.emoji.clone())
+                    .map(|reaction| (reaction.emoji.clone(), reaction.count))
                     .collect::<Vec<_>>();
                 if reactions.is_empty() {
                     return None;
                 }
-                Some(AppCommand::LoadReactionUsers {
-                    channel_id,
-                    message_id,
-                    reactions,
-                })
+                self.open_reaction_users_popup(channel_id, message_id, reactions);
+                None
             }
             MessageActionKind::OpenPollVotePicker => {
                 self.open_poll_vote_picker();
@@ -428,10 +626,11 @@ impl DashboardState {
     }
 
     fn open_message_url_picker(&mut self, items: Vec<MessageUrlItem>) {
-        self.popups.modal = Some(ModalPopup::MessageUrlPicker(MessageUrlPickerState {
-            selection: Default::default(),
-            items,
-        }));
+        self.popups
+            .set_modal(ModalPopup::MessageUrlPicker(MessageUrlPickerState {
+                selection: Default::default(),
+                items,
+            }));
     }
 
     pub fn direct_copy_selected_message_content(&mut self) {
@@ -441,11 +640,11 @@ impl DashboardState {
         else {
             return;
         };
-        self.runtime.copy_message_content_requested = Some(content.clone());
+        self.runtime.copy_text_requested = Some((content.clone(), "Message copied"));
     }
 
-    pub(in crate::tui) fn take_copy_message_content_request(&mut self) -> Option<String> {
-        self.runtime.copy_message_content_requested.take()
+    pub(in crate::tui) fn take_copy_text_request(&mut self) -> Option<(String, &'static str)> {
+        self.runtime.copy_text_requested.take()
     }
 
     pub fn direct_open_selected_message_reaction_picker(&mut self) {
@@ -480,7 +679,26 @@ impl DashboardState {
         }
     }
 
+    pub fn direct_open_selected_message_remove_embeds_confirmation(&mut self) {
+        let Some(message) = self.selected_message_state() else {
+            return;
+        };
+        if !self.can_remove_message_embeds(message) {
+            return;
+        }
+        self.open_message_confirmation(popups::MessageConfirmationState::remove_embeds(
+            message.channel_id,
+            message.id,
+            message.author.clone(),
+            message.content.clone(),
+        ));
+    }
+
     pub fn direct_play_selected_message_media(&mut self) -> Option<AppCommand> {
+        if !self.media_playback_enabled() {
+            self.show_media_playback_disabled_toast(std::time::Instant::now());
+            return None;
+        }
         let message = self.selected_message_state()?;
         message_media_playback_items(message)
             .into_iter()
@@ -503,8 +721,7 @@ impl DashboardState {
                 Some(guild_id) => ActiveGuildScope::Guild(guild_id),
                 None => ActiveGuildScope::DirectMessages,
             })?;
-        self.activate_guild(scope);
-        self.activate_channel(target.channel_id);
+        self.activate_message_history_channel(target.channel_id, Some(scope));
         self.focus_pane(FocusPane::Messages);
         Some(AppCommand::LoadMessageHistoryAround {
             channel_id: target.channel_id,
@@ -531,33 +748,12 @@ impl DashboardState {
         if !self.can_delete_message(message) {
             return;
         }
-        self.popups.modal = Some(ModalPopup::MessageDeleteConfirmation(
-            popups::MessageDeleteConfirmationState {
-                channel_id: message.channel_id,
-                message_id: message.id,
-                author: message.author.clone(),
-                content: message.content.clone(),
-            },
+        self.open_message_confirmation(popups::MessageConfirmationState::delete(
+            message.channel_id,
+            message.id,
+            message.author.clone(),
+            message.content.clone(),
         ));
-    }
-
-    pub fn close_message_delete_confirmation(&mut self) {
-        if self.is_active_modal_popup(ActiveModalPopupKind::MessageDeleteConfirmation) {
-            self.popups.clear_modal();
-        }
-    }
-
-    pub fn confirm_message_delete(&mut self) -> Option<AppCommand> {
-        let confirmation = self.popups.take_message_delete_confirmation()?;
-        Some(AppCommand::DeleteMessage {
-            channel_id: confirmation.channel_id,
-            message_id: confirmation.message_id,
-        })
-    }
-
-    pub fn message_delete_confirmation_lines(&self) -> Option<(String, Option<String>)> {
-        let confirmation = self.popups.message_delete_confirmation()?;
-        Some((confirmation.author.clone(), confirmation.content.clone()))
     }
 
     pub fn open_selected_message_pin_confirmation(&mut self, pinned: bool) {
@@ -567,39 +763,55 @@ impl DashboardState {
         if !self.can_pin_messages_for_message(message) {
             return;
         }
-        self.popups.modal = Some(ModalPopup::MessagePinConfirmation(
-            popups::MessagePinConfirmationState {
-                channel_id: message.channel_id,
-                message_id: message.id,
-                pinned,
-                author: message.author.clone(),
-                content: message.content.clone(),
-            },
+        self.open_message_confirmation(popups::MessageConfirmationState::pin(
+            message.channel_id,
+            message.id,
+            pinned,
+            message.author.clone(),
+            message.content.clone(),
         ));
     }
 
-    pub fn close_message_pin_confirmation(&mut self) {
-        if self.is_active_modal_popup(ActiveModalPopupKind::MessagePinConfirmation) {
+    pub fn close_message_confirmation(&mut self) {
+        if self.is_active_modal_popup(ActiveModalPopupKind::MessageConfirmation) {
             self.popups.clear_modal();
         }
     }
 
-    pub fn confirm_message_pin(&mut self) -> Option<AppCommand> {
-        let confirmation = self.popups.take_message_pin_confirmation()?;
-        Some(AppCommand::SetMessagePinned {
-            channel_id: confirmation.channel_id,
-            message_id: confirmation.message_id,
-            pinned: confirmation.pinned,
-        })
+    pub fn confirm_message_confirmation(&mut self) -> Option<AppCommand> {
+        let confirmation = self.popups.take_message_confirmation()?;
+        match confirmation.kind {
+            MessageConfirmationKind::Delete => Some(AppCommand::DeleteMessage {
+                channel_id: confirmation.channel_id,
+                message_id: confirmation.message_id,
+            }),
+            MessageConfirmationKind::RemoveEmbeds => Some(AppCommand::RemoveMessageEmbeds {
+                channel_id: confirmation.channel_id,
+                message_id: confirmation.message_id,
+            }),
+            MessageConfirmationKind::Pin { pinned } => Some(AppCommand::SetMessagePinned {
+                channel_id: confirmation.channel_id,
+                message_id: confirmation.message_id,
+                pinned,
+            }),
+        }
     }
 
-    pub fn message_pin_confirmation_lines(&self) -> Option<(bool, String, Option<String>)> {
-        let confirmation = self.popups.message_pin_confirmation()?;
+    pub fn message_confirmation_lines(
+        &self,
+    ) -> Option<(MessageConfirmationKind, String, Option<String>)> {
+        let confirmation = self.popups.message_confirmation()?;
         Some((
-            confirmation.pinned,
+            confirmation.kind,
             confirmation.author.clone(),
             confirmation.content.clone(),
         ))
+    }
+
+    fn open_message_confirmation(&mut self, confirmation: popups::MessageConfirmationState) {
+        self.popups.confirmation_button = popups::ConfirmationButton::default();
+        self.popups
+            .set_modal(ModalPopup::MessageConfirmation(confirmation));
     }
 }
 
@@ -616,7 +828,11 @@ fn message_url_items(message: &MessageState) -> Vec<MessageUrlItem> {
 fn message_media_playback_items(message: &MessageState) -> Vec<MediaPlaybackTarget> {
     let mut targets = message
         .attachments_in_display_order()
-        .filter(|attachment| attachment.is_video())
+        .filter(|attachment| {
+            attachment.media_type().is_some_and(|media_type| {
+                media_type == AttachmentMediaType::Video || media_type == AttachmentMediaType::Audio
+            })
+        })
         .filter_map(|attachment| {
             Some(MediaPlaybackTarget {
                 url: attachment.preferred_url()?.to_owned(),
@@ -651,6 +867,7 @@ fn message_playable_media_urls(message: &MessageState) -> Vec<String> {
 fn playable_embed_video_urls(embeds: &[EmbedInfo]) -> Vec<String> {
     embeds
         .iter()
+        .filter(|embed| embed.gifv_image_url.is_none())
         .filter_map(|embed| embed.video_url.clone())
         .filter(|url| is_playable_media_url(url))
         .collect()
@@ -662,6 +879,11 @@ fn message_urls(message: &MessageState) -> Vec<String> {
         urls.extend(detected_urls(content));
     }
     urls.extend(embed_urls(&message.embeds));
+    urls.extend(
+        message
+            .attachments_in_display_order()
+            .filter_map(|attachment| attachment.preferred_url().map(str::to_owned)),
+    );
     // URLs in a reply quote or a forwarded message are shown to the user too.
     if let Some(reply) = &message.reply
         && let Some(content) = &reply.content

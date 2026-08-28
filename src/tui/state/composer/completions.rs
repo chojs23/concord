@@ -5,7 +5,7 @@ use crate::discord::ids::{
 
 use crate::discord::{
     ApplicationCommandIdentity, ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelState,
-    CustomEmojiInfo, PresenceStatus, RoleState, builtin_slash_commands,
+    CustomEmojiInfo, PresenceStatus, RoleState, builtin_slash_commands, custom_emoji_image_url,
 };
 
 use super::super::{MemberEntry, emoji::custom_emoji_can_be_used_directly};
@@ -213,9 +213,15 @@ pub(super) fn build_command_choice_candidates(
     query: &str,
     option: &ApplicationCommandOptionInfo,
 ) -> Vec<CommandPickerEntry> {
+    build_command_choice_candidates_from_choices(query, &option.choices)
+}
+
+pub(super) fn build_command_choice_candidates_from_choices(
+    query: &str,
+    choices: &[crate::discord::ApplicationCommandChoiceInfo],
+) -> Vec<CommandPickerEntry> {
     let needle = query.to_ascii_lowercase();
-    option
-        .choices
+    choices
         .iter()
         .filter(|choice| choice.name.to_ascii_lowercase().contains(&needle))
         .map(|choice| CommandPickerEntry {
@@ -247,28 +253,25 @@ pub(super) fn build_mention_candidates(
         .filter_map(|entry| {
             let display_name = entry.display_name();
             let username = entry.username();
+            let search_alias = entry.member_search_alias();
             let lowered_display = display_name.to_lowercase();
             let lowered_username = username.as_deref().map(str::to_lowercase);
+            let lowered_alias = search_alias.as_deref().map(str::to_lowercase);
 
-            // Lower rank wins. We deliberately stagger the ladder so an alias
-            // prefix beats a username prefix and either beats a substring hit
-            // on the other field.
+            // Lower rank wins. These are the two member fields Discord's
+            // Opcode 8 query can match by prefix.
             let rank = if needle.is_empty() {
                 2
-            } else if lowered_display.starts_with(&needle) {
+            } else if lowered_alias
+                .as_deref()
+                .is_some_and(|name| name.starts_with(&needle))
+            {
                 0
             } else if lowered_username
                 .as_deref()
                 .is_some_and(|name| name.starts_with(&needle))
             {
                 1
-            } else if lowered_display.contains(&needle) {
-                2
-            } else if lowered_username
-                .as_deref()
-                .is_some_and(|name| name.contains(&needle))
-            {
-                3
             } else {
                 return None;
             };
@@ -361,11 +364,12 @@ pub(super) fn move_picker_selection(selected: usize, len: usize, delta: isize) -
     (current + delta).clamp(0, len as isize - 1) as usize
 }
 
-pub(super) fn build_emoji_candidates<'a>(
+pub(in crate::tui::state) fn build_emoji_candidates<'a>(
     query: &str,
     foreign_emojis: impl Iterator<Item = &'a CustomEmojiInfo>,
     guild_emojis: impl Iterator<Item = &'a CustomEmojiInfo>,
     has_nitro: bool,
+    can_use_external_emojis: bool,
     emojis_as_links: bool,
 ) -> Vec<EmojiPickerEntry> {
     let needle = query.to_ascii_lowercase();
@@ -375,7 +379,8 @@ pub(super) fn build_emoji_candidates<'a>(
 
     let make_entry = |is_foreign: bool| {
         move |emoji: &CustomEmojiInfo| {
-            let can_send_directly = custom_emoji_can_be_used_directly(emoji, is_foreign, has_nitro);
+            let can_send_directly = custom_emoji_can_be_used_directly(emoji, is_foreign, has_nitro)
+                && (!is_foreign || can_use_external_emojis);
             let as_link = emojis_as_links && !can_send_directly;
             let shortcode = emoji.name.clone();
             let marker = if emoji.animated { "◇" } else { "◆" };
@@ -409,7 +414,7 @@ pub(super) fn build_emoji_candidates<'a>(
         .map(|emoji| make_entry(false)(emoji))
         .collect();
 
-    if has_nitro || emojis_as_links {
+    if (has_nitro && can_use_external_emojis) || emojis_as_links {
         scored.extend(
             foreign_emojis
                 .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
@@ -443,8 +448,11 @@ pub(super) fn build_emoji_candidates<'a>(
 
 fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool, as_link: bool) -> String {
     if as_link {
-        let link = custom_emoji_image_url(id, animated);
-        format!("[{name}]({link}?size=48&name={name}&lossless=true)")
+        let mut link = custom_emoji_image_url(id.get(), animated);
+        let query_separator = if link.contains('?') { '&' } else { '?' };
+        link.push(query_separator);
+        link.push_str(&format!("size=48&name={name}&lossless=true"));
+        format!("[{name}]({link})")
     } else if animated {
         format!("<a:{name}:{}>", id.get())
     } else {
@@ -452,12 +460,7 @@ fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool, as_link:
     }
 }
 
-fn custom_emoji_image_url(id: Id<EmojiMarker>, animated: bool) -> String {
-    let extension = if animated { "gif" } else { "png" };
-    format!("https://cdn.discordapp.com/emojis/{}.{extension}", id.get())
-}
-
-pub(super) fn should_start_completion_query(input: &str) -> bool {
+pub(in crate::tui::state) fn should_start_completion_query(input: &str) -> bool {
     input.chars().last().is_none_or(char::is_whitespace)
 }
 
@@ -465,7 +468,7 @@ pub(super) fn is_mention_query_char(value: char) -> bool {
     value.is_alphanumeric() || matches!(value, '_' | '.' | '-')
 }
 
-pub(super) fn is_emoji_query_char(value: char) -> bool {
+pub(in crate::tui::state) fn is_emoji_query_char(value: char) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, '_' | '-' | '+')
 }
 
@@ -473,7 +476,7 @@ pub(super) fn is_command_query_char(value: char) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, '_' | '-')
 }
 
-pub(super) fn expand_emoji_shortcodes(input: &str) -> String {
+pub(in crate::tui::state) fn expand_emoji_shortcodes(input: &str) -> String {
     let mut rest = input;
     let mut output = String::with_capacity(input.len());
 

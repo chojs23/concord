@@ -8,26 +8,23 @@ mod tests {
     use super::normalize_openable_url;
 
     #[test]
-    fn openable_urls_allow_http_and_https() {
-        assert_eq!(
-            normalize_openable_url("https://example.com/?a=1&b=2").as_deref(),
-            Some("https://example.com/?a=1&b=2")
-        );
-        assert_eq!(
-            normalize_openable_url("http://example.com/path").as_deref(),
-            Some("http://example.com/path")
-        );
-    }
-
-    #[test]
-    fn openable_urls_reject_non_web_schemes() {
-        for value in [
-            "javascript:alert(1)",
-            "file:///etc/passwd",
-            "discord://-/channels/1/2/3",
-            "not a url",
+    fn only_http_and_https_urls_are_openable() {
+        for (value, expected) in [
+            (
+                "https://example.com/?a=1&b=2",
+                Some("https://example.com/?a=1&b=2"),
+            ),
+            ("http://example.com/path", Some("http://example.com/path")),
+            ("javascript:alert(1)", None),
+            ("file:///etc/passwd", None),
+            ("discord://-/channels/1/2/3", None),
+            ("not a url", None),
         ] {
-            assert_eq!(normalize_openable_url(value), None, "{value}");
+            assert_eq!(
+                normalize_openable_url(value).as_deref(),
+                expected,
+                "{value}"
+            );
         }
     }
 }

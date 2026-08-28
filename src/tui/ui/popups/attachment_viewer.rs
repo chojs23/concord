@@ -1,8 +1,9 @@
+use crate::discord::AttachmentMediaType;
+
 use super::*;
 
 pub(in crate::tui::ui) fn render_attachment_viewer(
     frame: &mut Frame,
-    messages_area: Rect,
     frame_area: Rect,
     state: &DashboardState,
     image_preview: Option<ImagePreview<'_>>,
@@ -16,13 +17,10 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
     };
 
     let zoom = state.attachment_viewer_zoom();
-    let popup = attachment_viewer_popup(messages_area, frame_area, zoom);
+    let popup = attachment_viewer_popup(frame_area, zoom);
     let title_width = usize::from(popup.width.saturating_sub(4)).max(1);
     let title = truncate_display_width(&attachment_viewer_title(&item), title_width);
-    frame.render_widget(Clear, popup);
-    let block = panel_block_owned(title, true);
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
+    let inner = render_modal_frame(frame, popup, title);
     let hint_height = inner.height.min(1);
     let body_area = Rect {
         height: inner.height.saturating_sub(hint_height),
@@ -33,8 +31,10 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
         height: hint_height,
         ..inner
     });
-
-    let can_preview = item.is_image || item.is_video;
+    let can_preview = matches!(
+        item.media_type,
+        Some(AttachmentMediaType::Image | AttachmentMediaType::Video)
+    );
     if can_preview
         && state.show_images()
         && let Some(image_preview) = image_preview
@@ -48,7 +48,7 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
     } else if can_preview && state.show_images() {
         frame.render_widget(
             Paragraph::new(format!("loading {}...", item.filename))
-                .style(Style::default().fg(DIM))
+                .style(theme::current().style(theme::HighlightGroup::Loading))
                 .wrap(Wrap { trim: false }),
             body_area,
         );
@@ -58,12 +58,22 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
 
     if let Some(hint_area) = hint_area {
         let hint = truncate_display_width(
-            state.key_bindings().attachment_viewer_download_hint(),
+            &popup_shortcut_help_text(&[
+                ("o", "open"),
+                ("y", "copy URL"),
+                ("x", "play"),
+                ("d", "download"),
+                ("z", "zoom"),
+                ("+/-", "zoom in/out"),
+            ]),
             usize::from(hint_area.width),
         );
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(DIM))))
-                .alignment(Alignment::Center),
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                theme::current().style(theme::HighlightGroup::Hint),
+            )))
+            .alignment(Alignment::Center),
             hint_area,
         );
     }
@@ -89,16 +99,31 @@ pub(in crate::tui::ui) fn centered_viewer_preview_area(
 }
 
 fn render_attachment_details(frame: &mut Frame, area: Rect, item: &AttachmentViewerItem) {
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
-            Span::styled("File: ", Style::default().fg(DIM)),
+            Span::styled(
+                "File: ",
+                theme::current().style(theme::HighlightGroup::FieldLabel),
+            ),
             Span::raw(item.filename.clone()),
         ]),
         Line::from(vec![
-            Span::styled("Size: ", Style::default().fg(DIM)),
+            Span::styled(
+                "Size: ",
+                theme::current().style(theme::HighlightGroup::FieldLabel),
+            ),
             Span::raw(format_byte_size(item.size_bytes)),
         ]),
     ];
+    if let Some(url) = &item.url {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "URL: ",
+                theme::current().style(theme::HighlightGroup::FieldLabel),
+            ),
+            Span::raw(url.clone()),
+        ]));
+    }
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 

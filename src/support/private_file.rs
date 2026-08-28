@@ -17,31 +17,31 @@ pub(crate) fn set_private_dir_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Writes to a sibling temp file and renames it into place, so a crash or
+/// full disk mid-write can never leave a truncated file behind.
 #[cfg(unix)]
 pub(crate) fn write_private_file(path: &Path, content: &str) -> Result<()> {
-    use std::{
-        fs,
-        io::Write,
-        os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    };
+    use std::{fs, io::Write, os::unix::fs::PermissionsExt};
 
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut file = tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o600))
+        .tempfile_in(dir)?;
     file.write_all(content.as_bytes())?;
-
-    let mut permissions = file.metadata()?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
 #[cfg(not(unix))]
 pub(crate) fn write_private_file(path: &Path, content: &str) -> Result<()> {
-    std::fs::write(path, content)?;
+    use std::io::Write;
+
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    file.write_all(content.as_bytes())?;
+    file.as_file().sync_all()?;
+    file.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
@@ -73,7 +73,11 @@ mod tests {
         let path = dir.path().join("private.toml");
 
         write_private_file(&path, "token = 'secret'").expect("private file should be written");
+        write_private_file(&path, "token = 'rotated'")
+            .expect("existing private file should be replaced");
 
+        let content = std::fs::read_to_string(&path).expect("private file should be readable");
+        assert_eq!(content, "token = 'rotated'");
         let mode = path
             .metadata()
             .expect("file metadata should be available")

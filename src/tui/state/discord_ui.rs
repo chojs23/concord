@@ -8,19 +8,27 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
 use crate::discord::{
-    AppEvent, ApplicationCommandInfo, ChannelUnreadState, DiscordSnapshot, DiscordState,
+    ActionBlockReason, AppEvent, ApplicationCommandInfo, ChannelUnreadState, DiscordAction,
+    DiscordSnapshot, DiscordState, GuildParticipationRestriction, MessageInfo, PremiumTier,
     SnapshotAreas, SnapshotRevision,
 };
 
-use super::{DashboardState, DesktopNotification, message_notification_body};
+use super::{ChannelPaneCursor, DashboardState, DesktopNotification, message_notification_body};
 
 #[derive(Debug, Default)]
 pub(super) struct DiscordUiState {
     pub(super) cache: DiscordState,
+    /// Test-only stand-in for the state `DiscordClient` owns in production.
+    /// Tests drive events through it so `push_event` reproduces the real
+    /// apply -> snapshot -> restore path instead of writing `cache` directly.
+    #[cfg(test)]
+    pub(super) authoritative: DiscordState,
+    #[cfg(test)]
+    pub(super) authoritative_revision: SnapshotRevision,
     pub(super) current_user: Option<String>,
     pub(super) current_user_id: Option<Id<UserMarker>>,
     pub(super) application_commands: HashMap<Option<Id<GuildMarker>>, Vec<ApplicationCommandInfo>>,
-    pub(super) current_user_has_nitro: Option<bool>,
+    pub(super) current_user_premium_tier: Option<PremiumTier>,
     pub(super) update_available_version: Option<String>,
 }
 
@@ -39,12 +47,51 @@ impl DerefMut for DiscordUiState {
 }
 
 impl DashboardState {
+    pub(super) fn discord_action_allowed_in_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        action: DiscordAction,
+    ) -> bool {
+        self.discord_action_block_reason_in_channel(channel_id, action)
+            .is_none()
+    }
+
+    pub(super) fn discord_action_block_reason_in_channel(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        action: DiscordAction,
+    ) -> Option<String> {
+        let channel = self.discord.cache.channel(channel_id)?;
+        let reason = self
+            .discord
+            .cache
+            .channel_action_decision(channel, action)
+            .optimistic_ui_block_reason()?;
+        Some(match reason {
+            ActionBlockReason::ChannelDataUnavailable => "channel unavailable".to_owned(),
+            ActionBlockReason::ThreadStateUnavailable => "thread state unavailable".to_owned(),
+            ActionBlockReason::ThreadArchived => "thread archived".to_owned(),
+            ActionBlockReason::PermissionDenied(permission) => {
+                format!("{permission} required")
+            }
+            ActionBlockReason::PermissionDataUnavailable(_) => return None,
+            ActionBlockReason::ParticipationRestricted(restriction) => {
+                participation_restriction_label(restriction)
+            }
+            ActionBlockReason::ParticipationDataUnavailable(_) => {
+                "verification status unknown".to_owned()
+            }
+        })
+    }
+
     pub(super) fn current_user_has_nitro(&self) -> bool {
-        self.discord.current_user_has_nitro.unwrap_or(false)
+        self.discord
+            .current_user_premium_tier
+            .is_some_and(PremiumTier::has_nitro)
     }
 
     pub fn restore_discord_snapshot(&mut self, discord: DiscordState) {
-        self.restore_discord_snapshot_with(SnapshotAreas::all(), |state| {
+        self.restore_discord_snapshot_with(SnapshotAreas::all(), true, |state| {
             *state = discord;
         });
     }
@@ -55,7 +102,8 @@ impl DashboardState {
         previous_revision: SnapshotRevision,
     ) {
         let areas = snapshot.revision.changed_areas_since(previous_revision);
-        self.restore_discord_snapshot_with(areas, |state| {
+        let thread_card_catalog_changed = snapshot.thread_card_catalog_changed_from(&self.discord);
+        self.restore_discord_snapshot_with(areas, thread_card_catalog_changed, |state| {
             state.restore_snapshot_areas(snapshot, previous_revision);
         });
     }
@@ -63,6 +111,7 @@ impl DashboardState {
     fn restore_discord_snapshot_with(
         &mut self,
         areas: SnapshotAreas,
+        thread_card_catalog_changed: bool,
         restore: impl FnOnce(&mut DiscordState),
     ) {
         let was_auto_follow = self.messages.message_auto_follow;
@@ -85,12 +134,19 @@ impl DashboardState {
                     .map(|message| message.id)
             })
             .flatten();
-        let channel_cursor_id = self.selected_channel_cursor_id();
+        let channel_cursor = self.selected_channel_cursor();
 
         restore(&mut self.discord.cache);
+        self.reconcile_pending_messages_with_cache();
         self.clear_message_row_content_metrics_cache();
+        if thread_card_catalog_changed {
+            // Presence, voice, and other navigation updates do not change the
+            // thread catalog. Reusing it avoids sorting every forum post for
+            // unrelated Gateway traffic.
+            self.clear_thread_card_list_cache();
+        }
         if areas.navigation {
-            self.repair_navigation_after_discord_restore(channel_cursor_id);
+            self.repair_navigation_after_discord_restore(channel_cursor);
         }
 
         let in_message_view = self.message_pane_supports_auto_follow();
@@ -104,12 +160,13 @@ impl DashboardState {
                 should_scroll,
             );
         }
+        self.close_composer_for_safety_lock();
         self.refresh_search_popup_after_member_cache_update();
     }
 
     fn repair_navigation_after_discord_restore(
         &mut self,
-        channel_cursor_id: Option<Id<ChannelMarker>>,
+        channel_cursor: Option<ChannelPaneCursor>,
     ) {
         if let Some(user) = self.discord.current_user() {
             self.discord.current_user = Some(user.to_owned());
@@ -120,10 +177,10 @@ impl DashboardState {
         self.refresh_composer_emoji_candidates_for_current_query();
 
         self.clamp_active_selection();
-        self.restore_channel_cursor(channel_cursor_id);
-        self.navigation.guilds.selected = self.selected_guild();
-        self.navigation.channels.selected = self.selected_channel();
-        self.navigation.members.selected = self.selected_member();
+        self.restore_channel_pane_cursor(channel_cursor);
+        self.navigation.guilds.list.selected = self.selected_guild();
+        self.navigation.channels.list.selected = self.selected_channel();
+        self.navigation.members.list.selected = self.selected_member();
         self.clamp_guild_viewport();
         self.clamp_channel_viewport();
         self.clamp_member_viewport();
@@ -148,6 +205,24 @@ impl DashboardState {
         self.clamp_message_viewport();
         if !should_scroll {
             self.refresh_message_auto_follow();
+        }
+    }
+}
+
+fn participation_restriction_label(restriction: GuildParticipationRestriction) -> String {
+    match restriction {
+        GuildParticipationRestriction::MembershipScreening => "screening incomplete".to_owned(),
+        GuildParticipationRestriction::OnboardingIncomplete => "onboarding incomplete".to_owned(),
+        GuildParticipationRestriction::EmailVerificationRequired => "email not verified".to_owned(),
+        GuildParticipationRestriction::AccountTooNew { remaining_seconds } => {
+            format!("account too new, wait {remaining_seconds}s")
+        }
+        GuildParticipationRestriction::MemberTooNew { remaining_seconds } => {
+            format!("new server member, wait {remaining_seconds}s")
+        }
+        GuildParticipationRestriction::PhoneVerificationRequired => "phone not verified".to_owned(),
+        GuildParticipationRestriction::UnsupportedLevel { value } => {
+            format!("verification level {value} unsupported")
         }
     }
 }
@@ -180,6 +255,17 @@ impl DashboardState {
     pub fn channel_unread_message_count(&self, channel_id: Id<ChannelMarker>) -> usize {
         self.discord.cache.channel_unread_message_count(channel_id)
     }
+
+    /// Whether `channel_id` is a thread whose parent is a forum channel.
+    pub fn is_forum_post_thread(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.discord
+            .cache
+            .channel(channel_id)
+            .filter(|channel| channel.is_thread())
+            .and_then(|channel| channel.parent_id)
+            .and_then(|parent_id| self.discord.cache.channel(parent_id))
+            .is_some_and(|parent| parent.is_forum())
+    }
 }
 
 impl DashboardState {
@@ -190,10 +276,7 @@ impl DashboardState {
         let AppEvent::MessageCreate { message } = event else {
             return None;
         };
-        if !self.desktop_notifications_enabled()
-            || (self.terminal_focused()
-                && self.navigation.active_channel_id == Some(message.channel_id))
-        {
+        if !self.desktop_notifications_enabled() || self.message_notification_suppressed(message) {
             return None;
         }
         if !self
@@ -219,11 +302,28 @@ impl DashboardState {
         };
         let body = message_notification_body(
             message.content.as_deref(),
-            message.sticker_names.len(),
+            message.stickers.len(),
             message.attachments.len(),
             message.embeds.len(),
         );
         Some(DesktopNotification { title, body })
+    }
+
+    pub(crate) fn notification_sound_for_event(&self, event: &AppEvent) -> bool {
+        let AppEvent::MessageCreate { message } = event else {
+            return false;
+        };
+        self.desktop_notifications_enabled()
+            && !self.message_notification_suppressed(message)
+            && self
+                .discord
+                .cache
+                .message_event_triggers_notification(event)
+    }
+
+    fn message_notification_suppressed(&self, message: &MessageInfo) -> bool {
+        self.terminal_focused()
+            && self.navigation.channels.active_channel_id == Some(message.channel_id)
     }
 }
 

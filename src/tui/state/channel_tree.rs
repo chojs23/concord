@@ -62,16 +62,6 @@ pub(super) fn sorted_child_threads<'a>(
     threads
 }
 
-pub(super) fn child_thread_count<'a>(
-    channels: impl IntoIterator<Item = &'a ChannelState>,
-    parent_id: Id<ChannelMarker>,
-) -> usize {
-    channels
-        .into_iter()
-        .filter(|channel| channel.is_thread() && channel.parent_id == Some(parent_id))
-        .count()
-}
-
 pub(super) fn preceding_category_id(
     entries: &[ChannelPaneEntry<'_>],
     selected: usize,

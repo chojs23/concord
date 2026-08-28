@@ -2,6 +2,693 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.13] - 2026-08-24
+
+### Bug Fixes
+
+- Message member hydration by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- Apply negotiated keyframe intervals to Go Live encoders by @chojs23
+
+## [2.5.12] - 2026-08-21
+
+### Bug Fixes
+
+- Remove repeated allocations from emoji reaction filtering by @chojs23
+- Fix Rust 1.98 Clippy failures by @chojs23
+- _(tui)_ Synchronize animated media redraws by @chojs23
+- _(tui)_ Fix profile update picker row by @chojs23
+
+### Features
+
+- Enlarge all emoji in emoji-only messages by @chojs23
+- _(reactions)_ Customizing top 10 emojis in config.toml (#326) in [#326](https://github.com/chojs23/concord/pull/326) by @Wulgaren
+- Improve profile popup ui by @chojs23
+- _(theme)_ Add configurable unified selection markers to theme settings (#330) in [#330](https://github.com/chojs23/concord/pull/330) by @chojs23
+- _(tui)_ Preview guild stickers as inline media (#329) in [#329](https://github.com/chojs23/concord/pull/329) by @gandol
+- _(tui)_ Render Discord Lottie stickers inline by @chojs23
+
+### Miscellaneous Tasks
+
+- Remove cache warm by @chojs23
+
+### New Contributors
+
+- @gandol made their first contribution in [#329](https://github.com/chojs23/concord/pull/329)
+- @Wulgaren made their first contribution in [#326](https://github.com/chojs23/concord/pull/326)
+
+## [2.5.11] - 2026-08-17
+
+### Bug Fixes
+
+- _(linux)_ Restore portable DMA-BUF ioctl handling by @chojs23
+
+### Features
+
+- X11 broadcasting (#324) by @chojs23
+
+### Miscellaneous Tasks
+
+- Add an all-features musl compile check by @chojs23
+- Fix the musl CI target volume mount by @chojs23
+
+### Performance
+
+- _(capture)_ Import linear DMA-BUF through EGL instead of reading it on the CPU (#317) in [#317](https://github.com/chojs23/concord/pull/317) by @4EEZE
+
+### New Contributors
+
+- @4EEZE made their first contribution in [#317](https://github.com/chojs23/concord/pull/317)
+
+## [2.5.10] - 2026-08-15
+
+### Bug Fixes
+
+- Fix DMA-BUF ioctl compilation on musl Linux (#313) in [#313](https://github.com/chojs23/concord/pull/313) by @chojs23
+- Fix joined thread member and inactivity by @chojs23
+- Match embedded thread cards to post UI by @chojs23
+- Align read-state and presence activity handling by @chojs23
+- Fix Voice, Gateway, RPC, presence, and message pin protocol handling by @chojs23
+- Improve thread card layout by @chojs23
+- Preserve mute duration metadata by @chojs23
+
+### Features
+
+- Improve forum post cards with spacing, image thumbnails by @chojs23
+
+### Performance
+
+- Load forum previews by viewport by @chojs23
+
+### Refactor
+
+- Unify forum and thread card UI by @chojs23
+
+### Tests
+
+- Remove negative behavior coverage by @chojs23
+
+## [2.5.9] - 2026-08-13
+
+### Bug Fixes
+
+- _(media)_ Request animated Discord emoji as WebP by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- _(media)_ Animate GIF and WebP images by @chojs23
+- _(media)_ Preserve Discord types and render Giphy GIFV inline by @chojs23
+
+## [2.5.8] - 2026-08-12
+
+### Bug Fixes
+
+- Prevent false media playback errors (#308) in [#308](https://github.com/chojs23/concord/pull/308) by @mvanhorn
+- Match Discord webhook message grouping (#310) in [#310](https://github.com/chojs23/concord/pull/310) by @chojs23
+
+### Features
+
+- _(tui)_ Add full screen refresh shortcut by @chojs23
+
+### New Contributors
+
+- @mvanhorn made their first contribution in [#308](https://github.com/chojs23/concord/pull/308)
+
+## [2.5.7] - 2026-08-12
+
+### Bug Fixes
+
+- Fix targeted guild member hydration by @chojs23
+- Separate member pane search from member autocomplete by @chojs23
+- Fix member hydration, search, refresh by @chojs23
+- _(discord)_ Distinguish identifier no-update from fetch failures by @chojs23
+- Preserve Discord list order across refreshes by @chojs23
+- _(discord)_ Align gateway recovery and client state by @chojs23
+- Fix forwarded timestamps to honor the configured hour format by @chojs23
+- Composer input (#307) in [#307](https://github.com/chojs23/concord/pull/307) by @chojs23
+- Fix empty panel titles breaking top borders by @chojs23
+
+### Features
+
+- Align Gateway compression, client state, and REST headers by @chojs23
+- Add config option for 12-hour time format (#306) in [#306](https://github.com/chojs23/concord/pull/306) by @NotNoss
+- Enhance thread create ui by @chojs23
+
+### Miscellaneous Tasks
+
+- Remove mark read hint by @chojs23
+
+### New Contributors
+
+- @NotNoss made their first contribution in [#306](https://github.com/chojs23/concord/pull/306)
+
+## [2.5.6] - 2026-08-07
+
+### Bug Fixes
+
+- Fix referenced message navigation and redraw by @chojs23
+- Harden background redraw detection and unify redraw tests by @chojs23
+- Capture and classify native stderr by @chojs23
+- Forum previews, author colors, and card separation by @chojs23
+- Fix member identity hydration and cache preservation by @chojs23
+- Avoid repeated bullets on wrapped list items (#295) in [#295](https://github.com/chojs23/concord/pull/295) by @kimbank
+- Remove obsolete user identity paths by @chojs23
+- Clippy by @chojs23
+
+### New Contributors
+
+- @kimbank made their first contribution in [#295](https://github.com/chojs23/concord/pull/295)
+
+## [2.5.5] - 2026-08-06
+
+### Bug Fixes
+
+- Fix libva 2.24.1 compatible crates (#302) in [#302](https://github.com/chojs23/concord/pull/302) by @chojs23
+
+## [2.5.4] - 2026-08-06
+
+### Bug Fixes
+
+- _(stream)_ Handle capture failures and linear DMA-BUF negotiation (#299) in [#299](https://github.com/chojs23/concord/pull/299) by @chojs23
+- Enable windows OLE APIs for Media Foundation encoding by @chojs23
+- Preserve active DAVE media during MLS epoch preparation by @chojs23
+- _(stream)_ Smooth H.264 broadcast pacing by @chojs23
+- _(build)_ Replace audiopus_sys with opusic-c by @chojs23
+- _(linux)_ Use generic VA-API surfaces for H264 encoding by @chojs23
+- _(boradcast)_ Filter macOS capture targets and show loading feedback by @chojs23
+
+### Features
+
+- _(broadcast)_ Add hardware encoder by @chojs23
+- _(broadcast)_ Add one-way runtime fallback from hardware H264 encoders to OpenH264 by @chojs23
+- _(linux)_ Add 10-bit, multi-plane, and modifier-aware screen capture by @chojs23
+- _(stream)_ Improve cross-platform hardware encoding by @chojs23
+
+## [2.5.3] - 2026-08-04
+
+### Bug Fixes
+
+- _(stream)_ Start video-only broadcasts immediately by @chojs23
+- _(stream)_ Scale stream playback for high-resolution and high-frame-rate video by @chojs23
+- _(stream)_ Add UDP safeguards and recovery diagnostics by @chojs23
+- _(stream)_ Preserve manual mpv window resizing and disable pause by @chojs23
+- _(stream)_ Stabilize RTP recovery and live playback timing by @chojs23
+- _(broadcast)_ Fix Linux screen-share startup readiness and add lifecycle diagnostics by @chojs23
+
+### Miscellaneous Tasks
+
+- _(docs)_ Add debug mode instruction by @chojs23
+
+## [2.5.2] - 2026-08-03
+
+### Bug Fixes
+
+- _(tui)_ Align inbox, thread, and shortcut behavior by @chojs23
+- _(release)_ Scope Homebrew audio dependencies to Linux (#297) in [#297](https://github.com/chojs23/concord/pull/297) by @chojs23
+
+### Refactor
+
+- _(tui)_ Unify popup input and shortcut routing by @chojs23
+
+## [2.5.1] - 2026-08-02
+
+### Bug Fixes
+
+- _(stream)_ Fix Windows broadcasts stopping when captured content outgrows the D3D11 frame pool by @chojs23
+- Unify stream toggle command naming by @chojs23
+- _(test)_ Fix no-default-features build by @chojs23
+- _(stream)_ Fix stream freezes caused by backward audio RTP timestamps (#289) in [#289](https://github.com/chojs23/concord/pull/289) by @chojs23
+- _(nix)_ Patch PipeWire bindgen fallbacks for immutable vendor sources (#292) in [#292](https://github.com/chojs23/concord/pull/292) by @chojs23
+- Filter muted channel in inbox (#293) in [#293](https://github.com/chojs23/concord/pull/293) by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+- Add gentoo installation instructions to README (#286) in [#286](https://github.com/chojs23/concord/pull/286) by @darwincereska
+- Update README by @chojs23
+
+### Features
+
+- _(voice)_ Add selectable input and output audio sources (#287) in [#287](https://github.com/chojs23/concord/pull/287) by @chojs23
+
+### Miscellaneous Tasks
+
+- Update descriptions and docs by @chojs23
+
+### New Contributors
+
+- @darwincereska made their first contribution in [#286](https://github.com/chojs23/concord/pull/286)
+
+## [2.5.0] - 2026-08-01
+
+### Bug Fixes
+
+- _(stream)_ Require exact Linux audio monitor by @chojs23
+- _(ci)_ Install Linux capture dependencies by @chojs23
+- _(stream)_ Cancel watch session child tasks by @chojs23
+- _(voice)_ Await runtime cleanup before gateway stop by @chojs23
+- _(stream)_ Rotate active RTC servers by @chojs23
+- _(stream)_ Bound broadcast reconnect attempts by @chojs23
+- _(stream)_ Centralize lifecycle completion events by @chojs23
+- _(stream)_ Redact RTC tokens from debug output by @chojs23
+- _(stream)_ Allow restarting fullscreen broadcasts on Windows by @chojs23
+- Add cross-platform application audio capture for stream broadcasts by @chojs23
+- _(stream)_ Keep stalled capture joins outside Tokio by @chojs23
+- _(stream)_ Back off stream watch reconnects by @chojs23
+- _(broadcast)_ Remove screencapturekit by @chojs23
+- _(broadcast)_ Replace xcap with native cross-platform screen capture backends by @chojs23
+- _(stream)_ Prepare portal capture before creating Discord stream by @chojs23
+- _(broadcast)_ Fix Linux broadcast restart and system audio latency by @chojs23
+- _(broadcast)_ Fix Linux broadcast self-audio exclusion by @chojs23
+- _(broadcast)_ Cancel stale capture preparation by @chojs23
+- _(build)_ Require macOS 13 by @chojs23
+- _(stream)_ Bound H264 assembly memory by @chojs23
+- _(stream)_ Slow preview upload cadence by @chojs23
+- _(broadcast)_ Derive audio clock from samples by @chojs23
+- Fix stream startup and capture lifecycle issues by @chojs23
+- _(voice)_ Reduce Linux PulseAudio voice playback latency by @chojs23
+- Harden stream capture preparation lifecycle by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- Watch and broadcast streaming by @chojs23
+- Add live stream presence sounds and participant panel by @chojs23
+- _(stream)_ Make stream feature optional by @chojs23
+- _(broadcast)_ Broacasting ui by @chojs23
+- Add broadcast preview by @chojs23
+
+### Miscellaneous Tasks
+
+- _(ci)_ Update Linux CI and release runners to Ubuntu 24.04 by @chojs23
+
+### Refactor
+
+- _(stream)_ Simplify live presence state by @chojs23
+- _(stream)_ Share voice gateway control handling by @chojs23
+- Refactor stream forwarding and reuse capture frame buffers by @chojs23
+
+## [2.4.8] - 2026-07-28
+
+### Bug Fixes
+
+- _(voice)_ Stabilize speaking state and connection lifecycle by @chojs23
+
+## [2.4.7] - 2026-07-27
+
+### Bug Fixes
+
+- _(voice)_ Fix voice input delay (#278) in [#278](https://github.com/chojs23/concord/pull/278) by @chojs23
+- _(voice)_ Preserve normal key input while using bare keys for push-to-talk by @chojs23
+
+### Documentation
+
+- Update LICESE by @chojs23
+
+### Features
+
+- Add independent 100ms pacing for message sends by @chojs23
+- _(voice)_ Add optional RNNoise microphone noise suppression by @chojs23
+- _(voice)_ Add push-to-talk option by @chojs23
+- _(voice)_ Replace voice input mode with a push-to-talk boolean by @chojs23
+
+### Miscellaneous Tasks
+
+- Use Arc instead of deep clone for client by @chojs23
+- _(test)_ Remove redundant tests and consolidate same-policy cases by @chojs23
+
+## [2.4.6] - 2026-07-25
+
+### Bug Fixes
+
+- Show new threads in sidebar without restart (#274) in [#274](https://github.com/chojs23/concord/pull/274) by @michaelnew
+- Correct Discord event snapshot area mappings by @chojs23
+- Align Discord API and Gateway behavior by @chojs23
+- Replace flat message cache with segmented live-aware timelines by @chojs23
+
+### Features
+
+- Loading indicator by @chojs23
+- Add attachment URL access in viewer (#276) in [#276](https://github.com/chojs23/concord/pull/276) by @chojs23
+
+### New Contributors
+
+- @michaelnew made their first contribution in [#274](https://github.com/chojs23/concord/pull/274)
+
+## [2.4.5] - 2026-07-23
+
+### Features
+
+- Add voice participant actions (#273) in [#273](https://github.com/chojs23/concord/pull/273) by @chojs23
+
+## [2.4.4] - 2026-07-21
+
+### Bug Fixes
+
+- _(inbox)_ Show unread mention count in the Mentions tab by @chojs23
+
+### Features
+
+- _(inbox)_ Paginate unread previews and animate loading states by @chojs23
+
+## [2.4.3] - 2026-07-20
+
+### Bug Fixes
+
+- Rebuild the notification inbox (#269) in [#269](https://github.com/chojs23/concord/pull/269) by @chojs23
+
+### Features
+
+- _(messages)_ Show pending messages (#270) in [#270](https://github.com/chojs23/concord/pull/270) by @chojs23
+
+## [2.4.2] - 2026-07-17
+
+### Bug Fixes
+
+- _(voice)_ Bypass guild connect checks for DM calls by @chojs23
+- _(discord)_ Harden network requests and session recovery (#265) in [#265](https://github.com/chojs23/concord/pull/265) by @chojs23
+
+### Features
+
+- _(voice)_ Increase microphone transmit boost gain to 1.5 (#262) in [#262](https://github.com/chojs23/concord/pull/262) by @chojs23
+
+## [2.4.1] - 2026-07-15
+
+### Features
+
+- Handle channel permission (#259) in [#259](https://github.com/chojs23/concord/pull/259) by @chojs23
+- Adjust dm min message count and add warning message on password signin by @chojs23
+
+## [2.4.0] - 2026-07-14
+
+### Bug Fixes
+
+- Fix invalid token warning when fresh login by @chojs23
+
+### Features
+
+- Configurable themes (#248) in [#248](https://github.com/chojs23/concord/pull/248) by @neurosysgg
+
+### New Contributors
+
+- @neurosysgg made their first contribution in [#248](https://github.com/chojs23/concord/pull/248)
+
+## [2.3.5] - 2026-07-12
+
+### Bug Fixes
+
+- Apply burst playout tick recovery by @chojs23
+
+### Features
+
+- Support all CPAL linear PCM audio output formats by @chojs23
+- _(voice)_ Size dynamically voice prebuffer from the current audio callback by @chojs23
+
+## [2.3.4] - 2026-07-12
+
+### Bug Fixes
+
+- Add voice UDP keepalive for listen-only sessions by @chojs23
+- Share fingerprint across REST, and Gateway (#252) in [#252](https://github.com/chojs23/concord/pull/252) by @chojs23
+- Unify member selection markers and update the group DM icon by @chojs23
+- Use the default output device format on every OS by @chojs23
+
+### Documentation
+
+- Update README by @chojs23
+
+## [2.3.3] - 2026-07-11
+
+### Bug Fixes
+
+- Upgrade CPAL to 0.18.1 for audio stream recovery (#249) in [#249](https://github.com/chojs23/concord/pull/249) by @chojs23
+- Add a 60ms prebuffer and fixed 2400-frame PulseAudio output buffer by @chojs23
+
+### Features
+
+- Support mouse row clicks and scroll in action menus by @chojs23
+
+## [2.3.2] - 2026-07-08
+
+### Bug Fixes
+
+- Fix gateway backoff reset, atomic private-file writes, and remove duplicate by @chojs23
+
+### Features
+
+- Promote guild/channel/member action menus to standalone modal popups by @chojs23
+
+### Miscellaneous Tasks
+
+- Remove redundant sccache from CI and release workflows by @chojs23
+
+### Refactor
+
+- Extract render_modal_frame helper to deduplicate popup modal boilerplate by @chojs23
+- Remove legacy keymap actions by @chojs23
+- Extract OnDemandRequests and CursorRequests primitives to dedupe request trackers by @chojs23
+- Split message format.rs into wrap, markdown, polls, and system submodules by @chojs23
+- Unify discord module layout, dedupe extra_fields by @chojs23
+
+## [2.3.1] - 2026-07-07
+
+### Features
+
+- Add delete line composer key (#246) in [#246](https://github.com/chojs23/concord/pull/246) by @chojs23
+- Support CONCORD_TOKEN env var in Auto credential mode (#243) in [#243](https://github.com/chojs23/concord/pull/243) by @yilisharcs
+- Collapse avatar gutter and move selected-message time to border (#247) in [#247](https://github.com/chojs23/concord/pull/247) by @chojs23
+
+### Refactor
+
+- Generalize composer input actions by @chojs23
+
+### New Contributors
+
+- @yilisharcs made their first contribution in [#243](https://github.com/chojs23/concord/pull/243)
+
+## [2.3.0] - 2026-07-06
+
+### Bug Fixes
+
+- Fix bot badge rendering (#241) in [#241](https://github.com/chojs23/concord/pull/241) by @LmanTW
+- Rewrite Discord build-number fetch to scrape the sentry JS asset by @chojs23
+- Fix truncated compsoer placeholder by @chojs23
+
+### Features
+
+- _(discord)_ Fetch live client build number at startup by @chojs23
+- _(discord)_ Attach a snowflake nonce to outgoing messages by @chojs23
+- _(discord)_ Broadcast typing indicator while composing a message by @chojs23
+- _(discord)_ Lock DM composer until the conversation is established (#245) in [#245](https://github.com/chojs23/concord/pull/245) by @chojs23
+
+## [2.2.13] - 2026-07-04
+
+### Features
+
+- Add support for playing audio attachments (#240) in [#240](https://github.com/chojs23/concord/pull/240) by @LmanTW
+
+### Refactor
+
+- _(tui)_ Standardize popup action buttons by @chojs23
+
+### Nix
+
+- Move package derivation to nix/package.nix by @chojs23
+
+## [2.2.12] - 2026-07-02
+
+### Features
+
+- _(presence)_ Relay Rich Presence from local apps (#239) in [#239](https://github.com/chojs23/concord/pull/239) by @chojs23
+
+### Refactor
+
+- _(tui)_ Unify custom-emoji image overlays into single module by @chojs23
+
+## [2.2.11] - 2026-07-01
+
+### Bug Fixes
+
+- Respect user nitro and guild boost restrictions (#234) in [#234](https://github.com/chojs23/concord/pull/234) by @chojs23
+- Fix missing default profile avatar in profile popup by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- Add reply pings toggle option (#232) in [#232](https://github.com/chojs23/concord/pull/232) by @chojs23
+- Allow file drop without needing to already be composing (#212) (#227) in [#227](https://github.com/chojs23/concord/pull/227) by @LmanTW
+- Support bare array keymap bindings (#233) in [#233](https://github.com/chojs23/concord/pull/233) by @chojs23
+
+### Refactor
+
+- _(tests)_ Construct AppEvent variants via shared fixtures by @chojs23
+
+## [2.2.10] - 2026-06-30
+
+### Bug Fixes
+
+- Fix qwerty shortkey shadows numeric keys by @chojs23
+- Fix missing pinned post (#231) in [#231](https://github.com/chojs23/concord/pull/231) by @chojs23
+- Show fresh servers missing from guild_folders at top of server pane by @chojs23
+
+### Miscellaneous Tasks
+
+- Consolidate config load by @chojs23
+
+### Refactor
+
+- _(tui)_ Unify popup scrolling on shared scrolloff viewport by @chojs23
+
+## [2.2.9] - 2026-06-29
+
+### Bug Fixes
+
+- Support 10ms Discord voice packets (#229) in [#229](https://github.com/chojs23/concord/pull/229) by @chojs23
+
+### Documentation
+
+- Update changelog by @chojs23
+- Update readme by @chojs23
+
+### Features
+
+- Add a separate image quality option for the attachment viewer (#224) in [#224](https://github.com/chojs23/concord/pull/224) by @LmanTW
+- Add support for disabling keymap shortcuts by @chojs23
+- Make external media playback opt-in (#230) in [#230](https://github.com/chojs23/concord/pull/230) by @chojs23
+- Add underline and strikethrough support to message formatting (#228) in [#228](https://github.com/chojs23/concord/pull/228) by @LmanTW
+
+### Miscellaneous Tasks
+
+- Remove legacy tests by @chojs23
+
+### New Contributors
+
+- @LmanTW made their first contribution in [#228](https://github.com/chojs23/concord/pull/228)
+
+## [2.2.8] - 2026-06-26
+
+### Bug Fixes
+
+- Fix double redraw by @chojs23
+- Make config parsing field-level tolerant so one bad value no longer discards other by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+- Update readme by @chojs23
+
+### Features
+
+- Block send message dm to fresh user (#222) in [#222](https://github.com/chojs23/concord/pull/222) by @chojs23
+- Add private/group dm voice call (#223) in [#223](https://github.com/chojs23/concord/pull/223) by @chojs23
+
+### Miscellaneous Tasks
+
+- Fmt by @chojs23
+
+## [2.2.7] - 2026-06-24
+
+### Bug Fixes
+
+- Render overlay popups within the full frame area by @chojs23
+
+### Features
+
+- Update post create ui by @chojs23
+- Add post actions by @chojs23
+- Add thread actions (#215) in [#215](https://github.com/chojs23/concord/pull/215) by @chojs23
+- Add threads and forums to channel switcher (#216) in [#216](https://github.com/chojs23/concord/pull/216) by @chojs23
+- Add notification inbox (#217) in [#217](https://github.com/chojs23/concord/pull/217) by @chojs23
+
+### Miscellaneous Tasks
+
+- Fmt by @chojs23
+
+### Performance
+
+- Implement per-image placement-diff rendering by @chojs23
+
+## [2.2.6] - 2026-06-22
+
+### Features
+
+- Image protocol pref (#209) in [#209](https://github.com/chojs23/concord/pull/209) by @chojs23
+
+## [2.2.5] - 2026-06-21
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- Add guild folder settings by @chojs23
+- Use custom notification sound instead of system generated sound by @chojs23
+- Add create post by @chojs23
+- Add composer attachment preview by @chojs23
+
+## [2.2.4] - 2026-06-19
+
+### Bug Fixes
+
+- Hide empty channel categories if user doesn't have permission (#203) in [#203](https://github.com/chojs23/concord/pull/203) by @chojs23
+- Update guild folders and order by UserSettingsUpdate by @chojs23
+
+### Features
+
+- Rename folder by @chojs23
+- Add suppress embeds (#205) in [#205](https://github.com/chojs23/concord/pull/205) by @chojs23
+
+### Refactor
+
+- Preserve boundary payloads consistently by @chojs23
+
+### New Contributors
+
+- @fuguesoft made their first contribution in [#200](https://github.com/chojs23/concord/pull/200)
+
+## [2.2.3] - 2026-06-18
+
+### Bug Fixes
+
+- Limit image protocol refresh to modal popup open/close by @chojs23
+- Fix thread-kind reuse by @chojs23
+- Fix mention detecting by authoritative Discord gateway fields (#198) in [#198](https://github.com/chojs23/concord/pull/198) by @chojs23
+
+### Features
+
+- Add sign-out feature (#202) in [#202](https://github.com/chojs23/concord/pull/202) by @chojs23
+
+### Miscellaneous Tasks
+
+- Extract app helper modules by @chojs23
+
+### Refactor
+
+- Split media cache modules by resource by @chojs23
+- Refactor media structure and add jobs by @chojs23
+- Extract dashboard event reducer by @chojs23
+- Redesign modules by @chojs23
+- Reuse message payloads in app events by @chojs23
+- Merge presence updates into optional guild event by @chojs23
+- Refactor some states duplication by @chojs23
+
 ## [2.2.2] - 2026-06-14
 
 ### Documentation

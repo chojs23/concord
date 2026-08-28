@@ -1,25 +1,124 @@
 use super::*;
 
+// Absolute row counts only mean something next to a baseline, so the two
+// plain-message rows come first and every other row should be read as the
+// extra rows that feature costs.
 #[test]
-fn video_attachment_thumbnail_reserves_image_preview_rows() {
-    let mut message = height_test_message("clip");
-    message.attachments = vec![video_attachment(1)];
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
-}
-
-#[test]
-fn explicit_newlines_increase_message_rendered_height() {
-    let message = height_test_message("hello\nworld");
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
-}
-
-#[test]
-fn wrapped_content_increases_message_rendered_height() {
-    let message = height_test_message("abcdefghijkl");
-
-    assert_eq!(message_rendered_height(&message, 5, 16, 3), 5);
+fn message_rendered_height_reserves_rows_for_each_message_feature() {
+    for (name, message, width, expected) in [
+        (
+            "baseline, one content line",
+            height_test_message("clip"),
+            200,
+            3,
+        ),
+        (
+            "baseline, empty content still reserves its row",
+            height_test_message(""),
+            200,
+            3,
+        ),
+        (
+            "video attachment",
+            MessageState {
+                attachments: vec![video_attachment(1)],
+                ..height_test_message("clip")
+            },
+            200,
+            7,
+        ),
+        (
+            "five image album",
+            MessageState {
+                attachments: (1..=5).map(image_attachment).collect(),
+                ..height_test_message("look")
+            },
+            200,
+            12,
+        ),
+        (
+            "discord embed",
+            MessageState {
+                embeds: vec![youtube_embed()],
+                ..height_test_message("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+            },
+            80,
+            9,
+        ),
+        (
+            "forwarded snapshot with an image",
+            MessageState {
+                forwarded_snapshots: vec![forwarded_snapshot(1)],
+                ..height_test_message("")
+            },
+            200,
+            8,
+        ),
+        (
+            "forwarded snapshot with source metadata",
+            MessageState {
+                forwarded_snapshots: vec![MessageSnapshotInfo {
+                    source_channel_id: Some(Id::new(2)),
+                    timestamp: Some("2026-04-30T12:34:56.000000+00:00".to_owned()),
+                    ..forwarded_snapshot(1)
+                }],
+                ..height_test_message("")
+            },
+            200,
+            9,
+        ),
+        (
+            "forwarded snapshot with an embed",
+            MessageState {
+                forwarded_snapshots: vec![MessageSnapshotInfo {
+                    attachments: Vec::new(),
+                    embeds: vec![youtube_embed()],
+                    ..forwarded_snapshot(1)
+                }],
+                ..height_test_message("")
+            },
+            200,
+            11,
+        ),
+        (
+            "thread created system card",
+            MessageState {
+                message_kind: MessageKind::new(18),
+                ..height_test_message("release notes")
+            },
+            200,
+            9,
+        ),
+        (
+            "thread starter system card",
+            MessageState {
+                message_kind: MessageKind::new(21),
+                reply: Some(ReplyInfo {
+                    content: Some("original topic".to_owned()),
+                    ..ReplyInfo::test("alice")
+                }),
+                ..height_test_message("")
+            },
+            200,
+            4,
+        ),
+        (
+            "poll result card",
+            MessageState {
+                message_kind: MessageKind::new(46),
+                poll: Some(poll_info(false)),
+                ..height_test_message("")
+            },
+            200,
+            6,
+        ),
+    ] {
+        assert_eq!(
+            message_rendered_height(&message, width, 16, 3),
+            expected,
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -47,16 +146,15 @@ fn message_row_content_metrics_cache_clears_on_discord_event() {
     let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
     assert_eq!(state.message_row_content_metrics_cache_len(), 1);
 
-    state.push_event(AppEvent::MessageUpdate {
-        guild_id: Some(Id::new(1)),
-        channel_id: Id::new(2),
-        message_id: Id::new(1),
-        fields: MessageUpdateEventFields {
+    state.push_event(message_update_event(
+        Id::new(2),
+        Id::new(1),
+        MessageUpdateEventFields {
             content: Some("updated".to_owned()),
             edited_timestamp: Some("2026-01-01T00:00:00Z".to_owned()),
             ..MessageUpdateEventFields::default()
         },
-    });
+    ));
 
     assert_eq!(state.message_row_content_metrics_cache_len(), 0);
 
@@ -125,91 +223,6 @@ fn forwarded_mentions_affect_height_from_source_channel_guild() {
 }
 
 #[test]
-fn wide_content_increases_message_rendered_height_by_terminal_width() {
-    let message = height_test_message("漢字仮名交じ");
-
-    assert_eq!(message_rendered_height(&message, 10, 16, 3), 4);
-}
-
-#[test]
-fn discord_embed_rows_increase_message_rendered_height() {
-    let mut message = height_test_message("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-    message.embeds = vec![youtube_embed()];
-
-    assert_eq!(message_rendered_height(&message, 80, 16, 3), 9);
-}
-
-#[test]
-fn image_attachment_summary_reserves_text_row_before_preview() {
-    let mut message = height_test_message("look");
-    message.attachments = vec![image_attachment(1)];
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
-}
-
-#[test]
-fn five_image_album_rendered_height_lists_each_attachment_but_keeps_album_bounded() {
-    let mut message = height_test_message("look");
-    message.attachments = (1..=5).map(image_attachment).collect();
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 12);
-}
-
-#[test]
-fn forwarded_image_attachment_reserves_preview_rows() {
-    let mut message = height_test_message("");
-    message.forwarded_snapshots = vec![forwarded_snapshot(1)];
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 8);
-}
-
-#[test]
-fn forwarded_snapshot_wrapped_content_increases_rendered_height() {
-    let mut message = height_test_message("");
-    message.forwarded_snapshots = vec![MessageSnapshotInfo {
-        content: Some("abcdefghijkl".to_owned()),
-        attachments: vec![image_attachment(1)],
-        ..MessageSnapshotInfo::test()
-    }];
-
-    assert_eq!(message_rendered_height(&message, 7, 16, 3), 10);
-}
-
-#[test]
-fn forwarded_snapshot_wide_content_uses_terminal_width() {
-    let mut message = height_test_message("");
-    message.forwarded_snapshots = vec![MessageSnapshotInfo {
-        content: Some("漢字仮名交じ".to_owned()),
-        attachments: vec![image_attachment(1)],
-        ..MessageSnapshotInfo::test()
-    }];
-
-    assert_eq!(message_rendered_height(&message, 12, 16, 3), 9);
-}
-
-#[test]
-fn forwarded_metadata_reserves_card_row() {
-    let mut snapshot = forwarded_snapshot(1);
-    snapshot.source_channel_id = Some(Id::new(2));
-    snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
-    let mut message = height_test_message("");
-    message.forwarded_snapshots = vec![snapshot];
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
-}
-
-#[test]
-fn forwarded_snapshot_embed_rows_increase_rendered_height() {
-    let mut snapshot = forwarded_snapshot(1);
-    snapshot.attachments.clear();
-    snapshot.embeds = vec![youtube_embed()];
-    let mut message = height_test_message("");
-    message.forwarded_snapshots = vec![snapshot];
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 11);
-}
-
-#[test]
 fn non_default_message_kind_reserves_label_row() {
     let mut message = height_test_message("reply body");
     message.attachments = vec![image_attachment(1)];
@@ -235,75 +248,58 @@ fn reply_preview_reserves_connector_row_without_extra_type_label() {
 }
 
 #[test]
-fn poll_message_reserves_question_and_answer_rows() {
-    let mut message = height_test_message("");
-    message.poll = Some(poll_info(false));
+fn message_height_grows_with_every_kind_of_extra_row() {
+    let cases = [
+        ("hello\nworld", 200, 4),
+        ("abcdefghijkl", 5, 5),
+        ("漢字仮名交じ", 10, 4),
+    ];
 
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
+    for (content, width, expected) in cases {
+        let message = height_test_message(content);
+        assert_eq!(
+            message_rendered_height(&message, width, 16, 3),
+            expected,
+            "{content}"
+        );
+    }
 }
 
 #[test]
-fn poll_message_body_counts_inside_card_height() {
-    let mut message = height_test_message("Please vote");
-    message.poll = Some(poll_info(false));
+fn poll_card_height_covers_the_question_answers_and_wrapped_body() {
+    let cases = [
+        ("", 200, 9),
+        ("Please vote", 200, 10),
+        ("abcdefghijkl", 10, 11),
+    ];
 
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 10);
+    for (content, width, expected) in cases {
+        let mut message = height_test_message(content);
+        message.poll = Some(poll_info(false));
+        assert_eq!(
+            message_rendered_height(&message, width, 16, 3),
+            expected,
+            "{content}"
+        );
+    }
 }
 
 #[test]
-fn wrapped_poll_message_body_counts_inside_card_height() {
-    let mut message = height_test_message("abcdefghijkl");
-    message.poll = Some(poll_info(false));
+fn forwarded_snapshot_body_height_follows_the_content_width() {
+    let cases = [("abcdefghijkl", 7, 10), ("漢字仮名交じ", 12, 9)];
 
-    assert_eq!(message_rendered_height(&message, 10, 16, 3), 11);
-}
+    for (content, width, expected) in cases {
+        let mut message = height_test_message("");
+        message.forwarded_snapshots = vec![MessageSnapshotInfo {
+            content: Some(content.to_owned()),
+            attachments: vec![image_attachment(1)],
+            ..MessageSnapshotInfo::test()
+        }];
 
-#[test]
-fn thread_created_message_reserves_system_card_rows() {
-    let mut message = height_test_message("release notes");
-    message.message_kind = MessageKind::new(18);
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 7);
-}
-
-#[test]
-fn poll_result_message_reserves_result_card_rows() {
-    let mut message = height_test_message("");
-    message.message_kind = MessageKind::new(46);
-    message.poll = Some(poll_info(false));
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
-}
-
-#[test]
-fn poll_result_message_counts_summed_answer_votes() {
-    let mut message = height_test_message("");
-    message.message_kind = MessageKind::new(46);
-    let mut poll = poll_info(false);
-    poll.total_votes = None;
-    poll.answers[0].vote_count = Some(2);
-    poll.answers[1].vote_count = Some(1);
-    message.poll = Some(poll);
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 6);
-}
-
-#[test]
-fn thread_starter_message_reserves_system_card_rows() {
-    let mut message = height_test_message("");
-    message.message_kind = MessageKind::new(21);
-    message.reply = Some(ReplyInfo {
-        content: Some("original topic".to_owned()),
-        ..ReplyInfo::test("alice")
-    });
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 4);
-}
-
-#[test]
-fn multiselect_poll_message_uses_same_card_height() {
-    let mut message = height_test_message("");
-    message.poll = Some(poll_info(true));
-
-    assert_eq!(message_rendered_height(&message, 200, 16, 3), 9);
+        assert_eq!(
+            message_rendered_height(&message, width, 16, 3),
+            expected,
+            "{content}"
+        );
+    }
 }

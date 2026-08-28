@@ -1,15 +1,58 @@
-use crate::config::MicrophoneSensitivityDb;
 use crate::discord::AppCommand;
-use crate::tui::keybindings::OptionsCategoryShortcut;
+use crate::discord::{MicrophoneSensitivityDb, VoiceAudioSourceOptions, VoiceVolumePercent};
+use crate::tui::keybindings::{OptionsCategoryShortcut, SelectionAction};
 
-use super::super::{DashboardState, DisplayOptionItem};
-use super::{ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState};
+use super::super::{DashboardState, DisplayOptionGauge, DisplayOptionItem};
+use super::{
+    ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState, SelectablePopupTarget,
+};
 
-const DISPLAY_OPTION_COUNT: usize = 6;
+const DISPLAY_OPTION_COUNT: usize = 9;
 const COMPOSER_OPTION_COUNT: usize = 1;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
-const VOICE_OPTION_COUNT: usize = 6;
+const VOICE_OPTION_COUNT: usize = VoiceOption::ALL.len();
 const OPTION_CATEGORY_COUNT: usize = 4;
+
+/// A row of the voice options popup.
+///
+/// `ALL` is the single source of on-screen order: the row list is built by
+/// mapping over it, and every selection index is resolved through it. Adding or
+/// moving a row is therefore a change to `ALL` alone, with no match arms to
+/// renumber and no row count to keep in sync by hand.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum VoiceOption {
+    Muted,
+    Deafened,
+    InputSource,
+    OutputSource,
+    AllowMicrophoneTransmit,
+    PushToTalk,
+    PushToTalkShortcut,
+    NoiseSuppression,
+    MicrophoneSensitivity,
+    MicrophoneVolume,
+    VoiceVolume,
+}
+
+impl VoiceOption {
+    const ALL: [Self; 11] = [
+        Self::Muted,
+        Self::Deafened,
+        Self::InputSource,
+        Self::OutputSource,
+        Self::AllowMicrophoneTransmit,
+        Self::PushToTalk,
+        Self::PushToTalkShortcut,
+        Self::NoiseSuppression,
+        Self::MicrophoneSensitivity,
+        Self::MicrophoneVolume,
+        Self::VoiceVolume,
+    ];
+
+    fn at(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+}
 
 impl DashboardState {
     #[cfg(test)]
@@ -18,14 +61,26 @@ impl DashboardState {
     }
 
     pub fn open_options_category_picker(&mut self) {
-        self.popups.modal = Some(ModalPopup::Options(OptionsPopupState::default()));
+        self.popups
+            .set_modal(ModalPopup::Options(OptionsPopupState::default()));
     }
 
     pub fn open_options_category(&mut self, category: OptionsCategory) {
-        self.popups.modal = Some(ModalPopup::Options(OptionsPopupState {
-            category: Some(category),
-            ..OptionsPopupState::default()
-        }));
+        if category == OptionsCategory::Voice {
+            self.options.next_voice_audio_sources_request_id = self
+                .options
+                .next_voice_audio_sources_request_id
+                .wrapping_add(1)
+                .max(1);
+            let request_id = self.options.next_voice_audio_sources_request_id;
+            self.options.voice_audio_sources_request_id = Some(request_id);
+            self.enqueue_pending_command(AppCommand::LoadVoiceAudioSources { request_id });
+        }
+        self.popups
+            .set_modal(ModalPopup::Options(OptionsPopupState {
+                category: Some(category),
+                ..OptionsPopupState::default()
+            }));
     }
 
     pub fn close_options_popup(&mut self) {
@@ -35,16 +90,11 @@ impl DashboardState {
     }
 
     pub fn move_option_down(&mut self) {
-        let item_count = self.options_popup_item_count();
-        if let Some(popup) = self.popups.options_popup_mut() {
-            popup.selection.move_down(item_count);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::Options, SelectionAction::Next);
     }
 
     pub fn move_option_up(&mut self) {
-        if let Some(popup) = self.popups.options_popup_mut() {
-            popup.selection.move_up();
-        }
+        self.move_selectable_popup(SelectablePopupTarget::Options, SelectionAction::Previous);
     }
 
     pub fn selected_option_index(&self) -> Option<usize> {
@@ -69,6 +119,27 @@ impl DashboardState {
         self.popups
             .options_popup()
             .is_some_and(|popup| popup.category.is_none())
+    }
+
+    pub(in crate::tui) fn is_capturing_push_to_talk_shortcut(&self) -> bool {
+        self.popups
+            .options_popup()
+            .is_some_and(|popup| popup.capturing_push_to_talk_shortcut)
+    }
+
+    pub(in crate::tui) fn cancel_push_to_talk_shortcut_capture(&mut self) {
+        if let Some(popup) = self.popups.options_popup_mut() {
+            popup.capturing_push_to_talk_shortcut = false;
+        }
+    }
+
+    pub(in crate::tui) fn capture_push_to_talk_shortcut(&mut self, shortcut: String) {
+        self.cancel_push_to_talk_shortcut_capture();
+        if self.options.voice_options.push_to_talk_shortcut == shortcut {
+            return;
+        }
+        self.options.voice_options.push_to_talk_shortcut = shortcut;
+        self.mark_options_changed();
     }
 
     pub(super) fn options_popup_item_count(&self) -> usize {
@@ -103,55 +174,38 @@ impl DashboardState {
     }
 
     fn option_category_items(&self) -> Vec<DisplayOptionItem> {
-        let key_bindings = self.options.key_bindings();
         vec![
             DisplayOptionItem {
                 label: "Display",
                 enabled: true,
-                value: Some(
-                    key_bindings
-                        .options_category_shortcut_label(OptionsCategoryShortcut::Display)
-                        .to_owned(),
-                ),
-                gauge_percent: None,
+                value: Some(OptionsCategoryShortcut::Display.key().to_string()),
+                gauge: None,
                 effective: true,
                 description: "Image, custom emoji, and pane display settings.",
             },
             DisplayOptionItem {
                 label: "Composer",
                 enabled: true,
-                value: Some(
-                    key_bindings
-                        .options_category_shortcut_label(OptionsCategoryShortcut::Composer)
-                        .to_owned(),
-                ),
-                gauge_percent: None,
+                value: Some(OptionsCategoryShortcut::Composer.key().to_string()),
+                gauge: None,
                 effective: true,
                 description: "Message input and send-format settings.",
             },
             DisplayOptionItem {
                 label: "Notifications",
                 enabled: true,
-                value: Some(
-                    key_bindings
-                        .options_category_shortcut_label(OptionsCategoryShortcut::Notifications)
-                        .to_owned(),
-                ),
-                gauge_percent: None,
+                value: Some(OptionsCategoryShortcut::Notifications.key().to_string()),
+                gauge: None,
                 effective: true,
                 description: "Desktop notification settings.",
             },
             DisplayOptionItem {
                 label: "Voice",
                 enabled: true,
-                value: Some(
-                    key_bindings
-                        .options_category_shortcut_label(OptionsCategoryShortcut::Voice)
-                        .to_owned(),
-                ),
-                gauge_percent: None,
+                value: Some(OptionsCategoryShortcut::Voice.key().to_string()),
+                gauge: None,
                 effective: true,
-                description: "Mute, deaf, microphone transmit, sensitivity, and volume settings.",
+                description: "Mute, deaf, push-to-talk, microphone processing, and volume settings.",
             },
         ]
     }
@@ -163,7 +217,7 @@ impl DashboardState {
                 label: "Disable all image previews",
                 enabled: options.disable_image_preview,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.disable_image_preview,
                 description: "Master switch for avatars, images, and custom emoji images.",
             },
@@ -171,7 +225,7 @@ impl DashboardState {
                 label: "Show avatars",
                 enabled: options.show_avatars,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.avatars_visible(),
                 description: "Message and profile avatars.",
             },
@@ -179,7 +233,7 @@ impl DashboardState {
                 label: "Show images",
                 enabled: options.show_images,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.images_visible(),
                 description: "Attachment, embed, and attachment viewer previews.",
             },
@@ -187,15 +241,23 @@ impl DashboardState {
                 label: "Image preview quality",
                 enabled: true,
                 value: Some(options.image_preview_quality.label().to_owned()),
-                gauge_percent: None,
+                gauge: None,
                 effective: options.images_visible(),
-                description: "Quality preset for attachment, embed, and viewer previews.",
+                description: "Quality preset for attachment and embed.",
+            },
+            DisplayOptionItem {
+                label: "Attachment viewer quality",
+                enabled: true,
+                value: Some(options.attachment_viewer_quality.label().to_owned()),
+                gauge: None,
+                effective: options.images_visible(),
+                description: "Quality preset for attachment viewer previews.",
             },
             DisplayOptionItem {
                 label: "Show custom emoji images",
                 enabled: options.show_custom_emoji,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.custom_emoji_visible(),
                 description: "When off, custom emoji are shown as their emoji id.",
             },
@@ -203,9 +265,25 @@ impl DashboardState {
                 label: "Circular avatars",
                 enabled: options.circular_avatars,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: options.avatars_visible() && options.circular_avatars,
                 description: "Mask message and profile avatars into a circle.",
+            },
+            DisplayOptionItem {
+                label: "Media playback",
+                enabled: options.media_playback,
+                value: None,
+                gauge: None,
+                effective: options.media_playback_enabled(),
+                description: "Allow videos to open in the external media player.",
+            },
+            DisplayOptionItem {
+                label: "24-hour time",
+                enabled: options.hour_format_24,
+                value: None,
+                gauge: None,
+                effective: options.hour_format_24,
+                description: "Use 24-hour time for message timestamps.",
             },
         ]
     }
@@ -216,7 +294,7 @@ impl DashboardState {
             label: "Emojis as links",
             enabled: options.emojis_as_links,
             value: None,
-            gauge_percent: None,
+            gauge: None,
             effective: options.emojis_as_links,
             description: "Sends unavailable emojis as a link instead.",
         }]
@@ -227,69 +305,142 @@ impl DashboardState {
             label: "Desktop notifications",
             enabled: self.options.notification_options.desktop_notifications,
             value: None,
-            gauge_percent: None,
+            gauge: None,
             effective: self.options.notification_options.desktop_notifications,
             description: "Show OS notifications for Discord messages that pass notification settings.",
         }]
     }
 
     fn display_option_items_for_voice(&self) -> Vec<DisplayOptionItem> {
-        vec![
-            DisplayOptionItem {
+        VoiceOption::ALL
+            .iter()
+            .map(|option| self.voice_option_item(*option))
+            .collect()
+    }
+
+    fn voice_option_item(&self, option: VoiceOption) -> DisplayOptionItem {
+        let voice = &self.options.voice_options;
+        match option {
+            VoiceOption::Muted => DisplayOptionItem {
                 label: "Voice muted",
-                enabled: self.options.voice_options.self_mute,
+                enabled: voice.self_mute,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
-                description: "Set your Discord voice microphone mute state.",
+                description: "",
             },
-            DisplayOptionItem {
+            VoiceOption::Deafened => DisplayOptionItem {
                 label: "Voice deafened",
-                enabled: self.options.voice_options.self_deaf,
+                enabled: voice.self_deaf,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
-                description: "Set your Discord voice playback deaf state.",
+                description: "",
             },
-            DisplayOptionItem {
+            VoiceOption::InputSource => DisplayOptionItem {
+                label: "Input source",
+                enabled: true,
+                value: Some(self.voice_audio_source_value(|sources| {
+                    sources.input_label(voice.input_source.as_deref())
+                })),
+                gauge: None,
+                effective: voice.allow_microphone_transmit,
+                description: "Enter or ←/→ to change.",
+            },
+            VoiceOption::OutputSource => DisplayOptionItem {
+                label: "Output source",
+                enabled: true,
+                value: Some(self.voice_audio_source_value(|sources| {
+                    sources.output_label(voice.output_source.as_deref())
+                })),
+                gauge: None,
+                effective: !voice.self_deaf,
+                description: "Enter or ←/→ to change.",
+            },
+            VoiceOption::AllowMicrophoneTransmit => DisplayOptionItem {
                 label: "Allow microphone transmit",
-                enabled: self.options.voice_options.allow_microphone_transmit,
+                enabled: voice.allow_microphone_transmit,
                 value: None,
-                gauge_percent: None,
+                gauge: None,
                 effective: true,
-                description: "Permit microphone transmit while joined and not muted.",
+                description: "",
             },
-            DisplayOptionItem {
+            VoiceOption::PushToTalk => DisplayOptionItem {
+                label: "Push to talk",
+                enabled: voice.push_to_talk,
+                value: None,
+                gauge: None,
+                effective: voice.allow_microphone_transmit,
+                description: "Hold the shortcut to transmit.",
+            },
+            VoiceOption::PushToTalkShortcut => DisplayOptionItem {
+                label: "Push-to-talk shortcut",
+                enabled: true,
+                value: Some(if self.is_capturing_push_to_talk_shortcut() {
+                    "Press shortcut (Esc cancels)".to_owned()
+                } else {
+                    voice.push_to_talk_shortcut.clone()
+                }),
+                gauge: None,
+                effective: voice.push_to_talk,
+                description: if self.is_capturing_push_to_talk_shortcut() {
+                    ""
+                } else {
+                    "Enter to record."
+                },
+            },
+            VoiceOption::NoiseSuppression => DisplayOptionItem {
+                label: "Noise suppression",
+                enabled: voice.noise_suppression,
+                value: None,
+                gauge: None,
+                effective: voice.allow_microphone_transmit,
+                description: "",
+            },
+            VoiceOption::MicrophoneSensitivity => DisplayOptionItem {
                 label: "Microphone sensitivity",
                 enabled: true,
-                value: Some(self.options.voice_options.microphone_sensitivity.label()),
-                gauge_percent: Some(microphone_sensitivity_percent(
-                    self.options.voice_options.microphone_sensitivity,
+                value: Some(voice.microphone_sensitivity.label()),
+                gauge: Some(DisplayOptionGauge::new(
+                    microphone_sensitivity_percent(voice.microphone_sensitivity),
+                    100,
                 )),
-                effective: self.options.voice_options.allow_microphone_transmit,
-                description: "Lower dB values transmit quieter microphone input.",
+                effective: voice.allow_microphone_transmit && !voice.push_to_talk,
+                description: "Lower dB detects quieter input.",
             },
-            DisplayOptionItem {
+            VoiceOption::MicrophoneVolume => DisplayOptionItem {
                 label: "Microphone volume",
                 enabled: true,
-                value: Some(self.options.voice_options.microphone_volume.label()),
-                gauge_percent: Some(u16::from(
-                    self.options.voice_options.microphone_volume.value(),
+                value: Some(voice.microphone_volume.label()),
+                gauge: Some(DisplayOptionGauge::new(
+                    u16::from(voice.microphone_volume.value()),
+                    u16::from(VoiceVolumePercent::maximum()),
                 )),
-                effective: self.options.voice_options.allow_microphone_transmit,
-                description: "Adjust outgoing microphone audio level.",
+                effective: voice.allow_microphone_transmit,
+                description: "",
             },
-            DisplayOptionItem {
+            VoiceOption::VoiceVolume => DisplayOptionItem {
                 label: "Voice volume",
                 enabled: true,
-                value: Some(self.options.voice_options.voice_output_volume.label()),
-                gauge_percent: Some(u16::from(
-                    self.options.voice_options.voice_output_volume.value(),
+                value: Some(voice.voice_output_volume.label()),
+                gauge: Some(DisplayOptionGauge::new(
+                    u16::from(voice.voice_output_volume.value()),
+                    u16::from(VoiceVolumePercent::maximum()),
                 )),
-                effective: !self.options.voice_options.self_deaf,
-                description: "Adjust received voice playback level.",
+                effective: !voice.self_deaf,
+                description: "",
             },
-        ]
+        }
+    }
+
+    fn voice_audio_source_value(
+        &self,
+        label: impl FnOnce(&VoiceAudioSourceOptions) -> String,
+    ) -> String {
+        if self.options.voice_audio_sources_request_id.is_some() {
+            return "Loading sources...".to_owned();
+        }
+        label(&self.options.voice_audio_source_options)
     }
 
     pub fn toggle_selected_display_option(&mut self) {
@@ -301,8 +452,14 @@ impl DashboardState {
             return;
         };
 
-        let mut update_current_voice_state = false;
-        let mut update_current_voice_capture_permission = false;
+        if category == OptionsCategory::Voice {
+            if let Some(option) = VoiceOption::at(selected) {
+                self.toggle_voice_option(option);
+            }
+            return;
+        }
+
+        let images_visible_before = self.show_images();
 
         match (category, selected) {
             (OptionsCategory::Display, 0) => {
@@ -321,12 +478,27 @@ impl DashboardState {
                     self.options.display_options.image_preview_quality.next()
             }
             (OptionsCategory::Display, 4) => {
+                self.options.display_options.attachment_viewer_quality = self
+                    .options
+                    .display_options
+                    .attachment_viewer_quality
+                    .next()
+            }
+            (OptionsCategory::Display, 5) => {
                 self.options.display_options.show_custom_emoji =
                     !self.options.display_options.show_custom_emoji
             }
-            (OptionsCategory::Display, 5) => {
+            (OptionsCategory::Display, 6) => {
                 self.options.display_options.circular_avatars =
                     !self.options.display_options.circular_avatars
+            }
+            (OptionsCategory::Display, 7) => {
+                self.options.display_options.media_playback =
+                    !self.options.display_options.media_playback
+            }
+            (OptionsCategory::Display, 8) => {
+                self.options.display_options.hour_format_24 =
+                    !self.options.display_options.hour_format_24
             }
             (OptionsCategory::Composer, 0) => {
                 self.options.composer_options.emojis_as_links =
@@ -336,25 +508,57 @@ impl DashboardState {
                 self.options.notification_options.desktop_notifications =
                     !self.options.notification_options.desktop_notifications
             }
-            (OptionsCategory::Voice, 0) => {
-                self.options.voice_options.self_mute = !self.options.voice_options.self_mute;
-                update_current_voice_state = true;
-            }
-            (OptionsCategory::Voice, 1) => {
-                self.options.voice_options.self_deaf = !self.options.voice_options.self_deaf;
-                update_current_voice_state = true;
-            }
-            (OptionsCategory::Voice, 2) => {
-                self.options.voice_options.allow_microphone_transmit =
-                    !self.options.voice_options.allow_microphone_transmit;
-                update_current_voice_capture_permission = true;
-            }
             _ => return,
         }
-        self.after_display_option_changed(
-            update_current_voice_state,
-            update_current_voice_capture_permission,
-        );
+        if images_visible_before != self.show_images() {
+            self.refresh_composer_attachment_previews();
+        }
+        self.mark_options_changed();
+    }
+
+    /// Enter on a voice row. Toggles boolean rows and steps the cycled source
+    /// rows forward. The gauge rows respond to left and right only.
+    fn toggle_voice_option(&mut self, option: VoiceOption) {
+        match option {
+            VoiceOption::Muted => {
+                self.options.voice_options.self_mute = !self.options.voice_options.self_mute;
+                self.mark_options_changed();
+                self.queue_current_voice_state_update();
+            }
+            VoiceOption::Deafened => {
+                self.options.voice_options.self_deaf = !self.options.voice_options.self_deaf;
+                self.mark_options_changed();
+                self.queue_current_voice_state_update();
+            }
+            VoiceOption::InputSource | VoiceOption::OutputSource => {
+                self.adjust_voice_option(option, 1);
+            }
+            VoiceOption::AllowMicrophoneTransmit => {
+                self.options.voice_options.allow_microphone_transmit =
+                    !self.options.voice_options.allow_microphone_transmit;
+                self.mark_options_changed();
+                self.queue_current_voice_capture_permission_update();
+            }
+            VoiceOption::PushToTalk => {
+                self.options.voice_options.push_to_talk = !self.options.voice_options.push_to_talk;
+                self.mark_options_changed();
+                self.queue_current_voice_capture_permission_update();
+            }
+            VoiceOption::PushToTalkShortcut => {
+                if let Some(popup) = self.popups.options_popup_mut() {
+                    popup.capturing_push_to_talk_shortcut = true;
+                }
+            }
+            VoiceOption::NoiseSuppression => {
+                self.options.voice_options.noise_suppression =
+                    !self.options.voice_options.noise_suppression;
+                self.mark_options_changed();
+                self.queue_current_voice_capture_permission_update();
+            }
+            VoiceOption::MicrophoneSensitivity
+            | VoiceOption::MicrophoneVolume
+            | VoiceOption::VoiceVolume => {}
+        }
     }
 
     pub fn adjust_selected_display_option(&mut self, delta: i8) {
@@ -366,26 +570,63 @@ impl DashboardState {
         {
             return;
         }
-        let changed = match selected {
-            3 => {
+        if let Some(option) = VoiceOption::at(selected) {
+            self.adjust_voice_option(option, delta);
+        }
+    }
+
+    fn adjust_voice_option(&mut self, option: VoiceOption, delta: i8) {
+        match option {
+            VoiceOption::InputSource | VoiceOption::OutputSource => {
+                // Cycling against a list that is still loading would pick from
+                // the previous popup's devices.
+                if self.options.voice_audio_sources_request_id.is_some() {
+                    return;
+                }
+                let changed = if option == VoiceOption::InputSource {
+                    self.options
+                        .voice_audio_source_options
+                        .adjust_input(&mut self.options.voice_options.input_source, delta)
+                } else {
+                    self.options
+                        .voice_audio_source_options
+                        .adjust_output(&mut self.options.voice_options.output_source, delta)
+                };
+                if changed {
+                    self.mark_options_changed();
+                    self.queue_current_voice_audio_sources_update();
+                }
+            }
+            VoiceOption::MicrophoneSensitivity => {
                 let previous = self.options.voice_options.microphone_sensitivity;
                 self.options.voice_options.microphone_sensitivity = previous.adjust(delta);
-                self.options.voice_options.microphone_sensitivity != previous
+                if self.options.voice_options.microphone_sensitivity != previous {
+                    self.mark_options_changed();
+                    self.queue_current_voice_capture_permission_update();
+                }
             }
-            4 => {
+            VoiceOption::MicrophoneVolume => {
                 let previous = self.options.voice_options.microphone_volume;
                 self.options.voice_options.microphone_volume = previous.adjust(delta);
-                self.options.voice_options.microphone_volume != previous
+                if self.options.voice_options.microphone_volume != previous {
+                    self.mark_options_changed();
+                    self.queue_current_voice_capture_permission_update();
+                }
             }
-            5 => {
+            VoiceOption::VoiceVolume => {
                 let previous = self.options.voice_options.voice_output_volume;
                 self.options.voice_options.voice_output_volume = previous.adjust(delta);
-                self.options.voice_options.voice_output_volume != previous
+                if self.options.voice_options.voice_output_volume != previous {
+                    self.mark_options_changed();
+                    self.queue_current_voice_capture_permission_update();
+                }
             }
-            _ => false,
-        };
-        if changed {
-            self.after_display_option_changed(false, true);
+            VoiceOption::Muted
+            | VoiceOption::Deafened
+            | VoiceOption::AllowMicrophoneTransmit
+            | VoiceOption::PushToTalk
+            | VoiceOption::PushToTalkShortcut
+            | VoiceOption::NoiseSuppression => {}
         }
     }
 
@@ -414,19 +655,16 @@ impl DashboardState {
         }
     }
 
-    fn after_display_option_changed(
-        &mut self,
-        update_current_voice_state: bool,
-        update_current_voice_capture_permission: bool,
-    ) {
+    fn mark_options_changed(&mut self) {
         self.clear_message_row_content_metrics_cache();
         self.options.config_save_pending = true;
-        if update_current_voice_state {
-            self.queue_current_voice_state_update();
-        }
-        if update_current_voice_capture_permission {
-            self.queue_current_voice_capture_permission_update();
-        }
+    }
+
+    pub(in crate::tui) fn queue_current_voice_audio_sources_update(&mut self) {
+        self.enqueue_pending_command(AppCommand::UpdateVoiceAudioSources {
+            input_source: self.options.voice_options.input_source.clone(),
+            output_source: self.options.voice_options.output_source.clone(),
+        });
     }
 
     fn queue_current_voice_capture_permission_update(&mut self) {
@@ -438,9 +676,10 @@ impl DashboardState {
         };
 
         self.enqueue_pending_command(AppCommand::UpdateVoiceCapturePermission {
-            guild_id: voice.guild_id,
+            scope: voice.scope,
             channel_id,
             allow_microphone_transmit: self.options.voice_options.allow_microphone_transmit,
+            noise_suppression: self.options.voice_options.noise_suppression,
             microphone_sensitivity: self.options.voice_options.microphone_sensitivity,
             microphone_volume: self.options.voice_options.microphone_volume,
             voice_output_volume: self.options.voice_options.voice_output_volume,

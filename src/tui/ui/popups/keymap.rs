@@ -22,11 +22,7 @@ fn render_keymap_popup(
     state: &DashboardState,
 ) {
     let popup = keymap_popup_area(area);
-
-    frame.render_widget(Clear, popup);
-    let block = panel_block(title, true);
-    let inner = keymap_popup_text_area(area);
-    frame.render_widget(block, popup);
+    let inner = render_modal_frame(frame, popup, title);
 
     let total_lines = lines.len();
     let viewport = usize::from(inner.height);
@@ -82,14 +78,14 @@ pub(in crate::tui::ui) fn keymap_help_popup_lines(
             current_scope = summary.scope;
             lines.push(Line::from(Span::styled(
                 format!("[{}]", summary.scope),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::Heading),
             )));
         }
 
         lines.push(Line::from(vec![
             Span::styled(
                 format!("[{}] ", summary.keys.join(" / ")),
-                Style::default().add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::Shortcut),
             ),
             Span::raw(summary.action),
         ]));
@@ -98,7 +94,7 @@ pub(in crate::tui::ui) fn keymap_help_popup_lines(
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "No key mappings.",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     }
 

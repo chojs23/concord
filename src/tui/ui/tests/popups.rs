@@ -1,14 +1,352 @@
 use super::*;
+
+const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
+const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
+const ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
+
+fn post_form_state(
+    parent_kind: &str,
+) -> (
+    DashboardState,
+    Id<crate::discord::ids::marker::ChannelMarker>,
+    Id<crate::discord::ids::marker::ChannelMarker>,
+) {
+    let guild_id = Id::new(1);
+    let parent_id = Id::new(20);
+    let thread_id = Id::new(31);
+    let current_user_id = Id::new(10);
+    let is_forum = parent_kind == "GuildForum";
+    let tags = if is_forum {
+        vec![
+            ForumTagInfo {
+                id: Id::new(101),
+                name: "Bug".to_owned(),
+                moderated: false,
+                emoji_id: None,
+                emoji_name: Some("🐛".to_owned()),
+            },
+            ForumTagInfo {
+                id: Id::new(102),
+                name: "Help".to_owned(),
+                moderated: false,
+                emoji_id: None,
+                emoji_name: None,
+            },
+        ]
+    } else {
+        Vec::new()
+    };
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                name: "support".to_owned(),
+                flags: is_forum.then_some(1 << 4),
+                available_tags: tags,
+                ..ChannelInfo::test(parent_id, parent_kind)
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                parent_id: Some(parent_id),
+                owner_id: Some(current_user_id),
+                name: "release-notes".to_owned(),
+                applied_tags: is_forum.then_some(Id::new(101)).into_iter().collect(),
+                rate_limit_per_user: Some(5),
+                thread_metadata: Some(ThreadMetadataInfo::test(false, false)),
+                ..ChannelInfo::test(thread_id, "GuildPublicThread")
+            },
+        ],
+        members: vec![MemberInfo::test(current_user_id, "neo")],
+        roles: vec![RoleInfo {
+            permissions: VIEW_CHANNEL | SEND_MESSAGES | ATTACH_FILES,
+            ..RoleInfo::test(Id::new(guild_id.get()), "@everyone")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(current_user_id),
+    });
+    (state, parent_id, thread_id)
+}
+
+#[test]
+fn post_forms_render_shared_sections_context_and_actions() {
+    let (mut create, forum_id, _) = post_form_state("GuildForum");
+    create.open_forum_post_composer(forum_id);
+    let create_dump = render_dashboard_dump(100, 30, &mut create);
+    let create_text = create_dump.join("\n");
+    for expected in [
+        "Create post",
+        "#support",
+        "CONTENT",
+        "Body *",
+        "0 / 2000",
+        "DETAILS",
+        "Attachments",
+        "None",
+        "Tags *",
+        "[c] Cancel",
+        "[s] Create",
+    ] {
+        assert!(
+            create_text.contains(expected),
+            "missing {expected}:\n{create_text}"
+        );
+    }
+    for removed in [
+        "Add a clear title",
+        "Write the first message",
+        "Move ·",
+        "Tab Next",
+    ] {
+        assert!(
+            !create_text.contains(removed),
+            "unexpected {removed}:\n{create_text}"
+        );
+    }
+    let create_row = create_dump
+        .iter()
+        .position(|line| line.contains("[s] Create"))
+        .expect("create action should render");
+    let cancel_row = create_dump
+        .iter()
+        .position(|line| line.contains("[c] Cancel"))
+        .expect("cancel action should render");
+    assert_eq!(
+        cancel_row,
+        create_row + 1,
+        "actions should stack vertically"
+    );
+    assert_eq!(create.save_forum_post_composer(), None);
+    let narrow_error = render_dashboard_dump(40, 14, &mut create).join("\n");
+    assert!(narrow_error.contains("title is required"));
+    assert!(narrow_error.contains("[s] Create"));
+
+    let (mut forum_edit, _, forum_thread_id) = post_form_state("GuildForum");
+    forum_edit.open_thread_edit(forum_thread_id);
+    forum_edit.activate_thread_edit();
+    forum_edit.push_thread_edit_char('!');
+    let forum_edit_text = render_dashboard_dump(100, 30, &mut forum_edit).join("\n");
+    for expected in [
+        "Edit post settings",
+        "POST",
+        "Tags *",
+        "BEHAVIOR",
+        "Slow mode",
+        "Read only",
+        "Auto-archive",
+        "[s] Save",
+    ] {
+        assert!(
+            forum_edit_text.contains(expected),
+            "missing {expected}:\n{forum_edit_text}"
+        );
+    }
+
+    let (mut thread_edit, _, thread_id) = post_form_state("GuildText");
+    thread_edit.open_thread_edit(thread_id);
+    let thread_edit_text = render_dashboard_dump(100, 30, &mut thread_edit).join("\n");
+    assert!(thread_edit_text.contains("Edit thread settings"));
+    assert!(!thread_edit_text.contains("Tags *"));
+}
+
+#[test]
+fn create_post_body_scrolls_inside_a_bounded_editor_and_fields_remain_reachable() {
+    let (mut state, forum_id, _) = post_form_state("GuildForum");
+    state.open_forum_post_composer(forum_id);
+    let first_dump = render_dashboard_dump(100, 20, &mut state);
+    let footer_row = first_dump
+        .iter()
+        .position(|line| line.contains("[s] Create"))
+        .expect("create action should render");
+
+    state.cycle_forum_post_field_next();
+    state.activate_forum_post_composer();
+    let body = (1..=30)
+        .map(|index| format!("body-row-{index:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(state.insert_forum_post_text(&body));
+    state.request_forum_post_scroll_reveal();
+    let scrolled_dump = render_dashboard_dump(100, 20, &mut state);
+
+    assert_eq!(
+        state.forum_post_composer_scroll(),
+        0,
+        "the body should scroll internally instead of growing the form"
+    );
+    assert_eq!(
+        scrolled_dump
+            .iter()
+            .filter(|line| line.contains("body-row-"))
+            .count(),
+        6,
+        "the body viewport should stop at six text rows"
+    );
+    assert!(
+        scrolled_dump
+            .iter()
+            .any(|line| line.contains("body-row-") && line.contains('┃')),
+        "an overflowing body should show its own scrollbar"
+    );
+    assert!(scrolled_dump.iter().any(|line| line.contains("DETAILS")));
+    assert_eq!(
+        scrolled_dump
+            .iter()
+            .position(|line| line.contains("[s] Create")),
+        Some(footer_row)
+    );
+
+    state.activate_forum_post_composer();
+    state.cycle_forum_post_field_next();
+    state.cycle_forum_post_field_next();
+    state.request_forum_post_scroll_reveal();
+    let tags_dump = render_dashboard_dump(100, 20, &mut state);
+    assert!(tags_dump.iter().any(|line| line.contains("› Tags *")));
+
+    state.cycle_forum_post_field_previous();
+    state.cycle_forum_post_field_previous();
+    state.cycle_forum_post_field_previous();
+    state.request_forum_post_scroll_reveal();
+    let title_dump = render_dashboard_dump(100, 20, &mut state);
+    assert!(title_dump.iter().any(|line| line.contains("› Title *")));
+}
+
+#[test]
+fn long_message_confirmation_explains_the_file_fallback() {
+    let lines = long_message_confirmation_lines_for_test(2_001, 2_000);
+    let rendered = line_texts_from_ratatui(&lines);
+
+    assert_eq!(
+        rendered,
+        vec![
+            "2001 / 2000 characters",
+            "This message is too long to send as text.",
+            "Send the full text as message.txt instead?",
+            "",
+            "› [y] send as file",
+            "  [n] cancel",
+        ]
+    );
+}
+use crate::discord::FriendStatus;
+use crate::discord::test_builders::{
+    GuildCreateFixture, ReactionUsersLoadedFixture, guild_create_event, reaction_users_loaded_event,
+};
 use crate::tui::keybindings::{KeymapBindingSummary, OptionsCategoryShortcut};
+use crate::tui::state::{ActionAvailability, ReactionUsersPopupState};
 use crate::tui::ui::{downloads_popup_area, downloads_popup_lines};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::BTreeMap;
 
 #[test]
+fn owned_stream_info_omits_local_capture_source_without_viewers() {
+    let current_user_id = Id::new(20);
+    let scope = crate::discord::VoiceScope::Guild(Id::new(1));
+    let channel_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "Me".to_owned(),
+        user_id: Some(current_user_id),
+    });
+    state.push_event(AppEvent::ReadyUserDirectory {
+        users: vec![ChannelRecipientInfo::test(current_user_id, "Me")],
+    });
+    state.show_stream_broadcast_preparing_toast(scope, channel_id);
+
+    state.push_effect(AppEvent::StreamBroadcastStarted { scope, channel_id });
+
+    assert!(state.toast_message().is_none());
+    assert_eq!(
+        line_texts_from_ratatui(&stream_info_lines_for_width(&state, 18)),
+        vec!["Me 🔴", "------------------"]
+    );
+}
+
+#[test]
+fn stream_info_panel_separates_owned_and_watched_streams() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(10);
+    let current_user_id = Id::new(20);
+    let watched_owner_id = Id::new(30);
+    let viewer_id = Id::new(40);
+    let scope = crate::discord::VoiceScope::Guild(guild_id);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "Me".to_owned(),
+        user_id: Some(current_user_id),
+    });
+    state.push_event(AppEvent::ReadyUserDirectory {
+        users: vec![
+            ChannelRecipientInfo::test(current_user_id, "Me"),
+            ChannelRecipientInfo::test(watched_owner_id, "Broadcaster"),
+            ChannelRecipientInfo::test(viewer_id, "Viewer"),
+        ],
+    });
+    state.push_event(AppEvent::StreamCreate {
+        stream: crate::discord::StreamCreateInfo {
+            stream_key: "guild:1:10:20".to_owned(),
+            rtc_server_id: "100".to_owned(),
+            rtc_channel_id: Id::new(101),
+            viewer_ids: vec![viewer_id],
+            paused: false,
+        },
+    });
+    state.push_event(AppEvent::StreamCreate {
+        stream: crate::discord::StreamCreateInfo {
+            stream_key: "guild:1:10:30".to_owned(),
+            rtc_server_id: "200".to_owned(),
+            rtc_channel_id: Id::new(201),
+            viewer_ids: vec![current_user_id],
+            paused: false,
+        },
+    });
+    state.show_stream_broadcast_preparing_toast(scope, channel_id);
+    state.push_effect(AppEvent::StreamBroadcastStarted { scope, channel_id });
+    state.show_stream_playback_preparing_toast(scope, channel_id, watched_owner_id);
+    state.push_effect(AppEvent::StreamPlaybackWindowReady {
+        scope,
+        channel_id,
+        user_id: watched_owner_id,
+    });
+
+    let lines = stream_info_lines(&state);
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec![
+            "Me 🔴",
+            "----------------------------------",
+            "Viewer",
+            "==================================",
+            "Broadcaster 🔴",
+            "----------------------------------",
+            "Me",
+        ]
+    );
+    let frame = Rect::new(0, 0, 80, 24);
+    let members = dashboard_areas(frame, &state).members;
+    let popup = stream_info_area(members, &lines);
+    assert!(popup.x >= members.x);
+    assert!(popup.y >= members.y);
+    assert!(popup.right() <= members.right());
+    assert!(popup.bottom() <= members.bottom());
+
+    let occlusion = background_media_occlusion_areas(frame, &state);
+    let stream_occlusion = occlusion.last().expect("stream panel occludes media");
+    assert!(stream_occlusion.x >= members.x);
+    assert!(stream_occlusion.y >= members.y);
+    assert!(stream_occlusion.right() <= members.right());
+    assert!(stream_occlusion.bottom() <= members.bottom());
+}
+
+#[test]
 fn options_popup_lines_show_selected_toggle_state() {
     let items = vec![
         DisplayOptionItem {
-            description: "Master switch.",
             ..DisplayOptionItem::test("Disable all image previews")
         },
         DisplayOptionItem {
@@ -20,22 +358,53 @@ fn options_popup_lines_show_selected_toggle_state() {
         DisplayOptionItem {
             enabled: true,
             value: Some("balanced".to_owned()),
-            gauge_percent: Some(55),
+            gauge: Some(DisplayOptionGauge::new(55, 100)),
             effective: true,
             description: "Attachment and embed previews.",
             ..DisplayOptionItem::test("Image preview quality")
         },
+        DisplayOptionItem {
+            enabled: true,
+            value: Some("150%".to_owned()),
+            gauge: Some(DisplayOptionGauge::new(150, 200)),
+            effective: true,
+            description: "Received voice level.",
+            ..DisplayOptionItem::test("Voice volume")
+        },
     ];
 
-    let lines = options_popup_lines(&items, 1, items.len(), 120);
+    let description_background = Color::Red;
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Description,
+        Style::default()
+            .bg(description_background)
+            .add_modifier(Modifier::DIM),
+    );
+    theme::with_test_theme(custom, || {
+        let lines = options_popup_lines(&items, 1, items.len(), 0, 120);
+        let text = |line: &ratatui::text::Line<'_>| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        };
 
-    assert_eq!(lines[0].spans[1].content, "[ ] ");
-    assert_eq!(lines[1].spans[0].content, "› ");
-    assert_eq!(lines[1].spans[1].content, "[x] ");
-    assert_eq!(lines[2].spans[1].content, "[balanced] ");
-    assert!(lines[3].spans[1].content.contains("-100 dB"));
-    assert!(lines[3].spans[3].content.contains("0 dB"));
-    assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].spans[1].content, "[ ] ");
+        assert_eq!(
+            text(&lines[0]).trim_end(),
+            "  [ ] Disable all image previews"
+        );
+        assert_eq!(lines[1].spans[0].content, "▸ ");
+        assert_eq!(lines[1].spans[1].content, "[x] ");
+        assert_eq!(lines[1].spans[4].style.bg, Some(description_background));
+        assert_eq!(lines[2].spans[1].content, "[balanced] ");
+        assert!(lines[3].spans[0].content.contains("-100 dB"));
+        assert!(lines[3].spans[2].content.contains("0 dB"));
+        assert!(lines[5].spans[0].content.contains("0%"));
+        assert!(lines[5].spans[2].content.contains("200%"));
+        assert_eq!(text(&lines[5]).find("200%"), Some(41));
+        assert_eq!(lines.len(), 6);
+    });
 }
 
 #[test]
@@ -49,19 +418,34 @@ fn message_delete_confirmation_lines_show_controls_and_excerpt() {
     assert_eq!(lines[0].spans[0].content, "Delete this message?");
     assert_eq!(lines[1].spans[0].content, "From: neo");
     assert!(lines[2].spans[0].content.contains("important message"));
-    assert!(lines[4].spans[0].content.contains("Enter/y"));
-    assert!(lines[4].spans[2].content.contains("Esc/n"));
+    let texts = line_texts_from_ratatui(&lines);
+    assert_eq!(texts[4], "› [y] confirm");
+    assert_eq!(texts[5], "  [n] cancel");
 }
 
 #[test]
 fn message_pin_confirmation_lines_show_action_and_excerpt() {
     let pin_lines = message_pin_confirmation_lines(true, "neo", Some("pin this"), 80);
     assert_eq!(pin_lines[0].spans[0].content, "Pin this message?");
-    assert!(pin_lines[4].spans[1].content.contains("Pin message"));
+    let pin_texts = line_texts_from_ratatui(&pin_lines);
+    assert_eq!(pin_texts[4], "› [y] confirm");
+    assert_eq!(pin_texts[5], "  [n] cancel");
 
     let unpin_lines = message_pin_confirmation_lines(false, "neo", Some("unpin this"), 80);
     assert_eq!(unpin_lines[0].spans[0].content, "Unpin this message?");
-    assert!(unpin_lines[4].spans[1].content.contains("Unpin message"));
+    let unpin_texts = line_texts_from_ratatui(&unpin_lines);
+    assert_eq!(unpin_texts[4], "› [y] confirm");
+    assert_eq!(unpin_texts[5], "  [n] cancel");
+
+    let remove_lines =
+        message_remove_embeds_confirmation_lines("neo", Some("remove embeds from this"), 80);
+    assert_eq!(
+        remove_lines[0].spans[0].content,
+        "Remove embeds from this message?"
+    );
+    let remove_texts = line_texts_from_ratatui(&remove_lines);
+    assert_eq!(remove_texts[4], "› [y] confirm");
+    assert_eq!(remove_texts[5], "  [n] cancel");
 }
 
 #[test]
@@ -70,15 +454,11 @@ fn quit_confirmation_lines_show_controls() {
 
     assert_eq!(lines[0].spans[0].content, "Quit Concord?");
     assert_eq!(lines[1].spans[0].content, "");
-    assert!(lines[2].spans[0].content.contains("Enter/y"));
-    assert!(lines[2].spans[2].content.contains("Esc/n"));
-}
-
-#[test]
-fn toast_area_anchors_to_terminal_bottom_left() {
-    let area = toast_area(Rect::new(5, 2, 40, 12), "Message copied");
-
-    assert_eq!(area, Rect::new(5, 11, 16, 3));
+    let texts = line_texts_from_ratatui(&lines);
+    assert_eq!(texts[2], "› [y] confirm");
+    assert_eq!(texts[3], "  [n] cancel");
+    assert_eq!(lines[2].spans[0].content, "› ");
+    assert_eq!(lines[3].spans[0].content, "  ");
 }
 
 #[test]
@@ -90,15 +470,32 @@ fn toast_line_truncates_to_available_width() {
 
 #[test]
 fn dashboard_renders_toast_at_bottom_left() {
-    let mut state = DashboardState::new();
-    state.show_success_toast("Message copied", std::time::Instant::now());
+    let background = Color::Rgb(12, 34, 56);
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().fg(Color::Reset).bg(background),
+    );
 
-    let dump = render_dashboard_dump(40, 10, &mut state);
-    let rendered = dump.join("\n");
+    theme::with_test_theme(custom, || {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        let mut state = DashboardState::new();
+        state.show_success_toast("Message copied", std::time::Instant::now());
 
-    assert!(dump[7].starts_with("┌"), "{rendered}");
-    assert!(dump[8].starts_with("│Message copied│"), "{rendered}");
-    assert!(dump[9].starts_with("└"), "{rendered}");
+        terminal
+            .draw(|frame| {
+                sync_view_heights(frame.area(), &mut state);
+                super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
+            })
+            .expect("toast render should succeed");
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 7)].symbol(), "┌");
+        assert_eq!(buffer[(0, 7)].fg, Color::Green);
+        assert_eq!(buffer[(1, 8)].symbol(), "M");
+        assert_eq!(buffer[(1, 8)].fg, Color::Green);
+        assert_eq!(buffer[(1, 8)].bg, background);
+    });
 }
 
 #[test]
@@ -159,49 +556,22 @@ fn search_popup_message_results_show_sent_time() {
 
     let dump = render_dashboard_dump(120, 28, &mut state);
     let rendered = dump.join("\n");
-    let expected_time = format_message_sent_time(message_id);
+    let expected_time = format_message_sent_time(message_id, true);
 
     assert!(
         rendered.contains(&format!("#general neo {expected_time}: needle result")),
         "{rendered}"
     );
-}
 
-#[test]
-fn options_popup_lines_keep_selected_item_visible_when_clipped() {
-    let items = vec![
-        DisplayOptionItem {
-            enabled: true,
-            effective: true,
-            description: "First.",
-            ..DisplayOptionItem::test("Option 1")
-        },
-        DisplayOptionItem {
-            enabled: true,
-            effective: true,
-            description: "Second.",
-            ..DisplayOptionItem::test("Option 2")
-        },
-        DisplayOptionItem {
-            enabled: true,
-            effective: true,
-            description: "Third.",
-            ..DisplayOptionItem::test("Option 3")
-        },
-        DisplayOptionItem {
-            enabled: true,
-            effective: true,
-            description: "Fourth.",
-            ..DisplayOptionItem::test("Option 4")
-        },
-    ];
-
-    let lines = options_popup_lines(&items, 3, 2, 120);
-    let rendered = line_texts_from_ratatui(&lines).join("\n");
-
-    assert!(!rendered.contains("Option 1"), "{rendered}");
-    assert!(rendered.contains("Option 3"), "{rendered}");
-    assert!(rendered.contains("› [x] Option 4"), "{rendered}");
+    let area = Rect::new(0, 0, 120, 28);
+    let layout = active_selectable_popup_layout(area, &state).expect("search results layout");
+    assert_eq!(
+        mouse_target_at(area, &state, layout.list.x, layout.list.y),
+        Some(MouseTarget::PopupRow {
+            target: SelectablePopupTarget::SearchResults,
+            row: 0,
+        })
+    );
 }
 
 #[test]
@@ -215,67 +585,103 @@ fn options_popup_render_keeps_selected_row_visible_when_short() {
 
     assert!(
         dump.iter()
-            .any(|row| row.contains("›") && row.contains("Desktop notifications")),
+            .any(|row| row.contains("▸") && row.contains("Desktop notifications")),
         "{rendered}"
     );
 }
 
 #[test]
-fn attachment_viewer_render_shows_download_hint_inside_popup() {
+fn options_popup_variable_rows_share_paging_and_mouse_mapping() {
+    let area = Rect::new(0, 0, 100, 12);
+    let mut state = DashboardState::new();
+    state.open_options_category_picker();
+    state.open_options_category_from_shortcut(OptionsCategoryShortcut::Voice);
+    sync_view_heights(area, &mut state);
+
+    let first_layout = active_selectable_popup_layout(area, &state).expect("options layout");
+    let page_step = (first_layout.visible_items() / 2).max(1);
+    assert!(state.page_active_popup_down());
+    assert_eq!(state.selected_option_index(), Some(page_step));
+
+    let gauge_index = state
+        .display_option_items()
+        .iter()
+        .position(|item| item.gauge.is_some())
+        .expect("voice options include a gauge");
+    while state.selected_option_index().unwrap_or(0) > gauge_index {
+        state.move_option_up();
+    }
+    while state.selected_option_index().unwrap_or(0) < gauge_index {
+        state.move_option_down();
+    }
+    sync_view_heights(area, &mut state);
+    let gauge_layout = active_selectable_popup_layout(area, &state).expect("voice options layout");
+    let gauge_rows = (0..gauge_layout.list.height)
+        .filter_map(|offset| {
+            let row = gauge_layout.list.y.saturating_add(offset);
+            (gauge_layout.item_at(gauge_layout.list.x, row) == Some(gauge_index)).then_some(row)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(gauge_rows.len(), 2);
+    for row in gauge_rows {
+        assert_eq!(
+            mouse_target_at(area, &state, gauge_layout.list.x, row),
+            Some(MouseTarget::PopupRow {
+                target: SelectablePopupTarget::Options,
+                row: gauge_index,
+            })
+        );
+    }
+}
+
+#[test]
+fn attachment_viewer_render_shows_url_and_actions_inside_popup() {
     let mut state = state_with_file_attachment_message();
     assert!(state.open_attachment_viewer_for_selected_message());
 
-    let dump = render_dashboard_dump(100, 25, &mut state);
+    let dump = render_dashboard_dump(140, 25, &mut state);
     let rendered = dump.join("\n");
     let hint_row = dump
         .iter()
-        .find(|row| row.contains("[x] play") && row.contains("[d] download"))
+        .find(|row| row.contains("[o] open") && row.contains("[y] copy URL"))
         .expect("attachment viewer hint should render");
 
     assert!(rendered.contains("File: notes.txt"), "{rendered}");
     assert!(rendered.contains("Size: 42 B"), "{rendered}");
+    assert!(
+        rendered.contains("URL: https://cdn.discordapp.com/notes.txt"),
+        "{rendered}"
+    );
     assert!(hint_row.contains('│'), "{rendered}");
 }
 
 #[test]
-fn attachment_viewer_popup_uses_eighty_percent_of_message_area() {
+fn attachment_viewer_popup_geometry_follows_zoom_level() {
     let area = Rect::new(10, 5, 100, 40);
+    let cases = [
+        (AttachmentViewerZoom::Default, Rect::new(20, 9, 80, 32)),
+        (AttachmentViewerZoom::Large, Rect::new(12, 6, 95, 38)),
+        (AttachmentViewerZoom::Fullscreen, area),
+    ];
 
-    let popup = attachment_viewer_popup(area, area, AttachmentViewerZoom::Default);
-    let image_area = attachment_viewer_image_area(area, area, AttachmentViewerZoom::Default);
+    for (zoom, expected) in cases {
+        assert_eq!(attachment_viewer_popup(area, zoom), expected, "{zoom:?}");
+    }
 
-    assert_eq!(popup, Rect::new(20, 9, 80, 32));
-    assert_eq!(image_area, Rect::new(21, 10, 78, 29));
+    assert_eq!(
+        attachment_viewer_image_area(area, AttachmentViewerZoom::Default),
+        Rect::new(21, 10, 78, 29)
+    );
 }
 
 #[test]
-fn attachment_viewer_popup_large_uses_ninety_five_percent_of_message_area() {
-    let area = Rect::new(10, 5, 100, 40);
-
-    let popup = attachment_viewer_popup(area, area, AttachmentViewerZoom::Large);
-
-    assert_eq!(popup, Rect::new(12, 6, 95, 38));
-}
-
-#[test]
-fn attachment_viewer_popup_fullscreen_uses_full_frame_area() {
-    let messages_area = Rect::new(10, 5, 100, 40);
-    let frame_area = Rect::new(0, 0, 200, 60);
-
-    let popup =
-        attachment_viewer_popup(messages_area, frame_area, AttachmentViewerZoom::Fullscreen);
-
-    assert_eq!(popup, frame_area);
-}
-
-#[test]
-fn user_profile_popup_styles_name_by_status() {
+fn user_profile_popup_keeps_name_on_terminal_foreground() {
     let profile = user_profile_info(10, "neo");
     let state = DashboardState::new();
 
     let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Idle);
 
-    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Rgb(180, 140, 0)));
+    assert_eq!(lines[0].spans[0].style.fg, None);
     assert!(
         lines[0].spans[0]
             .style
@@ -312,34 +718,134 @@ fn current_user_profile_settings_render_contract() {
     let texts = line_texts_from_ratatui(&lines);
     assert_eq!(lines[0].spans[0].content, "Neo Global");
 
-    let display_value = texts
+    let display_index = texts
         .iter()
         .position(|line| line.contains("Display name"))
-        .and_then(|index| lines.get(index + 1))
-        .expect("display name value should follow label");
-    let display_label = texts
-        .iter()
-        .position(|line| line.contains("Display name"))
-        .and_then(|index| lines.get(index))
-        .expect("display name label should exist");
-    let pronouns_value = texts
+        .expect("display name field should exist");
+    let pronouns_index = texts
         .iter()
         .position(|line| line.contains("Pronouns"))
-        .and_then(|index| lines.get(index + 1))
-        .expect("pronouns value should follow label");
-    let status_value = texts
+        .expect("pronouns field should exist");
+    let status_index = texts
         .iter()
         .position(|line| line.contains("Status"))
-        .and_then(|index| lines.get(index + 1))
-        .expect("status value should follow label");
+        .expect("status field should exist");
+    let display_line = &lines[display_index];
+    let pronouns_line = &lines[pronouns_index];
+    let status_line = &lines[status_index];
 
-    assert_eq!(display_label.spans[1].style.fg, Some(ACCENT));
-    assert_eq!(display_value.spans[0].content, "  Neo Global");
-    assert_eq!(display_value.spans[0].style, Style::default());
-    assert_eq!(pronouns_value.spans[0].content, "  (empty)");
-    assert_eq!(pronouns_value.spans[0].style.fg, Some(DIM));
-    assert_eq!(status_value.spans[0].content, "  Do Not Disturb");
-    assert_eq!(status_value.spans[0].style.fg, Some(Color::Red));
+    assert_eq!(
+        display_line.spans[1].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ActiveField)
+            .fg
+    );
+    assert_eq!(display_line.spans[2].content, " │ ");
+    assert_eq!(display_line.spans[3].content, "Neo Global");
+    assert_eq!(
+        display_line.spans[3].style,
+        theme::current().style(theme::HighlightGroup::ActiveField)
+    );
+    assert_eq!(pronouns_line.spans[3].content, "(not set)");
+    assert!(
+        pronouns_line.spans[3]
+            .style
+            .add_modifier
+            .contains(Modifier::DIM)
+    );
+    assert_eq!(status_line.spans[3].content, "Do Not Disturb");
+    assert_eq!(status_line.spans[3].style.fg, Some(Color::Red));
+    assert!(
+        texts
+            .iter()
+            .any(|line| line.trim_start().starts_with("PROFILE"))
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|line| line.trim_start().starts_with("PRESENCE"))
+    );
+
+    let pronouns = "they/them or she/her depending on the day and context";
+    profile.pronouns = Some(pronouns.to_owned());
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: None,
+        profile: profile.clone(),
+    });
+    let wrapped_lines =
+        user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let wrapped_texts = line_texts_from_ratatui(&wrapped_lines);
+    let wrapped_pronouns_index = wrapped_texts
+        .iter()
+        .position(|line| line.contains("Pronouns"))
+        .expect("pronouns field should render");
+    let rendered_pronouns = wrapped_lines[wrapped_pronouns_index..]
+        .iter()
+        .take_while(|line| !line.spans.is_empty())
+        .filter_map(|line| line.spans.last())
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert_eq!(rendered_pronouns, pronouns);
+    assert!(
+        wrapped_lines[wrapped_pronouns_index..]
+            .iter()
+            .take_while(|line| !line.spans.is_empty())
+            .count()
+            > 1,
+        "long pronouns should use continuation rows"
+    );
+
+    state.next_user_profile_settings_field();
+    state.next_user_profile_settings_field();
+    let avatar_text = line_texts_from_ratatui(&user_profile_popup_lines(
+        &profile,
+        &state,
+        60,
+        PresenceStatus::DoNotDisturb,
+    ))
+    .join("\n");
+    assert!(
+        avatar_text.contains("Avatar image path or paste image"),
+        "{avatar_text}"
+    );
+    assert!(
+        avatar_text.contains("[Ctrl+V] Paste image"),
+        "{avatar_text}"
+    );
+    state.previous_user_profile_settings_field();
+    state.previous_user_profile_settings_field();
+
+    profile.global_name = Some("x".repeat(38));
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: None,
+        profile: profile.clone(),
+    });
+    let _ = state.start_or_commit_user_profile_edit();
+    let exact_width_text = user_profile_popup_text(
+        &profile,
+        &state,
+        60,
+        PresenceStatus::DoNotDisturb,
+        &[],
+        &[],
+        false,
+    );
+    let exact_width_display_row = exact_width_text
+        .lines
+        .iter()
+        .position(|line| line.to_string().contains("Display name"))
+        .expect("display name should render at an exact value width");
+    assert_eq!(
+        exact_width_text.cursor,
+        Some((exact_width_display_row + 1, 22)),
+        "a cursor at the line width should move to an empty continuation row"
+    );
+    state.close_or_cancel_user_profile_popup();
+    profile.global_name = Some("Neo Global".to_owned());
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: None,
+        profile: profile.clone(),
+    });
 
     let _ = state.start_or_commit_user_profile_edit();
     let editing_lines =
@@ -350,8 +856,11 @@ fn current_user_profile_settings_render_contract() {
         .position(|line| line.contains("Display name"))
         .and_then(|index| editing_lines.get(index))
         .expect("editing label should exist");
-    assert_eq!(editing_label.spans[1].content, "Display name");
-    assert_eq!(editing_label.spans[1].style.fg, Some(Color::Yellow));
+    assert_eq!(editing_label.spans[1].content.trim_end(), "Display name");
+    assert_eq!(
+        editing_label.spans[1].style.fg,
+        theme::current().style(theme::HighlightGroup::Editing).fg
+    );
     for value in "Neo Dirty".chars() {
         state.push_user_profile_edit_char(value);
     }
@@ -359,31 +868,30 @@ fn current_user_profile_settings_render_contract() {
     let dirty_lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
     let dirty_texts = line_texts_from_ratatui(&dirty_lines);
 
-    assert!(
-        dirty_texts
-            .iter()
-            .any(|line| line == "Unsaved changes. Press s to save.")
+    assert!(dirty_texts.iter().any(|line| line.contains("[s] Save")));
+    assert!(dirty_texts.iter().any(|line| line.contains("[q] Close")));
+    assert!(dirty_texts.iter().any(|line| line.contains("[o] Sign out")));
+    let sign_out_row = dirty_texts
+        .iter()
+        .position(|line| line.contains("[o] Sign out"))
+        .expect("sign-out action should render");
+    assert_eq!(
+        dirty_lines[sign_out_row].spans[2].style.fg,
+        Some(Color::Red)
     );
-    assert!(dirty_texts.iter().any(|line| line.contains("Enter select")));
-    assert!(dirty_texts.iter().any(|line| line.contains(" · ")));
-    assert!(
-        !dirty_texts
-            .iter()
-            .any(|line| line.contains("select/edit/commit"))
+    assert_eq!(
+        dirty_lines[sign_out_row].spans[1].style,
+        theme::current().style(theme::HighlightGroup::Shortcut)
     );
-
     let narrow_lines = user_profile_popup_lines(&profile, &state, 24, PresenceStatus::DoNotDisturb);
     let narrow_texts = line_texts_from_ratatui(&narrow_lines);
-    let hint_start = narrow_texts
-        .iter()
-        .position(|line| line.contains("Esc close/cancel"))
-        .expect("wrapped helper hint should start with Esc close/cancel");
-    let wrapped_hint = narrow_texts[hint_start..].join(" ");
-    assert!(wrapped_hint.contains("Esc close/cancel"));
-    assert!(wrapped_hint.contains(" · "));
-    assert!(wrapped_hint.contains("Enter select"));
-    assert!(wrapped_hint.contains("s Save"));
-    assert!(!wrapped_hint.contains("select/edit/commit"));
+    assert!(narrow_texts.iter().any(|line| line.contains("[s] Save")));
+    assert!(narrow_texts.iter().any(|line| line.contains("[q] Close")));
+    assert!(
+        narrow_texts
+            .iter()
+            .any(|line| line.contains("[o] Sign out"))
+    );
 
     state.next_user_profile_settings_field();
     state.next_user_profile_settings_field();
@@ -395,45 +903,169 @@ fn current_user_profile_settings_render_contract() {
 
     assert!(picker_texts.iter().any(|line| line.contains("Status")));
     assert!(picker_texts.iter().any(|line| line == "Choose status"));
-    assert!(picker_texts.iter().any(|line| line == "› Idle"));
+    assert!(picker_texts.iter().any(|line| line == "▸ Idle"));
+    let selected_status = picker_lines
+        .iter()
+        .find(|line| line.to_string() == "▸ Idle")
+        .expect("selected status row");
+    assert_eq!(
+        selected_status.spans[1].style.fg,
+        presence_style(PresenceStatus::Idle).fg
+    );
+    assert_eq!(
+        selected_status.spans[1].style.bg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .bg
+    );
+
+    let area = Rect::new(0, 0, 100, 14);
+    sync_view_heights(area, &mut state);
+    let snapshot = state
+        .active_selectable_popup_snapshot()
+        .expect("status picker selection");
+    let layout = active_selectable_popup_layout(area, &state).expect("status picker layout");
+    let selected_screen_row = (0..layout.list.height)
+        .map(|offset| layout.list.y.saturating_add(offset))
+        .find(|row| layout.item_at(layout.list.x, *row) == Some(snapshot.selected))
+        .expect("selected status should remain visible in a short popup");
+    assert_eq!(
+        mouse_target_at(area, &state, layout.list.x, selected_screen_row),
+        Some(MouseTarget::PopupRow {
+            target: SelectablePopupTarget::UserProfileStatus,
+            row: snapshot.selected,
+        })
+    );
 }
 
 #[test]
-fn user_profile_popup_does_not_show_dm_hint_without_dm_context() {
-    for (profile_name, current_user_id) in [("neo", 10), ("alice", 99)] {
-        let profile = user_profile_info(10, profile_name);
-        let mut state = DashboardState::new();
-        state.push_event(AppEvent::Ready {
-            user: "neo".to_owned(),
-            user_id: Some(Id::new(current_user_id)),
-        });
+fn current_user_profile_settings_viewport_and_feedback_contract() {
+    let user_id = Id::new(10);
+    let profile = user_profile_info(user_id.get(), "neo");
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: None,
+        profile,
+    });
+    state.open_current_user_profile_popup();
 
-        let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
-        let texts = line_texts_from_ratatui(&lines);
+    let initial_dump = render_dashboard_dump(100, 14, &mut state);
+    assert!(
+        initial_dump
+            .iter()
+            .any(|line| line.contains("› Display name")),
+        "initial selection should be visible:\n{}",
+        initial_dump.join("\n")
+    );
+    assert!(
+        !initial_dump.iter().any(|line| line.contains("[s] Save")),
+        "actions below the viewport should not stay fixed:\n{}",
+        initial_dump.join("\n")
+    );
+    let initial_scroll = state.user_profile_popup_scroll();
 
-        assert!(!texts.iter().any(|line| line.contains("m send DM")));
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
     }
+    let activity_dump = render_dashboard_dump(100, 14, &mut state);
+    assert!(
+        activity_dump.iter().any(|line| line.contains("› Activity")),
+        "selection below the viewport should be revealed:\n{}",
+        activity_dump.join("\n")
+    );
+    let activity_scroll = state.user_profile_popup_scroll();
+    assert!(activity_scroll > initial_scroll);
+
+    state.next_user_profile_settings_field();
+    let selected_action_dump = render_dashboard_dump(100, 14, &mut state);
+    assert!(
+        selected_action_dump
+            .iter()
+            .any(|line| line.contains("› [s] Save")),
+        "selecting Save should reveal its document row:\n{}",
+        selected_action_dump.join("\n")
+    );
+    for _ in 0..32 {
+        state.scroll_user_profile_popup_up();
+    }
+    let manually_scrolled_dump = render_dashboard_dump(100, 14, &mut state);
+    assert!(
+        !manually_scrolled_dump
+            .iter()
+            .any(|line| line.contains("[s] Save")),
+        "manual scrolling should move the action rows with the document:\n{}",
+        manually_scrolled_dump.join("\n")
+    );
+
+    for _ in 0..3 {
+        state.next_user_profile_settings_field();
+    }
+    let wrapped_selection_dump = render_dashboard_dump(100, 14, &mut state);
+    assert!(
+        wrapped_selection_dump
+            .iter()
+            .any(|line| line.contains("› Display name")),
+        "wrapping selection should reveal the first field again:\n{}",
+        wrapped_selection_dump.join("\n")
+    );
+    assert!(state.user_profile_popup_scroll() < activity_scroll);
+
+    let _ = state.start_or_commit_user_profile_edit();
+    state.insert_user_profile_edit_text("failed value");
+    let _ = state.start_or_commit_user_profile_edit();
+    for _ in 0..5 {
+        state.next_user_profile_settings_field();
+    }
+    assert!(state.save_user_profile_settings_command().is_some());
+    state.record_user_profile_update_failed(user_id, None, "profile validation rejected the value");
+    let failed_dump = render_dashboard_dump(100, 14, &mut state).join("\n");
+    assert!(
+        failed_dump.contains("Save failed: profile validation rejected the value"),
+        "{failed_dump}"
+    );
+    assert!(failed_dump.contains("› [s] Save"), "{failed_dump}");
+    assert!(!failed_dump.contains("Display name"), "{failed_dump}");
 }
 
 #[test]
-fn user_profile_popup_avatar_gutter_matches_geometry_in_narrow_layouts() {
+fn user_profile_popup_avatar_keeps_full_width_document_geometry() {
     let narrow_area = Rect::new(0, 0, 10, 20);
     let wide_area = Rect::new(0, 0, 80, 20);
+    let mut state = DashboardState::new();
 
-    assert!(!user_profile_popup_has_avatar(narrow_area, true));
+    assert!(!user_profile_popup_has_avatar(narrow_area, &state, true));
     assert_eq!(
-        user_profile_popup_text_geometry(narrow_area, false),
-        user_profile_popup_text_geometry(
-            narrow_area,
-            user_profile_popup_has_avatar(narrow_area, true),
-        )
+        user_profile_popup_text_geometry(narrow_area, &state),
+        (5, 16)
     );
 
-    assert!(user_profile_popup_has_avatar(wide_area, true));
-    assert_ne!(
-        user_profile_popup_text_geometry(wide_area, false),
-        user_profile_popup_text_geometry(wide_area, user_profile_popup_has_avatar(wide_area, true)),
+    assert!(user_profile_popup_has_avatar(wide_area, &state, true));
+    assert_eq!(
+        user_profile_popup_text_geometry(wide_area, &state),
+        (57, 16)
     );
+
+    state.open_user_profile_popup(Id::new(10), None);
+    state.set_user_profile_popup_view_height(1);
+    state.set_user_profile_popup_total_lines(10);
+    assert_eq!(
+        user_profile_popup_avatar_viewport(wide_area, &state),
+        Some((Rect::new(11, 2, 8, 4), 0))
+    );
+
+    state.scroll_user_profile_popup_down();
+    assert_eq!(
+        user_profile_popup_avatar_viewport(wide_area, &state),
+        Some((Rect::new(11, 2, 8, 3), 1))
+    );
+    for _ in 0..3 {
+        state.scroll_user_profile_popup_down();
+    }
+    assert_eq!(user_profile_popup_avatar_viewport(wide_area, &state), None);
 }
 
 #[test]
@@ -467,7 +1099,11 @@ fn user_profile_popup_renders_activity_section() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    assert!(texts.iter().any(|line| line == "ACTIVITY"));
+    assert!(
+        texts
+            .iter()
+            .any(|line| line.trim_start().starts_with("ACTIVITY"))
+    );
     assert!(texts.iter().any(|line| line == "🦀 Coding hard"));
     assert!(texts.iter().any(|line| line == "♪ Spotify"));
     assert!(texts.iter().any(|line| line == "Bohemian Rhapsody"));
@@ -476,52 +1112,199 @@ fn user_profile_popup_renders_activity_section() {
 }
 
 #[test]
-fn user_profile_popup_omits_activity_section_when_empty() {
-    let profile = user_profile_info(10, "neo");
-    let state = DashboardState::new();
-    let lines =
-        user_profile_popup_lines_with_activities(&profile, &state, 60, PresenceStatus::Online, &[]);
-    let texts = line_texts_from_ratatui(&lines);
-
-    assert!(!texts.iter().any(|line| line == "ACTIVITY"));
-}
-
-#[test]
-fn user_profile_popup_lists_mutual_servers_without_selection_marker() {
+fn guild_user_profile_popup_renders_sectioned_profile() {
+    let guild_id = Id::new(42);
+    let user_id = Id::new(10);
+    let member_role_id = Id::new(20);
+    let admin_role_id = Id::new(30);
     let mut profile = user_profile_info(10, "neo");
+    profile.guild_nick = Some("Neo on Concord".to_owned());
+    profile.guild_pronouns = Some("they/them".to_owned());
+    profile.avatar_url = Some("https://cdn.discordapp.com/avatars/10/avatar.png".to_owned());
+    profile.bio = Some("Building a better terminal client.".to_owned());
+    profile.note = Some("Met in the Rust community.".to_owned());
+    profile.role_ids = vec![Id::new(guild_id.get()), member_role_id, admin_role_id];
+    profile.role_ids_present = true;
     profile.mutual_guilds = (1_u64..=3)
         .map(|id| MutualGuildInfo {
             guild_id: Id::new(id),
             nick: None,
         })
         .collect();
-    let state = DashboardState::new();
+    profile.mutual_friends_count = 4;
+    profile.mutual_friends = vec![
+        MutualFriendInfo {
+            user_id: Id::new(50),
+            username: "alice".to_owned(),
+            global_name: Some("Alice".to_owned()),
+        },
+        MutualFriendInfo {
+            user_id: Id::new(51),
+            username: "bob".to_owned(),
+            global_name: None,
+        },
+    ];
+    let mut state = DashboardState::new_with_options(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        KeymapOptions {
+            mappings: [("ClosePopup".to_owned(), KeymapBinding::one("x"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    state.push_event(guild_create_event(GuildCreateFixture {
+        name: "Concord".to_owned(),
+        roles: vec![
+            RoleInfo {
+                position: 0,
+                ..RoleInfo::test(Id::new(guild_id.get()), "@everyone")
+            },
+            RoleInfo {
+                color: Some(0x00_AA_00),
+                position: 1,
+                ..RoleInfo::test(member_role_id, "Member")
+            },
+            RoleInfo {
+                color: Some(0xAA_00_00),
+                position: 2,
+                ..RoleInfo::test(admin_role_id, "Admin")
+            },
+        ],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.push_event(AppEvent::UserProfileLoaded {
+        guild_id: Some(guild_id),
+        profile: profile.clone(),
+    });
+    state.open_user_profile_popup(user_id, Some(guild_id));
+
     let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
     let texts = line_texts_from_ratatui(&lines);
+    let rendered = texts.join("\n");
 
-    // The popup no longer drives a per-row cursor. Every mutual entry gets a
-    // uniform "  • name" prefix and the user navigates by scrolling.
+    for section in ["SERVER PROFILE", "ABOUT ME", "NOTE", "SOCIAL"] {
+        assert!(
+            texts
+                .iter()
+                .any(|line| line.trim_start().starts_with(section)),
+            "{rendered}"
+        );
+    }
+    assert!(rendered.contains("Neo on Concord"), "{rendered}");
+    assert!(rendered.contains("@neo  ·  they/them"), "{rendered}");
+    assert!(rendered.contains("[Admin] [Member]"), "{rendered}");
+    assert!(!rendered.contains("@everyone"), "{rendered}");
     assert!(texts.iter().any(|line| line == "  • guild-1"));
     assert!(texts.iter().any(|line| line == "  • guild-3"));
-    assert!(!texts.iter().any(|line| line.starts_with("› ")));
+    assert!(rendered.contains("Mutual friends  4"), "{rendered}");
+    assert!(rendered.contains("• Alice  ·  @alice"), "{rendered}");
+    assert!(rendered.contains("• @bob"), "{rendered}");
+
+    let admin = lines
+        .iter()
+        .flat_map(|line| &line.spans)
+        .find(|span| span.content == "[Admin]")
+        .expect("admin role chip should render");
+    assert_eq!(admin.style.fg, Some(Color::Rgb(0xAA, 0, 0)));
+
+    let dump = render_dashboard_dump(80, 30, &mut state).join("\n");
+    assert!(dump.contains("Profile"), "{dump}");
+    assert!(dump.contains("Concord"), "{dump}");
+    assert!(!dump.contains("[x] Close"), "{dump}");
+    assert!(!dump.contains("Scroll"), "{dump}");
+    let identity_column = dump
+        .lines()
+        .find(|line| line.contains("Neo on Concord"))
+        .and_then(|line| line.find("Neo on Concord"))
+        .expect("identity should render beside the avatar");
+    let section_column = dump
+        .lines()
+        .find(|line| line.contains("SERVER PROFILE"))
+        .and_then(|line| line.find("SERVER PROFILE"))
+        .expect("server section should render below the avatar");
+    assert!(section_column < identity_column, "{dump}");
+
+    let custom = theme::Theme::default()
+        .with_style(
+            theme::HighlightGroup::RelationshipFriend,
+            Style::default().fg(Color::Green),
+        )
+        .with_style(
+            theme::HighlightGroup::RelationshipIncoming,
+            Style::default().fg(Color::Yellow),
+        )
+        .with_style(
+            theme::HighlightGroup::RelationshipOutgoing,
+            Style::default().fg(Color::LightYellow),
+        )
+        .with_style(
+            theme::HighlightGroup::RelationshipBlocked,
+            Style::default().fg(Color::Red),
+        )
+        .with_style(
+            theme::HighlightGroup::RelationshipNone,
+            Style::default().fg(Color::Blue).add_modifier(Modifier::DIM),
+        );
+    theme::with_test_theme(custom, || {
+        let cases = [
+            (FriendStatus::Friend, "● Friend", Color::Green, false),
+            (
+                FriendStatus::IncomingRequest,
+                "● Incoming friend request",
+                Color::Yellow,
+                false,
+            ),
+            (
+                FriendStatus::OutgoingRequest,
+                "● Outgoing friend request",
+                Color::LightYellow,
+                false,
+            ),
+            (FriendStatus::Blocked, "● Blocked", Color::Red, false),
+            (FriendStatus::None, "● Not friends", Color::Blue, true),
+        ];
+        for (relationship, label, expected, expect_dim) in cases {
+            let mut profile = user_profile_info(10, "neo");
+            profile.friend_status = relationship;
+            let lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::Online);
+            let relationship = lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .find(|span| span.content == label)
+                .expect("relationship badge should render");
+            assert_eq!(relationship.style.fg, Some(expected));
+            assert_eq!(
+                relationship.style.add_modifier.contains(Modifier::DIM),
+                expect_dim
+            );
+        }
+    });
 }
 
 #[test]
 fn message_action_menu_marks_selected_and_disabled_actions() {
     let actions = vec![
-        MessageActionItem {
-            label: "Open thread".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::OpenThread)
-        },
-        MessageActionItem {
-            label: "Show reacted users".to_owned(),
-            enabled: false,
-            ..MessageActionItem::test(MessageActionKind::ShowReactionUsers)
-        },
-        MessageActionItem {
-            label: "Choose poll votes".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::OpenPollVotePicker)
-        },
+        MessageActionItem::new(
+            MessageActionKind::CopyContent,
+            "copy message",
+            ActionAvailability::Enabled,
+        ),
+        MessageActionItem::new(
+            MessageActionKind::ShowReactionUsers,
+            "Show reacted users",
+            ActionAvailability::Disabled("no reactions".to_owned()),
+        ),
+        MessageActionItem::new(
+            MessageActionKind::OpenPollVotePicker,
+            "Choose poll votes",
+            ActionAvailability::Enabled,
+        ),
     ];
 
     let lines = message_action_menu_lines(&actions, 1);
@@ -529,32 +1312,72 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "  [t] Open thread",
-            "› [u] Show reacted users (unavailable)",
+            "  [y] copy message",
+            "▸ [u] Show reacted users (no reactions)",
             "  [c] Choose poll votes",
         ]
     );
+
+    let disabled_copy_keymap = KeymapOptions {
+        message_actions: [("CopyMessage".to_owned(), KeymapBinding::disabled())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let lines = message_action_menu_lines_with_keymap_options(&actions, 0, &disabled_copy_keymap);
+
+    assert_eq!(line_texts_from_ratatui(&lines)[0], "▸ [] copy message");
 }
 
 #[test]
 fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
     let actions = vec![
-        MessageActionItem {
-            label: "Show cat users".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::ShowReactionUsers)
-        },
-        MessageActionItem {
-            label: "Show dog users".to_owned(),
-            ..MessageActionItem::test(MessageActionKind::ShowReactionUsers)
-        },
+        MessageActionItem::new(
+            MessageActionKind::ShowReactionUsers,
+            "Show cat users",
+            ActionAvailability::Enabled,
+        ),
+        MessageActionItem::new(
+            MessageActionKind::ShowReactionUsers,
+            "Show dog users",
+            ActionAvailability::Enabled,
+        ),
     ];
 
     let lines = message_action_menu_lines(&actions, 0);
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["› [1] Show cat users", "  [2] Show dog users"]
+        vec!["▸ [1] Show cat users", "  [2] Show dog users"]
     );
+}
+
+#[test]
+fn popup_lists_use_the_configured_selection_marker() {
+    let (options, parse_warnings) =
+        crate::config::parse_theme_options_for_test("[ui.indicator]\nselection = \"❯ \"\n")
+            .expect("selection marker config should parse");
+    assert!(parse_warnings.is_empty());
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+    let actions = vec![
+        MessageActionItem::new(
+            MessageActionKind::CopyContent,
+            "copy message",
+            ActionAvailability::Enabled,
+        ),
+        MessageActionItem::new(
+            MessageActionKind::OpenPollVotePicker,
+            "Choose poll votes",
+            ActionAvailability::Enabled,
+        ),
+    ];
+
+    theme::with_test_theme(custom, || {
+        let lines = message_action_menu_lines(&actions, 1);
+
+        assert_eq!(lines[0].spans[0].content, "  ");
+        assert_eq!(lines[1].spans[0].content, "❯ ");
+    });
 }
 
 #[test]
@@ -568,7 +1391,7 @@ fn message_url_picker_truncates_fragment_urls_to_menu_width() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["› [1] https://thisis.com/a...."]
+        vec!["▸ [1] https://thisis.com/a...."]
     );
 }
 
@@ -589,16 +1412,16 @@ fn emoji_reaction_picker_marks_selected_reaction() {
         },
     ];
 
-    let lines = emoji_reaction_picker_lines(&reactions, 1, 10, &[]);
+    let lines = emoji_reaction_picker_lines(&reactions, 1, 10, 0, &[]);
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["  [1] 👍 Thumbs up", "› [2] :party: Party",]
+        vec!["  [1] 👍 Thumbs up", "▸ [2] :party: Party",]
     );
 }
 
 #[test]
-fn emoji_reaction_picker_uses_qwerty_shortcuts_for_existing_reactions() {
+fn emoji_reaction_picker_uses_reaction_colors_and_selected_background() {
     let reactions = vec![
         EmojiReactionItem {
             label: "Thumbs up".to_owned(),
@@ -608,55 +1431,31 @@ fn emoji_reaction_picker_uses_qwerty_shortcuts_for_existing_reactions() {
             label: "Heart".to_owned(),
             ..EmojiReactionItem::test(ReactionEmoji::Unicode("❤️".to_owned()))
         },
-        EmojiReactionItem {
-            label: "Joy".to_owned(),
-            ..EmojiReactionItem::test(ReactionEmoji::Unicode("😂".to_owned()))
-        },
-    ];
-    let existing_reactions = vec![
-        ReactionEmoji::Unicode("👍".to_owned()),
-        ReactionEmoji::Unicode("❤️".to_owned()),
-    ];
-
-    let lines =
-        emoji_reaction_picker_lines_with_existing(&reactions, &existing_reactions, 0, 10, &[]);
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["› [q] 👍 Thumbs up", "  [w] ❤️ Heart", "  [1] 😂 Joy"]
-    );
-}
-
-#[test]
-fn emoji_reaction_picker_marks_own_reactions_yellow() {
-    let reactions = vec![
-        EmojiReactionItem {
-            label: "Thumbs up".to_owned(),
-            ..EmojiReactionItem::test(ReactionEmoji::Unicode("👍".to_owned()))
-        },
-        EmojiReactionItem {
-            label: "Heart".to_owned(),
-            ..EmojiReactionItem::test(ReactionEmoji::Unicode("❤️".to_owned()))
-        },
-    ];
-    let existing_reactions = vec![
-        ReactionEmoji::Unicode("👍".to_owned()),
-        ReactionEmoji::Unicode("❤️".to_owned()),
     ];
     let own_reactions = vec![ReactionEmoji::Unicode("❤️".to_owned())];
 
-    let lines = emoji_reaction_picker_lines_with_own_reactions(
-        &reactions,
-        &existing_reactions,
-        &own_reactions,
-        1,
-        10,
-        &[],
-    );
+    let lines =
+        emoji_reaction_picker_lines_with_own_reactions(&reactions, &own_reactions, 0, 10, &[]);
 
-    assert_eq!(lines[0].spans[2].style.fg, None);
-    assert_eq!(lines[1].spans[2].style.fg, Some(Color::Yellow));
-    assert_eq!(lines[1].spans[2].style.bg, Some(Color::Rgb(40, 45, 90)));
+    assert_eq!(
+        lines[0].spans[2].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .fg
+    );
+    assert_eq!(
+        lines[1].spans[2].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::SelfReaction)
+            .fg
+    );
+    assert_eq!(
+        lines[0].spans[2].style.bg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .bg
+    );
+    assert_eq!(lines[1].spans[2].style.bg, None);
 }
 
 #[test]
@@ -677,88 +1476,135 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["  [1] [x] Soup", "› [2] [ ] Noodles"]
+        vec!["  [1] [x] Soup", "▸ [2] [ ] Noodles"]
+    );
+    assert_eq!(
+        lines[0].spans[2].style.fg,
+        theme::current().style(theme::HighlightGroup::Selection).fg
+    );
+    assert_eq!(
+        lines[1].spans[2].style.bg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .bg
     );
 }
 
 #[test]
-fn reaction_users_popup_groups_users_by_reaction() {
-    let lines = reaction_users_popup_lines(
-        &[
-            ReactionUsersInfo {
-                users: vec![
-                    ReactionUserInfo::test(Id::new(10), "neo"),
-                    ReactionUserInfo::test(Id::new(11), "trinity"),
-                ],
-                ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-            },
-            ReactionUsersInfo::test(ReactionEmoji::Custom {
-                id: Id::new(50),
-                name: Some("party".to_owned()),
-                animated: false,
-            }),
+fn reaction_users_popup_lists_reactions() {
+    // The selected row gets the shared marker. A custom emoji with no ready
+    // thumbnail falls back to `:name:`.
+    let popup = ReactionUsersPopupState::test_list(
+        Id::new(2),
+        Id::new(1),
+        vec![
+            (ReactionEmoji::Unicode("👍".to_owned()), 55),
+            (
+                ReactionEmoji::Custom {
+                    id: Id::new(50),
+                    name: Some("party".to_owned()),
+                    animated: false,
+                },
+                23,
+            ),
         ],
-        0,
-        10,
-        56,
     );
+
+    let lines = reaction_users_popup_lines(&popup, 0, 10, 56);
 
     let trimmed = line_texts_from_ratatui(&lines)
         .into_iter()
         .map(|line| line.trim_end().to_owned())
         .collect::<Vec<_>>();
+    assert_eq!(trimmed, vec!["▸ 👍 55", "  :party: 23"]);
     assert_eq!(
-        trimmed,
-        vec![
-            "👍 · 2 users",
-            "  neo",
-            "  trinity",
-            ":party: · 0 users",
-            "  no users found",
-        ]
+        lines[0].spans[1].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .fg
     );
+}
+
+#[test]
+fn reaction_list_reserves_image_cell_for_ready_custom_emoji() {
+    let custom = ReactionEmoji::Custom {
+        id: Id::new(50),
+        name: Some("party".to_owned()),
+        animated: false,
+    };
+    let popup =
+        ReactionUsersPopupState::test_list(Id::new(2), Id::new(1), vec![(custom.clone(), 23)]);
+    let url = custom
+        .custom_image_url()
+        .expect("custom emoji has a thumbnail url");
+
+    // No thumbnail ready yet -> text fallback shows `:party:`.
+    let fallback = reaction_list_lines_with_ready_urls(&popup, &[], 56);
+    assert!(line_texts_from_ratatui(&fallback)[0].contains(":party:"));
+
+    // Thumbnail ready -> the emoji cell is blanked so the overlaid image shows,
+    // exactly like the message view and picker.
+    let with_image = reaction_list_lines_with_ready_urls(&popup, std::slice::from_ref(&url), 56);
+    assert!(!line_texts_from_ratatui(&with_image)[0].contains(":party:"));
 }
 
 #[test]
 fn reaction_users_popup_scrolls_long_lists() {
-    let reactions = vec![ReactionUsersInfo {
-        users: (1..=6)
-            .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
-            .collect(),
-        ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-    }];
+    // View B: the reactors for one emoji, scrolled down by 3.
+    let popup = ReactionUsersPopupState::test_viewing(
+        Id::new(2),
+        Id::new(1),
+        vec![(
+            ReactionEmoji::Unicode("👍".to_owned()),
+            6,
+            (1..=6)
+                .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
+                .collect(),
+            None,
+        )],
+        0,
+    );
 
-    let lines = reaction_users_popup_lines(&reactions, 3, 3, 56);
+    let lines = reaction_users_popup_lines(&popup, 3, 3, 56);
 
     let trimmed = line_texts_from_ratatui(&lines)
         .into_iter()
         .map(|line| line.trim_end().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(trimmed, vec!["  user-3", "  user-4", "  user-5",]);
+    assert_eq!(trimmed, vec!["  user-4", "  user-5", "  user-6"]);
 }
 
 #[test]
 fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
+    use crate::tui::keybindings::SelectionAction;
+
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::ReactionUsersLoaded {
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            ..ChannelInfo::test(Id::new(2), "GuildText")
+        }],
+        members: vec![member_info(1, "Guild Reactor")],
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 5)]);
+    // Drill into the reaction so the user list (with the long name) renders.
+    state.activate_reaction_users_popup();
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
-        reactions: vec![
-            ReactionUsersInfo {
-                users: vec![
-                    ReactionUserInfo::test(Id::new(1), "갱생케가"),
-                    ReactionUserInfo::test(Id::new(2), "하나비"),
-                    ReactionUserInfo::test(Id::new(3), "슬기인뎅"),
-                    ReactionUserInfo::test(Id::new(4), "won"),
-                ],
-                ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-            },
-            ReactionUsersInfo {
-                users: vec![ReactionUserInfo::test(Id::new(5), "파닥파닥( 40%..? )")],
-                ..ReactionUsersInfo::test(ReactionEmoji::Unicode("❤️".to_owned()))
-            },
+        emoji,
+        users: vec![
+            ReactionUserInfo::test(Id::new(1), "unknown"),
+            ReactionUserInfo::test(Id::new(2), "하나비"),
+            ReactionUserInfo::test(Id::new(3), "슬기인뎅"),
+            ReactionUserInfo::test(Id::new(4), "won"),
+            ReactionUserInfo::test(Id::new(5), "파닥파닥( 40%..? )"),
         ],
-    });
+        next_after: None,
+        after: None,
+    }));
 
     // Use a wide terminal so the popup's full POPUP_TARGET_WIDTH (58)
     // applies and line truncation should never trigger.
@@ -778,7 +1624,7 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
     // survive without bleeding the wrap continuation onto
     // neighbouring rows.
     for _ in 0..6 {
-        state.scroll_reaction_users_popup_down();
+        state.navigate_reaction_users_popup(SelectionAction::Next);
     }
     terminal
         .draw(|frame| {
@@ -787,7 +1633,7 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
         })
         .expect("second draw");
     for _ in 0..6 {
-        state.scroll_reaction_users_popup_up();
+        state.navigate_reaction_users_popup(SelectionAction::Previous);
     }
     terminal
         .draw(|frame| {
@@ -805,6 +1651,11 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
         })
         .collect::<Vec<_>>();
 
+    assert!(
+        dump.iter().any(|line| line.contains("Guild Reactor")),
+        "reaction user should use the shared guild member identity"
+    );
+
     // The reported artefact was the trailing fragment "? )" from
     // "파닥파닥( 40%..? )" appearing on rows that should hold a different
     // (shorter) name. After scrolling, count the number of rows whose
@@ -820,48 +1671,27 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
 }
 
 #[test]
-fn reaction_users_popup_buffer_stays_clean_in_narrow_terminal() {
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::ReactionUsersLoaded {
-        channel_id: Id::new(2),
-        message_id: Id::new(1),
-        reactions: vec![ReactionUsersInfo {
-            users: vec![
+fn reaction_users_popup_truncates_long_lines_to_fit_width() {
+    let popup = ReactionUsersPopupState::test_viewing(
+        Id::new(2),
+        Id::new(1),
+        vec![(
+            ReactionEmoji::Unicode("❤️".to_owned()),
+            2,
+            vec![
                 ReactionUserInfo::test(Id::new(1), "won"),
                 ReactionUserInfo::test(Id::new(2), "파닥파닥( 40%..? )"),
             ],
-            ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-        }],
-    });
-
-    // Narrow terminal that would force the popup down to a width where
-    // the long name no longer fits without wrapping. Pre-truncation must
-    // turn the long name into an ellipsis, never split it across rows.
-    let dump = render_dashboard_dump(40, 25, &mut state);
-
-    let trailing_matches = dump.iter().filter(|line| line.contains("? )")).count();
-    assert!(
-        trailing_matches <= 1,
-        "popup buffer contained '? )' fragment on {trailing_matches} rows; expected at most 1.\nDump:\n{}",
-        dump.join("\n")
+            None,
+        )],
+        0,
     );
-}
-
-#[test]
-fn reaction_users_popup_truncates_long_lines_to_fit_width() {
-    let reactions = vec![ReactionUsersInfo {
-        users: vec![
-            ReactionUserInfo::test(Id::new(1), "won"),
-            ReactionUserInfo::test(Id::new(2), "파닥파닥( 40%..? )"),
-        ],
-        ..ReactionUsersInfo::test(ReactionEmoji::Unicode("❤️".to_owned()))
-    }];
 
     // Inner width that is narrower than the long Korean+ASCII display name
     // forces the popup logic to truncate. Without truncation, ratatui's
     // wrap would split the long name and the wrap continuation would bleed
     // onto adjacent rows.
-    let lines = reaction_users_popup_lines(&reactions, 0, 4, 12);
+    let lines = reaction_users_popup_lines(&popup, 0, 4, 12);
 
     for line in &lines {
         assert!(
@@ -897,10 +1727,11 @@ fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
         &reactions,
         0,
         10,
+        0,
         &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
     );
 
-    assert_eq!(line_texts_from_ratatui(&lines), vec!["› [1]    Party"]);
+    assert_eq!(line_texts_from_ratatui(&lines), vec!["▸ [1]    Party"]);
 }
 
 #[test]
@@ -925,7 +1756,7 @@ fn emoji_reaction_picker_truncates_long_rows_to_inner_width() {
     }
     assert_eq!(
         line_texts_from_ratatui(&lines)[0].trim_end(),
-        "› [1] :this_is_a_very..."
+        "▸ [1] :this_is_a_very..."
     );
 }
 
@@ -942,16 +1773,17 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
         })
         .collect::<Vec<_>>();
 
-    let lines = emoji_reaction_picker_lines(&reactions, 12, 5, &[]);
+    // At scroll 10 the selected row 12 keeps rows 13 and 14 visible below it.
+    let lines = emoji_reaction_picker_lines(&reactions, 12, 5, 10, &[]);
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "  [9] :emoji_8: Emoji 8",
-            "  [0] :emoji_9: Emoji 9",
             "      :emoji_10: Emoji 10",
             "      :emoji_11: Emoji 11",
-            "›     :emoji_12: Emoji 12",
+            "▸     :emoji_12: Emoji 12",
+            "      :emoji_13: Emoji 13",
+            "      :emoji_14: Emoji 14",
         ]
     );
 }
@@ -971,12 +1803,12 @@ fn emoji_reaction_picker_shows_active_filter() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["› [1] :this: This goose", "Filter /thi",]
+        vec!["▸ [1] :this: This goose", "Filter /thi",]
     );
 }
 
 #[test]
-fn leader_popup_renders_as_bottom_window() {
+fn leader_key_sequence_hint_renders_as_bottom_window() {
     let mut state = DashboardState::new();
     state.open_leader();
 
@@ -995,7 +1827,57 @@ fn leader_popup_renders_as_bottom_window() {
 }
 
 #[test]
-fn leader_popup_shows_keymap_entries_alongside_default_entries() {
+fn popup_key_sequence_hint_renders_above_the_active_modal() {
+    let mappings = [
+        (
+            "JumpTop".to_owned(),
+            crate::config::KeymapBinding::one("z z"),
+        ),
+        (
+            "StartComposer".to_owned(),
+            crate::config::KeymapBinding::one("z s"),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let mut state = DashboardState::new_with_options(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        crate::config::KeymapOptions {
+            mappings,
+            ..Default::default()
+        },
+        Default::default(),
+    );
+    state.open_options_popup();
+
+    crate::tui::input::handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+    );
+
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options));
+    assert!(state.is_key_sequence_active());
+    assert_eq!(state.key_sequence_title(), "z");
+    assert_eq!(
+        state
+            .key_sequence_shortcuts()
+            .into_iter()
+            .map(|item| (item.key, item.label))
+            .collect::<Vec<_>>(),
+        [("z".to_owned(), "jump top".to_owned())]
+    );
+
+    let rendered = render_dashboard_dump(160, 20, &mut state).join("\n");
+    assert!(rendered.contains("Options"), "{rendered}");
+    assert!(rendered.contains("jump top"), "{rendered}");
+}
+
+#[test]
+fn leader_key_sequence_hint_shows_keymap_entries_alongside_defaults() {
     let mut mappings = BTreeMap::new();
     mappings.insert(
         "StartComposer".to_owned(),
@@ -1041,7 +1923,7 @@ fn leader_popup_shows_keymap_entries_alongside_default_entries() {
 }
 
 #[test]
-fn leader_popup_expands_horizontally_for_many_keymap_entries() {
+fn leader_key_sequence_hint_expands_for_many_keymap_entries() {
     let mut mappings = BTreeMap::new();
     for (action, key) in [
         ("StartComposer", "<leader>b"),
@@ -1057,7 +1939,7 @@ fn leader_popup_expands_horizontally_for_many_keymap_entries() {
             action.to_owned(),
             crate::config::KeymapBinding {
                 keys: vec![key.to_owned()],
-                description: Some(format!("wide leader popup column label for {action}")),
+                description: Some(format!("wide key sequence hint column label for {action}")),
             },
         );
     }
@@ -1097,7 +1979,7 @@ fn leader_popup_expands_horizontally_for_many_keymap_entries() {
 }
 
 #[test]
-fn leader_popup_shows_non_leader_prefix_title_and_description() {
+fn key_sequence_hint_shows_non_leader_prefix_title_and_description() {
     let mut mappings = BTreeMap::new();
     mappings.insert(
         "ChannelSwitcher".to_owned(),
@@ -1136,20 +2018,35 @@ fn leader_popup_shows_non_leader_prefix_title_and_description() {
 }
 
 #[test]
-fn leader_action_popup_renders_focused_pane_actions() {
-    let mut state = state_with_message();
-    state.focus_pane(FocusPane::Channels);
-    state.open_leader();
-    state.open_leader_actions_for_focused_target();
+fn leader_action_popup_matches_the_focused_pane() {
+    for (pane, expected) in [
+        (
+            FocusPane::Channels,
+            &[
+                "Channel actions",
+                "[p]",
+                "Show pinned messages",
+                "Show threads",
+                "Mark as read",
+            ][..],
+        ),
+        (
+            FocusPane::Guilds,
+            &["Server actions", "Mark server as read"][..],
+        ),
+    ] {
+        let mut state = state_with_message();
+        state.focus_pane(pane);
+        state.open_leader();
+        state.open_focused_pane_actions();
 
-    let dump = render_dashboard_dump(120, 20, &mut state);
-    let rendered = dump.join("\n");
+        let dump = render_dashboard_dump(120, 20, &mut state);
+        let rendered = dump.join("\n");
 
-    assert!(rendered.contains("Channel Actions"), "{rendered}");
-    assert!(rendered.contains("[p]"), "{rendered}");
-    assert!(rendered.contains("Show pinned messages"), "{rendered}");
-    assert!(rendered.contains("Show threads"), "{rendered}");
-    assert!(rendered.contains("Mark as read"), "{rendered}");
+        for needle in expected {
+            assert!(rendered.contains(needle), "{pane:?} {needle}\n{rendered}");
+        }
+    }
 }
 
 #[test]
@@ -1158,7 +2055,7 @@ fn leader_action_popup_renders_modified_action_shortcut_labels() {
     let channel_id = Id::new(2);
     let mut channel_actions = BTreeMap::new();
     channel_actions.insert(
-        "MuteChannel".to_owned(),
+        "ToggleMute".to_owned(),
         crate::config::KeymapBinding::one("<C-u>"),
     );
     let mut state = DashboardState::new_with_options(
@@ -1173,28 +2070,21 @@ fn leader_action_popup_renders_modified_action_shortcut_labels() {
         },
         Default::default(),
     );
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.focus_pane(FocusPane::Channels);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
 
-    let lines = leader_action_lines_for_test(&state);
+    let lines = channel_action_menu_lines_for_test(&state);
     let rendered = line_texts_from_ratatui(&lines).join("\n");
 
     assert!(rendered.contains("[Ctrl+u]"), "{rendered}");
@@ -1202,43 +2092,40 @@ fn leader_action_popup_renders_modified_action_shortcut_labels() {
 }
 
 #[test]
-fn leader_action_popup_dims_disabled_channel_actions() {
+fn leader_action_popup_selection_overrides_disabled_dim() {
     let mut state = state_with_message();
     state.focus_pane(FocusPane::Channels);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
-    let lines = leader_action_lines_for_test(&state);
+    state.open_focused_pane_actions();
+    let lines = channel_action_menu_lines_for_test(&state);
 
-    assert_eq!(lines[0].spans[2].content, "Join voice");
-    assert_eq!(lines[0].spans[2].style.fg, Some(DIM));
+    assert_eq!(
+        lines[0].spans[2].content,
+        "Join voice (not a voice channel)"
+    );
+    assert!(!lines[0].spans[2].style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]
-fn leader_action_popup_from_messages_hides_standalone_message_action_menu() {
-    let mut state = state_with_message();
-    state.focus_pane(FocusPane::Messages);
-    state.open_leader();
-    state.open_leader_actions_for_focused_target();
+fn folder_settings_popup_renders_name_and_color_inputs() {
+    let mut state = state_with_folder_settings();
 
     let dump = render_dashboard_dump(120, 20, &mut state);
     let rendered = dump.join("\n");
 
-    assert!(rendered.contains("Message Actions"), "{rendered}");
-    assert!(!rendered.contains("Message actions"), "{rendered}");
-}
+    assert!(rendered.contains("Folder Settings"), "{rendered}");
+    assert!(rendered.contains("Name:"), "{rendered}");
+    assert!(rendered.contains("folder"), "{rendered}");
+    assert!(rendered.contains("Color code:"), "{rendered}");
+    assert!(rendered.contains("#00AAFF"), "{rendered}");
+    assert!(rendered.contains("[s] submit"), "{rendered}");
+    assert!(rendered.contains("[c] cancel"), "{rendered}");
+    assert!(!rendered.contains("[Enter] select"), "{rendered}");
+    assert!(!rendered.contains("[Esc] close/cancel"), "{rendered}");
 
-#[test]
-fn leader_action_popup_from_guilds_uses_server_action_title() {
-    let mut state = state_with_message();
-    state.focus_pane(FocusPane::Guilds);
-    state.open_leader();
-    state.open_leader_actions_for_focused_target();
-
-    let dump = render_dashboard_dump(120, 20, &mut state);
-    let rendered = dump.join("\n");
-
-    assert!(rendered.contains("Server Actions"), "{rendered}");
-    assert!(rendered.contains("Mark server as read"), "{rendered}");
+    let inactive = folder_settings_input_line_for_test(false);
+    assert!(inactive.spans[1].style.add_modifier.contains(Modifier::DIM));
+    assert!(inactive.spans[2].style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]
@@ -1247,31 +2134,24 @@ fn leader_action_popup_from_members_uses_member_action_title() {
     state.confirm_selected_guild();
     state.focus_pane(FocusPane::Members);
     state.open_leader();
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
 
     let dump = render_dashboard_dump(120, 20, &mut state);
     let rendered = dump.join("\n");
 
-    assert!(rendered.contains("Member Actions"), "{rendered}");
+    assert!(rendered.contains("Member actions"), "{rendered}");
     assert!(rendered.contains("Show profile"), "{rendered}");
 }
 
 #[test]
-fn leader_action_popup_for_empty_panes_does_not_fall_back_to_root_keymap() {
+fn focused_pane_actions_on_empty_panes_open_nothing() {
     for pane in [FocusPane::Channels, FocusPane::Messages, FocusPane::Members] {
         let mut state = DashboardState::new();
         state.focus_pane(pane);
         state.open_leader();
-        state.open_leader_actions_for_focused_target();
+        state.open_focused_pane_actions();
 
-        let dump = render_dashboard_dump(120, 20, &mut state);
-        let rendered = dump.join("\n");
-
-        assert!(
-            rendered.contains("No actions available"),
-            "{pane:?}: {rendered}"
-        );
-        assert!(!rendered.contains("[o] Options"), "{pane:?}: {rendered}");
+        assert_eq!(state.active_modal_popup_kind(), None, "{pane:?}");
     }
 }
 
@@ -1333,7 +2213,7 @@ fn debug_log_popup_wraps_long_detail_lines() {
 
 #[test]
 fn keymap_popup_lines_show_help_content() {
-    let help_lines = keymap_help_popup_lines(vec![
+    let summaries = vec![
         KeymapBindingSummary {
             scope: "keymap",
             action: "ReplyMessage".to_owned(),
@@ -1344,7 +2224,8 @@ fn keymap_popup_lines_show_help_content() {
             action: "Submit".to_owned(),
             keys: vec!["<Enter>".to_owned()],
         },
-    ]);
+    ];
+    let help_lines = keymap_help_popup_lines(summaries.clone());
 
     assert_eq!(help_lines[0].spans[0].content, "[keymap]");
     assert_eq!(help_lines[1].spans[0].content, "[n] ");
@@ -1352,4 +2233,20 @@ fn keymap_popup_lines_show_help_content() {
     assert_eq!(help_lines[3].spans[0].content, "[keymap.composer]");
     assert_eq!(help_lines[4].spans[0].content, "[<Enter>] ");
     assert!(help_lines[4].spans[1].content.contains("Submit"));
+
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Shortcut,
+        Style::default().fg(Color::LightMagenta),
+    );
+    theme::with_test_theme(custom, || {
+        let help_lines = keymap_help_popup_lines(summaries);
+        assert_eq!(help_lines[1].spans[0].style.fg, Some(Color::LightMagenta));
+        assert_eq!(help_lines[4].spans[0].style.fg, Some(Color::LightMagenta));
+
+        let confirmation_lines = quit_confirmation_lines();
+        assert_eq!(
+            confirmation_lines[3].spans[1].style.fg,
+            Some(Color::LightMagenta)
+        );
+    });
 }

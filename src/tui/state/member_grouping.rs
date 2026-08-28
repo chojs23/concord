@@ -1,21 +1,19 @@
-use std::collections::HashMap;
-
 use crate::discord::ids::{
     Id,
     marker::{RoleMarker, UserMarker},
 };
 
-use crate::discord::{ChannelRecipientState, ChannelState, GuildMemberState, RoleState};
-
-use super::presentation::{
-    is_direct_message_channel, is_online_status, sort_member_entries, sort_recipient_entries,
-    sorted_hoisted_roles,
+use crate::discord::{
+    ChannelRecipientState, ChannelState, GuildMemberListEntry, GuildMemberState, RoleState,
 };
+
+use super::presentation::{is_direct_message_channel, member_status_rank, sort_recipient_entries};
 
 #[derive(Debug)]
 pub struct MemberGroup<'a> {
     pub label: String,
     pub color: Option<u32>,
+    pub count: u64,
     pub entries: Vec<MemberEntry<'a>>,
 }
 
@@ -49,6 +47,15 @@ impl MemberEntry<'_> {
         }
     }
 
+    pub fn member_search_alias(self) -> Option<String> {
+        match self {
+            Self::Guild(member) => member.nickname.clone(),
+            // Private-channel recipients are local-only candidates. Their
+            // display name remains searchable even though Opcode 8 is not used.
+            Self::Recipient(recipient) => Some(recipient.display_name.clone()),
+        }
+    }
+
     pub fn has_fallback_identity(self) -> bool {
         match self {
             Self::Guild(member) => member.username.is_none() && member.display_name == "unknown",
@@ -74,73 +81,77 @@ impl MemberEntry<'_> {
 }
 
 pub(super) fn guild_member_groups<'a>(
-    members: Vec<&'a GuildMemberState>,
-    roles: Vec<&'a RoleState>,
+    list_entries: Vec<(u32, &GuildMemberListEntry)>,
+    member_for_id: impl Fn(Id<UserMarker>) -> Option<&'a GuildMemberState>,
+    role_for_id: impl Fn(Id<RoleMarker>) -> Option<&'a RoleState>,
 ) -> Vec<MemberGroup<'a>> {
-    let hoisted_roles = sorted_hoisted_roles(&roles);
-    let hoisted_role_ranks: HashMap<Id<RoleMarker>, usize> = hoisted_roles
-        .iter()
-        .enumerate()
-        .map(|(rank, role)| (role.id, rank))
-        .collect();
-    let mut role_entries: Vec<Vec<&GuildMemberState>> = vec![Vec::new(); hoisted_roles.len()];
-    let mut groups: Vec<MemberGroup<'a>> = Vec::new();
-
-    let mut online_unroled = Vec::new();
-    let mut offline = Vec::new();
-
-    for member in members {
-        if let Some(rank) = primary_hoisted_role_rank(member, &hoisted_role_ranks) {
-            role_entries[rank].push(member);
-        } else if is_online_status(member.status) {
-            online_unroled.push(member);
-        } else {
-            offline.push(member);
+    let mut groups = Vec::new();
+    let mut current_group_index = None;
+    let mut current_group_is_implicit = false;
+    let mut previous_entry_index: Option<u32> = None;
+    for (entry_index, entry) in list_entries {
+        if previous_entry_index.is_some_and(|previous| previous.checked_add(1) != Some(entry_index))
+        {
+            current_group_index = None;
+            current_group_is_implicit = false;
         }
-    }
 
-    for (role, mut entries) in hoisted_roles.into_iter().zip(role_entries) {
-        if entries.is_empty() {
-            continue;
+        match entry {
+            GuildMemberListEntry::Group { id, count } => {
+                let (label, color) = member_group_presentation(id, &role_for_id);
+                groups.push(MemberGroup {
+                    label,
+                    color,
+                    count: *count,
+                    entries: Vec::new(),
+                });
+                current_group_index = Some(groups.len() - 1);
+                current_group_is_implicit = false;
+            }
+            GuildMemberListEntry::Member { user_id } => {
+                let Some(member) = member_for_id(*user_id) else {
+                    previous_entry_index = Some(entry_index);
+                    continue;
+                };
+                if current_group_index.is_none() {
+                    groups.push(MemberGroup {
+                        label: "Members".to_owned(),
+                        color: None,
+                        count: 0,
+                        entries: Vec::new(),
+                    });
+                    current_group_index = Some(groups.len() - 1);
+                    current_group_is_implicit = true;
+                }
+                let group = groups
+                    .get_mut(current_group_index.expect("member group index exists"))
+                    .expect("member group exists");
+                if current_group_is_implicit {
+                    group.count = group.count.saturating_add(1);
+                }
+                group.entries.push(MemberEntry::Guild(member));
+            }
         }
-        sort_member_entries(&mut entries);
-        groups.push(MemberGroup {
-            label: role.name.clone(),
-            color: role.color,
-            entries: entries.into_iter().map(MemberEntry::Guild).collect(),
-        });
+        previous_entry_index = Some(entry_index);
     }
-
-    if !online_unroled.is_empty() {
-        sort_member_entries(&mut online_unroled);
-        groups.push(MemberGroup {
-            label: "Online".to_owned(),
-            color: None,
-            entries: online_unroled.into_iter().map(MemberEntry::Guild).collect(),
-        });
-    }
-
-    if !offline.is_empty() {
-        sort_member_entries(&mut offline);
-        groups.push(MemberGroup {
-            label: "Offline".to_owned(),
-            color: None,
-            entries: offline.into_iter().map(MemberEntry::Guild).collect(),
-        });
-    }
-
     groups
 }
 
-fn primary_hoisted_role_rank(
-    member: &GuildMemberState,
-    hoisted_role_ranks: &HashMap<Id<RoleMarker>, usize>,
-) -> Option<usize> {
-    member
-        .role_ids
-        .iter()
-        .filter_map(|role_id| hoisted_role_ranks.get(role_id).copied())
-        .min()
+fn member_group_presentation<'a>(
+    id: &str,
+    role_for_id: &impl Fn(Id<RoleMarker>) -> Option<&'a RoleState>,
+) -> (String, Option<u32>) {
+    match id {
+        "online" => ("Online".to_owned(), None),
+        "offline" => ("Offline".to_owned(), None),
+        _ => id
+            .parse::<u64>()
+            .ok()
+            .and_then(Id::<RoleMarker>::new_checked)
+            .and_then(role_for_id)
+            .map(|role| (role.name.clone(), role.color))
+            .unwrap_or_else(|| ("Members".to_owned(), None)),
+    }
 }
 
 pub(super) fn channel_recipient_group(channel: &ChannelState) -> Vec<MemberGroup<'_>> {
@@ -153,7 +164,26 @@ pub(super) fn channel_recipient_group(channel: &ChannelState) -> Vec<MemberGroup
     vec![MemberGroup {
         label: "Members".to_owned(),
         color: None,
+        count: recipients.len() as u64,
         entries: recipients.into_iter().map(MemberEntry::Recipient).collect(),
+    }]
+}
+
+pub(super) fn thread_member_group(mut members: Vec<&GuildMemberState>) -> Vec<MemberGroup<'_>> {
+    if members.is_empty() {
+        return Vec::new();
+    }
+    members.sort_by_cached_key(|member| {
+        (
+            member_status_rank(member.status),
+            member.display_name.to_lowercase(),
+        )
+    });
+    vec![MemberGroup {
+        label: "Members".to_owned(),
+        color: None,
+        count: u64::try_from(members.len()).unwrap_or(u64::MAX),
+        entries: members.into_iter().map(MemberEntry::Guild).collect(),
     }]
 }
 

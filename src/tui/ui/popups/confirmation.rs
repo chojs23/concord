@@ -1,55 +1,49 @@
 use super::*;
+use crate::tui::state::{ConfirmationButton, MessageConfirmationKind};
 
-pub(in crate::tui::ui) fn render_message_delete_confirmation(
+pub(in crate::tui::ui) fn render_long_message_confirmation(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::MessageDeleteConfirmation) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation) {
         return;
     }
 
-    let Some((author, content)) = state.message_delete_confirmation_lines() else {
+    let Some((character_count, character_limit)) = state.long_message_confirmation_counts() else {
         return;
     };
-
-    let lines = message_delete_confirmation_lines_with_key_bindings(
-        &author,
-        content.as_deref(),
-        56,
-        state.key_bindings(),
+    let lines = long_message_confirmation_lines(
+        character_count,
+        character_limit,
+        state.active_confirmation_button(),
     );
-    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
-    render_modal_paragraph(frame, popup, "Delete message?", lines);
+    let popup = long_message_confirmation_popup_area(area, lines.len());
+    render_modal_paragraph(frame, popup, "Message is too long", lines);
 }
 
-pub(in crate::tui::ui) fn render_message_pin_confirmation(
+pub(in crate::tui::ui) fn render_message_confirmation(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::MessagePinConfirmation) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::MessageConfirmation) {
         return;
     }
 
-    let Some((pinned, author, content)) = state.message_pin_confirmation_lines() else {
+    let Some((kind, author, content)) = state.message_confirmation_lines() else {
         return;
     };
 
-    let lines = message_pin_confirmation_lines_with_key_bindings(
-        pinned,
+    let lines = message_confirmation_lines(
+        kind,
         &author,
         content.as_deref(),
         56,
-        state.key_bindings(),
+        state.active_confirmation_button(),
     );
-    let title = if pinned {
-        "Pin message?"
-    } else {
-        "Unpin message?"
-    };
-    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
-    render_modal_paragraph(frame, popup, title, lines);
+    let popup = message_confirmation_popup_area(area, lines.len());
+    render_modal_paragraph(frame, popup, kind.title(), lines);
 }
 
 pub(in crate::tui::ui) fn render_quit_confirmation(
@@ -61,8 +55,8 @@ pub(in crate::tui::ui) fn render_quit_confirmation(
         return;
     }
 
-    let lines = quit_confirmation_lines_with_key_bindings(state.key_bindings());
-    let popup = clear_centered_popup_area(frame, area, 44, (lines.len() as u16).saturating_add(2));
+    let lines = quit_confirmation_popup_lines(state.active_confirmation_button());
+    let popup = quit_confirmation_popup_area(area);
     render_modal_paragraph(frame, popup, "Quit", lines);
 }
 
@@ -79,9 +73,123 @@ pub(in crate::tui::ui) fn render_guild_leave_confirmation(
         return;
     };
 
-    let lines = guild_leave_confirmation_lines_with_key_bindings(&name, 56, state.key_bindings());
-    let popup = clear_centered_popup_area(frame, area, 60, (lines.len() as u16).saturating_add(2));
+    let lines = guild_leave_confirmation_lines(&name, 56, state.active_confirmation_button());
+    let popup = guild_leave_confirmation_popup_area(area, lines.len());
     render_modal_paragraph(frame, popup, "Leave server?", lines);
+}
+
+pub(in crate::tui::ui) fn render_thread_delete_confirmation(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+) {
+    if !state.is_active_modal_popup(ActiveModalPopupKind::ThreadDeleteConfirmation) {
+        return;
+    }
+
+    let Some((name, noun)) = state.thread_delete_confirmation_target() else {
+        return;
+    };
+
+    let lines =
+        thread_delete_confirmation_lines(&name, noun, 56, state.active_confirmation_button());
+    let popup = thread_delete_confirmation_popup_area(area, lines.len());
+    render_modal_paragraph(frame, popup, format!("Delete {noun}?"), lines);
+}
+
+pub(in crate::tui::ui) fn render_notification_inbox_mark_all_confirmation(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+) {
+    if !state.notification_inbox_is_confirming_mark_all() {
+        return;
+    }
+
+    let lines = notification_inbox_mark_all_confirmation_lines(state.active_confirmation_button());
+    let popup = message_confirmation_popup_area(area, lines.len());
+    render_modal_paragraph(frame, popup, "Mark read?", lines);
+}
+
+pub(in crate::tui::ui) fn message_confirmation_popup_area(area: Rect, line_count: usize) -> Rect {
+    centered_rect(area, 60, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn long_message_confirmation_popup_area(
+    area: Rect,
+    line_count: usize,
+) -> Rect {
+    centered_rect(area, 64, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn long_message_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let (character_count, character_limit) = state.long_message_confirmation_counts()?;
+    let lines = long_message_confirmation_lines(
+        character_count,
+        character_limit,
+        state.active_confirmation_button(),
+    );
+    Some(long_message_confirmation_popup_area(area, lines.len()))
+}
+
+pub(in crate::tui::ui) fn message_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let (kind, author, content) = state.message_confirmation_lines()?;
+    let lines = message_confirmation_lines(
+        kind,
+        &author,
+        content.as_deref(),
+        56,
+        state.active_confirmation_button(),
+    );
+    Some(message_confirmation_popup_area(area, lines.len()))
+}
+
+pub(in crate::tui::ui) fn quit_confirmation_popup_area(area: Rect) -> Rect {
+    centered_rect(
+        area,
+        44,
+        (quit_confirmation_popup_lines(ConfirmationButton::default()).len() as u16)
+            .saturating_add(2),
+    )
+}
+
+pub(in crate::tui::ui) fn guild_leave_confirmation_popup_area(
+    area: Rect,
+    line_count: usize,
+) -> Rect {
+    centered_rect(area, 60, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn guild_leave_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let name = state.guild_leave_confirmation_name()?;
+    let lines = guild_leave_confirmation_lines(&name, 56, state.active_confirmation_button());
+    Some(guild_leave_confirmation_popup_area(area, lines.len()))
+}
+
+pub(in crate::tui::ui) fn thread_delete_confirmation_popup_area(
+    area: Rect,
+    line_count: usize,
+) -> Rect {
+    centered_rect(area, 60, (line_count as u16).saturating_add(2))
+}
+
+pub(in crate::tui::ui) fn thread_delete_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let (name, noun) = state.thread_delete_confirmation_target()?;
+    let lines =
+        thread_delete_confirmation_lines(&name, noun, 56, state.active_confirmation_button());
+    Some(thread_delete_confirmation_popup_area(area, lines.len()))
 }
 
 #[cfg(test)]
@@ -90,27 +198,12 @@ pub(in crate::tui::ui) fn message_delete_confirmation_lines(
     content: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    message_delete_confirmation_lines_with_key_bindings(
+    message_confirmation_lines(
+        MessageConfirmationKind::Delete,
         author,
         content,
         width,
-        &crate::tui::keybindings::KeyBindings::default(),
-    )
-}
-
-fn message_delete_confirmation_lines_with_key_bindings(
-    author: &str,
-    content: Option<&str>,
-    width: usize,
-    key_bindings: &crate::tui::keybindings::KeyBindings,
-) -> Vec<Line<'static>> {
-    confirmation_lines(
-        "Delete this message?".to_owned(),
-        author,
-        content,
-        width,
-        "delete".to_owned(),
-        key_bindings,
+        ConfirmationButton::default(),
     )
 }
 
@@ -121,85 +214,160 @@ pub(in crate::tui::ui) fn message_pin_confirmation_lines(
     content: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    message_pin_confirmation_lines_with_key_bindings(
-        pinned,
+    message_confirmation_lines(
+        MessageConfirmationKind::Pin { pinned },
         author,
         content,
         width,
-        &crate::tui::keybindings::KeyBindings::default(),
+        ConfirmationButton::default(),
     )
 }
 
 #[cfg(test)]
 pub(in crate::tui::ui) fn quit_confirmation_lines() -> Vec<Line<'static>> {
-    quit_confirmation_lines_with_key_bindings(&crate::tui::keybindings::KeyBindings::default())
+    quit_confirmation_popup_lines(ConfirmationButton::default())
 }
 
-fn quit_confirmation_lines_with_key_bindings(
-    key_bindings: &crate::tui::keybindings::KeyBindings,
-) -> Vec<Line<'static>> {
-    vec![
-        Line::from(Span::raw("Quit Concord?")),
-        Line::from(Span::raw(String::new())),
-        Line::from(vec![
-            Span::styled(
-                key_bindings.message_confirmation_confirm_label(),
-                Style::default().fg(ACCENT).bold(),
-            ),
-            Span::raw(" quit · "),
-            Span::styled(
-                key_bindings.message_confirmation_cancel_label(),
-                Style::default().fg(ACCENT).bold(),
-            ),
-            Span::raw(" cancel"),
-        ]),
-    ]
-}
-
-fn guild_leave_confirmation_lines_with_key_bindings(
-    name: &str,
-    width: usize,
-    key_bindings: &crate::tui::keybindings::KeyBindings,
-) -> Vec<Line<'static>> {
-    let name = truncate_display_width(name, width.max(1).saturating_sub(2));
-    vec![
-        Line::from(Span::raw("Leave the current server?")),
-        Line::from(Span::styled(
-            format!("Server: {name}"),
-            Style::default().fg(Color::Red),
-        )),
-        Line::from(Span::raw(String::new())),
-        Line::from(vec![
-            Span::styled(
-                key_bindings.message_confirmation_confirm_label(),
-                Style::default().fg(ACCENT).bold(),
-            ),
-            Span::raw(" leave server · "),
-            Span::styled(
-                key_bindings.message_confirmation_cancel_label(),
-                Style::default().fg(ACCENT).bold(),
-            ),
-            Span::raw(" cancel"),
-        ]),
-    ]
-}
-
-fn message_pin_confirmation_lines_with_key_bindings(
-    pinned: bool,
+#[cfg(test)]
+pub(in crate::tui::ui) fn message_remove_embeds_confirmation_lines(
     author: &str,
     content: Option<&str>,
     width: usize,
-    key_bindings: &crate::tui::keybindings::KeyBindings,
 ) -> Vec<Line<'static>> {
-    let action = if pinned { "Pin" } else { "Unpin" };
-    confirmation_lines(
-        format!("{action} this message?"),
+    message_confirmation_lines(
+        MessageConfirmationKind::RemoveEmbeds,
         author,
         content,
         width,
-        format!("{action} message"),
-        key_bindings,
+        ConfirmationButton::default(),
     )
+}
+
+fn quit_confirmation_popup_lines(active: ConfirmationButton) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(Span::raw("Quit Concord?")),
+        Line::from(Span::raw(String::new())),
+    ];
+    lines.extend(confirmation_button_lines(active));
+    lines
+}
+
+fn guild_leave_confirmation_lines(
+    name: &str,
+    width: usize,
+    active: ConfirmationButton,
+) -> Vec<Line<'static>> {
+    let name = truncate_display_width(name, width.max(1).saturating_sub(2));
+    let mut lines = vec![
+        Line::from(Span::raw("Leave the current server?")),
+        Line::from(Span::styled(
+            format!("Server: {name}"),
+            theme::current().style(theme::HighlightGroup::Error),
+        )),
+        Line::from(Span::raw(String::new())),
+    ];
+    lines.extend(confirmation_button_lines(active));
+    lines
+}
+
+fn thread_delete_confirmation_lines(
+    name: &str,
+    noun: &str,
+    width: usize,
+    active: ConfirmationButton,
+) -> Vec<Line<'static>> {
+    let name = truncate_display_width(name, width.max(1).saturating_sub(2));
+    let label = capitalize_first(noun);
+    let mut lines = vec![
+        Line::from(Span::raw(format!("Permanently delete this {noun}?"))),
+        Line::from(Span::styled(
+            format!("{label}: {name}"),
+            theme::current().style(theme::HighlightGroup::Error),
+        )),
+        Line::from(Span::raw(String::new())),
+    ];
+    lines.extend(confirmation_button_lines(active));
+    lines
+}
+
+fn confirmation_button_lines(active: ConfirmationButton) -> Vec<Line<'static>> {
+    confirmation_button_lines_with_labels(active, "confirm", "cancel")
+}
+
+fn confirmation_button_lines_with_labels(
+    active: ConfirmationButton,
+    confirm_label: &'static str,
+    cancel_label: &'static str,
+) -> Vec<Line<'static>> {
+    vec![
+        popup_button_line("y", confirm_label, active == ConfirmationButton::Confirm),
+        popup_button_line("n", cancel_label, active == ConfirmationButton::Cancel),
+    ]
+}
+
+fn long_message_confirmation_lines(
+    character_count: usize,
+    character_limit: usize,
+    active: ConfirmationButton,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("{character_count} / {character_limit} characters"),
+            theme::current().style(theme::HighlightGroup::Error),
+        )),
+        Line::from(Span::raw("This message is too long to send as text.")),
+        Line::from(Span::raw("Send the full text as message.txt instead?")),
+        Line::from(Span::raw(String::new())),
+    ];
+    lines.extend(confirmation_button_lines_with_labels(
+        active,
+        "send as file",
+        "cancel",
+    ));
+    lines
+}
+
+#[cfg(test)]
+pub(in crate::tui::ui) fn long_message_confirmation_lines_for_test(
+    character_count: usize,
+    character_limit: usize,
+) -> Vec<Line<'static>> {
+    long_message_confirmation_lines(
+        character_count,
+        character_limit,
+        ConfirmationButton::default(),
+    )
+}
+
+fn notification_inbox_mark_all_confirmation_lines(
+    active: ConfirmationButton,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(Span::raw("Mark all unread channels as read?")),
+        Line::from(Span::raw(String::new())),
+    ];
+    lines.extend(confirmation_button_lines(active));
+    lines
+}
+
+/// Uppercase the first ASCII letter so a noun like "post" renders as "Post:" in
+/// the confirmation body. The nouns are known ASCII words, so this is sufficient.
+fn capitalize_first(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn message_confirmation_lines(
+    kind: MessageConfirmationKind,
+    author: &str,
+    content: Option<&str>,
+    width: usize,
+    active: ConfirmationButton,
+) -> Vec<Line<'static>> {
+    confirmation_lines(kind.prompt(), author, content, width, active)
 }
 
 fn confirmation_lines(
@@ -207,8 +375,7 @@ fn confirmation_lines(
     author: &str,
     content: Option<&str>,
     width: usize,
-    action_label: String,
-    key_bindings: &crate::tui::keybindings::KeyBindings,
+    active: ConfirmationButton,
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
     let excerpt = content
@@ -217,28 +384,18 @@ fn confirmation_lines(
         .map(|content| content.split_whitespace().collect::<Vec<_>>().join(" "))
         .unwrap_or_else(|| "[no text content]".to_owned());
     let excerpt = truncate_display_width(&excerpt, width.saturating_sub(2));
-    vec![
+    let mut lines = vec![
         Line::from(Span::raw(prompt)),
         Line::from(Span::styled(
             format!("From: {author}"),
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::MessageSecondary),
         )),
         Line::from(Span::styled(
             format!("\"{excerpt}\""),
-            Style::default().fg(Color::Red),
+            theme::current().style(theme::HighlightGroup::Error),
         )),
         Line::from(Span::raw(String::new())),
-        Line::from(vec![
-            Span::styled(
-                key_bindings.message_confirmation_confirm_label(),
-                Style::default().fg(ACCENT).bold(),
-            ),
-            Span::raw(format!(" {action_label} · ")),
-            Span::styled(
-                key_bindings.message_confirmation_cancel_label(),
-                Style::default().fg(ACCENT).bold(),
-            ),
-            Span::raw(" cancel"),
-        ]),
-    ]
+    ];
+    lines.extend(confirmation_button_lines(active));
+    lines
 }

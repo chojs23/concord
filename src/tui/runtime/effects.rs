@@ -13,33 +13,33 @@ use tokio::sync::mpsc;
 use crate::{
     config::NotificationOptions,
     discord::{
-        AppEvent, ChannelInfo, DiscordClient, MessageInfo, SequencedAppEvent, VoiceSoundKind,
+        AppEvent, DiscordClient, SequencedAppEvent, VoiceSoundKind,
+        ids::{
+            Id,
+            marker::{GuildMarker, UserMarker},
+        },
     },
     logging,
 };
 
 use super::super::{
-    media::{
-        AvatarImageCache, EmojiImageCache, ImagePreviewCache, MediaImageDecodeResult,
-        spawn_media_image_decode,
-    },
+    media::MediaImageDecodeResult,
     state::{DashboardState, DesktopNotification},
 };
+use super::media_runtime::DashboardMediaRuntime;
 
 pub(super) const MAX_DRAINED_EFFECT_EVENTS: usize = 1024;
 static NOTIFICATION_FAILURE_LOGGED: AtomicBool = AtomicBool::new(false);
 
-pub(in crate::tui) struct EffectContext<'a> {
-    pub(in crate::tui) state: &'a mut DashboardState,
-    pub(in crate::tui) client: &'a DiscordClient,
-    pub(in crate::tui) image_previews: &'a mut ImagePreviewCache,
-    pub(in crate::tui) avatar_images: &'a mut AvatarImageCache,
-    pub(in crate::tui) emoji_images: &'a mut EmojiImageCache,
-    pub(in crate::tui) media_decode_tx: &'a mpsc::UnboundedSender<MediaImageDecodeResult>,
+pub(super) struct EffectContext<'a> {
+    pub(super) state: &'a mut DashboardState,
+    pub(super) client: &'a DiscordClient,
+    pub(super) media_runtime: &'a mut DashboardMediaRuntime,
+    pub(super) media_decode_tx: &'a mpsc::UnboundedSender<MediaImageDecodeResult>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::tui) struct EffectProcessingOutcome {
+pub(super) struct EffectProcessingOutcome {
     pub(super) processed_event: bool,
     pub(super) force_redraw: bool,
 }
@@ -58,10 +58,11 @@ impl EffectProcessingOutcome {
     }
 }
 
-pub(in crate::tui) fn effect_forces_redraw(event: &AppEvent) -> bool {
-    // Attachment preview events are the shared media-completion path for
-    // inline previews, avatars, emoji images, and profile-popup avatars. They
-    // must redraw even when the visible dashboard signature is unchanged.
+/// Some redraws are needed for state that the dashboard view signature does not
+/// cover, mainly the media caches (an inline preview, avatar, or emoji finishing
+/// or failing to load) and connection-lifecycle events. Force a redraw for those
+/// regardless of whether the visible signature changed.
+pub(super) fn effect_forces_redraw(event: &AppEvent) -> bool {
     matches!(
         event,
         AppEvent::AttachmentPreviewLoaded { .. }
@@ -74,6 +75,7 @@ pub(in crate::tui) fn effect_forces_redraw(event: &AppEvent) -> bool {
             | AppEvent::MediaPlaybackWindowReady { .. }
             | AppEvent::GatewayResumed
             | AppEvent::GatewayReidentified
+            | AppEvent::SignedOut
             | AppEvent::GatewayClosed
     )
 }
@@ -83,47 +85,72 @@ pub(super) fn process_effect_event(
     ctx: &mut EffectContext<'_>,
 ) -> EffectProcessingOutcome {
     let outcome = EffectProcessingOutcome::processed(&event);
-    let member_hydration_messages = member_hydration_messages_for_event(&event);
-    let thread_owner_hydration_infos = thread_owner_hydration_infos_for_event(&event);
+    let now = std::time::Instant::now();
+    let missing_members = missing_members_for_effect(&event, ctx.state, now);
 
     dispatch_runtime_side_effects(&event, ctx);
     record_media_event(&event, ctx);
     push_dashboard_effect(event, ctx);
-    enqueue_missing_message_author_requests(member_hydration_messages, ctx);
-    enqueue_missing_thread_owner_requests(thread_owner_hydration_infos, ctx);
+    enqueue_member_hydration_requests(missing_members, ctx, now);
 
     outcome
 }
 
-fn member_hydration_messages_for_event(event: &AppEvent) -> Option<Vec<MessageInfo>> {
-    match event {
+fn missing_members_for_effect(
+    event: &AppEvent,
+    state: &DashboardState,
+    now: std::time::Instant,
+) -> Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)> {
+    let mut missing = Vec::new();
+    let messages = match event {
+        AppEvent::MessageCreate { message } => Some(std::slice::from_ref(message)),
         AppEvent::MessageHistoryLoaded { messages, .. }
         | AppEvent::MessageHistoryRefreshed { messages, .. }
         | AppEvent::MessageHistoryAfterLoaded { messages, .. }
-        | AppEvent::MessageHistoryCatchUpLoaded { messages, .. }
         | AppEvent::MessageHistoryAroundLoaded { messages, .. }
+        | AppEvent::InboxMentionsLoaded { messages, .. }
+        | AppEvent::InboxChannelMessagesLoaded { messages, .. }
         | AppEvent::MessageSearchLoaded {
             page: crate::discord::MessageSearchPage { messages, .. },
         }
-        | AppEvent::PinnedMessagesLoaded { messages, .. }
-        | AppEvent::ForumPostsLoaded {
-            first_messages: messages,
-            ..
-        } => Some(messages.clone()),
+        | AppEvent::PinnedMessagesLoaded { messages, .. } => Some(messages.as_slice()),
         _ => None,
+    };
+    if let Some(messages) = messages {
+        missing.extend(state.missing_message_author_member_requests(messages));
     }
-}
-
-fn thread_owner_hydration_infos_for_event(event: &AppEvent) -> Option<Vec<ChannelInfo>> {
-    match event {
-        AppEvent::ForumPostsLoaded { threads, .. } => Some(threads.clone()),
-        _ => None,
+    if let AppEvent::MessageUpdateDispatch { update } = event
+        && let Some(mentions) = update.fields.mentions.as_ref()
+    {
+        missing.extend(state.missing_channel_user_member_requests(
+            update.channel_id,
+            update.guild_id,
+            mentions.iter().map(|mention| mention.user_id),
+        ));
     }
+    if let AppEvent::ReactionUsersLoaded {
+        channel_id, users, ..
+    } = event
+    {
+        missing.extend(state.missing_channel_user_member_requests(
+            *channel_id,
+            None,
+            users.iter().map(|user| user.user_id),
+        ));
+    }
+    // Persistent voice, typing, thread, and permission demands are retryable
+    // background work. Append them only after users surfaced by this event so
+    // the first 100-ID Gateway request resolves the active view.
+    missing.extend(state.observed_member_hydration_requests(now));
+    missing
 }
 
 fn dispatch_runtime_side_effects(event: &AppEvent, ctx: &EffectContext<'_>) {
     if let Some(notification) = ctx.state.desktop_notification_for_event(event) {
         dispatch_desktop_notification(notification, ctx.state.desktop_notification_icon());
+    }
+    if ctx.state.notification_sound_for_event(event) {
+        dispatch_notification_sound(ctx.state.notification_options());
     }
     if let AppEvent::VoiceSound { kind } = event {
         dispatch_voice_sound(*kind, ctx.state.notification_options());
@@ -131,20 +158,26 @@ fn dispatch_runtime_side_effects(event: &AppEvent, ctx: &EffectContext<'_>) {
 }
 
 fn record_media_event(event: &AppEvent, ctx: &mut EffectContext<'_>) {
-    let preview_jobs = ctx.image_previews.record_event(event);
-    for job in preview_jobs
-        .into_iter()
-        .chain(ctx.avatar_images.record_event(event))
-        .chain(ctx.emoji_images.record_event(event))
-    {
-        spawn_media_image_decode(job, ctx.media_decode_tx.clone());
-    }
+    ctx.media_runtime.record_event(event, ctx.media_decode_tx);
 }
 
 fn push_dashboard_effect(event: AppEvent, ctx: &mut EffectContext<'_>) {
+    if let AppEvent::RichPresenceDetected { activities } = event {
+        ctx.state.set_detected_rich_presence(activities);
+        return;
+    }
     if matches!(event, AppEvent::GatewayClosed) {
         handle_gateway_closed(ctx.state);
         return;
+    }
+    if matches!(event, AppEvent::SignedOut) {
+        ctx.state.sign_out();
+        return;
+    }
+    if matches!(event, AppEvent::GatewayReidentified)
+        && let Some(command) = ctx.state.selected_channel_subscription_command()
+    {
+        ctx.state.enqueue_pending_command(command);
     }
     if matches!(
         event,
@@ -156,75 +189,74 @@ fn push_dashboard_effect(event: AppEvent, ctx: &mut EffectContext<'_>) {
     ctx.state.push_effect(event);
 }
 
-fn enqueue_missing_message_author_requests(
-    messages: Option<Vec<MessageInfo>>,
+fn enqueue_member_hydration_requests(
+    missing: Vec<(Id<GuildMarker>, Vec<Id<UserMarker>>)>,
     ctx: &mut EffectContext<'_>,
+    now: std::time::Instant,
 ) {
-    let Some(messages) = messages else {
-        return;
-    };
-    let missing = ctx.state.missing_message_author_member_requests(&messages);
-    let requests = ctx
-        .client
-        .next_message_author_member_requests(missing, std::time::Instant::now());
-    ctx.state.enqueue_message_author_member_requests(requests);
-}
-
-fn enqueue_missing_thread_owner_requests(
-    threads: Option<Vec<ChannelInfo>>,
-    ctx: &mut EffectContext<'_>,
-) {
-    let Some(threads) = threads else {
-        return;
-    };
-    let missing = ctx.state.missing_thread_owner_member_requests(&threads);
-    let requests = ctx
-        .client
-        .next_message_author_member_requests(missing, std::time::Instant::now());
-    ctx.state.enqueue_message_author_member_requests(requests);
+    let requests = ctx.client.next_member_hydration_requests(missing, now);
+    ctx.state.enqueue_member_hydration_requests(requests);
 }
 
 fn dispatch_desktop_notification(notification: DesktopNotification, icon: Option<String>) {
+    let title = notification.title;
+    let body = notification.body;
+    spawn_notification_task("notification", "desktop notification", move || {
+        deliver_desktop_notification(&title, &body, icon.as_deref())
+    });
+}
+
+fn dispatch_voice_sound(kind: VoiceSoundKind, notification_options: NotificationOptions) {
+    spawn_notification_task("voice", "voice sound", move || {
+        play_voice_sound(kind, notification_options)
+    });
+}
+
+fn dispatch_notification_sound(notification_options: NotificationOptions) {
+    spawn_notification_task("notification", "message sound", move || {
+        play_notification_sound(notification_options)
+    });
+}
+
+#[cfg(feature = "voice-playback")]
+pub(in crate::tui) fn dispatch_push_to_talk_sound(pressed: bool) {
     tokio::spawn(async move {
-        let title = notification.title;
-        let body = notification.body;
         let result = tokio::task::spawn_blocking(move || {
-            deliver_desktop_notification(&title, &body, icon.as_deref())
+            super::notification_audio::play_push_to_talk_sound(pressed)
         })
         .await;
-
         match result {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 log_notification_failure_once(
-                    "notification",
-                    format!("desktop notification failed: {error}"),
+                    "voice",
+                    format!("push-to-talk sound failed: {error}"),
                 );
-                ring_terminal_bell();
             }
             Err(error) => {
                 log_notification_failure_once(
-                    "notification",
-                    format!("desktop notification task failed: {error}"),
+                    "voice",
+                    format!("push-to-talk sound task failed: {error}"),
                 );
-                ring_terminal_bell();
             }
         }
     });
 }
 
-fn dispatch_voice_sound(kind: VoiceSoundKind, notification_options: NotificationOptions) {
+fn spawn_notification_task<F>(target: &'static str, action: &'static str, task: F)
+where
+    F: FnOnce() -> std::result::Result<(), String> + Send + 'static,
+{
     tokio::spawn(async move {
-        let result =
-            tokio::task::spawn_blocking(move || play_voice_sound(kind, notification_options)).await;
+        let result = tokio::task::spawn_blocking(task).await;
         match result {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
-                log_notification_failure_once("voice", format!("voice sound failed: {error}"));
+                log_notification_failure_once(target, format!("{action} failed: {error}"));
                 ring_terminal_bell();
             }
             Err(error) => {
-                log_notification_failure_once("voice", format!("voice sound task failed: {error}"));
+                log_notification_failure_once(target, format!("{action} task failed: {error}"));
                 ring_terminal_bell();
             }
         }
@@ -263,10 +295,29 @@ fn play_voice_sound(
     }
 }
 
+fn play_notification_sound(
+    notification_options: NotificationOptions,
+) -> std::result::Result<(), String> {
+    let custom_path = notification_options.notification_sound.as_deref();
+    #[cfg(feature = "voice-playback")]
+    {
+        super::notification_audio::play_notification_sound(custom_path)
+    }
+    #[cfg(not(feature = "voice-playback"))]
+    {
+        let _ = custom_path;
+        ring_terminal_bell();
+        Ok(())
+    }
+}
+
 fn voice_sound_path(kind: VoiceSoundKind, options: &NotificationOptions) -> Option<&Path> {
     match kind {
         VoiceSoundKind::Join => options.voice_join_sound.as_deref(),
         VoiceSoundKind::Leave => options.voice_leave_sound.as_deref(),
+        VoiceSoundKind::StreamStart
+        | VoiceSoundKind::StreamViewerJoin
+        | VoiceSoundKind::StreamViewerLeave => None,
     }
 }
 
@@ -282,8 +333,8 @@ fn deliver_notify_rust_notification(
     if let Some(icon) = icon {
         notification.icon(icon);
     }
-    #[cfg(target_os = "macos")]
-    notification.sound_name("Ping");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    notification.hint(notify_rust::Hint::SuppressSound(true));
     notification
         .summary(title)
         .body(body)
@@ -326,7 +377,7 @@ fn ring_terminal_bell() {
     let _ = output.flush();
 }
 
-pub(in crate::tui) fn process_sequenced_effect(
+pub(super) fn process_sequenced_effect(
     event: SequencedAppEvent,
     current_snapshot_revision: u64,
     deferred_effects: &mut VecDeque<SequencedAppEvent>,
@@ -339,7 +390,7 @@ pub(in crate::tui) fn process_sequenced_effect(
     process_effect_event(event.event, ctx)
 }
 
-pub(in crate::tui) fn process_deferred_effects(
+pub(super) fn process_deferred_effects(
     current_snapshot_revision: u64,
     deferred_effects: &mut VecDeque<SequencedAppEvent>,
     ctx: &mut EffectContext<'_>,
@@ -367,128 +418,260 @@ pub(super) fn handle_gateway_closed(state: &mut DashboardState) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use tokio::sync::mpsc;
 
     use crate::discord::ids::Id;
+    use crate::discord::test_builders::{
+        GuildCreateFixture, MessageHistoryLoadedFixture, ReactionUsersLoadedFixture,
+        guild_create_event, message_history_loaded_event, reaction_users_loaded_event,
+    };
     use crate::discord::{
-        AppCommand, AppEvent, ChannelInfo, ForumPostArchiveState, MemberInfo, MessageInfo, RoleInfo,
+        AppCommand, AppEvent, ChannelInfo, MemberInfo, MentionInfo, MessageHistoryAfterMode,
+        MessageInfo, MessageUpdateDispatchInfo, MessageUpdateEventFields, ReactionEmoji,
+        ReactionUserInfo, RoleInfo, SequencedAppEvent, VoiceStateInfo,
     };
 
     use super::*;
 
     #[test]
-    fn message_history_loaded_enqueues_missing_author_member_request() {
+    fn effect_waits_until_snapshot_revision_catches_up() {
+        let mut state = DashboardState::new();
+        let mut media_runtime =
+            DashboardMediaRuntime::new(crate::config::ImageProtocolPreference::Auto);
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let (media_decode_tx, _media_decode_rx) = mpsc::unbounded_channel();
+        let mut deferred_effects = VecDeque::new();
+
+        {
+            let mut ctx = EffectContext {
+                state: &mut state,
+                client: &client,
+                media_runtime: &mut media_runtime,
+                media_decode_tx: &media_decode_tx,
+            };
+            process_sequenced_effect(
+                SequencedAppEvent {
+                    revision: 2,
+                    event: AppEvent::Ready {
+                        user: "tester".to_owned(),
+                        user_id: None,
+                    },
+                },
+                1,
+                &mut deferred_effects,
+                &mut ctx,
+            );
+        }
+
+        assert_eq!(deferred_effects.len(), 1);
+        assert_eq!(state.current_user(), None);
+
+        {
+            let mut ctx = EffectContext {
+                state: &mut state,
+                client: &client,
+                media_runtime: &mut media_runtime,
+                media_decode_tx: &media_decode_tx,
+            };
+            process_deferred_effects(2, &mut deferred_effects, &mut ctx);
+        }
+
+        assert!(deferred_effects.is_empty());
+        assert_eq!(state.current_user(), Some("tester"));
+    }
+
+    #[test]
+    fn events_carrying_unloaded_authors_enqueue_a_member_request() {
         let guild_id = Id::new(1);
         let channel_id = Id::new(2);
         let author_id = Id::new(99);
+        let message_id = Id::new(20);
+        let text_channel = || channel_info(guild_id, channel_id, None, "general", "GuildText");
+
+        // Every route that surfaces a message authored by someone the
+        // member cache has never seen must ask for that member, or the row
+        // renders with a raw id instead of a name.
+        let cases = [
+            (
+                "live message",
+                text_channel(),
+                AppEvent::MessageCreate {
+                    message: message_info(guild_id, channel_id, message_id, author_id),
+                },
+            ),
+            (
+                "message history",
+                text_channel(),
+                message_history_loaded_event(MessageHistoryLoadedFixture {
+                    channel_id,
+                    messages: vec![message_info(guild_id, channel_id, message_id, author_id)],
+                    ..MessageHistoryLoadedFixture::new()
+                }),
+            ),
+            (
+                "inbox mentions",
+                text_channel(),
+                AppEvent::InboxMentionsLoaded {
+                    request_id: 1,
+                    before: None,
+                    messages: vec![message_info(guild_id, channel_id, message_id, author_id)],
+                    has_more: false,
+                },
+            ),
+            (
+                "inbox channel messages",
+                text_channel(),
+                AppEvent::InboxChannelMessagesLoaded {
+                    request_id: 1,
+                    channel_id,
+                    messages: vec![message_info(guild_id, channel_id, message_id, author_id)],
+                },
+            ),
+            (
+                "reaction user",
+                text_channel(),
+                reaction_users_loaded_event(ReactionUsersLoadedFixture {
+                    channel_id,
+                    message_id,
+                    emoji: ReactionEmoji::Unicode("👍".to_owned()),
+                    users: vec![ReactionUserInfo::test(author_id, "unknown")],
+                    next_after: None,
+                    after: None,
+                }),
+            ),
+            (
+                "updated message mention",
+                text_channel(),
+                AppEvent::MessageUpdateDispatch {
+                    update: MessageUpdateDispatchInfo {
+                        guild_id: Some(guild_id),
+                        channel_id,
+                        message_id,
+                        fields: MessageUpdateEventFields {
+                            mentions: Some(vec![MentionInfo::test(author_id, "unknown")]),
+                            ..MessageUpdateEventFields::default()
+                        },
+                        extra_fields: Default::default(),
+                    },
+                },
+            ),
+        ];
+
+        for (label, channel, event) in cases {
+            let mut state = DashboardState::new();
+            push_guild_with_channel(&mut state, guild_id, channel);
+
+            process_effect_in_default_context(&mut state, event);
+
+            assert_eq!(
+                state.drain_pending_commands(),
+                vec![AppCommand::LoadGuildMembersByIds {
+                    guild_id,
+                    user_ids: vec![author_id],
+                }],
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn visible_message_authors_take_the_first_member_hydration_batch() {
+        let guild_id = Id::new(1);
+        let text_channel_id = Id::new(2);
+        let voice_channel_id = Id::new(3);
+        let author_id = Id::new(9_999);
         let mut state = DashboardState::new();
-        push_guild_with_channel(
-            &mut state,
-            guild_id,
-            channel_info(guild_id, channel_id, None, "general", "GuildText"),
-        );
+        state.push_event(guild_create_event(GuildCreateFixture {
+            channels: vec![
+                channel_info(guild_id, text_channel_id, None, "general", "GuildText"),
+                channel_info(guild_id, voice_channel_id, None, "Lobby", "GuildVoice"),
+            ],
+            roles: vec![RoleInfo::test(Id::new(guild_id.get()), "@everyone")],
+            ..GuildCreateFixture::new(guild_id)
+        }));
+
+        let background_user_ids = (1_000..1_100).map(Id::new).collect::<Vec<_>>();
+        for user_id in &background_user_ids {
+            state.push_event(AppEvent::VoiceStateUpdate {
+                state: VoiceStateInfo::test(guild_id, Some(voice_channel_id), *user_id),
+            });
+        }
 
         process_effect_in_default_context(
             &mut state,
             AppEvent::MessageHistoryLoaded {
-                channel_id,
+                channel_id: text_channel_id,
                 before: None,
-                messages: vec![message_info(guild_id, channel_id, Id::new(20), author_id)],
-            },
-        );
-
-        assert_eq!(
-            state.drain_pending_commands(),
-            vec![AppCommand::LoadGuildMembersByIds {
-                guild_id,
-                user_ids: vec![author_id],
-            }]
-        );
-    }
-
-    #[test]
-    fn forum_posts_loaded_enqueues_missing_preview_author_member_request() {
-        let guild_id = Id::new(1);
-        let forum_id = Id::new(2);
-        let thread_id = Id::new(3);
-        let author_id = Id::new(99);
-        let mut state = DashboardState::new();
-        push_guild_with_channel(
-            &mut state,
-            guild_id,
-            channel_info(guild_id, forum_id, None, "forum", "forum"),
-        );
-
-        process_effect_in_default_context(
-            &mut state,
-            AppEvent::ForumPostsLoaded {
-                channel_id: forum_id,
-                archive_state: ForumPostArchiveState::Active,
-                offset: 0,
-                next_offset: 1,
-                threads: vec![channel_info(
+                messages: vec![message_info(
                     guild_id,
-                    thread_id,
-                    Some(forum_id),
-                    "welcome",
-                    "GuildPublicThread",
+                    text_channel_id,
+                    Id::new(20),
+                    author_id,
                 )],
-                first_messages: vec![message_info(guild_id, thread_id, Id::new(20), author_id)],
-                has_more: false,
             },
         );
 
-        assert_eq!(
-            state.drain_pending_commands(),
-            vec![AppCommand::LoadGuildMembersByIds {
-                guild_id,
-                user_ids: vec![author_id],
-            }]
-        );
+        let commands = state.drain_pending_commands();
+        let [
+            AppCommand::LoadGuildMembersByIds {
+                guild_id: first_guild_id,
+                user_ids: first_user_ids,
+            },
+            AppCommand::LoadGuildMembersByIds {
+                guild_id: second_guild_id,
+                user_ids: second_user_ids,
+            },
+        ] = commands.as_slice()
+        else {
+            panic!("expected two member hydration batches, got {commands:?}");
+        };
+        assert_eq!(*first_guild_id, guild_id);
+        assert_eq!(*second_guild_id, guild_id);
+        assert_eq!(first_user_ids.first(), Some(&author_id));
+        assert_eq!(first_user_ids.len(), 100);
+        assert_eq!(second_user_ids, &background_user_ids[99..]);
     }
 
     #[test]
-    fn forum_posts_loaded_enqueues_missing_thread_owner_member_request() {
+    fn voice_member_hydration_requests_only_unresolved_participants() {
         let guild_id = Id::new(1);
-        let forum_id = Id::new(2);
-        let thread_id = Id::new(3);
-        let owner_id = Id::new(99);
-        let mut state = DashboardState::new();
-        push_guild_with_channel(
-            &mut state,
-            guild_id,
-            channel_info(guild_id, forum_id, None, "forum", "forum"),
-        );
+        let channel_id = Id::new(2);
+        let user_id = Id::new(99);
+        let voice_channel = || channel_info(guild_id, channel_id, None, "Lobby", "GuildVoice");
 
-        process_effect_in_default_context(
-            &mut state,
-            AppEvent::ForumPostsLoaded {
-                channel_id: forum_id,
-                archive_state: ForumPostArchiveState::Active,
-                offset: 0,
-                next_offset: 1,
-                threads: vec![ChannelInfo {
-                    owner_id: Some(owner_id),
-                    ..channel_info(
-                        guild_id,
-                        thread_id,
-                        Some(forum_id),
-                        "welcome",
-                        "GuildPublicThread",
-                    )
-                }],
-                first_messages: Vec::new(),
-                has_more: false,
-            },
-        );
-
+        let mut missing_state = DashboardState::new();
+        push_guild_with_channel(&mut missing_state, guild_id, voice_channel());
+        let missing_event = AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo::test(guild_id, Some(channel_id), user_id),
+        };
+        missing_state.push_event(missing_event.clone());
+        process_effect_in_default_context(&mut missing_state, missing_event);
         assert_eq!(
-            state.drain_pending_commands(),
+            missing_state.drain_pending_commands(),
             vec![AppCommand::LoadGuildMembersByIds {
                 guild_id,
-                user_ids: vec![owner_id],
+                user_ids: vec![user_id],
             }]
         );
+
+        let mut complete_state = DashboardState::new();
+        push_guild_with_channel(&mut complete_state, guild_id, voice_channel());
+        let complete_event = AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo {
+                member: Some(MemberInfo {
+                    username: Some("voice-user".to_owned()),
+                    role_ids: vec![Id::new(10)],
+                    ..MemberInfo::test(user_id, "Voice User")
+                }),
+                ..VoiceStateInfo::test(guild_id, Some(channel_id), user_id)
+            },
+        };
+        complete_state.push_event(complete_event.clone());
+        process_effect_in_default_context(&mut complete_state, complete_event);
+        assert!(complete_state.drain_pending_commands().is_empty());
     }
 
     #[test]
@@ -505,22 +688,39 @@ mod tests {
             );
             state.confirm_selected_guild();
             state.confirm_selected_channel();
-            state.push_event(AppEvent::MessageHistoryLoaded {
+            state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
                 channel_id,
-                before: None,
                 messages: vec![message_info(guild_id, channel_id, Id::new(20), Id::new(99))],
-            });
+                ..MessageHistoryLoadedFixture::new()
+            }));
 
+            let reidentified = matches!(event, AppEvent::GatewayReidentified);
             process_effect_in_default_context(&mut state, event);
 
-            assert_eq!(
-                state.drain_pending_commands(),
-                vec![AppCommand::CatchUpMessageHistoryAfter {
+            let mut expected = Vec::new();
+            if reidentified {
+                expected.push(AppCommand::SubscribeGuildChannel {
+                    guild_id,
                     channel_id,
-                    after: Id::new(20),
-                }]
-            );
+                });
+            }
+            expected.push(AppCommand::LoadMessageHistoryAfter {
+                channel_id,
+                after: Id::new(20),
+                mode: MessageHistoryAfterMode::CatchUp,
+            });
+            assert_eq!(state.drain_pending_commands(), expected);
         }
+    }
+
+    #[test]
+    fn signed_out_effect_marks_dashboard_for_sign_out() {
+        let mut state = DashboardState::new();
+
+        process_effect_in_default_context(&mut state, AppEvent::SignedOut);
+
+        assert!(state.should_quit());
+        assert!(state.should_sign_out());
     }
 
     fn push_guild_with_channel(
@@ -528,17 +728,11 @@ mod tests {
         guild_id: Id<crate::discord::ids::marker::GuildMarker>,
         channel: ChannelInfo,
     ) {
-        state.push_event(AppEvent::GuildCreate {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            owner_id: None,
+        state.push_event(guild_create_event(GuildCreateFixture {
             channels: vec![channel],
-            members: Vec::<MemberInfo>::new(),
-            presences: Vec::new(),
             roles: vec![RoleInfo::test(Id::new(guild_id.get()), "@everyone")],
-            emojis: Vec::new(),
-        });
+            ..GuildCreateFixture::new(guild_id)
+        }));
     }
 
     fn channel_info(
@@ -575,16 +769,13 @@ mod tests {
     fn process_effect_in_default_context(state: &mut DashboardState, event: AppEvent) {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-        let mut image_previews = ImagePreviewCache::new();
-        let mut avatar_images = AvatarImageCache::new();
-        let mut emoji_images = EmojiImageCache::new();
+        let mut media_runtime =
+            DashboardMediaRuntime::new(crate::config::ImageProtocolPreference::Auto);
         let (media_decode_tx, _media_decode_rx) = mpsc::unbounded_channel();
         let mut ctx = EffectContext {
             state,
             client: &client,
-            image_previews: &mut image_previews,
-            avatar_images: &mut avatar_images,
-            emoji_images: &mut emoji_images,
+            media_runtime: &mut media_runtime,
             media_decode_tx: &media_decode_tx,
         };
 

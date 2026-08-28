@@ -11,8 +11,7 @@ By submitting this PR you agree it will be distributed under GPL-3.0-only.
 
 ## Why
 
-<!-- The motivation. Link the issue it closes, e.g. "Closes #123". -->
-<!-- Feature additions must have a related issue first. Feature PRs without a related issue may be closed without review. -->
+<!-- Link the issue it closes, e.g. "Closes #123". -->
 
 ## How
 

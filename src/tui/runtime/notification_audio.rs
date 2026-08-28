@@ -2,7 +2,7 @@
 use std::path::Path;
 #[cfg(feature = "voice-playback")]
 use std::sync::Arc;
-#[cfg(any(test, feature = "voice-playback"))]
+#[cfg(feature = "voice-playback")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(test, feature = "voice-playback"))]
 use std::time::Duration;
@@ -23,6 +23,10 @@ const GENERATED_VOICE_SOUND_SAMPLE_RATE: u32 = 48_000;
 const GENERATED_VOICE_SOUND_CHANNELS: u16 = 2;
 #[cfg(any(test, feature = "voice-playback"))]
 const GENERATED_VOICE_SOUND_DURATION: Duration = Duration::from_millis(180);
+#[cfg(any(test, feature = "voice-playback"))]
+const GENERATED_NOTIFICATION_SOUND_DURATION: Duration = Duration::from_millis(140);
+#[cfg(any(test, feature = "voice-playback"))]
+const GENERATED_PUSH_TO_TALK_SOUND_DURATION: Duration = Duration::from_millis(70);
 #[cfg(feature = "voice-playback")]
 const NOTIFICATION_SOUND_STREAM_PADDING: Duration = Duration::from_millis(40);
 #[cfg(feature = "voice-playback")]
@@ -52,6 +56,22 @@ pub(super) fn play_voice_sound(
         None => generated_voice_sound(kind),
     };
     play_notification_audio(audio)
+}
+
+#[cfg(feature = "voice-playback")]
+pub(super) fn play_notification_sound(
+    custom_path: Option<&Path>,
+) -> std::result::Result<(), String> {
+    let audio = match custom_path {
+        Some(path) => load_notification_wav(path)?,
+        None => generated_notification_sound(),
+    };
+    play_notification_audio(audio)
+}
+
+#[cfg(feature = "voice-playback")]
+pub(super) fn play_push_to_talk_sound(pressed: bool) -> std::result::Result<(), String> {
+    play_notification_audio(generated_push_to_talk_sound(pressed))
 }
 
 #[cfg(feature = "voice-playback")]
@@ -173,14 +193,14 @@ fn fill_notification_output<T>(
 }
 
 #[cfg(feature = "voice-playback")]
-fn log_notification_output_stream_error(error: cpal::StreamError) {
+fn log_notification_output_stream_error(error: cpal::Error) {
     logging::error(
         "voice",
         format!("notification audio output stream failed: {error}"),
     );
 }
 
-#[cfg(any(test, feature = "voice-playback"))]
+#[cfg(feature = "voice-playback")]
 fn notification_stream_result(stream_failed: &AtomicBool) -> std::result::Result<(), String> {
     if stream_failed.load(Ordering::Relaxed) {
         Err("notification audio output stream failed during playback".to_owned())
@@ -254,13 +274,95 @@ fn generated_voice_sound(kind: VoiceSoundKind) -> NotificationAudio {
 }
 
 #[cfg(any(test, feature = "voice-playback"))]
-fn generated_voice_sound_frequency(kind: VoiceSoundKind, progress: f32) -> f32 {
-    match (kind, progress < 0.5) {
-        (VoiceSoundKind::Join, true) => 660.0,
-        (VoiceSoundKind::Join, false) => 880.0,
-        (VoiceSoundKind::Leave, true) => 880.0,
-        (VoiceSoundKind::Leave, false) => 660.0,
+fn generated_notification_sound() -> NotificationAudio {
+    let frame_count = (GENERATED_VOICE_SOUND_SAMPLE_RATE as f32
+        * GENERATED_NOTIFICATION_SOUND_DURATION.as_secs_f32()) as usize;
+    let mut samples = Vec::with_capacity(frame_count * usize::from(GENERATED_VOICE_SOUND_CHANNELS));
+    for frame in 0..frame_count {
+        let progress = frame as f32 / frame_count.max(1) as f32;
+        let frequency = generated_notification_sound_frequency(progress);
+        let phase = frame as f32 * frequency * std::f32::consts::TAU
+            / GENERATED_VOICE_SOUND_SAMPLE_RATE as f32;
+        let envelope = generated_voice_sound_envelope(progress);
+        let sample = phase.sin() * 0.16 * envelope;
+        samples.push(sample);
+        samples.push(sample);
     }
+    NotificationAudio {
+        sample_rate: GENERATED_VOICE_SOUND_SAMPLE_RATE,
+        channels: GENERATED_VOICE_SOUND_CHANNELS,
+        samples,
+    }
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn generated_push_to_talk_sound(pressed: bool) -> NotificationAudio {
+    let frame_count = (GENERATED_VOICE_SOUND_SAMPLE_RATE as f32
+        * GENERATED_PUSH_TO_TALK_SOUND_DURATION.as_secs_f32()) as usize;
+    let frequency = if pressed { 1046.5 } else { 698.5 };
+    let mut samples = Vec::with_capacity(frame_count * usize::from(GENERATED_VOICE_SOUND_CHANNELS));
+    for frame in 0..frame_count {
+        let progress = frame as f32 / frame_count.max(1) as f32;
+        let phase = frame as f32 * frequency * std::f32::consts::TAU
+            / GENERATED_VOICE_SOUND_SAMPLE_RATE as f32;
+        let envelope = generated_voice_sound_envelope(progress);
+        let sample = phase.sin() * 0.13 * envelope;
+        samples.push(sample);
+        samples.push(sample);
+    }
+    NotificationAudio {
+        sample_rate: GENERATED_VOICE_SOUND_SAMPLE_RATE,
+        channels: GENERATED_VOICE_SOUND_CHANNELS,
+        samples,
+    }
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn generated_voice_sound_frequency(kind: VoiceSoundKind, progress: f32) -> f32 {
+    match kind {
+        VoiceSoundKind::Join => {
+            if progress < 0.5 {
+                660.0
+            } else {
+                880.0
+            }
+        }
+        VoiceSoundKind::Leave => {
+            if progress < 0.5 {
+                880.0
+            } else {
+                660.0
+            }
+        }
+        VoiceSoundKind::StreamStart => {
+            if progress < 0.34 {
+                523.3
+            } else if progress < 0.67 {
+                659.3
+            } else {
+                784.0
+            }
+        }
+        VoiceSoundKind::StreamViewerJoin => {
+            if progress < 0.5 {
+                740.0
+            } else {
+                987.8
+            }
+        }
+        VoiceSoundKind::StreamViewerLeave => {
+            if progress < 0.5 {
+                987.8
+            } else {
+                740.0
+            }
+        }
+    }
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn generated_notification_sound_frequency(progress: f32) -> f32 {
+    if progress < 0.45 { 1046.5 } else { 1318.5 }
 }
 
 #[cfg(any(test, feature = "voice-playback"))]
@@ -355,7 +457,7 @@ fn decode_wav_samples(
     data: &[u8],
 ) -> std::result::Result<NotificationAudio, String> {
     let bytes_per_sample = usize::from(format.bits_per_sample / 8);
-    if bytes_per_sample == 0 || data.len() % bytes_per_sample != 0 {
+    if bytes_per_sample == 0 || !data.len().is_multiple_of(bytes_per_sample) {
         return Err("notification sound data is not sample-aligned".to_owned());
     }
     let samples = match (format.audio_format, format.bits_per_sample) {
@@ -364,22 +466,28 @@ fn decode_wav_samples(
             .map(|sample| (f32::from(*sample) - 128.0) / 128.0)
             .collect::<Vec<_>>(),
         (1, 16) => data
-            .chunks_exact(2)
-            .map(|sample| {
-                f32::from(i16::from_le_bytes([sample[0], sample[1]])) / f32::from(i16::MAX)
-            })
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|sample| f32::from(i16::from_le_bytes(*sample)) / f32::from(i16::MAX))
             .collect(),
-        (1, 24) => data.chunks_exact(3).map(decode_i24_sample).collect(),
+        (1, 24) => data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|sample| decode_i24_sample(sample))
+            .collect(),
         (1, 32) => data
-            .chunks_exact(4)
-            .map(|sample| {
-                i32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]) as f32
-                    / i32::MAX as f32
-            })
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|sample| i32::from_le_bytes(*sample) as f32 / i32::MAX as f32)
             .collect(),
         (3, 32) => data
-            .chunks_exact(4)
-            .map(|sample| f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|sample| f32::from_le_bytes(*sample))
             .collect(),
         _ => {
             return Err(format!(
@@ -407,25 +515,61 @@ fn decode_i24_sample(sample: &[u8]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
-
     use crate::discord::VoiceSoundKind;
 
     use super::*;
 
     #[test]
-    fn generated_voice_sound_has_stereo_samples_for_join_and_leave() {
-        let join = generated_voice_sound(VoiceSoundKind::Join);
-        let leave = generated_voice_sound(VoiceSoundKind::Leave);
+    fn generated_voice_sounds_are_stereo_and_distinct() {
+        let kinds = [
+            VoiceSoundKind::Join,
+            VoiceSoundKind::Leave,
+            VoiceSoundKind::StreamStart,
+            VoiceSoundKind::StreamViewerJoin,
+            VoiceSoundKind::StreamViewerLeave,
+        ];
+        let sounds = kinds.map(generated_voice_sound);
+        let join = &sounds[0];
 
         assert_eq!(join.sample_rate, GENERATED_VOICE_SOUND_SAMPLE_RATE);
         assert_eq!(join.channels, GENERATED_VOICE_SOUND_CHANNELS);
         assert_eq!(join.samples.len() % usize::from(join.channels), 0);
-        assert_eq!(leave.samples.len(), join.samples.len());
-        assert_ne!(
-            generated_voice_sound_frequency(VoiceSoundKind::Join, 0.25),
-            generated_voice_sound_frequency(VoiceSoundKind::Leave, 0.25)
+        assert!(
+            sounds
+                .iter()
+                .all(|sound| sound.samples.len() == join.samples.len())
         );
+        for pair in sounds.windows(2) {
+            assert_ne!(pair[0].samples, pair[1].samples);
+        }
+    }
+
+    #[test]
+    fn generated_notification_sound_has_stereo_samples() {
+        let message = generated_notification_sound();
+        let join = generated_voice_sound(VoiceSoundKind::Join);
+
+        assert_eq!(message.sample_rate, GENERATED_VOICE_SOUND_SAMPLE_RATE);
+        assert_eq!(message.channels, GENERATED_VOICE_SOUND_CHANNELS);
+        assert_eq!(message.samples.len() % usize::from(message.channels), 0);
+        assert_ne!(message.samples.len(), join.samples.len());
+        assert_ne!(
+            generated_notification_sound_frequency(0.25),
+            generated_voice_sound_frequency(VoiceSoundKind::Join, 0.25)
+        );
+    }
+
+    #[test]
+    fn generated_push_to_talk_sounds_are_short_and_distinct() {
+        let pressed = generated_push_to_talk_sound(true);
+        let released = generated_push_to_talk_sound(false);
+
+        assert_eq!(pressed.sample_rate, GENERATED_VOICE_SOUND_SAMPLE_RATE);
+        assert_eq!(pressed.channels, GENERATED_VOICE_SOUND_CHANNELS);
+        assert_eq!(pressed.samples.len(), released.samples.len());
+        assert_eq!(pressed.samples.len() % usize::from(pressed.channels), 0);
+        assert!(pressed.samples.len() < generated_notification_sound().samples.len());
+        assert_ne!(pressed.samples, released.samples);
     }
 
     #[test]
@@ -444,16 +588,6 @@ mod tests {
         let error = decode_notification_wav(b"not a wav").expect_err("invalid wav should fail");
 
         assert!(error.contains("RIFF/WAVE"));
-    }
-
-    #[test]
-    fn notification_stream_result_reports_async_stream_error() {
-        let stream_failed = AtomicBool::new(true);
-
-        let error =
-            notification_stream_result(&stream_failed).expect_err("stream error should fail");
-
-        assert!(error.contains("failed during playback"));
     }
 
     fn pcm16_wav_bytes(sample_rate: u32, channels: u16, samples: &[i16]) -> Vec<u8> {

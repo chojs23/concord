@@ -104,65 +104,196 @@ fn focused_pane_horizontal_scroll_stops_before_blank_labels() {
 
     assert_eq!(state.member_horizontal_scroll(), "member 1".width() - 1);
 }
-
-#[test]
-fn guild_scroll_uses_scrolloff() {
-    let mut state = state_with_many_guilds(8);
-    state.focus_pane(FocusPane::Guilds);
-    state.set_guild_view_height(7);
-
-    state.jump_bottom();
-    assert_eq!(state.selected_guild(), 8);
-    assert_eq!(state.guild_scroll(), 2);
-
-    state.move_up();
-    state.move_up();
-    assert_eq!(state.selected_guild(), 6);
-    assert_eq!(state.guild_scroll(), 2);
-
-    state.move_up();
-    assert_eq!(state.selected_guild(), 5);
-    assert_eq!(state.guild_scroll(), 2);
+fn dm_channel_with_recipient(
+    channel_id: Id<ChannelMarker>,
+    name: &str,
+    recipient_id: Id<UserMarker>,
+    recipient_name: &str,
+    last_message_id: u64,
+) -> ChannelInfo {
+    ChannelInfo {
+        last_message_id: Some(Id::new(last_message_id)),
+        recipients: Some(vec![ChannelRecipientInfo {
+            status: Some(PresenceStatus::Online),
+            ..ChannelRecipientInfo::test(recipient_id, recipient_name)
+        }]),
+        ..dm_channel_info(channel_id, name)
+    }
 }
 
 #[test]
-fn channel_scroll_uses_scrolloff() {
+fn channel_navigation_skips_over_activity_subrows() {
+    let mut state = DashboardState::new();
+    let alice = Id::new(10);
+    let bob = Id::new(20);
+    let charlie = Id::new(30);
+
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        1,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(101),
+        "bob",
+        bob,
+        "bob",
+        2,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(102),
+        "charlie",
+        charlie,
+        "charlie",
+        3,
+    )));
+
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: bob,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Playing, "Concord")],
+        },
+    });
+
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(20);
+
+    // DMs sorted by last_message_id desc: charlie(3), bob(2), alice(1).
+    // Entries: 0 charlie, 1 bob (+activity), 2 alice.
+    // Lines: 0 charlie, 1 bob, 2 activity, 3 alice.
+    assert_eq!(state.selected_channel(), 0);
+    assert_eq!(state.count_channel_lines(), 4);
+
+    state.move_down();
+    assert_eq!(state.selected_channel(), 1);
+
+    state.move_down();
+    assert_eq!(state.selected_channel(), 2);
+}
+
+#[test]
+fn channel_half_page_scrolls_by_rendered_lines() {
+    let mut state = DashboardState::new();
+    let mut recipient_ids = Vec::new();
+    for id in 1u64..=4 {
+        let user_id: Id<UserMarker> = Id::new(id + 10);
+        recipient_ids.push(user_id);
+        state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+            Id::new(id + 100),
+            &format!("dm {id}"),
+            user_id,
+            &format!("user {id}"),
+            id,
+        )));
+    }
+
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: recipient_ids[1],
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Playing, "Game")],
+        },
+    });
+
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(5);
+
+    // DMs sorted by last_message_id desc: dm4, dm3, dm2(+activity), dm1.
+    // Lines: 0 dm4, 1 dm3, 2 dm2, 3 activity, 4 dm1.
+    assert_eq!(state.selected_channel(), 0);
+
+    state.half_page_down();
+    assert_eq!(state.selected_channel(), 2);
+}
+
+#[test]
+fn channel_half_page_up_resolves_activity_row_to_parent_dm() {
+    let mut state = DashboardState::new();
+    let alice = Id::new(10);
+    let bob = Id::new(20);
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        2,
+    )));
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(101),
+        "bob",
+        bob,
+        "bob",
+        1,
+    )));
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: alice,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Playing, "Game")],
+        },
+    });
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+    state.focus_pane(FocusPane::Channels);
+    state.set_channel_view_height(2);
+    state.move_down();
+    assert_eq!(state.selected_channel(), 1);
+
+    state.half_page_up();
+
+    assert_eq!(state.selected_channel(), 0);
+}
+
+#[test]
+fn empty_custom_activity_does_not_reserve_channel_row() {
+    let mut state = DashboardState::new();
+    let alice = Id::new(10);
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_with_recipient(
+        Id::new(100),
+        "alice",
+        alice,
+        "alice",
+        1,
+    )));
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id: alice,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(ActivityKind::Custom, "Custom Status")],
+        },
+    });
+    state.activate_guild(ActiveGuildScope::DirectMessages);
+
+    assert_eq!(state.count_channel_lines(), 1);
+}
+
+#[test]
+fn channel_focused_selection_line_accounts_for_scroll_offset() {
     let mut state = state_with_many_channels(8);
     state.focus_pane(FocusPane::Channels);
-    state.set_channel_view_height(7);
+    state.set_channel_view_height(3);
 
-    state.jump_bottom();
-    assert_eq!(state.selected_channel(), 7);
-    assert_eq!(state.channel_scroll(), 1);
-
-    state.move_up();
-    state.move_up();
-    assert_eq!(state.selected_channel(), 5);
-    assert_eq!(state.channel_scroll(), 1);
-
-    state.move_up();
+    for _ in 0..4 {
+        state.move_down();
+    }
     assert_eq!(state.selected_channel(), 4);
-    assert_eq!(state.channel_scroll(), 1);
-}
 
-#[test]
-fn member_scroll_uses_scrolloff() {
-    let mut state = state_with_members(8);
-    state.focus_pane(FocusPane::Members);
-    state.set_member_view_height(7);
-
-    state.jump_bottom();
-    assert_eq!(state.selected_member(), 7);
-    assert_eq!(state.member_scroll(), 2);
-
-    state.move_up();
-    state.move_up();
-    assert_eq!(state.selected_member(), 5);
-    assert_eq!(state.member_scroll(), 2);
-
-    state.move_up();
-    assert_eq!(state.selected_member(), 4);
-    assert_eq!(state.member_scroll(), 2);
+    let scroll = state.channel_scroll();
+    let entries = state.channel_pane_filtered_entries();
+    let focused = state.focused_channel_selection_line(&entries);
+    assert!(focused.is_some());
+    let absolute = state.selected_channel_line(&entries).unwrap();
+    assert_eq!(focused, Some(absolute));
+    assert!(absolute >= scroll);
+    assert!(absolute < scroll + 3);
 }
 
 #[test]
@@ -188,15 +319,24 @@ fn half_page_scrolls_all_list_panes() {
 
 #[test]
 fn channel_tree_groups_category_children() {
-    let state = state_with_channel_tree();
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::ChannelUpsert(category_channel_info(
+        Id::new(1),
+        Id::new(13),
+        "Empty Category",
+        2,
+    )));
+
     let entries = state.channel_pane_entries();
 
+    assert_eq!(entries.len(), 3);
     assert!(matches!(
         &entries[0],
         ChannelPaneEntry::CategoryHeader {
+            state,
             collapsed: false,
             ..
-        }
+        } if state.id == Id::new(10)
     ));
     assert!(matches!(
         &entries[1],
@@ -215,66 +355,44 @@ fn channel_tree_groups_category_children() {
 }
 
 #[test]
-fn channel_tree_shows_joined_threads_under_parent_channel() {
-    let guild_id = Id::new(1);
-    let parent_id = Id::new(11);
-    let joined_thread_id = Id::new(30);
-    let hidden_thread_id = Id::new(31);
-    let mut state = state_with_channel_tree();
-
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        current_user_joined_thread: Some(true),
-        ..thread_channel_info(guild_id, parent_id, joined_thread_id, "joined thread")
-    }));
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        current_user_joined_thread: Some(false),
-        ..thread_channel_info(guild_id, parent_id, hidden_thread_id, "hidden thread")
-    }));
-
-    let entries = state.channel_pane_entries();
-
-    assert!(matches!(
-        &entries[2],
-        ChannelPaneEntry::Thread {
-            state,
-            parent_branch: ChannelBranch::Middle,
-            branch: ChannelBranch::Last,
-        } if state.id == joined_thread_id
-    ));
-    assert_eq!(
-        channel_entry_names(&state),
-        vec!["general", "joined thread", "random"]
-    );
-}
-
-#[test]
-fn channel_tree_removes_thread_after_current_user_leaves() {
-    let guild_id = Id::new(1);
-    let parent_id = Id::new(11);
-    let thread_id = Id::new(30);
+fn channel_tree_keeps_empty_categories_for_channel_managers() {
     let current_user_id = Id::new(99);
+    let manager_role_id = Id::new(50);
     let mut state = state_with_channel_tree();
-
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),
         user_id: Some(current_user_id),
     });
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        current_user_joined_thread: Some(true),
-        ..thread_channel_info(guild_id, parent_id, thread_id, "joined thread")
-    }));
-    assert_eq!(
-        channel_entry_names(&state),
-        vec!["general", "joined thread", "random"]
-    );
-
-    state.push_event(AppEvent::ThreadMembersUpdate {
-        channel_id: thread_id,
-        added_user_ids: Vec::new(),
-        removed_user_ids: vec![current_user_id],
+    state.push_event(AppEvent::GuildRoleUpsert {
+        guild_id: Id::new(1),
+        role: role_info(
+            manager_role_id,
+            "Manager",
+            PERM_VIEW_CHANNEL | PERM_MANAGE_CHANNELS,
+        ),
     });
+    state.push_event(AppEvent::GuildMemberUpsert {
+        guild_id: Id::new(1),
+        member: member_with_roles(current_user_id, "me", vec![manager_role_id]),
+    });
+    state.push_event(AppEvent::ChannelUpsert(category_channel_info(
+        Id::new(1),
+        Id::new(13),
+        "Empty Category",
+        2,
+    )));
 
-    assert_eq!(channel_entry_names(&state), vec!["general", "random"]);
+    let entries = state.channel_pane_entries();
+
+    assert_eq!(entries.len(), 4);
+    assert!(matches!(
+        &entries[3],
+        ChannelPaneEntry::CategoryHeader {
+            state,
+            collapsed: false,
+            ..
+        } if state.id == Id::new(13)
+    ));
 }
 
 #[test]
@@ -302,7 +420,7 @@ fn selected_channel_category_toggles_open_and_closed() {
 #[test]
 fn selected_channel_child_can_close_parent_category() {
     let mut state = state_with_channel_tree();
-    state.navigation.channels.selected = 1;
+    state.navigation.channels.list.selected = 1;
 
     state.toggle_selected_channel_category();
     let entries = state.channel_pane_entries();
@@ -365,6 +483,7 @@ fn collapsed_category_state_is_saved_and_restored() {
     assert!(
         restored
             .navigation
+            .channels
             .collapsed_channel_categories
             .contains(&Id::new(10))
     );
@@ -396,23 +515,6 @@ fn pane_layout_state_is_saved_and_restored() {
     assert!(!restored.is_pane_visible(FocusPane::Members));
     assert_eq!(restored.pane_width(FocusPane::Channels), 30);
     assert_eq!(restored.focus(), FocusPane::Messages);
-}
-
-#[test]
-fn moving_guild_cursor_does_not_activate_guild() {
-    let mut state = state_with_two_guilds();
-    state.focus_pane(FocusPane::Guilds);
-
-    state.confirm_selected_guild();
-    let active_guild = state.selected_guild_id();
-    assert!(active_guild.is_some());
-
-    state.move_down();
-    assert_eq!(state.navigation.guilds.selected, 2);
-    assert_eq!(state.selected_guild_id(), active_guild);
-
-    state.confirm_selected_guild();
-    assert_ne!(state.selected_guild_id(), active_guild);
 }
 
 #[test]
@@ -449,20 +551,60 @@ fn active_guild_entry_tracks_confirmed_guild() {
 }
 
 #[test]
-fn moving_channel_cursor_does_not_activate_channel() {
-    let mut state = state_with_channel_tree();
-    let random_id = Id::new(12);
-    state.focus_pane(FocusPane::Channels);
+fn guild_folder_update_reorders_sidebar_entries() {
+    let mut state = state_with_two_guilds();
 
-    assert_eq!(state.selected_channel_id(), None);
+    state.push_event(AppEvent::UserSettingsUpdate {
+        settings: UserSettingsInfo {
+            guild_folders: Some(vec![
+                GuildFolder {
+                    id: None,
+                    name: None,
+                    color: None,
+                    guild_ids: vec![Id::new(2)],
+                },
+                GuildFolder {
+                    id: None,
+                    name: None,
+                    color: None,
+                    guild_ids: vec![Id::new(1)],
+                },
+            ]),
+            ..UserSettingsInfo::default()
+        },
+    });
 
-    state.move_down();
-    state.move_down();
-    assert_eq!(state.navigation.channels.selected, 2);
-    assert_eq!(state.selected_channel_id(), None);
+    let entries = state.guild_pane_entries();
+    assert!(matches!(
+        entries[1],
+        GuildPaneEntry::Guild { state, .. } if state.id == Id::new(2)
+    ));
+    assert!(matches!(
+        entries[2],
+        GuildPaneEntry::Guild { state, .. } if state.id == Id::new(1)
+    ));
+}
 
-    state.confirm_selected_channel();
-    assert_eq!(state.selected_channel_id(), Some(random_id));
+#[test]
+fn guilds_missing_from_folders_appear_at_top_newest_first() {
+    let mut state = state_with_two_guilds();
+
+    state.push_event(super::user_settings_update(vec![GuildFolder {
+        id: None,
+        name: None,
+        color: None,
+        guild_ids: vec![Id::new(1)],
+    }]));
+
+    let entries = state.guild_pane_entries();
+    assert!(matches!(
+        entries[1],
+        GuildPaneEntry::Guild { state, .. } if state.id == Id::new(2)
+    ));
+    assert!(matches!(
+        entries[2],
+        GuildPaneEntry::Guild { state, .. } if state.id == Id::new(1)
+    ));
 }
 
 #[test]
@@ -567,7 +709,7 @@ fn folder_without_id_can_be_toggled_closed() {
 #[test]
 fn selected_folder_child_can_close_parent() {
     let mut state = state_with_folder(Some(42));
-    state.navigation.guilds.selected = 2;
+    state.navigation.guilds.list.selected = 2;
 
     state.toggle_selected_folder();
     let entries = state.guild_pane_entries();

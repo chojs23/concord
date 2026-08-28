@@ -1,18 +1,38 @@
+use std::collections::BTreeMap;
+
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
 };
 
-use crate::discord::test_builders::{MessageCreateFixture, message_create_event};
+use crate::discord::test_builders::{
+    ChannelPinsUpdateFixture, CurrentUserPollVoteUpdateFixture, CurrentUserReactionAddFixture,
+    CurrentUserReactionRemoveFixture, GuildCreateFixture, GuildUpdateFixture, MessageAckFixture,
+    MessageCreateFixture, MessageDeleteBulkFixture, MessageHistoryAfterLoadedFixture,
+    MessageHistoryLoadedFixture, MessagePinnedUpdateFixture, MessageReactionAddFixture,
+    MessageReactionRemoveAllFixture, MessageReactionRemoveEmojiFixture,
+    MessageReactionRemoveFixture, UserIdentityUpdateFixture, VoiceSpeakingUpdateFixture,
+    channel_pins_update_event, current_user_poll_vote_update_event,
+    current_user_reaction_add_event, current_user_reaction_remove_event, guild_create_event,
+    guild_update_event, message_ack_event, message_create_event, message_delete_bulk_event,
+    message_history_after_loaded_event, message_history_loaded_event, message_pinned_update_event,
+    message_reaction_add_event, message_reaction_remove_all_event,
+    message_reaction_remove_emoji_event, message_reaction_remove_event, user_identity_update_event,
+    voice_speaking_update_event,
+};
 use crate::discord::{
-    ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, ChannelInfo,
-    ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
+    ActivityInfo, ActivityKind, AppEvent, AttachmentUpdate, BASE_ATTACHMENT_LIMIT_BYTES,
+    ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo, ChannelUnreadState,
     ChannelVisibilityStats, CurrentVoiceConnectionState, CustomEmojiInfo, DiscordState,
-    FriendStatus, GuildNotificationSettingsInfo, MemberInfo, MentionInfo, MessageInfo, MessageKind,
-    MessageReferenceInfo, MessageSnapshotInfo, MessageState, MessageUpdateEventFields,
-    NotificationLevel, PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo,
-    PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, RelationshipInfo, ReplyInfo,
-    RoleInfo, UserProfileInfo, VoiceStateInfo,
+    FriendStatus, GuildBoostTier, GuildMemberListItem, GuildMemberListOperation,
+    GuildMemberListUpdateInfo, GuildMembersChunkInfo, GuildNotificationSettingsInfo, MemberInfo,
+    MentionInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState,
+    MessageUpdateDispatchInfo, MessageUpdateEventFields, NotificationLevel,
+    PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PremiumTier,
+    PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, ReadySnapshotInfo,
+    RelationshipInfo, ReplyInfo, RoleInfo, ThreadGatewayInfo, ThreadListSyncInfo, ThreadMemberInfo,
+    ThreadMemberListUpdateInfo, ThreadMetadataInfo, UserGuildSettingsInfo, UserProfileInfo,
+    VoiceStateInfo,
 };
 
 mod channels;
@@ -23,48 +43,10 @@ mod notifications;
 mod permissions;
 mod profiles;
 mod reads;
-
-struct GuildCreateFixture {
-    guild_id: Id<GuildMarker>,
-    name: String,
-    member_count: Option<u64>,
-    owner_id: Option<Id<UserMarker>>,
-    channels: Vec<ChannelInfo>,
-    members: Vec<MemberInfo>,
-    presences: Vec<(Id<UserMarker>, PresenceStatus)>,
-    roles: Vec<RoleInfo>,
-    emojis: Vec<CustomEmojiInfo>,
-}
-
-impl GuildCreateFixture {
-    fn new(guild_id: Id<GuildMarker>) -> Self {
-        Self {
-            guild_id,
-            name: "guild".to_owned(),
-            member_count: None,
-            owner_id: None,
-            channels: Vec::new(),
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-        }
-    }
-}
-
-fn guild_create_event(event: GuildCreateFixture) -> AppEvent {
-    AppEvent::GuildCreate {
-        guild_id: event.guild_id,
-        name: event.name,
-        member_count: event.member_count,
-        owner_id: event.owner_id,
-        channels: event.channels,
-        members: event.members,
-        presences: event.presences,
-        roles: event.roles,
-        emojis: event.emojis,
-    }
-}
+mod snapshots;
+mod streams;
+mod sync;
+mod upload_limits;
 
 fn profile_info(user_id: u64, guild_nick: Option<&str>) -> UserProfileInfo {
     UserProfileInfo {
@@ -86,6 +68,7 @@ fn relationship_info(
         nickname: nickname.map(str::to_owned),
         display_name: display_name.map(str::to_owned),
         username: username.map(str::to_owned),
+        ignored: false,
     }
 }
 
@@ -231,11 +214,11 @@ fn read_state_info(
 }
 
 fn latest_history_loaded(channel_id: Id<ChannelMarker>, messages: Vec<MessageInfo>) -> AppEvent {
-    AppEvent::MessageHistoryLoaded {
+    message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
-        before: None,
         messages,
-    }
+        ..MessageHistoryLoadedFixture::new()
+    })
 }
 
 fn notification_settings(
@@ -252,6 +235,34 @@ fn private_notification_settings(level: NotificationLevel) -> GuildNotificationS
     GuildNotificationSettingsInfo {
         message_notifications: Some(level),
         ..GuildNotificationSettingsInfo::test(None)
+    }
+}
+
+fn user_guild_settings_init(settings: Vec<GuildNotificationSettingsInfo>) -> AppEvent {
+    AppEvent::UserGuildSettingsInit {
+        settings: settings
+            .into_iter()
+            .map(|notification_settings| UserGuildSettingsInfo {
+                notification_settings,
+                extra_fields: BTreeMap::new(),
+            })
+            .collect(),
+    }
+}
+
+fn message_update_event(
+    channel_id: Id<ChannelMarker>,
+    message_id: Id<MessageMarker>,
+    fields: MessageUpdateEventFields,
+) -> AppEvent {
+    AppEvent::MessageUpdateDispatch {
+        update: MessageUpdateDispatchInfo {
+            guild_id: None,
+            channel_id,
+            message_id,
+            fields,
+            extra_fields: BTreeMap::new(),
+        },
     }
 }
 
@@ -320,6 +331,7 @@ fn attachment_info(id: u64, filename: &str, content_type: &str) -> crate::discor
         width: Some(100),
         height: Some(100),
         description: None,
+        flags: 0,
     }
 }
 

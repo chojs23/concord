@@ -1,5 +1,6 @@
 use reqwest::multipart::{Form, Part};
 use serde_json::{Value, json};
+use std::time::Duration;
 
 use crate::discord::ids::{
     Id,
@@ -8,36 +9,100 @@ use crate::discord::ids::{
 use crate::{
     AppError, Result,
     discord::{
-        MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
-        MessageAttachmentUpload, MessageInfo, gateway::parse_message_info,
+        BASE_ATTACHMENT_LIMIT_BYTES, MessageAttachmentUpload, MessageInfo, MessageSendLimits,
+        ReplyReference, gateway::parse_message_info, validate_attachment_sizes,
+        validate_message_content, validate_message_payload,
     },
+    logging,
 };
 
-use super::DiscordRest;
+use super::{DiscordRest, clone_array, extra_fields, rest_error_kind};
+
+pub(in crate::discord) enum MessageEditRequest<'a> {
+    Content(&'a str),
+    Flags(u64),
+}
+
+pub(in crate::discord) struct MessageCreateRequest<'a> {
+    pub nonce: Id<MessageMarker>,
+    pub content: &'a str,
+    pub reply_to: Option<ReplyReference>,
+    pub attachments: &'a [MessageAttachmentUpload],
+}
 
 impl DiscordRest {
     pub async fn send_message(
         &self,
         channel_id: Id<ChannelMarker>,
-        content: &str,
-        reply_to: Option<Id<MessageMarker>>,
-        attachments: &[MessageAttachmentUpload],
+        request: MessageCreateRequest<'_>,
+        limits: MessageSendLimits,
+        slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
-        validate_message_payload(content, attachments)?;
-        let body = message_request_body(content, reply_to, attachments);
+        validate_message_payload(request.content, request.attachments, limits)?;
+        let body = message_request_body(
+            request.content,
+            request.nonce,
+            request.reply_to,
+            request.attachments,
+        );
 
-        self.send_message_body(channel_id, body, attachments).await
+        self.send_message_body(
+            channel_id,
+            body,
+            request.attachments,
+            limits.max_attachment_bytes,
+            slow_mode,
+        )
+        .await
+    }
+
+    /// Fires a typing indicator without blocking the send it precedes. A
+    /// message that arrives with no prior typing looks automated.
+    pub fn spawn_typing(&self, channel_id: Id<ChannelMarker>) {
+        let rest = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = rest.trigger_typing(channel_id).await {
+                logging::error(
+                    "rest",
+                    format!(
+                        "background request failed action=\"trigger typing\" reason={}",
+                        rest_error_kind(&error)
+                    ),
+                );
+            }
+        });
+    }
+
+    async fn trigger_typing(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
+        self.send_unit(
+            self.raw_http.post(format!(
+                "https://discord.com/api/v9/channels/{}/typing",
+                channel_id.get()
+            )),
+            "trigger typing",
+        )
+        .await
     }
 
     pub async fn send_tts_message(
         &self,
         channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
         content: &str,
+        max_content_chars: usize,
+        slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
-        validate_message_content(content)?;
-        let body = message_request_body_with_tts(content, None, &[], true);
+        validate_message_content(content, max_content_chars)?;
+        let body = message_request_body_with_tts(content, nonce, None, &[], true);
 
-        self.send_message_body(channel_id, body, &[]).await
+        self.send_message_body(
+            channel_id,
+            body,
+            &[],
+            BASE_ATTACHMENT_LIMIT_BYTES,
+            slow_mode,
+        )
+        .await
     }
 
     async fn send_message_body(
@@ -45,7 +110,12 @@ impl DiscordRest {
         channel_id: Id<ChannelMarker>,
         body: Value,
         attachments: &[MessageAttachmentUpload],
+        upload_limit: u64,
+        slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
+        let _channel_guard = self.message_sends.acquire(channel_id).await;
+        self.message_sends.ensure_cooldown_elapsed(channel_id)?;
+
         let request = self.raw_http.post(format!(
             "https://discord.com/api/v9/channels/{}/messages",
             channel_id.get()
@@ -54,22 +124,40 @@ impl DiscordRest {
         let request = if attachments.is_empty() {
             request.json(&body)
         } else {
-            request.multipart(message_multipart_form(body, attachments).await?)
+            request.multipart(message_multipart_form(body, attachments, upload_limit).await?)
         };
 
-        let raw: Value = self.send_json(request, "send message").await?;
-        parse_message_info(&raw).ok_or_else(|| {
-            AppError::DiscordRequest("send message response was missing required fields".to_owned())
-        })
+        let result = self
+            .send_json(request, "send message")
+            .await
+            .and_then(|raw| {
+                parse_message_response(raw, "send message response")
+                    .map(|response| response.message)
+            });
+        match &result {
+            Ok(_) => {
+                if let Some(slow_mode) = slow_mode {
+                    self.message_sends.record_cooldown(channel_id, slow_mode);
+                }
+            }
+            Err(AppError::DiscordRateLimited {
+                retry_after_millis, ..
+            }) => self
+                .message_sends
+                .record_cooldown(channel_id, Duration::from_millis(*retry_after_millis)),
+            Err(_) => {}
+        }
+        result
     }
 
     pub async fn edit_message(
         &self,
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        content: &str,
+        request: MessageEditRequest<'_>,
+        max_content_chars: usize,
     ) -> Result<MessageInfo> {
-        validate_message_content(content)?;
+        let (body, action) = edit_message_request_body(request, max_content_chars)?;
         let raw: Value = self
             .send_json(
                 self.raw_http
@@ -78,13 +166,11 @@ impl DiscordRest {
                         channel_id.get(),
                         message_id.get()
                     ))
-                    .json(&json!({ "content": content })),
-                "edit message",
+                    .json(&body),
+                action,
             )
             .await?;
-        parse_message_info(&raw).ok_or_else(|| {
-            AppError::DiscordRequest("edit message response was missing required fields".to_owned())
-        })
+        parse_message_response(raw, &format!("{action} response")).map(|response| response.message)
     }
 
     pub async fn delete_message(
@@ -120,7 +206,31 @@ impl DiscordRest {
             request = request.query(&[("before", message_id.to_string())]);
         }
         let raw_messages: Vec<Value> = self.send_json(request, "message history").await?;
-        parse_message_list(raw_messages.iter(), "history message response")
+        parse_message_list_response(raw_messages, "history message response")
+            .map(|response| response.messages)
+    }
+
+    /// Recent messages that mention the current user across all guilds, in one
+    /// request. This is the endpoint Discord's own inbox uses for its Mentions
+    /// tab, so no per-channel fetching is needed. `roles`/`everyone` include
+    /// role and @everyone mentions, matching the client default.
+    pub async fn load_recent_mentions(
+        &self,
+        before: Option<Id<MessageMarker>>,
+        limit: u16,
+    ) -> Result<Vec<MessageInfo>> {
+        let request = recent_mentions_request(&self.raw_http, before, limit);
+        let raw_messages: Vec<Value> = self.send_json(request, "recent mentions").await?;
+        parse_message_list_response(raw_messages, "recent mentions response")
+            .map(|response| response.messages)
+    }
+
+    pub async fn delete_recent_mention(&self, message_id: Id<MessageMarker>) -> Result<()> {
+        self.send_unit(
+            recent_mention_delete_request(&self.raw_http, message_id),
+            "delete recent mention",
+        )
+        .await
     }
 
     pub async fn load_message_history_around(
@@ -159,46 +269,44 @@ impl DiscordRest {
             .query(&[("limit", limit.to_string())])
             .query(&[(anchor_name, message_id.to_string())]);
         let raw_messages: Vec<Value> = self.send_json(request, "message history").await?;
-        parse_message_list(raw_messages.iter(), "history message response")
+        parse_message_list_response(raw_messages, "history message response")
+            .map(|response| response.messages)
     }
 
     pub async fn load_pinned_messages(
         &self,
         channel_id: Id<ChannelMarker>,
     ) -> Result<Vec<MessageInfo>> {
-        let raw: Value = self
-            .send_json(
-                self.raw_http
-                    .get(format!(
-                        "https://discord.com/api/v9/channels/{}/messages/pins",
-                        channel_id.get()
-                    ))
-                    .query(&[("limit", "50")]),
-                "pins",
-            )
-            .await?;
-        let messages: Vec<&Value> = match &raw {
-            Value::Array(items) => items.iter().collect(),
-            Value::Object(object) => object
-                .get("items")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.get("message"))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
-        messages
-            .into_iter()
-            .map(|raw| {
-                parse_message_info(raw).ok_or_else(|| {
-                    AppError::DiscordRequest("pin message was missing required fields".to_owned())
-                })
-            })
-            .collect()
+        let endpoint = format!(
+            "https://discord.com/api/v9/channels/{}/messages/pins",
+            channel_id.get()
+        );
+        let mut before = None;
+        let mut messages = Vec::new();
+
+        loop {
+            let mut request = self.raw_http.get(&endpoint).query(&[("limit", "50")]);
+            if let Some(before) = before.as_deref() {
+                request = request.query(&[("before", before)]);
+            }
+            let raw: Value = self.send_json(request, "pins").await?;
+            let page = parse_pinned_messages_response(&raw)?;
+            messages.extend(page.messages);
+            if !page.has_more {
+                return Ok(messages);
+            }
+            let next_before = page.next_before.ok_or_else(|| {
+                AppError::DiscordRequest(
+                    "pins response has more pages but no pinned timestamp".to_owned(),
+                )
+            })?;
+            if before.as_deref() == Some(next_before.as_str()) {
+                return Err(AppError::DiscordRequest(
+                    "pins response did not advance its cursor".to_owned(),
+                ));
+            }
+            before = Some(next_before);
+        }
     }
 
     pub async fn set_message_pinned(
@@ -209,13 +317,13 @@ impl DiscordRest {
     ) -> Result<()> {
         let request = if pinned {
             self.raw_http.put(format!(
-                "https://discord.com/api/v9/channels/{}/pins/{}",
+                "https://discord.com/api/v9/channels/{}/messages/pins/{}",
                 channel_id.get(),
                 message_id.get()
             ))
         } else {
             self.raw_http.delete(format!(
-                "https://discord.com/api/v9/channels/{}/pins/{}",
+                "https://discord.com/api/v9/channels/{}/messages/pins/{}",
                 channel_id.get(),
                 message_id.get()
             ))
@@ -224,40 +332,170 @@ impl DiscordRest {
     }
 }
 
-fn parse_message_list<'a>(
-    raw_messages: impl IntoIterator<Item = &'a Value>,
-    label: &str,
-) -> Result<Vec<MessageInfo>> {
-    raw_messages
+fn recent_mentions_request(
+    http: &reqwest::Client,
+    before: Option<Id<MessageMarker>>,
+    limit: u16,
+) -> reqwest::RequestBuilder {
+    let mut request = http
+        .get("https://discord.com/api/v9/users/@me/mentions")
+        .query(&[
+            ("limit", limit.to_string()),
+            ("roles", "true".to_owned()),
+            ("everyone", "true".to_owned()),
+        ]);
+    if let Some(before) = before {
+        request = request.query(&[("before", before.to_string())]);
+    }
+    request
+}
+
+fn recent_mention_delete_request(
+    http: &reqwest::Client,
+    message_id: Id<MessageMarker>,
+) -> reqwest::RequestBuilder {
+    http.delete(format!(
+        "https://discord.com/api/v9/users/@me/mentions/{}",
+        message_id.get()
+    ))
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PinnedMessagesResponse {
+    pub(super) messages: Vec<MessageInfo>,
+    pub(super) has_more: bool,
+    pub(super) next_before: Option<String>,
+    pub(super) raw_items: Vec<Value>,
+    pub(super) extra_fields: std::collections::BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct MessageResponse {
+    pub(super) message: MessageInfo,
+    pub(super) raw_message: Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct MessageListResponse {
+    pub(super) messages: Vec<MessageInfo>,
+    pub(super) raw_messages: Vec<Value>,
+}
+
+pub(super) fn parse_pinned_messages_response(raw: &Value) -> Result<PinnedMessagesResponse> {
+    let raw_items = match raw {
+        Value::Array(_) => clone_array(Some(raw)),
+        Value::Object(_) => clone_array(raw.get("items")),
+        _ => Vec::new(),
+    };
+    let messages: Vec<&Value> = match raw {
+        Value::Array(items) => items.iter().collect(),
+        Value::Object(object) => object
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("message"))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let messages = messages
         .into_iter()
+        .map(|raw| {
+            parse_message_info(raw).ok_or_else(|| {
+                AppError::DiscordRequest("pin message was missing required fields".to_owned())
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(PinnedMessagesResponse {
+        messages,
+        has_more: raw
+            .get("has_more")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        next_before: raw_items
+            .last()
+            .and_then(|item| item.get("pinned_at"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        raw_items,
+        extra_fields: extra_fields(raw, &["items", "has_more"]),
+    })
+}
+
+pub(super) fn parse_message_response(raw_message: Value, label: &str) -> Result<MessageResponse> {
+    let message = parse_message_info(&raw_message)
+        .ok_or_else(|| AppError::DiscordRequest(format!("{label} was missing required fields")))?;
+    Ok(MessageResponse {
+        message,
+        raw_message,
+    })
+}
+
+fn parse_message_list_response(
+    raw_messages: Vec<Value>,
+    label: &str,
+) -> Result<MessageListResponse> {
+    let messages = raw_messages
+        .iter()
         .map(|raw| {
             parse_message_info(raw).ok_or_else(|| {
                 AppError::DiscordRequest(format!("{label} was missing required fields"))
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    Ok(MessageListResponse {
+        messages,
+        raw_messages,
+    })
 }
 
 pub(super) fn message_request_body(
     content: &str,
-    reply_to: Option<Id<MessageMarker>>,
+    nonce: Id<MessageMarker>,
+    reply_to: Option<ReplyReference>,
     attachments: &[MessageAttachmentUpload],
 ) -> Value {
-    message_request_body_with_tts(content, reply_to, attachments, false)
+    message_request_body_with_nonce(content, nonce, reply_to, attachments, false)
 }
 
 pub(super) fn message_request_body_with_tts(
     content: &str,
-    reply_to: Option<Id<MessageMarker>>,
+    nonce: Id<MessageMarker>,
+    reply_to: Option<ReplyReference>,
     attachments: &[MessageAttachmentUpload],
     tts: bool,
 ) -> Value {
-    let mut body = json!({ "content": content });
-    if tts {
-        body["tts"] = Value::Bool(true);
-    }
-    if let Some(message_id) = reply_to {
-        body["message_reference"] = json!({ "message_id": message_id.to_string() });
+    message_request_body_with_nonce(content, nonce, reply_to, attachments, tts)
+}
+
+fn message_request_body_with_nonce(
+    content: &str,
+    nonce: Id<MessageMarker>,
+    reply_to: Option<ReplyReference>,
+    attachments: &[MessageAttachmentUpload],
+    tts: bool,
+) -> Value {
+    let mut body = json!({
+        "mobile_network_type": "unknown",
+        "content": content,
+        "nonce": nonce.to_string(),
+        "enforce_nonce": true,
+        "tts": tts,
+        "flags": 0,
+    });
+    if let Some(reply) = reply_to {
+        body["message_reference"] = json!({ "message_id": reply.message_id.to_string() });
+        // `parse` must be spelled out here: without it, dropping the reply ping
+        // would also silence every in-content mention.
+        if !reply.mention_author {
+            body["allowed_mentions"] = json!({
+                "parse": ["users", "roles", "everyone"],
+                "replied_user": false,
+            });
+        }
     }
     if !attachments.is_empty() {
         body["attachments"] = Value::Array(
@@ -276,12 +514,32 @@ pub(super) fn message_request_body_with_tts(
     body
 }
 
+pub(super) fn edit_message_request_body(
+    request: MessageEditRequest<'_>,
+    max_content_chars: usize,
+) -> Result<(Value, &'static str)> {
+    match request {
+        MessageEditRequest::Content(content) => {
+            validate_message_content(content, max_content_chars)?;
+            Ok((json!({ "content": content }), "edit message"))
+        }
+        MessageEditRequest::Flags(flags) => Ok((json!({ "flags": flags }), "update message flags")),
+    }
+}
+
 pub(super) async fn message_multipart_form(
     body: Value,
     attachments: &[MessageAttachmentUpload],
+    upload_limit: u64,
 ) -> Result<Form> {
     let actual_sizes = attachment_sizes(attachments).await?;
-    validate_attachment_sizes(&actual_sizes)?;
+    validate_attachment_sizes(
+        actual_sizes.len(),
+        actual_sizes
+            .iter()
+            .map(|(filename, size)| (filename.as_str(), *size)),
+        upload_limit,
+    )?;
 
     let mut form = Form::new().part(
         "payload_json",
@@ -292,7 +550,11 @@ pub(super) async fn message_multipart_form(
 
     for (index, attachment) in attachments.iter().enumerate() {
         let bytes = attachment_bytes(attachment).await?;
-        validate_attachment_sizes(&[(attachment.filename.clone(), bytes.len() as u64)])?;
+        validate_attachment_sizes(
+            1,
+            std::iter::once((attachment.filename.as_str(), bytes.len() as u64)),
+            upload_limit,
+        )?;
         let content_type = upload_content_type(&attachment.filename);
         let part = Part::bytes(bytes)
             .file_name(attachment.filename.clone())
@@ -354,50 +616,27 @@ pub(super) fn upload_content_type(filename: &str) -> String {
         .to_owned()
 }
 
-pub(super) fn validate_message_payload(
-    content: &str,
-    attachments: &[MessageAttachmentUpload],
-) -> Result<()> {
-    if content.trim().is_empty() && attachments.is_empty() {
-        return Err(AppError::EmptyMessageContent);
+#[cfg(test)]
+mod recent_mentions_tests {
+    use super::*;
+
+    #[test]
+    fn recent_mention_requests_use_message_ids_and_documented_filters() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let http = reqwest::Client::new();
+        let list = recent_mentions_request(&http, Some(Id::new(700)), 25)
+            .build()
+            .expect("recent mentions request builds");
+        assert_eq!(list.url().path(), "/api/v9/users/@me/mentions");
+        let query = list.url().query_pairs().collect::<Vec<_>>();
+        assert!(query.contains(&("before".into(), "700".into())));
+        assert!(query.contains(&("roles".into(), "true".into())));
+        assert!(query.contains(&("everyone".into(), "true".into())));
+
+        let delete = recent_mention_delete_request(&http, Id::new(700))
+            .build()
+            .expect("recent mention delete request builds");
+        assert_eq!(delete.method(), reqwest::Method::DELETE);
+        assert_eq!(delete.url().path(), "/api/v9/users/@me/mentions/700");
     }
-
-    let len = content.chars().count();
-    if len > 2_000 {
-        return Err(AppError::MessageTooLong { len });
-    }
-
-    let sizes = attachments
-        .iter()
-        .map(|attachment| (attachment.filename.clone(), attachment.size_bytes))
-        .collect::<Vec<_>>();
-    validate_attachment_sizes(&sizes)
-}
-
-fn validate_attachment_sizes(attachments: &[(String, u64)]) -> Result<()> {
-    if attachments.len() > MAX_UPLOAD_ATTACHMENT_COUNT {
-        return Err(AppError::TooManyAttachments {
-            count: attachments.len(),
-        });
-    }
-
-    let mut total_size = 0_u64;
-    for (filename, size) in attachments {
-        if *size > MAX_UPLOAD_FILE_BYTES {
-            return Err(AppError::AttachmentTooLarge {
-                filename: filename.clone(),
-                size: *size,
-            });
-        }
-        total_size = total_size.saturating_add(*size);
-    }
-    if total_size > MAX_UPLOAD_TOTAL_BYTES {
-        return Err(AppError::AttachmentsTooLarge { size: total_size });
-    }
-
-    Ok(())
-}
-
-pub(super) fn validate_message_content(content: &str) -> Result<()> {
-    validate_message_payload(content, &[])
 }

@@ -1,4 +1,9 @@
+#[cfg(feature = "voice-playback")]
+use super::audio_buffer::voice_output_prebuffer_frames;
 use super::dave::VoiceDaveOutboundPayload;
+use super::opus::VoicePlaybackDecodeState;
+#[cfg(feature = "voice-playback")]
+use super::playback::voice_output_buffer_size;
 use super::rtp::build_voice_rtp_packet;
 use super::runtime::stop_voice_connection_task;
 use super::*;
@@ -21,7 +26,8 @@ fn voice_state(user_id: u64, channel_id: Option<Id<ChannelMarker>>) -> VoiceStat
 
 fn voice_server() -> VoiceServerInfo {
     VoiceServerInfo {
-        guild_id: Id::new(1),
+        guild_id: Some(Id::new(1)),
+        channel_id: None,
         endpoint: Some("voice.example.com".to_owned()),
         token: "secret-token".to_owned(),
     }
@@ -50,7 +56,7 @@ fn voice_runtime_assembles_local_voice_session() {
 
     match action {
         Some(VoiceRuntimeAction::Connect(session)) => {
-            assert_eq!(session.guild_id, Id::new(1));
+            assert_eq!(session.scope, VoiceScope::Guild(Id::new(1)));
             assert_eq!(session.channel_id, Id::new(10));
             assert_eq!(session.user_id, Id::new(10));
             assert_eq!(session.endpoint, "voice.example.com");
@@ -60,12 +66,57 @@ fn voice_runtime_assembles_local_voice_session() {
 }
 
 #[test]
+fn voice_runtime_restores_active_sources_only_for_the_latest_failed_selection() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    let connection_id = match state.apply(VoiceRuntimeEvent::VoiceServer(voice_server())) {
+        Some(VoiceRuntimeAction::Connect(session)) => session.connection_id,
+        action => panic!("voice server should start a connection, got {action:?}"),
+    };
+    let requested_sources = VoiceAudioSources {
+        input: Some("new-mic".to_owned()),
+        output: Some("new-speaker".to_owned()),
+    };
+    state.apply(VoiceRuntimeEvent::AudioSourcesChanged(
+        requested_sources.clone(),
+    ));
+    let selection = state.audio_source_selection();
+
+    state.apply(VoiceRuntimeEvent::AudioSourcesApplyFailed {
+        connection_id,
+        generation: selection.generation.saturating_sub(1),
+        requested_sources: requested_sources.clone(),
+        active_sources: VoiceAudioSources::default(),
+        message: "stale failure".to_owned(),
+    });
+    assert_eq!(state.audio_source_selection().sources, requested_sources);
+
+    state.apply(VoiceRuntimeEvent::AudioSourcesApplyFailed {
+        connection_id,
+        generation: selection.generation,
+        requested_sources: requested_sources.clone(),
+        active_sources: VoiceAudioSources::default(),
+        message: "current failure".to_owned(),
+    });
+    assert_eq!(
+        state.audio_source_selection().sources,
+        VoiceAudioSources::default()
+    );
+}
+
+#[test]
 fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     let mut state = VoiceRuntimeState::default();
     state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
 
     let mut requested = requested_voice();
     requested.allow_microphone_transmit = true;
+    requested.noise_suppression = true;
     requested.self_mute = false;
     requested.microphone_volume = VoiceVolumePercent::new(40);
     requested.voice_output_volume = VoiceVolumePercent::new(65);
@@ -80,7 +131,10 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
-            enabled: true,
+            capture_enabled: true,
+            transmit_enabled: true,
+            use_voice_activity: true,
+            noise_suppression: true,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
             microphone_volume: VoiceVolumePercent::new(40),
         })
@@ -98,7 +152,10 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
-            enabled: false,
+            capture_enabled: false,
+            transmit_enabled: false,
+            use_voice_activity: true,
+            noise_suppression: true,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
             microphone_volume: VoiceVolumePercent::new(40),
         })
@@ -116,7 +173,10 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
-            enabled: false,
+            capture_enabled: false,
+            transmit_enabled: false,
+            use_voice_activity: true,
+            noise_suppression: true,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
             microphone_volume: VoiceVolumePercent::new(40),
         })
@@ -136,7 +196,10 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
-            enabled: false,
+            capture_enabled: false,
+            transmit_enabled: false,
+            use_voice_activity: true,
+            noise_suppression: true,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
             microphone_volume: VoiceVolumePercent::new(40),
         })
@@ -155,6 +218,59 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     state.apply(VoiceRuntimeEvent::Requested(Some(other_channel)));
     assert_eq!(state.capture_gate(), None);
     assert_eq!(state.playback_gate(), None);
+}
+
+#[test]
+#[cfg(feature = "voice-playback")]
+fn voice_runtime_push_to_talk_transmits_only_while_pressed() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    let mut requested = requested_voice();
+    requested.allow_microphone_transmit = true;
+    requested.self_mute = false;
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested)));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    state.apply(VoiceRuntimeEvent::VoiceServer(voice_server()));
+    state.apply(VoiceRuntimeEvent::PushToTalkEnabledChanged(true));
+
+    let released_gate = state.capture_gate().expect("capture gate exists");
+    assert!(released_gate.capture_enabled);
+    assert!(!released_gate.transmit_enabled);
+    assert_eq!(
+        state.capture_gate(),
+        Some(VoiceCaptureGate {
+            capture_enabled: true,
+            transmit_enabled: false,
+            use_voice_activity: false,
+            noise_suppression: false,
+            microphone_sensitivity: MicrophoneSensitivityDb::default(),
+            microphone_volume: VoiceVolumePercent::default(),
+        })
+    );
+
+    state.apply(VoiceRuntimeEvent::PushToTalkPressed(true));
+    assert_eq!(
+        state.capture_gate(),
+        Some(VoiceCaptureGate {
+            capture_enabled: true,
+            transmit_enabled: true,
+            use_voice_activity: false,
+            noise_suppression: false,
+            microphone_sensitivity: MicrophoneSensitivityDb::default(),
+            microphone_volume: VoiceVolumePercent::default(),
+        })
+    );
+
+    state.apply(VoiceRuntimeEvent::PushToTalkPressed(false));
+    assert!(
+        !state
+            .capture_gate()
+            .expect("capture gate exists")
+            .transmit_enabled
+    );
 }
 
 #[test]
@@ -191,7 +307,7 @@ fn voice_runtime_closes_on_leave() {
 }
 
 #[test]
-fn voice_runtime_reconnects_after_matching_connection_end() {
+fn voice_runtime_respects_connection_end_outcome() {
     let mut state = VoiceRuntimeState::default();
     state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
     state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
@@ -204,16 +320,123 @@ fn voice_runtime_reconnects_after_matching_connection_end() {
         panic!("expected initial voice connect action, got {connected:?}");
     };
 
+    let reconnected = state.apply(session.connection_ended_event(VoiceConnectionEnd::Reconnect));
+    let Some(VoiceRuntimeAction::Connect(active)) = reconnected else {
+        panic!("recoverable end should reconnect, got {reconnected:?}");
+    };
     assert_eq!(
-        state.apply(session.connection_ended_event()),
-        Some(VoiceRuntimeAction::Connect(session))
+        state.apply(active.connection_ended_event(VoiceConnectionEnd::Stop)),
+        None
     );
+    assert_eq!(
+        state.apply(VoiceRuntimeEvent::VoiceServer(voice_server())),
+        None
+    );
+    assert!(matches!(
+        state.apply(VoiceRuntimeEvent::ManualRetry(requested_voice())),
+        Some(VoiceRuntimeAction::Connect(_))
+    ));
+}
+
+#[test]
+fn voice_runtime_limits_reconnects_and_resets_after_success() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    let connected = state.apply(VoiceRuntimeEvent::VoiceServer(voice_server()));
+    let Some(VoiceRuntimeAction::Connect(mut active)) = connected else {
+        panic!("expected initial voice connect action, got {connected:?}");
+    };
+
+    for _ in 0..super::runtime::MAX_VOICE_RECONNECT_ATTEMPTS {
+        let reconnected = state.apply(active.connection_ended_event(VoiceConnectionEnd::Reconnect));
+        let Some(VoiceRuntimeAction::Connect(next)) = reconnected else {
+            panic!("retry within the limit should reconnect, got {reconnected:?}");
+        };
+        active = next;
+    }
+    assert_eq!(
+        state.apply(active.connection_ended_event(VoiceConnectionEnd::Reconnect)),
+        None
+    );
+    let manual_retry = state.apply(VoiceRuntimeEvent::ManualRetry(requested_voice()));
+    assert!(
+        matches!(manual_retry, Some(VoiceRuntimeAction::Connect(_))),
+        "manual retry should reset the reconnect limit, got {manual_retry:?}"
+    );
+
+    let mut rotated = voice_server();
+    rotated.token = "rotated-token".to_owned();
+    let reset = state.apply(VoiceRuntimeEvent::VoiceServer(rotated));
+    let Some(VoiceRuntimeAction::Connect(mut active)) = reset else {
+        panic!("new voice session should reset the retry limit, got {reset:?}");
+    };
+    assert_eq!(
+        state.apply(active.connection_established_event()),
+        None,
+        "a healthy connection should reset consecutive retries"
+    );
+    for _ in 0..super::runtime::MAX_VOICE_RECONNECT_ATTEMPTS {
+        let reconnected = state.apply(active.connection_ended_event(VoiceConnectionEnd::Reconnect));
+        let Some(VoiceRuntimeAction::Connect(next)) = reconnected else {
+            panic!("retry after a healthy connection should reconnect, got {reconnected:?}");
+        };
+        active = next;
+    }
+}
+
+#[test]
+fn voice_runtime_ignores_stale_end_after_server_token_rotation() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    let connected = state.apply(VoiceRuntimeEvent::VoiceServer(voice_server()));
+    let Some(VoiceRuntimeAction::Connect(previous)) = connected else {
+        panic!("expected initial voice connect action, got {connected:?}");
+    };
+
+    let mut rotated = voice_server();
+    rotated.token = "rotated-token".to_owned();
+    let replaced = state.apply(VoiceRuntimeEvent::VoiceServer(rotated));
+    let Some(VoiceRuntimeAction::Connect(replacement)) = replaced else {
+        panic!("token rotation should replace the voice task, got {replaced:?}");
+    };
+    assert_ne!(previous.connection_id, replacement.connection_id);
+
+    assert_eq!(
+        state.apply(previous.connection_ended_event(VoiceConnectionEnd::Stop)),
+        None
+    );
+    assert!(matches!(
+        state.apply(replacement.connection_ended_event(VoiceConnectionEnd::Reconnect)),
+        Some(VoiceRuntimeAction::Connect(_))
+    ));
+}
+
+#[test]
+fn voice_close_codes_follow_reconnect_policy() {
+    assert_eq!(voice_close_action(4013), VoiceCloseAction::Resume);
+    assert_eq!(voice_close_action(4015), VoiceCloseAction::Resume);
+    assert_eq!(voice_close_action(4006), VoiceCloseAction::Reconnect);
+    assert_eq!(voice_close_action(4009), VoiceCloseAction::Reconnect);
+    for code in [4014, 4021, 4022] {
+        assert_eq!(voice_close_action(code), VoiceCloseAction::Stop);
+    }
 }
 
 #[test]
 fn voice_gateway_session_debug_redacts_secrets() {
     let session = VoiceGatewaySession {
-        guild_id: Id::new(1),
+        connection_id: 0,
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(10),
         user_id: Id::new(20),
         session_id: "secret-session".to_owned(),
@@ -239,9 +462,49 @@ fn voice_state_debug_redacts_session_id() {
 }
 
 #[test]
+fn voice_session_description_reuses_only_the_same_transport_key_and_mode() {
+    let current = VoiceSessionDescription {
+        audio_codec: "opus".to_owned(),
+        mode: "aead_xchacha20_poly1305_rtpsize".to_owned(),
+        secret_key: vec![1, 2, 3],
+        dave_protocol_version: Some(1),
+        video_codec: None,
+        media_session_id: "media-session".to_owned(),
+        keyframe_interval: Some(1_000),
+    };
+
+    for (next, expected) in [
+        (
+            VoiceSessionDescription {
+                dave_protocol_version: Some(2),
+                ..current.clone()
+            },
+            true,
+        ),
+        (
+            VoiceSessionDescription {
+                secret_key: vec![4, 5, 6],
+                ..current.clone()
+            },
+            false,
+        ),
+        (
+            VoiceSessionDescription {
+                mode: "aead_aes256_gcm_rtpsize".to_owned(),
+                ..current.clone()
+            },
+            false,
+        ),
+    ] {
+        assert_eq!(current.uses_same_transport(&next), expected, "{next:?}");
+    }
+}
+
+#[test]
 fn voice_dave_state_tracks_speaking_ssrc_mapping() {
     let session = VoiceGatewaySession {
-        guild_id: Id::new(1),
+        connection_id: 0,
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(10),
         user_id: Id::new(20),
         session_id: "voice-session".to_owned(),
@@ -283,12 +546,14 @@ fn voice_speaking_uses_microphone_bit_only() {
 }
 
 #[test]
-fn voice_speaking_tracker_expires_remote_speakers_and_tracks_local_edges() {
-    let mut tracker = VoiceSpeakingTracker::default();
+fn voice_speaking_tracker_keeps_local_and_remote_activity_separate() {
     let remote_user = Id::new(30);
     let local_user = Id::new(20);
+    let mut tracker = VoiceSpeakingTracker::new(local_user);
     let now = Instant::now();
 
+    assert_eq!(tracker.record_remote(local_user, true, now), None);
+    assert!(tracker.remote_deadlines.is_empty());
     assert_eq!(tracker.record_remote(remote_user, true, now), Some(true));
     assert_eq!(
         tracker.record_remote(remote_user, true, now + VOICE_REMOTE_SPEAKING_TTL / 2),
@@ -309,7 +574,64 @@ fn voice_speaking_tracker_expires_remote_speakers_and_tracks_local_edges() {
 
     assert_eq!(tracker.record_local(true), Some(true));
     assert_eq!(tracker.record_local(true), None);
-    assert_eq!(tracker.clear_all(local_user), vec![local_user]);
+    assert_eq!(tracker.clear_all(), vec![local_user]);
+}
+
+#[cfg(feature = "voice-playback")]
+#[test]
+fn local_speaking_follows_microphone_activity_and_emits_only_edges() {
+    let quiet = vec![100i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+    let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+    let voice_activity_gate = VoiceCaptureGate {
+        capture_enabled: true,
+        transmit_enabled: true,
+        use_voice_activity: true,
+        noise_suppression: false,
+        microphone_sensitivity: MicrophoneSensitivityDb::default(),
+        microphone_volume: VoiceVolumePercent::default(),
+    };
+    assert!(voice_microphone_frame_is_active(
+        voice_activity_gate,
+        &mut VoiceMicrophoneGateState::default(),
+        &normal,
+    ));
+    assert!(!voice_microphone_frame_is_active(
+        voice_activity_gate,
+        &mut VoiceMicrophoneGateState::default(),
+        &quiet,
+    ));
+    assert!(voice_microphone_frame_is_active(
+        VoiceCaptureGate {
+            use_voice_activity: false,
+            ..voice_activity_gate
+        },
+        &mut VoiceMicrophoneGateState::default(),
+        &quiet,
+    ));
+    assert!(!voice_microphone_frame_is_active(
+        VoiceCaptureGate {
+            transmit_enabled: false,
+            ..voice_activity_gate
+        },
+        &mut VoiceMicrophoneGateState::default(),
+        &normal,
+    ));
+
+    let (speaking_tx, mut speaking_rx) = mpsc::unbounded_channel();
+    let mut local_speaking = false;
+
+    publish_local_speaking_edge(&speaking_tx, &mut local_speaking, false);
+    publish_local_speaking_edge(&speaking_tx, &mut local_speaking, true);
+    publish_local_speaking_edge(&speaking_tx, &mut local_speaking, true);
+    publish_local_speaking_edge(&speaking_tx, &mut local_speaking, false);
+    publish_local_speaking_edge(&speaking_tx, &mut local_speaking, false);
+
+    assert_eq!(speaking_rx.try_recv(), Ok(true));
+    assert_eq!(speaking_rx.try_recv(), Ok(false));
+    assert_eq!(
+        speaking_rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    );
 }
 
 #[test]
@@ -354,6 +676,8 @@ fn dave_media_detection_requires_magic_marker() {
 #[test]
 fn voice_playback_frame_uses_only_playable_media_payloads() {
     let header = RtpHeader {
+        has_padding: false,
+        marker: false,
         payload_type: DISCORD_VOICE_PAYLOAD_TYPE,
         sequence: 7,
         timestamp: 8,
@@ -362,15 +686,34 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
         encrypted_extension_body_len: 0,
         payload_offset: 12,
     };
+    let mapped_user_id = Id::new(41);
 
     assert_eq!(
-        voice_playback_frame(&VoiceMediaPayload::Plain(b"opus".to_vec()), &header),
+        voice_playback_frame(
+            &VoiceMediaPayload::Plain(b"opus".to_vec()),
+            &header,
+            Some(mapped_user_id),
+        ),
+        Some(VoicePlaybackFrame {
+            ssrc: 9,
+            user_id: Some(mapped_user_id),
+            sequence: 7,
+            timestamp: 8,
+            opus: b"opus".to_vec(),
+        })
+    );
+    assert_eq!(
+        voice_playback_frame(
+            &VoiceMediaPayload::Plain(b"unmapped-opus".to_vec()),
+            &header,
+            None,
+        ),
         Some(VoicePlaybackFrame {
             ssrc: 9,
             user_id: None,
             sequence: 7,
             timestamp: 8,
-            opus: b"opus".to_vec(),
+            opus: b"unmapped-opus".to_vec(),
         })
     );
     assert_eq!(
@@ -380,10 +723,11 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
                 opus: b"dave-opus".to_vec(),
             },
             &header,
+            Some(mapped_user_id),
         ),
         Some(VoicePlaybackFrame {
             ssrc: 9,
-            user_id: Some(42),
+            user_id: Some(Id::new(42)),
             sequence: 7,
             timestamp: 8,
             opus: b"dave-opus".to_vec(),
@@ -393,6 +737,7 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
         voice_playback_frame(
             &VoiceMediaPayload::DaveUnexpectedPlain { payload_len: 4 },
             &header,
+            Some(mapped_user_id),
         ),
         None
     );
@@ -400,17 +745,32 @@ fn voice_playback_frame_uses_only_playable_media_payloads() {
         voice_playback_frame(
             &VoiceMediaPayload::DaveMissingUser { payload_len: 4 },
             &header,
+            Some(mapped_user_id),
         ),
         None
     );
 }
 
 fn test_playback_frame(ssrc: u32, user_id: Option<u64>, sequence: u16) -> VoicePlaybackFrame {
-    VoicePlaybackFrame {
+    test_playback_frame_with_timestamp(
         ssrc,
         user_id,
         sequence,
-        timestamp: u32::from(sequence) * DISCORD_OPUS_TIMESTAMP_INCREMENT,
+        u32::from(sequence) * DISCORD_OPUS_TIMESTAMP_INCREMENT,
+    )
+}
+
+fn test_playback_frame_with_timestamp(
+    ssrc: u32,
+    user_id: Option<u64>,
+    sequence: u16,
+    timestamp: u32,
+) -> VoicePlaybackFrame {
+    VoicePlaybackFrame {
+        ssrc,
+        user_id: user_id.map(Id::new),
+        sequence,
+        timestamp,
         opus: vec![sequence as u8],
     }
 }
@@ -426,7 +786,7 @@ fn voice_playout_buffer_reorders_nearby_packets() {
     assert!(buffer.push(test_playback_frame(9, Some(42), 11), now));
 
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -434,7 +794,7 @@ fn voice_playout_buffer_reorders_nearby_packets() {
         )))
     );
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION * 2),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -442,7 +802,7 @@ fn voice_playout_buffer_reorders_nearby_packets() {
         )))
     );
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION * 3),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -452,38 +812,131 @@ fn voice_playout_buffer_reorders_nearby_packets() {
 }
 
 #[test]
+fn voice_playout_buffer_schedules_packets_by_rtp_timestamp_delta() {
+    struct Case {
+        name: &'static str,
+        timestamp_step: u32,
+        step_duration: Duration,
+        early_duration: Duration,
+    }
+
+    for case in [
+        Case {
+            name: "20ms Discord packet",
+            timestamp_step: DISCORD_OPUS_TIMESTAMP_INCREMENT,
+            step_duration: VOICE_PLAYBACK_FRAME_DURATION,
+            early_duration: Duration::from_millis(10),
+        },
+        Case {
+            name: "10ms Abaddon packet",
+            timestamp_step: 480,
+            step_duration: Duration::from_millis(10),
+            early_duration: Duration::from_millis(5),
+        },
+    ] {
+        let now = Instant::now();
+        let playout_start = now + VOICE_PLAYBACK_JITTER_BUFFER_DELAY;
+        let mut buffer = VoicePlaybackPlayoutBuffer::default();
+        let timestamps = [
+            case.timestamp_step * 10,
+            case.timestamp_step * 11,
+            case.timestamp_step * 12,
+        ];
+
+        assert!(buffer.push(
+            test_playback_frame_with_timestamp(9, Some(42), 10, timestamps[0]),
+            now
+        ));
+        assert!(buffer.push(
+            test_playback_frame_with_timestamp(9, Some(42), 11, timestamps[1]),
+            now
+        ));
+        assert!(buffer.push(
+            test_playback_frame_with_timestamp(9, Some(42), 12, timestamps[2]),
+            now
+        ));
+
+        assert_eq!(
+            buffer.next_frame(playout_start),
+            Some(VoicePlayoutFrame::Audio(
+                test_playback_frame_with_timestamp(9, Some(42), 10, timestamps[0])
+            )),
+            "{} should emit the first frame at playout start",
+            case.name
+        );
+        assert_eq!(
+            buffer.next_frame(playout_start + case.early_duration),
+            None,
+            "{} should wait for the RTP timestamp delta",
+            case.name
+        );
+        assert_eq!(
+            buffer.next_frame(playout_start + case.step_duration),
+            Some(VoicePlayoutFrame::Audio(
+                test_playback_frame_with_timestamp(9, Some(42), 11, timestamps[1])
+            )),
+            "{} should emit the second frame after its timestamp delta",
+            case.name
+        );
+        assert_eq!(
+            buffer.next_frame(playout_start + case.step_duration * 2),
+            Some(VoicePlayoutFrame::Audio(
+                test_playback_frame_with_timestamp(9, Some(42), 12, timestamps[2])
+            )),
+            "{} should keep the same timestamp cadence",
+            case.name
+        );
+    }
+}
+
+#[test]
 fn voice_playout_buffer_emits_packet_loss_for_missing_sequence() {
-    let now = Instant::now();
-    let mut buffer = VoicePlaybackPlayoutBuffer::default();
+    // The concealment step comes from the surrounding RTP timestamps, so a
+    // 10 ms sender (Abaddon) must not be concealed with a 20 ms gap.
+    let cases = [
+        (
+            "20ms",
+            DISCORD_OPUS_TIMESTAMP_INCREMENT,
+            VOICE_PLAYBACK_FRAME_DURATION,
+        ),
+        ("10ms", 480, Duration::from_millis(10)),
+    ];
 
-    assert!(buffer.push(test_playback_frame(9, Some(42), 10), now));
-    assert!(buffer.push(test_playback_frame(9, Some(42), 12), now));
-    assert!(buffer.push(test_playback_frame(9, Some(42), 13), now));
+    for (name, timestamp_step, step_duration) in cases {
+        let now = Instant::now();
+        let playout_start = now + VOICE_PLAYBACK_JITTER_BUFFER_DELAY;
+        let mut buffer = VoicePlaybackPlayoutBuffer::default();
+        let first = test_playback_frame_with_timestamp(9, Some(42), 10, timestamp_step * 10);
+        let third = test_playback_frame_with_timestamp(9, Some(42), 12, timestamp_step * 12);
 
-    assert_eq!(
-        buffer.next_frame(now),
-        Some(VoicePlayoutFrame::Audio(test_playback_frame(
-            9,
-            Some(42),
-            10
-        )))
-    );
-    assert_eq!(
-        buffer.next_frame(now),
-        Some(VoicePlayoutFrame::PacketLoss {
-            ssrc: 9,
-            user_id: Some(42),
-            sequence: 11,
-        })
-    );
-    assert_eq!(
-        buffer.next_frame(now),
-        Some(VoicePlayoutFrame::Audio(test_playback_frame(
-            9,
-            Some(42),
-            12
-        )))
-    );
+        assert!(buffer.push(first.clone(), now));
+        assert!(buffer.push(third.clone(), now));
+        assert!(buffer.push(
+            test_playback_frame_with_timestamp(9, Some(42), 13, timestamp_step * 13),
+            now
+        ));
+
+        assert_eq!(
+            buffer.next_frame(playout_start),
+            Some(VoicePlayoutFrame::Audio(first)),
+            "{name}"
+        );
+        assert_eq!(
+            buffer.next_frame(playout_start + step_duration),
+            Some(VoicePlayoutFrame::PacketLoss {
+                ssrc: 9,
+                user_id: Some(Id::new(42)),
+                sequence: 11,
+                timestamp_step,
+            }),
+            "{name}"
+        );
+        assert_eq!(
+            buffer.next_frame(playout_start + step_duration * 2),
+            Some(VoicePlayoutFrame::Audio(third)),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -495,7 +948,7 @@ fn voice_playout_buffer_drops_stale_packets_after_playout_advances() {
     assert!(buffer.push(test_playback_frame(9, Some(42), 8), now));
     assert!(buffer.push(test_playback_frame(9, Some(42), 9), now));
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -503,7 +956,7 @@ fn voice_playout_buffer_drops_stale_packets_after_playout_advances() {
         )))
     );
     assert_eq!(
-        buffer.next_frame(now),
+        buffer.next_frame(now + VOICE_PLAYBACK_FRAME_DURATION * 2),
         Some(VoicePlayoutFrame::Audio(test_playback_frame(
             9,
             Some(42),
@@ -528,11 +981,66 @@ fn voice_decoded_samples_mix_same_tick_frames() {
 }
 
 #[test]
-fn voice_decoded_samples_clamp_mixed_peaks() {
-    let mixed = mix_voice_decoded_samples(&[vec![1.0, 1.0], vec![1.0, 1.0]])
-        .expect("same-tick decoded frames should mix");
+fn voice_decode_state_outputs_one_poll_quantum_per_mix() {
+    let mut state = VoicePlaybackDecodeState::default();
+    let poll_samples =
+        VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS);
 
-    assert_eq!(mixed, vec![1.0, 1.0]);
+    state.push_decoded_samples(1, vec![1.0; poll_samples * 2]);
+    state.push_decoded_samples(2, vec![0.5; poll_samples]);
+
+    let first = state
+        .next_pending_mix()
+        .expect("first poll should mix pending samples");
+    let second = state
+        .next_pending_mix()
+        .expect("second poll should drain 20ms frame remainder");
+
+    assert_eq!(first.len(), poll_samples);
+    assert_eq!(second.len(), poll_samples);
+    assert!(state.next_pending_mix().is_none());
+}
+
+#[test]
+fn voice_decode_state_applies_participant_settings_before_final_output_limit() {
+    let mut state = VoicePlaybackDecodeState::default();
+    let poll_samples =
+        VOICE_PLAYBACK_POLL_SAMPLES_PER_CHANNEL * usize::from(DISCORD_VOICE_CHANNELS);
+    state.replace_participant_playback_settings(HashMap::from([
+        (
+            Id::new(10),
+            VoiceParticipantPlaybackSettings {
+                volume: VoiceParticipantVolumePercent::new(200),
+                muted: false,
+            },
+        ),
+        (
+            Id::new(11),
+            VoiceParticipantPlaybackSettings {
+                muted: true,
+                ..VoiceParticipantPlaybackSettings::default()
+            },
+        ),
+    ]));
+    state.push_decoded_samples_for_user(1, Some(Id::new(10)), vec![0.75; poll_samples]);
+    state.push_decoded_samples_for_user(2, Some(Id::new(11)), vec![1.0; poll_samples]);
+
+    let mixed = state
+        .next_pending_mix()
+        .expect("audible participant should produce a mix");
+
+    assert!(mixed.iter().all(|sample| (*sample - 1.5).abs() < 0.0001));
+
+    #[cfg(feature = "voice-playback")]
+    {
+        let reduced_after_participant_boost = apply_voice_playback_gain_and_limit(mixed[0], 0.5);
+        assert_voice_sample_near(reduced_after_participant_boost, 0.75);
+
+        let boosted_quieter_peak = apply_voice_playback_gain_and_limit(0.75, 2.0);
+        let boosted_louder_peak = apply_voice_playback_gain_and_limit(1.0, 2.0);
+        assert!(boosted_quieter_peak < boosted_louder_peak);
+        assert!(boosted_louder_peak <= VOICE_SOFT_LIMIT_CEILING);
+    }
 }
 
 #[test]
@@ -551,22 +1059,35 @@ fn voice_post_process_reduces_alternating_high_frequency_noise() {
 #[test]
 fn extra_output_channels_use_converted_silence() {
     let mut u8_output = [0u8; 4];
-    write_voice_output_frame(&mut u8_output, 1.0, -1.0, f32_sample_to_u8);
+    write_voice_output_frame(&mut u8_output, 0.5, -0.5, 1.0, f32_sample_to_u8);
     assert_eq!(
         u8_output,
-        [255, 0, f32_sample_to_u8(0.0), f32_sample_to_u8(0.0)]
+        [
+            f32_sample_to_u8(0.5),
+            f32_sample_to_u8(-0.5),
+            f32_sample_to_u8(0.0),
+            f32_sample_to_u8(0.0)
+        ]
     );
 
     let mut u16_output = [0u16; 4];
-    write_voice_output_frame(&mut u16_output, 1.0, -1.0, f32_sample_to_u16);
+    write_voice_output_frame(&mut u16_output, 0.5, -0.5, 1.0, f32_sample_to_u16);
     assert_eq!(
         u16_output,
-        [u16::MAX, 0, f32_sample_to_u16(0.0), f32_sample_to_u16(0.0),]
+        [
+            f32_sample_to_u16(0.5),
+            f32_sample_to_u16(-0.5),
+            f32_sample_to_u16(0.0),
+            f32_sample_to_u16(0.0),
+        ]
     );
 
     let mut i16_output = [1i16; 4];
-    write_voice_output_frame(&mut i16_output, 1.0, -1.0, f32_sample_to_i16);
-    assert_eq!(i16_output, [i16::MAX, i16::MIN + 1, 0, 0]);
+    write_voice_output_frame(&mut i16_output, 0.5, -0.5, 1.0, f32_sample_to_i16);
+    assert_eq!(
+        i16_output,
+        [f32_sample_to_i16(0.5), f32_sample_to_i16(-0.5), 0, 0]
+    );
 }
 
 fn assert_voice_sample_near(actual: f32, expected: f32) {
@@ -582,7 +1103,12 @@ fn voice_audio_buffer_resamples_non_48khz_output_clock() {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     tx.try_send(vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
         .expect("decoded samples should queue");
-    let mut buffer = VoiceAudioBuffer::new(rx, 24_000);
+    let stats = Arc::new(VoiceAudioOutputStats::default());
+    stats
+        .queued_frames
+        .store(VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES, Ordering::Relaxed);
+    let mut buffer = VoiceAudioBuffer::new(rx, 24_000, stats);
+    buffer.begin_output(0);
 
     assert_eq!(buffer.next_stereo_frame(), Some([0.0, 0.0]));
     assert_eq!(buffer.next_stereo_frame(), Some([2.0, 2.0]));
@@ -599,7 +1125,13 @@ fn voice_audio_buffer_fades_short_underruns() {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     tx.try_send(vec![1.0, -1.0])
         .expect("decoded samples should queue");
-    let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE);
+    let stats = Arc::new(VoiceAudioOutputStats::default());
+    stats.record_pcm_enqueue(1);
+    stats
+        .queued_frames
+        .store(VOICE_AUDIO_OUTPUT_PREBUFFER_FRAMES, Ordering::Relaxed);
+    let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE, Arc::clone(&stats));
+    buffer.begin_output(0);
 
     assert_eq!(buffer.next_stereo_frame(), Some([1.0, -1.0]));
     let faded = buffer
@@ -608,6 +1140,40 @@ fn voice_audio_buffer_fades_short_underruns() {
 
     assert!(faded[0] < 1.0 && faded[0] > 0.0);
     assert!(faded[1] > -1.0 && faded[1] < 0.0);
+    assert_eq!(stats.output_underruns.load(Ordering::Relaxed), 1);
+    assert_eq!(stats.recent_pcm_underruns.load(Ordering::Relaxed), 1);
+}
+
+#[cfg(feature = "voice-playback")]
+#[test]
+fn voice_output_prebuffer_includes_one_device_callback() {
+    let cases = [
+        (4_096, 48_000, 6_976),
+        (96_000, 48_000, 98_880),
+        (4_096, 192_000, 3_904),
+        (4_096, 24_000, 11_072),
+    ];
+
+    for (callback_frames, output_sample_rate, expected) in cases {
+        assert_eq!(
+            voice_output_prebuffer_frames(callback_frames, output_sample_rate),
+            expected
+        );
+    }
+
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    tx.try_send(vec![1.0, -1.0])
+        .expect("decoded samples should queue");
+    let stats = Arc::new(VoiceAudioOutputStats::default());
+    let mut buffer = VoiceAudioBuffer::new(rx, DISCORD_VOICE_SAMPLE_RATE, Arc::clone(&stats));
+
+    stats.queued_frames.store(6_975, Ordering::Relaxed);
+    buffer.begin_output(4_096);
+    assert_eq!(buffer.next_stereo_frame(), None);
+
+    stats.queued_frames.store(6_976, Ordering::Relaxed);
+    buffer.begin_output(4_096);
+    assert_eq!(buffer.next_stereo_frame(), Some([1.0, -1.0]));
 }
 
 #[test]
@@ -696,23 +1262,64 @@ fn microphone_gate_hangover_keeps_short_quiet_gaps_open() {
 fn voice_volume_scales_i16_pcm_frame() {
     let mut frame = vec![1000, -1000, i16::MAX, i16::MIN];
 
-    apply_voice_volume_to_i16_frame(&mut frame, VoiceVolumePercent::new(50));
+    let limited =
+        apply_voice_microphone_gain_and_limit(&mut frame, VoiceVolumePercent::new(50).gain());
 
     assert_eq!(frame, vec![500, -500, 16384, -16384]);
+    assert_eq!(limited, 0);
+
+    let mut boosted = vec![1000, -1000, 20_000, -20_000];
+    let limited =
+        apply_voice_microphone_gain_and_limit(&mut boosted, VoiceVolumePercent::new(200).gain());
+
+    assert_eq!(boosted[0..2], [2000, -2000]);
+    assert!(boosted[2] < i16::MAX);
+    assert!(boosted[3] > i16::MIN);
+    assert_eq!(boosted[2], -boosted[3]);
+    assert_eq!(limited, 2);
 }
 
 #[test]
 fn voice_microphone_protection_soft_limits_extreme_samples() {
     let mut frame = vec![1000, -1000, i16::MAX, i16::MIN];
 
-    let limited = protect_voice_microphone_frame(&mut frame);
+    let limited = apply_voice_microphone_gain_and_limit(&mut frame, 1.0);
 
     assert_eq!(frame[0], 1000);
     assert_eq!(frame[1], -1000);
     assert!(frame[2] < i16::MAX);
     assert!(frame[3] > i16::MIN);
-    assert_eq!(frame[2], -frame[3]);
+    assert!((i32::from(frame[2]) + i32::from(frame[3])).abs() <= 1);
     assert_eq!(limited, 2);
+}
+
+#[cfg(feature = "voice-playback")]
+#[test]
+fn voice_microphone_conditioning_combines_gain_before_soft_limiting() {
+    let mut frame = vec![1000, 12_000, 20_000, -12_000, -20_000];
+    let mut microphone_gate = VoiceMicrophoneGateState::default();
+    let mut transmit_stats = VoiceUdpTransmitStats::default();
+
+    condition_voice_microphone_frame(
+        &mut frame,
+        VoiceCaptureGate {
+            capture_enabled: true,
+            transmit_enabled: true,
+            use_voice_activity: true,
+            noise_suppression: false,
+            microphone_sensitivity: MicrophoneSensitivityDb::default(),
+            microphone_volume: VoiceVolumePercent::new(200),
+        },
+        &mut microphone_gate,
+        &mut transmit_stats,
+    );
+
+    assert_eq!(frame[0], 3000);
+    assert!(frame[1] < frame[2]);
+    assert!(frame[2] < i16::MAX);
+    assert_eq!(frame[1], -frame[3]);
+    assert_eq!(frame[2], -frame[4]);
+    assert_eq!(transmit_stats.limited_samples, 4);
 }
 
 #[test]
@@ -839,7 +1446,7 @@ fn voice_microphone_overload_gain_keeps_shouted_frame_audible() {
 
     let gain = voice_microphone_overload_gain(&shouted)
         .expect("clipped shouted frame should be gain-reduced");
-    apply_voice_microphone_gain(&mut shouted, gain);
+    apply_voice_microphone_gain_and_limit(&mut shouted, gain);
 
     assert_eq!(gain, VOICE_MIC_OVERLOAD_ATTENUATION_GAIN);
     assert!(shouted.iter().any(|sample| *sample > 0));
@@ -851,7 +1458,10 @@ fn voice_microphone_overload_gain_keeps_shouted_frame_audible() {
 }
 
 #[test]
-fn voice_microphone_blanks_sparse_clipped_unclassified_frame() {
+fn voice_microphone_blanks_clipped_frames_except_handling_noise() {
+    // Clipping that the classifier does not recognise, and clipping it
+    // classifies as anything but handling noise, both get blanked. Handling
+    // noise keeps its own gate path, and a clean frame is left alone.
     let mut sparse_clip = vec![2000i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     for sample in sparse_clip
         .iter_mut()
@@ -859,17 +1469,7 @@ fn voice_microphone_blanks_sparse_clipped_unclassified_frame() {
     {
         *sample = i16::MAX;
     }
-    let raw_decision = voice_microphone_overload_decision(&sparse_clip);
-    assert!(raw_decision.is_none());
 
-    assert!(voice_microphone_clipped_frame_needs_blank(
-        &sparse_clip,
-        raw_decision,
-    ));
-}
-
-#[test]
-fn voice_microphone_blanks_clipped_non_handling_frame() {
     let mut attenuated = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     for sample in attenuated
         .iter_mut()
@@ -877,45 +1477,46 @@ fn voice_microphone_blanks_clipped_non_handling_frame() {
     {
         *sample = i16::MAX;
     }
-    let raw_decision = voice_microphone_overload_decision(&attenuated);
-    assert_eq!(
-        raw_decision.map(|decision| decision.kind),
-        Some(VoiceMicrophoneOverloadKind::Attenuated)
-    );
 
-    assert!(voice_microphone_clipped_frame_needs_blank(
-        &attenuated,
-        raw_decision,
-    ));
-}
-
-#[test]
-fn voice_microphone_keeps_handling_noise_on_gate_path() {
     let mut handling_noise = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     handling_noise[0] = i16::MAX;
     handling_noise[1] = i16::MIN + 1;
-    let raw_decision = voice_microphone_overload_decision(&handling_noise);
-    assert_eq!(
-        raw_decision.map(|decision| decision.kind),
-        Some(VoiceMicrophoneOverloadKind::HandlingNoise)
-    );
 
-    assert!(!voice_microphone_clipped_frame_needs_blank(
-        &handling_noise,
-        raw_decision,
-    ));
-}
+    let cases = [
+        ("sparse unclassified clip", sparse_clip, None, true),
+        (
+            "attenuated clip",
+            attenuated,
+            Some(VoiceMicrophoneOverloadKind::Attenuated),
+            true,
+        ),
+        (
+            "handling noise",
+            handling_noise,
+            Some(VoiceMicrophoneOverloadKind::HandlingNoise),
+            false,
+        ),
+        (
+            "clean frame",
+            vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES],
+            None,
+            false,
+        ),
+    ];
 
-#[test]
-fn voice_microphone_does_not_blank_unclipped_unclassified_frame() {
-    let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-    let raw_decision = voice_microphone_overload_decision(&normal);
-    assert!(raw_decision.is_none());
-
-    assert!(!voice_microphone_clipped_frame_needs_blank(
-        &normal,
-        raw_decision,
-    ));
+    for (name, frame, expected_kind, needs_blank) in cases {
+        let raw_decision = voice_microphone_overload_decision(&frame);
+        assert_eq!(
+            raw_decision.map(|decision| decision.kind),
+            expected_kind,
+            "{name}"
+        );
+        assert_eq!(
+            voice_microphone_clipped_frame_needs_blank(&frame, raw_decision),
+            needs_blank,
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -933,57 +1534,42 @@ fn voice_microphone_handling_noise_uses_adjacent_delta_without_dense_clipping() 
 }
 
 #[test]
-fn voice_microphone_overload_promotes_sparse_clipped_impulse_to_handling_noise() {
-    let mut impulse = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-    impulse[0] = i16::MAX;
-    impulse[1] = -3_233;
+fn voice_microphone_overload_promotes_sparse_clipped_transients_to_handling_noise() {
+    for (name, second_sample, min_delta, max_delta) in [
+        (
+            "impulse",
+            -3_233,
+            VOICE_MIC_OVERLOAD_IMPULSE_DELTA,
+            VOICE_MIC_HANDLING_NOISE_DELTA,
+        ),
+        (
+            "step",
+            i16::MAX,
+            VOICE_MIC_OVERLOAD_CLIPPED_STEP_DELTA,
+            VOICE_MIC_OVERLOAD_IMPULSE_DELTA,
+        ),
+    ] {
+        let mut frame = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        frame[0] = i16::MAX;
+        frame[1] = second_sample;
 
-    let decision = voice_microphone_overload_decision(&impulse)
-        .expect("clipped impulse should be gain-reduced");
+        let decision = voice_microphone_overload_decision(&frame)
+            .unwrap_or_else(|| panic!("clipped {name} should be gain-reduced"));
 
-    assert_eq!(decision.kind, VoiceMicrophoneOverloadKind::HandlingNoise);
-    assert_eq!(decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
-    let max_adjacent_delta = voice_microphone_max_adjacent_delta(&impulse);
-    assert!(max_adjacent_delta >= VOICE_MIC_OVERLOAD_IMPULSE_DELTA);
-    assert!(max_adjacent_delta < VOICE_MIC_HANDLING_NOISE_DELTA);
-    assert!(
-        voice_microphone_clipped_sample_count(&impulse) < VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES
-    );
-}
-
-#[test]
-fn voice_microphone_overload_promotes_sparse_clipped_step_to_handling_noise() {
-    let mut impulse = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-    impulse[0] = i16::MAX;
-    impulse[1] = i16::MAX;
-
-    let decision =
-        voice_microphone_overload_decision(&impulse).expect("clipped step should be gain-reduced");
-
-    assert_eq!(decision.kind, VoiceMicrophoneOverloadKind::HandlingNoise);
-    assert_eq!(decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
-    let max_adjacent_delta = voice_microphone_max_adjacent_delta(&impulse);
-    assert!(max_adjacent_delta >= VOICE_MIC_OVERLOAD_CLIPPED_STEP_DELTA);
-    assert!(max_adjacent_delta < VOICE_MIC_OVERLOAD_IMPULSE_DELTA);
-    assert!(
-        voice_microphone_clipped_sample_count(&impulse) < VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES
-    );
-}
-
-#[test]
-fn voice_microphone_overload_gain_keeps_severe_same_polarity_clip_audible() {
-    let mut clipped = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-    for sample in clipped
-        .iter_mut()
-        .take(VOICE_MIC_OVERLOAD_SEVERE_CLIPPED_SAMPLES)
-    {
-        *sample = i16::MAX;
+        assert_eq!(
+            decision.kind,
+            VoiceMicrophoneOverloadKind::HandlingNoise,
+            "{name}"
+        );
+        assert_eq!(decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN, "{name}");
+        let max_adjacent_delta = voice_microphone_max_adjacent_delta(&frame);
+        assert!(max_adjacent_delta >= min_delta, "{name}");
+        assert!(max_adjacent_delta < max_delta, "{name}");
+        assert!(
+            voice_microphone_clipped_sample_count(&frame) < VOICE_MIC_OVERLOAD_MIN_CLIPPED_SAMPLES,
+            "{name}"
+        );
     }
-
-    assert_eq!(
-        voice_microphone_overload_gain(&clipped),
-        Some(VOICE_MIC_OVERLOAD_TRANSIENT_GAIN)
-    );
 }
 
 #[test]
@@ -1026,7 +1612,8 @@ fn voice_microphone_overload_gain_blanks_extreme_same_polarity_clip() {
 #[test]
 fn voice_identify_payload_matches_expected_shape() {
     let session = VoiceGatewaySession {
-        guild_id: Id::new(1),
+        connection_id: 0,
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(10),
         user_id: Id::new(20),
         session_id: "voice-session".to_owned(),
@@ -1046,6 +1633,27 @@ fn voice_identify_payload_matches_expected_shape() {
         payload["d"]["max_dave_protocol_version"].as_u64(),
         Some(u64::from(davey::DAVE_PROTOCOL_VERSION))
     );
+
+    let heartbeat: Value = serde_json::from_str(&voice_heartbeat_payload(42))
+        .expect("voice heartbeat payload is valid JSON");
+    assert_eq!(heartbeat["op"].as_u64(), Some(3));
+    assert!(heartbeat["d"]["t"].as_i64().is_some());
+    assert_eq!(heartbeat["d"]["seq_ack"].as_i64(), Some(42));
+
+    let resume: Value = serde_json::from_str(&voice_resume_payload(&session, 43))
+        .expect("voice resume payload is valid JSON");
+    assert_eq!(resume["op"].as_u64(), Some(7));
+    assert_eq!(resume["d"]["server_id"].as_str(), Some("1"));
+    assert_eq!(resume["d"]["channel_id"].as_str(), Some("10"));
+    assert_eq!(resume["d"]["session_id"].as_str(), Some("voice-session"));
+    assert_eq!(resume["d"]["token"].as_str(), Some("voice-token"));
+    assert_eq!(resume["d"]["seq_ack"].as_i64(), Some(43));
+
+    let mut heartbeat_ack = VoiceHeartbeatAckState::default();
+    assert!(heartbeat_ack.mark_sent());
+    assert!(!heartbeat_ack.mark_sent());
+    heartbeat_ack.mark_acknowledged();
+    assert!(heartbeat_ack.mark_sent());
 }
 
 #[test]
@@ -1142,13 +1750,57 @@ fn udp_discovery_and_select_protocol_match_expected_shapes() {
 }
 
 #[test]
+fn udp_ping_uses_documented_magic_and_echoed_sequence() {
+    let request = udp_ping_request(0x0102_0304);
+    let response = [0x13, 0x37, 0xf0, 0x0d, 0x01, 0x02, 0x03, 0x04];
+
+    assert_eq!(request, [0x13, 0x37, 0xca, 0xfe, 0x01, 0x02, 0x03, 0x04]);
+    assert_eq!(parse_udp_ping_response(&response), Some(0x0102_0304));
+}
+
+#[tokio::test]
+async fn voice_udp_ping_sends_initial_sequence() {
+    let receiver = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("receiver should bind");
+    let sender = Arc::new(
+        UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("sender should bind"),
+    );
+    sender
+        .connect(
+            receiver
+                .local_addr()
+                .expect("receiver should have an address"),
+        )
+        .await
+        .expect("sender should connect");
+    let udp_ping = tokio::spawn(run_voice_udp_ping(sender));
+    let mut packet = [0u8; UDP_PING_PACKET_LEN];
+
+    let received = timeout(Duration::from_secs(1), receiver.recv(&mut packet))
+        .await
+        .expect("UDP ping should arrive")
+        .expect("receiver should read the UDP ping");
+
+    udp_ping.abort();
+    assert_eq!(received, UDP_PING_PACKET_LEN);
+    assert_eq!(packet, udp_ping_request(0));
+}
+
+#[test]
 fn voice_session_description_parses_mode_and_redacts_secret() {
     let payload = json!({
         "op": 4,
         "d": {
+            "audio_codec": "opus",
             "mode": AEAD_XCHACHA20_POLY1305_RTPSIZE,
             "secret_key": (0u8..32).collect::<Vec<_>>(),
             "dave_protocol_version": 1,
+            "video_codec": "H264",
+            "media_session_id": "media-session-1",
+            "keyframe_interval": 1_000,
         },
     });
 
@@ -1156,11 +1808,44 @@ fn voice_session_description_parses_mode_and_redacts_secret() {
         parse_voice_session_description(&payload).expect("session description should parse");
     let debug = format!("{description:?}");
 
+    assert_eq!(description.audio_codec, "opus");
     assert_eq!(description.mode, AEAD_XCHACHA20_POLY1305_RTPSIZE);
     assert_eq!(description.secret_key.len(), 32);
     assert_eq!(description.dave_protocol_version, Some(1));
+    assert_eq!(description.video_codec.as_deref(), Some("H264"));
+    assert_eq!(description.media_session_id, "media-session-1");
+    assert_eq!(description.keyframe_interval, Some(1_000));
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("31"));
+}
+
+#[test]
+fn voice_session_update_refreshes_codec_and_media_settings() {
+    let mut description = VoiceSessionDescription {
+        audio_codec: "opus".to_owned(),
+        mode: AEAD_XCHACHA20_POLY1305_RTPSIZE.to_owned(),
+        secret_key: vec![9; 32],
+        dave_protocol_version: Some(1),
+        video_codec: Some("H264".to_owned()),
+        media_session_id: "media-session-1".to_owned(),
+        keyframe_interval: Some(1_000),
+    };
+    let payload = json!({
+        "op": 14,
+        "d": {
+            "audio_codec": "opus",
+            "video_codec": "H264",
+            "media_session_id": "media-session-2",
+            "keyframe_interval": 2_500,
+        }
+    });
+
+    apply_voice_session_update(&payload, &mut description).expect("session update should apply");
+
+    assert_eq!(description.audio_codec, "opus");
+    assert_eq!(description.video_codec.as_deref(), Some("H264"));
+    assert_eq!(description.media_session_id, "media-session-2");
+    assert_eq!(description.keyframe_interval, Some(2_500));
 }
 
 #[test]
@@ -1174,6 +1859,8 @@ fn rtp_header_parses_minimal_and_extended_packets() {
     assert_eq!(
         header,
         RtpHeader {
+            has_padding: false,
+            marker: false,
             payload_type: 0x78,
             sequence: 0x1234,
             timestamp: 0x01020304,
@@ -1198,13 +1885,18 @@ fn rtp_header_parses_minimal_and_extended_packets() {
 }
 
 #[test]
-fn rtp_decrypts_aead_rtpsize_modes_and_strips_extension_body() {
+fn rtp_decrypts_aead_rtpsize_modes_and_strips_extension_body_and_padding() {
     let key = [7u8; 32];
     let nonce_suffix = [1, 2, 3, 4];
-    let mut header = vec![0x90, 0x78, 0, 7, 0, 0, 0, 8, 0, 0, 0, 9];
+    let mut header = vec![0xb0, 0x78, 0, 7, 0, 0, 0, 8, 0, 0, 0, 9];
     header.extend_from_slice(&0x1000u16.to_be_bytes());
     header.extend_from_slice(&1u16.to_be_bytes());
-    let plaintext = [b"ext!".as_slice(), b"opus-frame".as_slice()].concat();
+    let plaintext = [
+        b"ext!".as_slice(),
+        b"opus-frame".as_slice(),
+        [0, 0, 3].as_slice(),
+    ]
+    .concat();
 
     for mode in [AEAD_AES256_GCM_RTPSIZE, AEAD_XCHACHA20_POLY1305_RTPSIZE] {
         let mut packet = header.clone();
@@ -1219,11 +1911,14 @@ fn rtp_decrypts_aead_rtpsize_modes_and_strips_extension_body() {
         let rtp_header = parse_rtp_header(&packet).expect("RTP header should parse");
         let decryptor = VoiceRtpDecryptor::new(mode, &key).expect("decryptor should build");
 
+        assert!(rtp_header.has_padding);
         let decrypted = decryptor
             .decrypt_packet(&packet, &rtp_header)
             .expect("RTP payload should decrypt");
 
         assert_eq!(decrypted.encrypted_extension_body_len, 4);
+        assert_eq!(decrypted.extension_profile, Some(0x1000));
+        assert_eq!(decrypted.extension_body, b"ext!");
         assert_eq!(decrypted.media_payload, b"opus-frame");
     }
 }
@@ -1300,11 +1995,11 @@ fn opus_encoder_encodes_decodable_20ms_stereo_frame() {
 
     assert!(!opus.is_empty());
 
-    let mut decoder = OpusDecoder::new(DISCORD_VOICE_SAMPLE_RATE, Channels::Stereo)
+    let mut decoder = OpusDecoder::new(Channels::Stereo, OpusSampleRate::Hz48000)
         .expect("Opus decoder should build");
     let mut decoded = vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     let samples_per_channel = decoder
-        .decode_float(&opus, &mut decoded, false)
+        .decode_float_to_slice(&opus, &mut decoded, false)
         .expect("encoded Opus should decode");
 
     assert_eq!(samples_per_channel, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL);
@@ -1318,6 +2013,26 @@ fn opus_encoder_encodes_decodable_20ms_stereo_frame() {
             DISCORD_OPUS_20MS_STEREO_SAMPLES - 1
         )
     );
+}
+
+#[test]
+fn system_audio_opus_encoder_encodes_decodable_20ms_stereo_frame() {
+    let mut encoder =
+        VoiceOpusEncode::new_system_audio().expect("system audio Opus encoder should build");
+    let pcm = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+
+    let opus = encoder
+        .encode_20ms_i16(&pcm)
+        .expect("system audio frame should encode");
+
+    let mut decoder = OpusDecoder::new(Channels::Stereo, OpusSampleRate::Hz48000)
+        .expect("Opus decoder should build");
+    let mut decoded = vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+    let samples_per_channel = decoder
+        .decode_float_to_slice(&opus, &mut decoded, false)
+        .expect("system audio Opus should decode");
+
+    assert_eq!(samples_per_channel, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL);
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1354,11 +2069,11 @@ fn microphone_pcm_frames_resample_44100_to_48000() {
         .try_recv()
         .expect("resampled 20 ms frame should be queued");
 
-    assert_eq!(frame.len(), DISCORD_OPUS_20MS_STEREO_SAMPLES);
-    assert_eq!(frame[0], 0);
-    assert_eq!(frame[1], 0);
-    assert!(frame[frame.len() - 2] > 870);
-    assert!(frame[frame.len() - 1] < -870);
+    assert_eq!(frame.samples.len(), DISCORD_OPUS_20MS_STEREO_SAMPLES);
+    assert_eq!(frame.samples[0], 0);
+    assert_eq!(frame.samples[1], 0);
+    assert!(frame.samples[frame.samples.len() - 2] > 870);
+    assert!(frame.samples[frame.samples.len() - 1] < -870);
     assert!(rx.try_recv().is_err());
     assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 1);
     assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 0);
@@ -1376,7 +2091,10 @@ fn microphone_pcm_frames_count_full_queue_drops() {
     frames.push_stereo_samples(&samples);
 
     assert_eq!(
-        rx.try_recv().expect("first frame should queue").len(),
+        rx.try_recv()
+            .expect("first frame should queue")
+            .samples
+            .len(),
         DISCORD_OPUS_20MS_STEREO_SAMPLES
     );
     assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 1);
@@ -1384,99 +2102,59 @@ fn microphone_pcm_frames_count_full_queue_drops() {
 }
 
 #[cfg(feature = "voice-playback")]
-#[tokio::test]
-async fn microphone_pcm_recv_returns_frames_in_fifo_order() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-
-    tx.try_send(vec![1]).expect("first frame should queue");
-    tx.try_send(vec![2]).expect("second frame should queue");
-    tx.try_send(vec![3]).expect("third frame should queue");
-
-    assert_eq!(rx.recv().await, Some(vec![1]));
-    assert_eq!(rx.recv().await, Some(vec![2]));
-    assert_eq!(rx.recv().await, Some(vec![3]));
-}
-
-#[cfg(feature = "voice-playback")]
 #[test]
-fn voice_transmit_pacer_delays_queued_frames_to_20ms_slots() {
-    let mut pacer = VoiceTransmitPacer::default();
-    let start = Instant::now();
+fn microphone_freshness_policy_bounds_queue_depth_and_frame_age() {
+    let now = Instant::now();
 
-    assert_eq!(pacer.delay_before_send(start), None);
-    assert_eq!(
-        pacer.delay_before_send(start),
-        Some(VOICE_PLAYBACK_FRAME_DURATION)
-    );
-    assert_eq!(
-        pacer.delay_before_send(start + VOICE_PLAYBACK_FRAME_DURATION),
-        Some(VOICE_PLAYBACK_FRAME_DURATION)
-    );
-    assert_eq!(
-        pacer.delay_before_send(start + VOICE_PLAYBACK_FRAME_DURATION * 4),
-        None
-    );
-}
-
-#[cfg(feature = "voice-playback")]
-#[tokio::test]
-async fn voice_transmit_pacer_delay_stops_when_gate_disables() {
-    let (gate_tx, mut gate_rx) = watch::channel(VoiceCaptureGate {
-        enabled: true,
-        microphone_sensitivity: MicrophoneSensitivityDb::default(),
-        microphone_volume: VoiceVolumePercent::default(),
-    });
-    let wait = tokio::spawn(async move {
-        wait_voice_transmit_pacer_delay(Duration::from_secs(60), &mut gate_rx).await
-    });
-
-    gate_tx
-        .send(VoiceCaptureGate {
-            enabled: false,
-            microphone_sensitivity: MicrophoneSensitivityDb::default(),
-            microphone_volume: VoiceVolumePercent::default(),
+    // A full stored queue catches up to the newest three live frames instead
+    // of preserving hundreds of milliseconds of old speech.
+    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
+    let initial = VoiceMicrophoneFrame {
+        samples: vec![0],
+        captured_at: now - Duration::from_millis(320),
+    };
+    for index in 1u8..=15 {
+        tx.try_send(VoiceMicrophoneFrame {
+            samples: vec![i16::from(index)],
+            captured_at: now - Duration::from_millis(u64::from(15 - index) * 20),
         })
-        .expect("gate receiver should still be alive");
+        .expect("backlog frame should queue");
+    }
 
-    let outcome = timeout(Duration::from_millis(100), wait)
-        .await
-        .expect("gate disable should interrupt pacer delay")
-        .expect("pacer wait task should finish");
-    assert_eq!(outcome, VoiceTransmitPacerDelayOutcome::GateChanged);
-}
+    let (selected, dropped) = select_fresh_voice_microphone_frame(initial, &mut rx, now);
+    let selected = selected.expect("a fresh frame should remain");
 
-#[cfg(feature = "voice-playback")]
-#[tokio::test]
-async fn voice_transmit_pacer_delay_drops_frame_on_disable_then_reenable() {
-    let (gate_tx, mut gate_rx) = watch::channel(VoiceCaptureGate {
-        enabled: true,
-        microphone_sensitivity: MicrophoneSensitivityDb::default(),
-        microphone_volume: VoiceVolumePercent::default(),
-    });
+    assert_eq!(selected.samples, vec![13]);
+    assert_eq!(dropped, 13);
+    assert_eq!(rx.len().saturating_add(1), VOICE_MIC_MAX_LIVE_FRAMES);
+    assert!(now.saturating_duration_since(selected.captured_at) <= VOICE_MIC_MAX_FRAME_AGE);
 
-    gate_tx
-        .send(VoiceCaptureGate {
-            enabled: false,
-            microphone_sensitivity: MicrophoneSensitivityDb::default(),
-            microphone_volume: VoiceVolumePercent::default(),
-        })
-        .expect("gate receiver should still be alive");
-    gate_tx
-        .send(VoiceCaptureGate {
-            enabled: true,
-            microphone_sensitivity: MicrophoneSensitivityDb::default(),
-            microphone_volume: VoiceVolumePercent::default(),
-        })
-        .expect("gate receiver should still be alive");
+    // A frame exactly on the age boundary remains live when it is the only
+    // available audio.
+    let (_tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let boundary = VoiceMicrophoneFrame {
+        samples: vec![50],
+        captured_at: now - VOICE_MIC_MAX_FRAME_AGE,
+    };
+    let (selected, dropped) = select_fresh_voice_microphone_frame(boundary, &mut rx, now);
 
-    let outcome = timeout(
-        Duration::from_millis(100),
-        wait_voice_transmit_pacer_delay(Duration::from_secs(60), &mut gate_rx),
-    )
-    .await
-    .expect("any gate change should interrupt pacer delay");
-    assert_eq!(outcome, VoiceTransmitPacerDelayOutcome::GateChanged);
-    assert!(gate_rx.borrow().enabled);
+    assert_eq!(
+        selected.expect("boundary frame should remain live").samples,
+        vec![50]
+    );
+    assert_eq!(dropped, 0);
+
+    // Once the age budget is exceeded, transmitting silence or waiting for a
+    // new live frame is better than sending stale speech.
+    let (_tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let stale = VoiceMicrophoneFrame {
+        samples: vec![99],
+        captured_at: now - VOICE_MIC_MAX_FRAME_AGE - Duration::from_millis(1),
+    };
+    let (selected, dropped) = select_fresh_voice_microphone_frame(stale, &mut rx, now);
+
+    assert!(selected.is_none());
+    assert_eq!(dropped, 1);
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1496,42 +2174,138 @@ async fn voice_child_tasks_waits_for_udp_transmit_shutdown() {
         .expect("shutdown should await UDP transmit completion");
 }
 
+#[cfg(feature = "voice-playback")]
+#[test]
+fn voice_udp_transmit_reports_only_failures_to_the_gateway() {
+    let (failure_tx, mut failure_rx) = mpsc::unbounded_channel();
+
+    publish_voice_udp_transmit_failure(Ok(()), &failure_tx);
+    assert_eq!(failure_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+
+    publish_voice_udp_transmit_failure(Err("closed voice websocket".to_owned()), &failure_tx);
+    assert_eq!(
+        failure_rx
+            .try_recv()
+            .expect("fatal transmit errors should reach the gateway"),
+        "closed voice websocket"
+    );
+}
+
 #[tokio::test]
 async fn voice_runtime_stops_connection_task_by_closing_gate_channels() {
+    let (audio_sources_tx, mut audio_sources_rx) = watch::channel(VoiceAudioSourceSelection {
+        generation: 0,
+        sources: VoiceAudioSources::default(),
+    });
     let (capture_gate_tx, mut capture_gate_rx) = mpsc::unbounded_channel();
     let (playback_gate_tx, mut playback_gate_rx) = mpsc::unbounded_channel();
     let (done_tx, done_rx) = tokio::sync::oneshot::channel();
     let mut connection_task = Some(tokio::spawn(async move {
+        assert!(audio_sources_rx.changed().await.is_err());
         assert!(capture_gate_rx.recv().await.is_none());
         assert!(playback_gate_rx.recv().await.is_none());
         let _ = done_tx.send(());
     }));
+    let mut connection_session = None;
+    let mut audio_sources_tx = Some(audio_sources_tx);
     let mut capture_gate_tx = Some(capture_gate_tx);
     let mut playback_gate_tx = Some(playback_gate_tx);
 
-    stop_voice_connection_task(
+    let stopped_session = stop_voice_connection_task(
         &mut connection_task,
+        &mut connection_session,
+        &mut audio_sources_tx,
         &mut capture_gate_tx,
         &mut playback_gate_tx,
         "test voice connection stop",
     )
     .await;
 
+    assert!(stopped_session.is_none());
     done_rx
         .await
         .expect("connection task should finish after gate channels close");
     assert!(connection_task.is_none());
+    assert!(audio_sources_tx.is_none());
     assert!(capture_gate_tx.is_none());
     assert!(playback_gate_tx.is_none());
+}
+
+#[test]
+fn voice_audio_source_watch_retains_only_the_latest_selection() {
+    let (audio_sources_tx, audio_sources_rx) = watch::channel(VoiceAudioSourceSelection {
+        generation: 0,
+        sources: VoiceAudioSources::default(),
+    });
+    audio_sources_tx.send_replace(VoiceAudioSourceSelection {
+        generation: 1,
+        sources: VoiceAudioSources {
+            input: Some("mic-1".to_owned()),
+            output: None,
+        },
+    });
+    audio_sources_tx.send_replace(VoiceAudioSourceSelection {
+        generation: 2,
+        sources: VoiceAudioSources {
+            input: Some("mic-2".to_owned()),
+            output: Some("speaker-2".to_owned()),
+        },
+    });
+
+    assert_eq!(
+        audio_sources_rx.borrow().clone(),
+        VoiceAudioSourceSelection {
+            generation: 2,
+            sources: VoiceAudioSources {
+                input: Some("mic-2".to_owned()),
+                output: Some("speaker-2".to_owned()),
+            },
+        }
+    );
+}
+
+#[tokio::test]
+async fn voice_runtime_requests_speaking_cleanup_after_connection_task_failure() {
+    let mut connection_task = Some(tokio::spawn(async {
+        panic!("simulated voice connection task failure");
+    }));
+    let expected_session = test_voice_gateway_session();
+    let mut connection_session = Some(expected_session.clone());
+    let mut audio_sources_tx = None;
+    let mut capture_gate_tx = None;
+    let mut playback_gate_tx = None;
+
+    let stopped_session = stop_voice_connection_task(
+        &mut connection_task,
+        &mut connection_session,
+        &mut audio_sources_tx,
+        &mut capture_gate_tx,
+        &mut playback_gate_tx,
+        "test failed voice connection stop",
+    )
+    .await;
+
+    assert_eq!(stopped_session, Some(expected_session));
+    assert!(connection_task.is_none());
+    assert!(connection_session.is_none());
 }
 
 #[cfg(feature = "voice-playback")]
 #[test]
 fn microphone_pcm_drain_clears_backlog_before_reenable() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
+    let now = Instant::now();
 
-    tx.try_send(vec![10]).expect("first frame should queue");
-    tx.try_send(vec![20]).expect("second frame should queue");
+    tx.try_send(VoiceMicrophoneFrame {
+        samples: vec![10],
+        captured_at: now,
+    })
+    .expect("first frame should queue");
+    tx.try_send(VoiceMicrophoneFrame {
+        samples: vec![20],
+        captured_at: now,
+    })
+    .expect("second frame should queue");
 
     drain_voice_microphone_pcm_queue(&mut rx);
 
@@ -1584,6 +2358,54 @@ fn voice_input_buffer_size_requests_small_supported_fixed_buffer() {
         voice_input_buffer_size(&cpal::SupportedBufferSize::Unknown),
         cpal::BufferSize::Default
     );
+}
+
+#[cfg(feature = "voice-playback")]
+#[test]
+fn voice_output_buffer_size_requests_bounded_low_latency_buffer() {
+    let cases = [
+        (
+            true,
+            cpal::SupportedBufferSize::Range {
+                min: 128,
+                max: 8_192,
+            },
+            cpal::BufferSize::Fixed(VOICE_PULSE_OUTPUT_BUFFER_FRAMES),
+        ),
+        (
+            true,
+            cpal::SupportedBufferSize::Range {
+                min: 4_096,
+                max: 8_192,
+            },
+            cpal::BufferSize::Fixed(4_096),
+        ),
+        (
+            true,
+            cpal::SupportedBufferSize::Range { min: 128, max: 960 },
+            cpal::BufferSize::Fixed(960),
+        ),
+        (
+            true,
+            cpal::SupportedBufferSize::Unknown,
+            cpal::BufferSize::Default,
+        ),
+        (
+            false,
+            cpal::SupportedBufferSize::Range {
+                min: 128,
+                max: 8_192,
+            },
+            cpal::BufferSize::Default,
+        ),
+    ];
+
+    for (use_low_latency_pulse_audio, supported, expected) in cases {
+        assert_eq!(
+            voice_output_buffer_size(use_low_latency_pulse_audio, &supported),
+            expected
+        );
+    }
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1663,9 +2485,9 @@ fn fake_outbound_uses_dave_outbound_policy_before_transport_encrypt() {
         &state.events()[1],
         7,
         960,
-        42,
         b"opus-frame",
         30u32.to_be_bytes(),
+        true,
     );
 
     let mut dave = VoiceDaveState::new(&test_voice_gateway_session());
@@ -1710,14 +2532,15 @@ fn fake_outbound_sends_encrypted_packets_without_live_io() {
             &state.events()[1],
             7,
             960,
-            42,
             b"opus-frame",
             [1, 2, 3, 4],
+            true,
         );
         assert_eq!(state.rtp.sequence, 8);
-        assert_eq!(state.rtp.timestamp, 1920);
+        assert_eq!(state.rtp.timestamp, 960);
         assert_eq!(state.nonce_suffix, 0x01020305);
 
+        state.advance_media_clock_frames(1);
         assert_eq!(
             state
                 .send_opus_frame(b"next-frame")
@@ -1730,18 +2553,121 @@ fn fake_outbound_sends_encrypted_packets_without_live_io() {
             &state.events()[2],
             8,
             1920,
-            42,
             b"next-frame",
             [1, 2, 3, 5],
+            false,
         );
         assert_eq!(state.rtp.sequence, 9);
-        assert_eq!(state.rtp.timestamp, 2880);
+        assert_eq!(state.rtp.timestamp, 1920);
         assert_eq!(state.nonce_suffix, 0x01020306);
     }
 }
 
 #[test]
-fn fake_outbound_stop_sends_finite_silence_then_speaking_off() {
+fn fake_outbound_media_clock_and_talkspurt_marker_are_independent() {
+    let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 10);
+    state.set_capture_gate(true, false);
+
+    state.advance_media_clock_frames(10);
+    assert_eq!(state.rtp.sequence, 7);
+    assert_eq!(state.rtp.timestamp, 10_560);
+    assert_eq!(state.nonce_suffix, 10);
+
+    assert_eq!(
+        state
+            .send_opus_frame(b"first-talkspurt")
+            .expect("first talkspurt should send"),
+        VoiceOutboundSendOutcome::Sent
+    );
+    let first_header = fake_packet_header(&state.events()[1]);
+    assert!(first_header.marker);
+    assert_eq!(first_header.timestamp, 10_560);
+    assert_eq!(state.rtp.sequence, 8);
+    assert_eq!(state.rtp.timestamp, 10_560);
+    assert_eq!(state.nonce_suffix, 11);
+
+    state.advance_media_clock_frames(1);
+    assert_eq!(
+        state
+            .send_opus_frame(b"same-talkspurt")
+            .expect("continued talkspurt should send"),
+        VoiceOutboundSendOutcome::Sent
+    );
+    let continued_header = fake_packet_header(&state.events()[2]);
+    assert!(!continued_header.marker);
+    assert_eq!(continued_header.timestamp, 11_520);
+
+    assert_eq!(
+        state.stop_speaking().expect("talkspurt should stop"),
+        VoiceOutboundSendOutcome::Sent
+    );
+    state.advance_media_clock_frames(50);
+    assert_eq!(
+        state
+            .send_opus_frame(b"next-talkspurt")
+            .expect("next talkspurt should send"),
+        VoiceOutboundSendOutcome::Sent
+    );
+    let next_header = fake_packet_header(
+        state
+            .events()
+            .last()
+            .expect("next talkspurt should queue a packet"),
+    );
+    assert!(next_header.marker);
+    assert_eq!(next_header.timestamp, 59_520);
+}
+
+#[test]
+fn trailing_silence_is_paced_and_can_be_cancelled() {
+    let mut tail = VoiceTrailingSilence::default();
+
+    tail.start(true);
+    for index in 0..DISCORD_TRAILING_SILENCE_FRAMES {
+        assert_eq!(
+            tail.take_frame(),
+            Some(index + 1 == DISCORD_TRAILING_SILENCE_FRAMES)
+        );
+    }
+    assert_eq!(tail.take_frame(), None);
+
+    tail.start(true);
+    assert_eq!(tail.take_frame(), Some(false));
+    tail.cancel();
+    assert_eq!(tail.take_frame(), None);
+
+    tail.start(false);
+    assert_eq!(tail.take_frame(), None);
+}
+
+#[test]
+fn microphone_capture_time_advances_rtp_clock_across_missing_frames() {
+    let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 10);
+    let started_at = Instant::now();
+    let mut previous_frame_at = None;
+
+    advance_voice_media_clock(&mut state, &mut previous_frame_at, started_at);
+    assert_eq!(state.rtp.timestamp, 1920);
+
+    advance_voice_media_clock(
+        &mut state,
+        &mut previous_frame_at,
+        started_at + Duration::from_millis(20),
+    );
+    assert_eq!(state.rtp.timestamp, 2880);
+
+    advance_voice_media_clock(
+        &mut state,
+        &mut previous_frame_at,
+        started_at + Duration::from_millis(120),
+    );
+    assert_eq!(state.rtp.timestamp, 7680);
+    assert_eq!(state.rtp.sequence, 7);
+    assert_eq!(state.nonce_suffix, 10);
+}
+
+#[test]
+fn fake_outbound_stop_paces_finite_silence_then_speaking_off() {
     let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 20);
     state.set_capture_gate(true, false);
 
@@ -1751,21 +2677,29 @@ fn fake_outbound_stop_sends_finite_silence_then_speaking_off() {
             .expect("frame should send"),
         VoiceOutboundSendOutcome::Sent
     );
-    assert_eq!(
-        state.stop_speaking().expect("stop should send silence"),
-        VoiceOutboundSendOutcome::Sent
-    );
 
-    assert_eq!(state.events().len(), DISCORD_TRAILING_SILENCE_FRAMES + 3);
     for index in 0..DISCORD_TRAILING_SILENCE_FRAMES {
+        state.advance_media_clock_frames(1);
+        assert_eq!(
+            state
+                .send_trailing_silence_frame_with_dave_payload(
+                    VoiceDaveOutboundPayload::Plain(DISCORD_OPUS_SILENCE_FRAME.to_vec()),
+                    index + 1 == DISCORD_TRAILING_SILENCE_FRAMES,
+                )
+                .expect("one trailing silence frame should send"),
+            VoiceOutboundSendOutcome::Sent
+        );
+        let expected_event_count =
+            index + 3 + usize::from(index + 1 == DISCORD_TRAILING_SILENCE_FRAMES);
+        assert_eq!(state.events().len(), expected_event_count);
         assert_fake_packet(
             AEAD_AES256_GCM_RTPSIZE,
             &state.events()[index + 2],
             8 + index as u16,
             1920 + index as u32 * DISCORD_OPUS_TIMESTAMP_INCREMENT,
-            42,
             &DISCORD_OPUS_SILENCE_FRAME,
             (21 + index as u32).to_be_bytes(),
+            false,
         );
     }
     assert_eq!(
@@ -1776,7 +2710,7 @@ fn fake_outbound_stop_sends_finite_silence_then_speaking_off() {
         }
     );
     assert_eq!(state.rtp.sequence, 13);
-    assert_eq!(state.rtp.timestamp, 6720);
+    assert_eq!(state.rtp.timestamp, 5760);
     assert_eq!(state.nonce_suffix, 26);
 }
 
@@ -1833,7 +2767,7 @@ fn fake_outbound_stop_sends_speaking_off_when_capture_gate_closes() {
 }
 
 #[test]
-fn fake_outbound_stop_uses_dave_policy_for_silence_frames() {
+fn fake_outbound_trailing_silence_uses_dave_policy() {
     let mut dave = VoiceDaveState::new(&test_voice_gateway_session());
     dave.reinit(1).expect("DAVE session should initialize");
     let mut state = fake_outbound_state(AEAD_AES256_GCM_RTPSIZE, 20);
@@ -1843,7 +2777,7 @@ fn fake_outbound_stop_uses_dave_policy_for_silence_frames() {
 
     assert_eq!(
         state
-            .stop_speaking_with_dave(&mut dave)
+            .send_trailing_silence_frame_with_dave(&mut dave, false)
             .expect("DAVE not-ready silence should still send speaking off"),
         VoiceOutboundSendOutcome::Sent
     );
@@ -1950,7 +2884,8 @@ fn fake_outbound_state(mode: &str, nonce_suffix: u32) -> VoiceOutboundSendState 
 
 fn test_voice_gateway_session() -> VoiceGatewaySession {
     VoiceGatewaySession {
-        guild_id: Id::new(1),
+        connection_id: 0,
+        scope: VoiceScope::Guild(Id::new(1)),
         channel_id: Id::new(10),
         user_id: Id::new(20),
         session_id: "voice-session".to_owned(),
@@ -1964,9 +2899,9 @@ fn assert_fake_packet(
     event: &VoiceOutboundSendEvent,
     sequence: u16,
     timestamp: u32,
-    ssrc: u32,
     expected_payload: &[u8],
     nonce_suffix: [u8; RTP_AEAD_NONCE_SUFFIX_BYTES],
+    marker: bool,
 ) {
     let VoiceOutboundSendEvent::Packet { bytes } = event else {
         panic!("expected fake packet event, got {event:?}");
@@ -1980,10 +2915,18 @@ fn assert_fake_packet(
 
     let actual_nonce_suffix = &packet_bytes[packet_bytes.len() - RTP_AEAD_NONCE_SUFFIX_BYTES..];
     assert_eq!(actual_nonce_suffix, nonce_suffix.as_slice());
+    assert_eq!(header.marker, marker);
     assert_eq!(header.sequence, sequence);
     assert_eq!(header.timestamp, timestamp);
-    assert_eq!(header.ssrc, ssrc);
+    assert_eq!(header.ssrc, 42);
     assert_eq!(decrypted.media_payload, expected_payload);
+}
+
+fn fake_packet_header(event: &VoiceOutboundSendEvent) -> RtpHeader {
+    let VoiceOutboundSendEvent::Packet { bytes } = event else {
+        panic!("expected fake packet event, got {event:?}");
+    };
+    parse_rtp_header(bytes).expect("fake RTP header should parse")
 }
 
 fn encrypt_test_rtp_payload(

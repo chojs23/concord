@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MediaKeyCode};
 
 use super::is_reserved_keymap_chord;
 
@@ -237,6 +237,158 @@ impl KeyChord {
         value.push_str(&key_code_label(self.code));
         value.push('>');
         value
+    }
+}
+
+pub(in crate::tui) fn push_to_talk_shortcut_from_key(
+    key: KeyEvent,
+) -> std::result::Result<String, String> {
+    if key
+        .modifiers
+        .intersects(KeyModifiers::HYPER | KeyModifiers::META)
+    {
+        return Err("Hyper and Meta modifiers are not supported for push-to-talk".to_owned());
+    }
+
+    let mut modifiers = key.modifiers
+        & (KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::SUPER);
+    let key_name = push_to_talk_key_name(key.code, &mut modifiers)?;
+    let mut parts = Vec::new();
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        parts.push("Control".to_owned());
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        parts.push("Alt".to_owned());
+    }
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        parts.push("Shift".to_owned());
+    }
+    if modifiers.contains(KeyModifiers::SUPER) {
+        parts.push("Super".to_owned());
+    }
+    parts.push(key_name);
+    Ok(parts.join("+"))
+}
+
+fn push_to_talk_key_name(
+    code: KeyCode,
+    modifiers: &mut KeyModifiers,
+) -> std::result::Result<String, String> {
+    let name = match code {
+        KeyCode::Backspace => "Backspace".to_owned(),
+        KeyCode::Enter => "Enter".to_owned(),
+        KeyCode::Left => "Left".to_owned(),
+        KeyCode::Right => "Right".to_owned(),
+        KeyCode::Up => "Up".to_owned(),
+        KeyCode::Down => "Down".to_owned(),
+        KeyCode::Home => "Home".to_owned(),
+        KeyCode::End => "End".to_owned(),
+        KeyCode::PageUp => "PageUp".to_owned(),
+        KeyCode::PageDown => "PageDown".to_owned(),
+        KeyCode::Tab => "Tab".to_owned(),
+        KeyCode::BackTab => {
+            modifiers.insert(KeyModifiers::SHIFT);
+            "Tab".to_owned()
+        }
+        KeyCode::Delete => "Delete".to_owned(),
+        KeyCode::Insert => "Insert".to_owned(),
+        KeyCode::F(value @ 1..=24) => format!("F{value}"),
+        KeyCode::Char(value) => push_to_talk_character_name(value, modifiers)?,
+        KeyCode::Esc => "Esc".to_owned(),
+        KeyCode::CapsLock => "CapsLock".to_owned(),
+        KeyCode::ScrollLock => "ScrollLock".to_owned(),
+        KeyCode::NumLock => "NumLock".to_owned(),
+        KeyCode::PrintScreen => "PrintScreen".to_owned(),
+        KeyCode::Pause => "Pause".to_owned(),
+        KeyCode::Media(media) => push_to_talk_media_key_name(media)?.to_owned(),
+        KeyCode::F(_)
+        | KeyCode::Null
+        | KeyCode::Menu
+        | KeyCode::KeypadBegin
+        | KeyCode::Modifier(_) => {
+            return Err("That key cannot be used as a global push-to-talk shortcut".to_owned());
+        }
+    };
+    Ok(name)
+}
+
+fn push_to_talk_character_name(
+    value: char,
+    modifiers: &mut KeyModifiers,
+) -> std::result::Result<String, String> {
+    if value == ' ' {
+        return Ok("Space".to_owned());
+    }
+    if value.is_ascii_uppercase() {
+        modifiers.insert(KeyModifiers::SHIFT);
+        return Ok(value.to_string());
+    }
+    if value.is_ascii_lowercase() || value.is_ascii_digit() {
+        return Ok(value.to_ascii_uppercase().to_string());
+    }
+
+    let (base, shifted) = match value {
+        '`' => ('`', false),
+        '-' => ('-', false),
+        '=' => ('=', false),
+        '[' => ('[', false),
+        ']' => (']', false),
+        '\\' => ('\\', false),
+        ';' => (';', false),
+        '\'' => ('\'', false),
+        ',' => (',', false),
+        '.' => ('.', false),
+        '/' => ('/', false),
+        '~' => ('`', true),
+        '_' => ('-', true),
+        '+' => ('=', true),
+        '{' => ('[', true),
+        '}' => (']', true),
+        '|' => ('\\', true),
+        ':' => (';', true),
+        '"' => ('\'', true),
+        '<' => (',', true),
+        '>' => ('.', true),
+        '?' => ('/', true),
+        '!' => ('1', true),
+        '@' => ('2', true),
+        '#' => ('3', true),
+        '$' => ('4', true),
+        '%' => ('5', true),
+        '^' => ('6', true),
+        '&' => ('7', true),
+        '*' => ('8', true),
+        '(' => ('9', true),
+        ')' => ('0', true),
+        _ => {
+            return Err(
+                "Only portable keyboard keys can be used for global push-to-talk".to_owned(),
+            );
+        }
+    };
+    if shifted {
+        modifiers.insert(KeyModifiers::SHIFT);
+    }
+    Ok(base.to_string())
+}
+
+fn push_to_talk_media_key_name(key: MediaKeyCode) -> std::result::Result<&'static str, String> {
+    match key {
+        MediaKeyCode::Play => Ok("MediaPlay"),
+        MediaKeyCode::Pause => Ok("MediaPause"),
+        MediaKeyCode::PlayPause => Ok("MediaPlayPause"),
+        MediaKeyCode::Stop => Ok("MediaStop"),
+        MediaKeyCode::TrackNext => Ok("MediaTrackNext"),
+        MediaKeyCode::TrackPrevious => Ok("MediaTrackPrevious"),
+        MediaKeyCode::LowerVolume => Ok("VolumeDown"),
+        MediaKeyCode::RaiseVolume => Ok("VolumeUp"),
+        MediaKeyCode::MuteVolume => Ok("VolumeMute"),
+        MediaKeyCode::Reverse
+        | MediaKeyCode::FastForward
+        | MediaKeyCode::Rewind
+        | MediaKeyCode::Record => {
+            Err("That media key is not supported for global push-to-talk".to_owned())
+        }
     }
 }
 

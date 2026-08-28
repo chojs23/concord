@@ -12,6 +12,7 @@ use crate::{
     DiscordClient,
     discord::{AppEvent, AttachmentDownloadId, DownloadAttachmentSource, MediaPlaybackRequestId},
     logging,
+    support::media_player::MediaPlayerIpcEndpoint,
     url_policy::normalize_openable_url,
 };
 
@@ -20,9 +21,8 @@ pub(super) const ATTACHMENT_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
 const ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const ATTACHMENT_DOWNLOAD_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
-const MEDIA_PLAYER_WINDOW_READY_TIMEOUT: Duration = Duration::from_secs(300);
-const MEDIA_PLAYER_IPC_CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(50);
-const MEDIA_PLAYER_IPC_WINDOW_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const MEDIA_PLAYER_READY_TIMEOUT: Duration = Duration::from_secs(300);
+const MEDIA_PLAYER_IPC_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(super) async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, String> {
     fetch_limited_bytes(
@@ -250,13 +250,7 @@ pub(super) async fn play_media(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let child = match command.spawn().map_err(media_player_spawn_error) {
-        Ok(child) => child,
-        Err(error) => {
-            ipc_endpoint.cleanup();
-            return Err(error);
-        }
-    };
+    let child = command.spawn().map_err(media_player_spawn_error)?;
     let url = url.to_owned();
     let label = media_playback_label(label).to_owned();
     let _player_monitor_task = tokio::spawn(async move {
@@ -273,9 +267,9 @@ async fn monitor_media_player_window(
     url: String,
     label: String,
 ) {
-    let ready_timeout = sleep(MEDIA_PLAYER_WINDOW_READY_TIMEOUT);
+    let ready_timeout = sleep(MEDIA_PLAYER_READY_TIMEOUT);
     tokio::pin!(ready_timeout);
-    let ready_result = wait_for_media_player_window_ready(ipc_endpoint.clone());
+    let ready_result = wait_for_media_player_ready(&ipc_endpoint);
     tokio::pin!(ready_result);
 
     let outcome = tokio::select! {
@@ -314,14 +308,12 @@ async fn monitor_media_player_window(
         () = &mut ready_timeout => {
             MediaPlayerWindowMonitorOutcome::ReadinessFailed(
                 format!(
-                    "play {label} failed: media player did not report a window within {} seconds",
-                    MEDIA_PLAYER_WINDOW_READY_TIMEOUT.as_secs()
+                    "play {label} failed: media player did not configure video output within {} seconds",
+                    MEDIA_PLAYER_READY_TIMEOUT.as_secs()
                 ),
             )
         }
     };
-
-    ipc_endpoint.cleanup();
 
     match outcome {
         MediaPlayerWindowMonitorOutcome::Ready => {
@@ -376,7 +368,7 @@ fn media_player_command_spec_for_url_with_ipc(
     let url = normalize_openable_url(url).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "unsupported media URL scheme")
     })?;
-    let mut args = vec!["--no-terminal".to_owned()];
+    let mut args = vec!["--no-terminal".to_owned(), "--force-window".to_owned()];
     if let Some(ipc_server) = ipc_server {
         args.push(format!("--input-ipc-server={ipc_server}"));
     }
@@ -387,85 +379,17 @@ fn media_player_command_spec_for_url_with_ipc(
     })
 }
 
-#[derive(Clone, Debug)]
-struct MediaPlayerIpcEndpoint {
-    server_arg: String,
-    #[cfg(unix)]
-    socket_path: PathBuf,
-}
-
-impl MediaPlayerIpcEndpoint {
-    fn unique() -> Self {
-        let id = uuid::Uuid::new_v4();
-
-        #[cfg(unix)]
-        {
-            let socket_path = std::env::temp_dir().join(format!("concord-mpv-{id}.sock"));
-            Self {
-                server_arg: socket_path.display().to_string(),
-                socket_path,
-            }
-        }
-
-        #[cfg(windows)]
-        {
-            Self {
-                server_arg: format!(r"\\.\pipe\concord-mpv-{id}"),
-            }
-        }
-
-        #[cfg(not(any(unix, windows)))]
-        {
-            Self {
-                server_arg: std::env::temp_dir()
-                    .join(format!("concord-mpv-{id}.sock"))
-                    .display()
-                    .to_string(),
-            }
-        }
-    }
-
-    fn server_arg(&self) -> &str {
-        &self.server_arg
-    }
-
-    fn prepare(&self) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            match fs::remove_file(&self.socket_path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
-        }
-
-        #[cfg(not(unix))]
-        {
-            Ok(())
-        }
-    }
-
-    fn cleanup(&self) {
-        #[cfg(unix)]
-        if let Err(error) = fs::remove_file(&self.socket_path)
-            && error.kind() != io::ErrorKind::NotFound
-        {
-            logging::error("media", format!("media player IPC cleanup failed: {error}"));
-        }
-    }
-}
-
-async fn wait_for_media_player_window_ready(endpoint: MediaPlayerIpcEndpoint) -> io::Result<()> {
+async fn wait_for_media_player_ready(endpoint: &MediaPlayerIpcEndpoint) -> io::Result<()> {
     #[cfg(unix)]
     {
-        let stream = connect_media_player_unix_ipc(&endpoint).await?;
-        wait_for_mpv_window_id(stream).await
+        let stream = endpoint.connect().await?;
+        wait_for_mpv_video_output_ready(stream).await
     }
 
     #[cfg(windows)]
     {
-        let stream = connect_media_player_windows_ipc(&endpoint).await?;
-        wait_for_mpv_window_id(stream).await
+        let stream = endpoint.connect().await?;
+        wait_for_mpv_video_output_ready(stream).await
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -478,44 +402,7 @@ async fn wait_for_media_player_window_ready(endpoint: MediaPlayerIpcEndpoint) ->
     }
 }
 
-#[cfg(unix)]
-async fn connect_media_player_unix_ipc(
-    endpoint: &MediaPlayerIpcEndpoint,
-) -> io::Result<tokio::net::UnixStream> {
-    loop {
-        match tokio::net::UnixStream::connect(&endpoint.socket_path).await {
-            Ok(stream) => return Ok(stream),
-            Err(error) if media_player_ipc_connect_error_is_retryable(&error) => {
-                sleep(MEDIA_PLAYER_IPC_CONNECT_RETRY_INTERVAL).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-#[cfg(windows)]
-async fn connect_media_player_windows_ipc(
-    endpoint: &MediaPlayerIpcEndpoint,
-) -> io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
-    loop {
-        match tokio::net::windows::named_pipe::ClientOptions::new().open(endpoint.server_arg()) {
-            Ok(stream) => return Ok(stream),
-            Err(error) if media_player_ipc_connect_error_is_retryable(&error) => {
-                sleep(MEDIA_PLAYER_IPC_CONNECT_RETRY_INTERVAL).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn media_player_ipc_connect_error_is_retryable(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused | io::ErrorKind::WouldBlock
-    )
-}
-
-async fn wait_for_mpv_window_id<S>(stream: S) -> io::Result<()>
+async fn wait_for_mpv_video_output_ready<S>(stream: S) -> io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -525,7 +412,7 @@ where
 
     loop {
         let request =
-            format!(r#"{{"command":["get_property","window-id"],"request_id":{request_id}}}"#);
+            format!(r#"{{"command":["get_property","vo-configured"],"request_id":{request_id}}}"#);
         reader.get_mut().write_all(request.as_bytes()).await?;
         reader.get_mut().write_all(b"\n").await?;
         reader.get_mut().flush().await?;
@@ -536,11 +423,12 @@ where
             if bytes_read == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "media player IPC closed before reporting a window",
+                    "media player IPC closed before configuring video output",
                 ));
             }
-            if let Some(window_ready) = mpv_window_id_response_readiness(&line, request_id) {
-                if window_ready {
+            if let Some(video_output_ready) = mpv_video_output_response_readiness(&line, request_id)
+            {
+                if video_output_ready {
                     return Ok(());
                 }
                 break;
@@ -548,11 +436,11 @@ where
         }
 
         request_id = request_id.saturating_add(1);
-        sleep(MEDIA_PLAYER_IPC_WINDOW_POLL_INTERVAL).await;
+        sleep(MEDIA_PLAYER_IPC_READY_POLL_INTERVAL).await;
     }
 }
 
-fn mpv_window_id_response_readiness(line: &[u8], request_id: u64) -> Option<bool> {
+fn mpv_video_output_response_readiness(line: &[u8], request_id: u64) -> Option<bool> {
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(line) else {
         return None;
     };
@@ -560,18 +448,11 @@ fn mpv_window_id_response_readiness(line: &[u8], request_id: u64) -> Option<bool
         return None;
     }
     let success = value.get("error").and_then(serde_json::Value::as_str) == Some("success");
+    if !success {
+        return Some(false);
+    }
 
-    Some(
-        success
-            && match value.get("data") {
-                Some(serde_json::Value::Number(number)) => {
-                    number.as_i64().is_some_and(|id| id != 0)
-                        || number.as_u64().is_some_and(|id| id != 0)
-                }
-                Some(serde_json::Value::String(id)) => !id.is_empty() && id != "0",
-                _ => false,
-            },
-    )
+    value.get("data").and_then(serde_json::Value::as_bool)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -622,9 +503,12 @@ mod tests {
 
     use super::{
         media_player_command_spec_for_url, media_player_command_spec_for_url_with_ipc,
-        media_player_spawn_error, mpv_window_id_response_readiness, open_url,
-        persist_unique_download_file, sanitize_filename, windows_open_url_command_spec,
+        media_player_spawn_error, mpv_video_output_response_readiness, open_url,
+        persist_unique_download_file, sanitize_filename, wait_for_mpv_video_output_ready,
+        windows_open_url_command_spec,
     };
+    use serde_json::{Value, json};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     fn unix_timestamp_nanos() -> u128 {
         std::time::SystemTime::now()
@@ -696,6 +580,7 @@ mod tests {
             spec.args,
             vec![
                 "--no-terminal".to_owned(),
+                "--force-window".to_owned(),
                 "--".to_owned(),
                 "https://example.com/video.mp4?x=1&y=2".to_owned(),
             ]
@@ -715,6 +600,7 @@ mod tests {
             spec.args,
             vec![
                 "--no-terminal".to_owned(),
+                "--force-window".to_owned(),
                 "--input-ipc-server=/tmp/concord-mpv.sock".to_owned(),
                 "--".to_owned(),
                 "https://example.com/video.mp4".to_owned(),
@@ -722,28 +608,131 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn mpv_video_output_readiness_polls_until_configured() {
+        let (client, server) = tokio::io::duplex(512);
+        let server = tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            let mut line = Vec::new();
+
+            server
+                .read_until(b'\n', &mut line)
+                .await
+                .expect("test server should read the first readiness request");
+            let request: Value =
+                serde_json::from_slice(&line).expect("readiness request should be valid JSON");
+            assert_eq!(request["command"], json!(["get_property", "vo-configured"]));
+            assert_eq!(request["request_id"], 1);
+            server
+                .get_mut()
+                .write_all(b"{\"data\":false,\"error\":\"success\",\"request_id\":1}\n")
+                .await
+                .expect("test server should report video output not configured");
+
+            line.clear();
+            server
+                .read_until(b'\n', &mut line)
+                .await
+                .expect("test server should read the next readiness request");
+            let request: Value =
+                serde_json::from_slice(&line).expect("readiness request should be valid JSON");
+            assert_eq!(request["command"], json!(["get_property", "vo-configured"]));
+            assert_eq!(request["request_id"], 2);
+            server
+                .get_mut()
+                .write_all(b"{\"data\":true,\"error\":\"success\",\"request_id\":2}\n")
+                .await
+                .expect("test server should report video output configured");
+        });
+
+        wait_for_mpv_video_output_ready(client)
+            .await
+            .expect("configured video output should complete readiness polling");
+        server.await.expect("test server should finish");
+    }
+
+    #[tokio::test]
+    async fn mpv_video_output_readiness_ignores_unrelated_messages() {
+        let (client, server) = tokio::io::duplex(512);
+        let server = tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            let mut line = Vec::new();
+            server
+                .read_until(b'\n', &mut line)
+                .await
+                .expect("test server should read the readiness request");
+            server
+                .get_mut()
+                .write_all(
+                    b"{\"event\":\"file-loaded\"}\nnot json\n{\"data\":true,\"error\":\"success\",\"request_id\":99}\n{\"data\":true,\"error\":\"success\",\"request_id\":1}\n",
+                )
+                .await
+                .expect("test server should send readiness messages");
+        });
+
+        wait_for_mpv_video_output_ready(client)
+            .await
+            .expect("matching configured response should complete readiness polling");
+        server.await.expect("test server should finish");
+    }
+
+    #[tokio::test]
+    async fn mpv_video_output_readiness_errors_when_ipc_closes() {
+        let (client, server) = tokio::io::duplex(512);
+        let server = tokio::spawn(async move {
+            let mut server = BufReader::new(server);
+            let mut line = Vec::new();
+            server
+                .read_until(b'\n', &mut line)
+                .await
+                .expect("test server should read the readiness request");
+        });
+
+        let error = wait_for_mpv_video_output_ready(client)
+            .await
+            .expect_err("closed IPC should fail before readiness");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        server.await.expect("test server should finish");
+    }
+
     #[test]
-    fn mpv_window_id_response_reports_window_readiness() {
+    fn mpv_video_output_response_requires_boolean_readiness() {
         assert_eq!(
-            mpv_window_id_response_readiness(
-                br#"{"data":945,"error":"success","request_id":7}"#,
+            mpv_video_output_response_readiness(
+                br#"{"data":true,"error":"success","request_id":7}"#,
                 7,
             ),
             Some(true)
         );
         assert_eq!(
-            mpv_window_id_response_readiness(
-                br#"{"data":null,"error":"success","request_id":7}"#,
+            mpv_video_output_response_readiness(
+                br#"{"data":false,"error":"success","request_id":7}"#,
                 7,
             ),
             Some(false)
         );
         assert_eq!(
-            mpv_window_id_response_readiness(
-                br#"{"data":945,"error":"success","request_id":6}"#,
+            mpv_video_output_response_readiness(
+                br#"{"data":true,"error":"success","request_id":6}"#,
                 7,
             ),
             None
+        );
+        for invalid_data in [
+            br#"{"error":"success","request_id":7}"#.as_slice(),
+            br#"{"data":null,"error":"success","request_id":7}"#.as_slice(),
+            br#"{"data":"true","error":"success","request_id":7}"#.as_slice(),
+            br#"{"data":1,"error":"success","request_id":7}"#.as_slice(),
+        ] {
+            assert_eq!(mpv_video_output_response_readiness(invalid_data, 7), None);
+        }
+        assert_eq!(
+            mpv_video_output_response_readiness(
+                br#"{"data":true,"error":"property unavailable","request_id":7}"#,
+                7,
+            ),
+            Some(false)
         );
     }
 

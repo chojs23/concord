@@ -1,8 +1,8 @@
 [package]
 name = "concord"
-version = "2.2.2"
+version = "2.5.13"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.90"
 description = "A terminal user interface client for Discord"
 homepage = "https://github.com/chojs23/concord"
 repository = "https://github.com/chojs23/concord"
@@ -19,10 +19,12 @@ base64 = "0.22"
 chacha20poly1305 = "0.10.1"
 chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
 crossterm = { version = "0.29.0", features = ["event-stream", "osc52"] }
-cpal = { version = "0.17.3", optional = true }
-davey = "0.1.3"
+cookie_store = "0.22.1"
+cpal = { version = "0.18.1", optional = true, features = ["pulseaudio"] }
+davey = "0.1.4"
 dirs = "6.0.0"
 emojis = "0.8.2"
+flate2 = "1.1.5"
 futures = "0.3.32"
 image = "0.25.10"
 keyring = { version = "3.6.3", default-features = false, features = [
@@ -34,11 +36,11 @@ keyring = { version = "3.6.3", default-features = false, features = [
 ] }
 mime_guess = "2.0"
 notify-rust = "4"
-opus = "0.3.1"
+opus = { version = "1.6.1", package = "opusic-c" }
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 ratatui = "0.30.0"
-ratatui-image = { version = "=10.0.6", default-features = false, features = [
+ratatui-image = { version = "11.0.5", default-features = false, features = [
   "crossterm",
   "image-defaults",
 ] }
@@ -54,6 +56,7 @@ reqwest = { version = "0.12", default-features = false, features = [
   "zstd",
   "multipart",
 ] }
+reqwest_cookie_store = "0.9.0"
 rsa = "0.9"
 rustls = { version = "0.23.39", default-features = false, features = [
   "ring",
@@ -62,6 +65,7 @@ rustls = { version = "0.23.39", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+socket2 = "0.6.3"
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = [
   "macros",
@@ -86,13 +90,174 @@ uuid = { version = "1.23.1", features = ["v4"] }
 syntect = { version = "5.3.0", default-features = false, features = [
   "default-fancy",
 ] }
+interprocess = { version = "2.4.2", features = ["tokio"] }
+sys-locale = "0.3.2"
+iana-time-zone = "0.1.65"
+nnnoiseless = { version = "0.5.2", default-features = false, optional = true }
+global-hotkey = { version = "0.8.0", optional = true }
+openh264 = { version = "0.9.7", optional = true }
+fast_image_resize = { version = "6.1.0", features = [
+  "only_u8x4",
+], optional = true }
+yuv = { version = "0.8.16", features = ["fast_mode"], optional = true }
+thorvg = { version = "0.5.1", default-features = false, features = [
+  "vendored",
+  "lottie",
+] }
 
 [features]
-default = ["voice-playback"]
-voice-playback = ["dep:cpal", "dep:alsa"]
+default = ["voice-playback", "stream-broadcast"]
+voice-playback = [
+  "dep:cpal",
+  "dep:alsa",
+  "dep:nnnoiseless",
+  "dep:global-hotkey",
+  "dep:ashpd",
+  "dep:windows-sys",
+  "dep:x11rb",
+  "dep:xkeysym",
+]
+stream-broadcast = [
+  "voice-playback",
+  "dep:cros-codecs",
+  "dep:openh264",
+  "dep:fast_image_resize",
+  "dep:yuv",
+  "dep:pipewire",
+  "dep:libc",
+  "dep:glow",
+  "dep:khronos-egl",
+  "x11rb/image",
+  "x11rb/randr",
+  "x11rb/xfixes",
+  "dep:wasapi",
+  "dep:windows",
+  "dep:block2",
+  "dep:dispatch2",
+  "dep:objc2",
+  "dep:objc2-core-audio-types",
+  "dep:objc2-core-foundation",
+  "dep:objc2-core-media",
+  "dep:objc2-core-video",
+  "dep:objc2-foundation",
+  "dep:objc2-screen-capture-kit",
+  "dep:objc2-video-toolbox",
+]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa = { version = "0.11", optional = true }
+ashpd = { version = "0.13.13", default-features = false, features = [
+  "tokio",
+  "global_shortcuts",
+  "screencast",
+], optional = true }
+cros-codecs = { package = "cros-codecs-extended", version = "=0.0.5-extended.2", features = [
+  "vaapi",
+], optional = true }
+glow = { version = "0.17.0", optional = true }
+khronos-egl = { version = "6.0.0", features = ["dynamic"], optional = true }
+libc = { version = "0.2", optional = true }
+pipewire = { version = "0.10.0", optional = true, features = ["v0_3_33"] }
+x11rb = { version = "0.13.2", features = ["xinput"], optional = true }
+xkeysym = { version = "0.2.1", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wasapi = { version = "0.23.0", optional = true }
+windows = { version = "0.62.2", features = [
+  "Foundation",
+  "Graphics_Capture",
+  "Graphics_DirectX",
+  "Graphics_DirectX_Direct3D11",
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_MediaFoundation",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+  "Win32_System_WinRT_Direct3D11",
+  "Win32_System_WinRT_Graphics_Capture",
+  "Win32_UI_WindowsAndMessaging",
+], optional = true }
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+], optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = { version = "0.6.2", default-features = false, features = [
+  "std",
+], optional = true }
+dispatch2 = { version = "0.3.1", default-features = false, features = [
+  "std",
+  "objc2",
+], optional = true }
+objc2 = { version = "0.6.4", default-features = false, features = [
+  "std",
+], optional = true }
+objc2-core-audio-types = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CoreAudioBaseTypes",
+], optional = true }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CFDictionary",
+  "CFNumber",
+  "CFString",
+], optional = true }
+objc2-core-media = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CMBlockBuffer",
+  "CMFormatDescription",
+  "CMSampleBuffer",
+  "CMTime",
+  "objc2",
+  "objc2-core-audio-types",
+  "objc2-core-video",
+], optional = true }
+objc2-core-video = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CVBase",
+  "CVBuffer",
+  "CVImageBuffer",
+  "CVPixelBuffer",
+  "CVPixelBufferPool",
+  "CVReturn",
+], optional = true }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSArray",
+  "NSError",
+  "NSString",
+  "NSObject",
+], optional = true }
+objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "SCError",
+  "SCShareableContent",
+  "SCStream",
+  "block2",
+  "dispatch2",
+  "objc2-core-foundation",
+  "objc2-core-graphics",
+  "objc2-core-media",
+], optional = true }
+objc2-video-toolbox = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "VTCompressionProperties",
+  "VTCompressionSession",
+  "VTErrors",
+  "VTSession",
+  "objc2-core-media",
+  "objc2-core-video",
+], optional = true }
 
 [profile.dist]
 inherits = "release"

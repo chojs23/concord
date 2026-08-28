@@ -1,5 +1,38 @@
 use super::*;
-use crate::discord::{AppCommand, AttachmentDownloadId, MediaPlaybackSource, MediaPlaybackTarget};
+
+#[test]
+fn poll_vote_actions_are_available_by_default() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        poll: Some(poll_info(false)),
+        content: Some(String::new()),
+        ..guild_message_create_fixture()
+    }));
+
+    let actions = state.selected_message_action_items();
+    let poll_action = actions
+        .iter()
+        .find(|action| action.kind == MessageActionKind::OpenPollVotePicker)
+        .expect("poll action should exist");
+
+    assert_eq!(poll_action.label, "choose poll votes");
+    assert!(poll_action.is_enabled());
+}
+use crate::discord::test_builders::{
+    AttachmentDownloadCompletedFixture, AttachmentDownloadFailedFixture,
+    AttachmentDownloadProgressFixture, AttachmentDownloadStartedFixture,
+    attachment_download_completed_event, attachment_download_failed_event,
+    attachment_download_progress_event, attachment_download_started_event,
+};
+use crate::discord::{
+    AppCommand, AttachmentDownloadId, AttachmentMediaType, MESSAGE_FLAG_SUPPRESS_EMBEDS,
+    MediaPlaybackSource, MediaPlaybackTarget,
+};
 
 fn message_action(actions: &[MessageActionItem], kind: MessageActionKind) -> &MessageActionItem {
     actions
@@ -16,7 +49,7 @@ fn message_action_index(actions: &[MessageActionItem], kind: MessageActionKind) 
 }
 
 #[test]
-fn message_action_items_reflect_selected_message_capabilities() {
+fn message_action_items_reflect_message_and_channel_capabilities() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
 
@@ -31,6 +64,7 @@ fn message_action_items_reflect_selected_message_capabilities() {
             MessageActionKind::OpenDeleteConfirmation,
             MessageActionKind::Edit,
             MessageActionKind::OpenUrl,
+            MessageActionKind::RemoveEmbeds,
             MessageActionKind::PlayMedia,
             MessageActionKind::ViewAttachment,
             MessageActionKind::GoToReferencedMessage,
@@ -41,18 +75,132 @@ fn message_action_items_reflect_selected_message_capabilities() {
             MessageActionKind::OpenPollVotePicker,
         ]
     );
-    assert!(message_action(&actions, MessageActionKind::CopyContent).enabled);
-    assert!(message_action(&actions, MessageActionKind::Reply).enabled);
+    assert!(message_action(&actions, MessageActionKind::CopyContent).is_enabled());
+    assert!(message_action(&actions, MessageActionKind::Reply).is_enabled());
     assert_eq!(
         message_action(&actions, MessageActionKind::ShowProfile).label,
         "show message sender profile"
     );
-    assert!(message_action(&actions, MessageActionKind::ShowProfile).enabled);
-    assert!(!message_action(&actions, MessageActionKind::GoToReferencedMessage).enabled);
-    assert!(!message_action(&actions, MessageActionKind::PlayMedia).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(message_action(&actions, MessageActionKind::ShowProfile).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::GoToReferencedMessage).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::RemoveEmbeds).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::PlayMedia).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
+
+    let mut restricted = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES,
+        Vec::new(),
+    );
+    restricted.focus_pane(FocusPane::Messages);
+    let actions = restricted.selected_message_action_items();
+    let reply = message_action(&actions, MessageActionKind::Reply);
+    assert!(!reply.is_enabled());
+    assert_eq!(
+        reply.disabled_reason(),
+        Some("Read Message History required")
+    );
+    restricted.direct_reply_to_selected_message();
+    assert!(!restricted.is_composing());
+
+    let mut onboarding = state_with_messages(1);
+    apply_incomplete_community_onboarding(&mut onboarding, Id::new(1), Id::new(99));
+    onboarding.activate_guild(ActiveGuildScope::Guild(Id::new(1)));
+    onboarding.activate_channel(Id::new(2));
+    onboarding.focus_pane(FocusPane::Messages);
+    onboarding.jump_bottom();
+
+    let actions = onboarding.selected_message_action_items();
+    for kind in [
+        MessageActionKind::OpenReactionPicker,
+        MessageActionKind::Reply,
+        MessageActionKind::OpenDeleteConfirmation,
+        MessageActionKind::Edit,
+        MessageActionKind::RemoveEmbeds,
+        MessageActionKind::OpenPinConfirmation,
+        MessageActionKind::OpenPollVotePicker,
+    ] {
+        let action = message_action(&actions, kind);
+        assert!(
+            !action.is_enabled(),
+            "{kind:?} should require completed onboarding"
+        );
+        assert_eq!(
+            action.disabled_reason(),
+            Some(if kind == MessageActionKind::OpenPollVotePicker {
+                "no poll"
+            } else {
+                "onboarding incomplete"
+            }),
+            "{kind:?} should explain why it is disabled"
+        );
+    }
+    assert!(message_action(&actions, MessageActionKind::CopyContent).is_enabled());
+    assert!(message_action(&actions, MessageActionKind::ShowProfile).is_enabled());
+
+    onboarding.direct_edit_selected_message();
+    assert!(!onboarding.is_composing());
+}
+
+#[test]
+fn remove_embeds_message_action_emits_command_for_unsuppressed_embeds() {
+    let mut state = state_with_messages(1);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(99)),
+    });
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            embeds: vec![youtube_embed()],
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+    assert!(message_action(&actions, MessageActionKind::RemoveEmbeds).is_enabled());
+
+    assert_eq!(
+        state.activate_message_action_kind(MessageActionKind::RemoveEmbeds),
+        None
+    );
+    assert!(
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
+    );
+    state.open_popup_keymap_prefix(
+        crate::tui::state::PopupKeymapContext::Confirmation,
+        Vec::new(),
+    );
+    assert!(state.is_key_sequence_active());
+
+    assert_eq!(
+        state.confirm_message_confirmation(),
+        Some(AppCommand::RemoveMessageEmbeds {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
+    );
+    assert!(!state.is_key_sequence_active());
+}
+
+#[test]
+fn remove_embeds_message_action_is_disabled_after_suppression() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            embeds: vec![youtube_embed()],
+            flags: MESSAGE_FLAG_SUPPRESS_EMBEDS,
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+
+    assert!(!message_action(&actions, MessageActionKind::RemoveEmbeds).is_enabled());
 }
 
 #[test]
@@ -91,8 +239,7 @@ fn direct_attachment_message_action_opens_attachment_viewer() {
             filename: "image-10.png".to_owned(),
             url: Some("https://cdn.discordapp.com/image-10.png".to_owned()),
             size_bytes: 2048,
-            is_image: true,
-            is_video: false,
+            media_type: Some(AttachmentMediaType::Image),
         })
     );
 }
@@ -145,7 +292,17 @@ fn attachment_viewer_navigation_clamps_and_downloads_current_attachment() {
 
 #[test]
 fn attachment_viewer_play_selected_attachment_only_plays_videos() {
-    let mut state = state_with_messages(1);
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        media_playback: true,
+        ..Default::default()
+    });
+    state.push_event(guild_create_event(
+        Id::new(1),
+        "guild",
+        vec![text_channel_info(Id::new(1), Id::new(2), "general")],
+    ));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
     state.push_event(latest_history_loaded(
         Id::new(2),
         vec![MessageInfo {
@@ -223,29 +380,35 @@ fn attachment_download_events_update_global_progress() {
     state.direct_open_selected_message_attachment_viewer();
     let id = AttachmentDownloadId::new(7);
 
-    state.push_event(AppEvent::AttachmentDownloadStarted {
-        id,
-        filename: "cat.png".to_owned(),
-        total_bytes: Some(100),
-        source: DownloadAttachmentSource::AttachmentViewer,
-    });
+    state.push_event(attachment_download_started_event(
+        AttachmentDownloadStartedFixture {
+            id,
+            filename: "cat.png".to_owned(),
+            total_bytes: Some(100),
+            source: DownloadAttachmentSource::AttachmentViewer,
+        },
+    ));
 
     assert_eq!(state.attachment_downloads().len(), 1);
 
     state.close_attachment_viewer();
-    state.push_event(AppEvent::AttachmentDownloadProgress {
-        id,
-        downloaded_bytes: 40,
-        total_bytes: Some(100),
-    });
+    state.push_event(attachment_download_progress_event(
+        AttachmentDownloadProgressFixture {
+            id,
+            downloaded_bytes: 40,
+            total_bytes: Some(100),
+        },
+    ));
 
     assert_eq!(state.attachment_downloads()[0].downloaded_bytes, 40);
 
-    state.push_event(AppEvent::AttachmentDownloadCompleted {
-        id,
-        path: "/tmp/cat.png".to_owned(),
-        source: DownloadAttachmentSource::AttachmentViewer,
-    });
+    state.push_event(attachment_download_completed_event(
+        AttachmentDownloadCompletedFixture {
+            id,
+            path: "/tmp/cat.png".to_owned(),
+            source: DownloadAttachmentSource::AttachmentViewer,
+        },
+    ));
 
     assert!(state.attachment_downloads().is_empty());
     assert_eq!(
@@ -254,18 +417,22 @@ fn attachment_download_events_update_global_progress() {
     );
 
     let failed_id = AttachmentDownloadId::new(8);
-    state.push_event(AppEvent::AttachmentDownloadStarted {
-        id: failed_id,
-        filename: "dog.png".to_owned(),
-        total_bytes: None,
-        source: DownloadAttachmentSource::AttachmentViewer,
-    });
-    state.push_event(AppEvent::AttachmentDownloadFailed {
-        id: failed_id,
-        filename: "dog.png".to_owned(),
-        message: "network reset".to_owned(),
-        source: DownloadAttachmentSource::AttachmentViewer,
-    });
+    state.push_event(attachment_download_started_event(
+        AttachmentDownloadStartedFixture {
+            id: failed_id,
+            filename: "dog.png".to_owned(),
+            source: DownloadAttachmentSource::AttachmentViewer,
+            ..AttachmentDownloadStartedFixture::new()
+        },
+    ));
+    state.push_event(attachment_download_failed_event(
+        AttachmentDownloadFailedFixture {
+            id: failed_id,
+            filename: "dog.png".to_owned(),
+            message: "network reset".to_owned(),
+            source: DownloadAttachmentSource::AttachmentViewer,
+        },
+    ));
 
     assert!(state.attachment_downloads().is_empty());
     assert_eq!(
@@ -275,48 +442,44 @@ fn attachment_download_events_update_global_progress() {
 }
 
 #[test]
-fn normal_message_actions_show_disabled_dynamic_actions() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
+fn dynamic_actions_stay_disabled_regardless_of_message_shape() {
+    // Thread / reaction-user / poll rows only light up when the message
+    // actually carries that payload. Owning the message or it being a reply
+    // must not be mistaken for one.
+    let own_regular = || {
+        let mut state = state_with_messages(1);
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(99)),
+        });
+        state
+    };
+    let own_reply = || {
+        let mut state = state_with_message_ids([]);
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(99)),
+        });
+        push_reply_message_with_attachments(&mut state, 1, 99, Some("reply body"), Vec::new());
+        state
+    };
 
-    let actions = state.selected_message_action_items();
+    for (name, mut state) in [("own regular", own_regular()), ("own reply", own_reply())] {
+        state.focus_pane(FocusPane::Messages);
 
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
-}
+        let actions = state.selected_message_action_items();
 
-#[test]
-fn own_regular_message_actions_show_disabled_dynamic_actions() {
-    let mut state = state_with_messages(1);
-    state.push_event(AppEvent::Ready {
-        user: "neo".to_owned(),
-        user_id: Some(Id::new(99)),
-    });
-    state.focus_pane(FocusPane::Messages);
-
-    let actions = state.selected_message_action_items();
-
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
-}
-
-#[test]
-fn own_reply_message_actions_show_disabled_dynamic_actions() {
-    let mut state = state_with_message_ids([]);
-    state.push_event(AppEvent::Ready {
-        user: "neo".to_owned(),
-        user_id: Some(Id::new(99)),
-    });
-    push_reply_message_with_attachments(&mut state, 1, 99, Some("reply body"), Vec::new());
-    state.focus_pane(FocusPane::Messages);
-
-    let actions = state.selected_message_action_items();
-
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+        for kind in [
+            MessageActionKind::OpenThread,
+            MessageActionKind::ShowReactionUsers,
+            MessageActionKind::OpenPollVotePicker,
+        ] {
+            assert!(
+                !message_action(&actions, kind).is_enabled(),
+                "{name} / {kind:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -346,20 +509,6 @@ fn edit_reply_action_prefills_composer_without_reply_target_and_submits_edit_com
 }
 
 #[test]
-fn other_user_direct_edit_does_not_start_composer() {
-    let mut state = state_with_messages(1);
-    state.push_event(AppEvent::Ready {
-        user: "me".to_owned(),
-        user_id: Some(Id::new(10)),
-    });
-    state.focus_pane(FocusPane::Messages);
-
-    state.direct_edit_selected_message();
-
-    assert!(!state.is_composing());
-}
-
-#[test]
 fn unhydrated_guild_permissions_keep_other_user_delete_available() {
     let mut state =
         state_with_other_user_message_permissions_hydrating_member(PERM_VIEW_CHANNEL, Vec::new());
@@ -368,9 +517,7 @@ fn unhydrated_guild_permissions_keep_other_user_delete_available() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -388,12 +535,10 @@ fn other_user_message_actions_include_delete_with_manage_messages() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
     assert_eq!(
-        state.confirm_message_delete(),
+        state.confirm_message_confirmation(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -412,9 +557,7 @@ fn other_user_delete_requires_manage_messages() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        !state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -455,12 +598,10 @@ fn direct_delete_message_submits_delete_command_for_own_message() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
     assert_eq!(
-        state.confirm_message_delete(),
+        state.confirm_message_confirmation(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -492,12 +633,10 @@ fn own_attachment_only_message_can_be_deleted_but_not_edited() {
     state.open_selected_message_delete_confirmation();
 
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
     assert_eq!(
-        state.confirm_message_delete(),
+        state.confirm_message_confirmation(),
         Some(AppCommand::DeleteMessage {
             channel_id: Id::new(2),
             message_id: Id::new(1),
@@ -517,7 +656,7 @@ fn direct_pin_message_requires_pin_messages_permission() {
 
     assert!(
         !without_pin
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     let mut with_pin = state_with_other_user_message_permissions(
@@ -530,7 +669,7 @@ fn direct_pin_message_requires_pin_messages_permission() {
 
     assert!(
         with_pin
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -546,10 +685,10 @@ fn reply_attachment_action_can_open_attachment_viewer() {
     );
     state.focus_pane(FocusPane::Messages);
     let actions = state.selected_message_action_items();
-    assert!(message_action(&actions, MessageActionKind::ViewAttachment).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(message_action(&actions, MessageActionKind::ViewAttachment).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 
     state.direct_open_selected_message_attachment_viewer();
 
@@ -562,30 +701,45 @@ fn reply_attachment_action_can_open_attachment_viewer() {
             filename: "image-1.png".to_owned(),
             url: Some("https://cdn.discordapp.com/image-1.png".to_owned()),
             size_bytes: 2048,
-            is_image: true,
-            is_video: false,
+            media_type: Some(AttachmentMediaType::Image),
         })
     );
 }
 
 #[test]
-fn direct_message_url_opens_single_url_from_message_content() {
-    let mut state = state_with_messages(1);
-    state.push_event(latest_history_loaded(
-        Id::new(2),
-        vec![MessageInfo {
-            content: Some("read https://example.com/docs.".to_owned()),
-            ..message_info(Id::new(2), 1)
-        }],
-    ));
-    state.focus_pane(FocusPane::Messages);
-    assert_eq!(
-        state.direct_open_selected_message_url(),
-        Some(AppCommand::OpenUrl {
-            url: "https://example.com/docs".to_owned(),
-        })
-    );
-    assert!(!state.is_message_action_context_active());
+fn direct_message_url_opens_the_message_url_without_the_action_menu() {
+    for (name, message, expected_url) in [
+        (
+            "url in the message content",
+            MessageInfo {
+                content: Some("read https://example.com/docs.".to_owned()),
+                ..message_info(Id::new(2), 1)
+            },
+            "https://example.com/docs",
+        ),
+        (
+            "attachment url when the content carries none",
+            MessageInfo {
+                content: Some(String::new()),
+                attachments: vec![image_attachment(10)],
+                ..message_info(Id::new(2), 1)
+            },
+            "https://cdn.discordapp.com/image-10.png",
+        ),
+    ] {
+        let mut state = state_with_messages(1);
+        state.push_event(latest_history_loaded(Id::new(2), vec![message]));
+        state.focus_pane(FocusPane::Messages);
+
+        assert_eq!(
+            state.direct_open_selected_message_url(),
+            Some(AppCommand::OpenUrl {
+                url: expected_url.to_owned(),
+            }),
+            "{name}"
+        );
+        assert!(!state.is_message_action_menu_active(), "{name}");
+    }
 }
 
 #[test]
@@ -601,7 +755,7 @@ fn direct_message_url_opens_url_picker_for_multiple_urls() {
     state.focus_pane(FocusPane::Messages);
     assert_eq!(state.direct_open_selected_message_url(), None);
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker));
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert_eq!(state.selected_message_url_index(), Some(0));
 
     assert_eq!(
@@ -616,58 +770,89 @@ fn direct_message_url_opens_url_picker_for_multiple_urls() {
     assert!(
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker)
     );
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
-fn direct_play_media_prefers_video_attachment() {
-    let mut state = state_with_messages(1);
+fn direct_play_media_prefers_a_video_attachment_over_a_content_url() {
+    for (name, message, expected_target) in [
+        (
+            "video attachment wins over a url in the content",
+            MessageInfo {
+                content: Some("also https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
+                attachments: vec![video_attachment(10)],
+                ..message_info(Id::new(2), 1)
+            },
+            MediaPlaybackTarget {
+                url: "https://cdn.discordapp.com/clip-10.mp4".to_owned(),
+                label: "clip-10.mp4".to_owned(),
+                source: MediaPlaybackSource::Message,
+            },
+        ),
+        (
+            "content url is used when there is no attachment",
+            MessageInfo {
+                content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
+                ..message_info(Id::new(2), 1)
+            },
+            MediaPlaybackTarget {
+                url: "https://youtu.be/dQw4w9WgXcQ".to_owned(),
+                label: "media URL".to_owned(),
+                source: MediaPlaybackSource::Message,
+            },
+        ),
+    ] {
+        let mut state = DashboardState::new_with_display_options(DisplayOptions {
+            media_playback: true,
+            ..Default::default()
+        });
+        state.push_event(guild_create_event(
+            Id::new(1),
+            "guild",
+            vec![text_channel_info(Id::new(1), Id::new(2), "general")],
+        ));
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(latest_history_loaded(Id::new(2), vec![message]));
+        state.focus_pane(FocusPane::Messages);
+
+        assert_eq!(
+            state.direct_play_selected_message_media(),
+            Some(AppCommand::PlayMedia {
+                target: expected_target,
+                request_id: None,
+            }),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn media_playback_disabled_removes_message_play_action() {
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        media_playback: false,
+        ..Default::default()
+    });
+    state.push_event(guild_create_event(
+        Id::new(1),
+        "guild",
+        vec![text_channel_info(Id::new(1), Id::new(2), "general")],
+    ));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
     state.push_event(latest_history_loaded(
         Id::new(2),
         vec![MessageInfo {
-            content: Some("also https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
             attachments: vec![video_attachment(10)],
             ..message_info(Id::new(2), 1)
         }],
     ));
     state.focus_pane(FocusPane::Messages);
 
-    assert_eq!(
-        state.direct_play_selected_message_media(),
-        Some(AppCommand::PlayMedia {
-            target: MediaPlaybackTarget {
-                url: "https://cdn.discordapp.com/clip-10.mp4".to_owned(),
-                label: "clip-10.mp4".to_owned(),
-                source: MediaPlaybackSource::Message,
-            },
-            request_id: None,
-        })
-    );
-}
+    let actions = state.selected_message_action_items();
 
-#[test]
-fn direct_play_media_uses_youtube_url() {
-    let mut state = state_with_messages(1);
-    state.push_event(latest_history_loaded(
-        Id::new(2),
-        vec![MessageInfo {
-            content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
-            ..message_info(Id::new(2), 1)
-        }],
-    ));
-    state.focus_pane(FocusPane::Messages);
-
-    assert_eq!(
-        state.direct_play_selected_message_media(),
-        Some(AppCommand::PlayMedia {
-            target: MediaPlaybackTarget {
-                url: "https://youtu.be/dQw4w9WgXcQ".to_owned(),
-                label: "media URL".to_owned(),
-                source: MediaPlaybackSource::Message,
-            },
-            request_id: None,
-        })
-    );
+    assert!(!message_action(&actions, MessageActionKind::PlayMedia).is_enabled());
+    assert_eq!(state.direct_play_selected_message_media(), None);
 }
 
 #[test]
@@ -737,10 +922,14 @@ fn message_action_detects_embed_urls() {
                 thumbnail_proxy_url: None,
                 thumbnail_width: None,
                 thumbnail_height: None,
+                thumbnail_flags: 0,
                 image_url: Some("https://media.example/image.jpg".to_owned()),
                 image_proxy_url: None,
                 image_width: None,
                 image_height: None,
+                image_flags: 0,
+                gifv_image_url: None,
+                gifv_image_proxy_url: None,
                 video_url: Some("https://media.example/video.mp4".to_owned()),
             }],
             ..message_info(Id::new(2), 1)
@@ -768,7 +957,7 @@ fn message_action_detects_urls_in_reply_quote_and_forwarded_snapshot() {
                 author_id: None,
                 author: "alice".to_owned(),
                 content: Some("check https://reply.example/page".to_owned()),
-                sticker_names: Vec::new(),
+                stickers: Vec::new(),
                 mentions: Vec::new(),
             }),
             forwarded_snapshots: vec![MessageSnapshotInfo {
@@ -811,11 +1000,11 @@ fn non_regular_message_actions_only_show_supported_actions() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::Edit).enabled);
-    assert!(message_action(&actions, MessageActionKind::ViewAttachment).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(!message_action(&actions, MessageActionKind::Edit).is_enabled());
+    assert!(message_action(&actions, MessageActionKind::ViewAttachment).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 }
 
 #[test]
@@ -835,9 +1024,9 @@ fn message_action_items_keep_poll_actions_for_attachment_messages() {
 
     let actions = state.selected_message_action_items();
 
-    assert!(!message_action(&actions, MessageActionKind::OpenThread).enabled);
-    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).enabled);
-    assert!(message_action(&actions, MessageActionKind::OpenPollVotePicker).enabled);
+    assert!(!message_action(&actions, MessageActionKind::OpenThread).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::ShowReactionUsers).is_enabled());
+    assert!(message_action(&actions, MessageActionKind::OpenPollVotePicker).is_enabled());
 }
 
 #[test]
@@ -934,6 +1123,11 @@ fn multi_select_poll_action_opens_picker_and_submits_selected_answers() {
     }));
 
     let actions = state.selected_message_action_items();
+    assert!(
+        actions
+            .iter()
+            .all(|action| action.is_enabled() || action.disabled_reason().is_some())
+    );
     assert_eq!(
         message_action(&actions, MessageActionKind::OpenPollVotePicker).label,
         "choose poll votes"

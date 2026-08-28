@@ -1,14 +1,18 @@
-use super::super::forum;
 use super::super::panes::{
-    render_composer, render_composer_command_picker, render_composer_emoji_picker,
-    render_composer_mention_picker,
+    active_composer_picker_area, render_composer, render_composer_command_picker,
+    render_composer_emoji_picker, render_composer_mention_picker,
 };
+use super::super::thread_card;
 use super::super::*;
 use crate::tui::media;
 use crate::tui::message::{
     layout::{MessageViewportPlan, MessageViewportRow},
-    time::{format_message_local_time, message_local_date, message_local_datetime},
+    time::{
+        format_local_date_time, format_message_local_time, message_local_date,
+        message_local_datetime,
+    },
 };
+use crate::tui::ui::emoji_overlay::{EmojiSlot, intersects_any, overlay_emoji_slots};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InlinePreviewSpacer {
@@ -29,11 +33,19 @@ struct MessageItemLinesInput<'a> {
     preview_spacers: &'a [InlinePreviewSpacer],
     bottom_gap: bool,
     line_offset: usize,
+    avatar_offset: u16,
 }
 
 struct MessageRenderPlan<'a, 'p> {
     rows: &'p MessageViewportPlan<'a>,
     layout: MessageViewportLayout,
+}
+
+pub(in crate::tui::ui) struct MessageMedia<'a> {
+    pub(in crate::tui::ui) image_previews: Vec<ImagePreview<'a>>,
+    pub(in crate::tui::ui) avatar_images: Vec<AvatarImage<'a>>,
+    pub(in crate::tui::ui) emoji_images: &'a [EmojiImage<'a>],
+    pub(in crate::tui::ui) occlusion_areas: &'a [Rect],
 }
 
 impl<'a> MessageRenderPlan<'a, '_> {
@@ -46,9 +58,7 @@ pub(in crate::tui::ui) fn render_messages(
     frame: &mut Frame,
     area: Rect,
     state: &DashboardState,
-    image_previews: Vec<ImagePreview<'_>>,
-    avatar_images: Vec<AvatarImage<'_>>,
-    emoji_images: &[EmojiImage<'_>],
+    media: MessageMedia<'_>,
     viewport_plan: Option<&MessageViewportPlan<'_>>,
 ) {
     let block = panel_block_owned(
@@ -59,52 +69,96 @@ pub(in crate::tui::ui) fn render_messages(
     frame.render_widget(block, area);
 
     let message_areas = message_areas(inner, state);
-    let content_width = message_content_width(message_areas.list);
+    let owned_occlusion_areas;
+    let media_occlusion_areas =
+        if let Some(area) = active_composer_picker_area(message_areas, state) {
+            owned_occlusion_areas = media
+                .occlusion_areas
+                .iter()
+                .copied()
+                .chain(std::iter::once(area))
+                .collect::<Vec<_>>();
+            owned_occlusion_areas.as_slice()
+        } else {
+            media.occlusion_areas
+        };
+    let avatar_offset = avatar_gutter_width(state.show_avatars());
+    let content_width = message_content_width(message_areas.list, avatar_offset);
 
     render_unread_banner(frame, message_areas.unread_banner, state);
 
-    if state.message_pane_uses_forum_posts() {
-        let posts = state.visible_forum_post_items();
-        let selected = state.focused_forum_post_selection();
+    if state.message_pane_uses_thread_cards() {
+        let posts = state.visible_thread_card_items();
+        let selected = state.focused_thread_card_selection();
         let is_loading = state.selected_forum_posts_loading();
-        let forum_viewport_len =
-            forum::forum_post_scrollbar_visible_count(message_areas.list.height);
-        let forum_total_rows = state.message_total_rendered_rows(content_width, 0, 0);
-        let forum_scrollbar_visible =
-            vertical_scrollbar_visible(message_areas.list, forum_viewport_len, forum_total_rows);
-        let forum_card_width =
-            selected_message_card_width(message_areas.list.width as usize, forum_scrollbar_visible);
+        let thread_viewport_len =
+            thread_card::thread_card_scrollbar_visible_count(message_areas.list.height);
+        let thread_total_rows = state.message_total_rendered_rows(content_width, 0, 0);
+        let thread_scrollbar_visible =
+            vertical_scrollbar_visible(message_areas.list, thread_viewport_len, thread_total_rows);
+        let thread_card_width = selected_message_card_width(
+            message_areas.list.width as usize,
+            thread_scrollbar_visible,
+        );
         frame.render_widget(
-            Paragraph::new(forum::forum_post_viewport_lines_with_custom_emoji_images(
-                &posts,
-                selected,
-                forum_card_width,
-                is_loading,
-                state.show_custom_emoji(),
-            )),
+            Paragraph::new(
+                thread_card::thread_card_viewport_lines_with_custom_emoji_images(
+                    &posts,
+                    selected,
+                    thread_card_width,
+                    is_loading,
+                    state.animation_frame(),
+                    state.show_custom_emoji(),
+                    state.show_images(),
+                ),
+            )
+            .style(theme::current().style(theme::HighlightGroup::Normal)),
             message_areas.list,
         );
         if state.show_custom_emoji() {
-            forum::render_forum_post_reaction_emojis(
+            thread_card::render_thread_card_reaction_emojis(
                 frame,
                 message_areas.list,
                 &posts,
-                forum_card_width,
-                emoji_images,
+                thread_card_width,
+                media.emoji_images,
+                media_occlusion_areas,
+                state.show_images(),
+            );
+            thread_card::render_thread_card_tag_emojis(
+                frame,
+                message_areas.list,
+                &posts,
+                thread_card_width,
+                media.emoji_images,
+                media_occlusion_areas,
+                state.show_images(),
+            );
+        }
+        for image_preview in media
+            .image_previews
+            .into_iter()
+            .filter(|preview| preview.thread_card)
+        {
+            render_thread_card_image_preview(
+                frame,
+                message_areas.list,
+                image_preview,
+                media_occlusion_areas,
             );
         }
         render_vertical_scrollbar(
             frame,
             message_areas.list,
             state.message_scroll_row_position(content_width, 0, 0),
-            forum_viewport_len,
-            forum_total_rows,
+            thread_viewport_len,
+            thread_total_rows,
         );
         render_typing_footer(frame, message_areas.typing, state);
-        render_composer(frame, message_areas.composer, state, emoji_images);
+        render_composer(frame, message_areas.composer, state, media.emoji_images);
         render_composer_command_picker(frame, message_areas, state);
         render_composer_mention_picker(frame, message_areas, state);
-        render_composer_emoji_picker(frame, message_areas, state, emoji_images);
+        render_composer_emoji_picker(frame, message_areas, state, media.emoji_images);
         return;
     }
 
@@ -112,7 +166,7 @@ pub(in crate::tui::ui) fn render_messages(
     let selected = state.focused_message_selection();
 
     let preview_width = if state.show_images() {
-        inline_image_preview_width(message_areas.list)
+        inline_image_preview_width(message_areas.list, avatar_offset)
     } else {
         0
     };
@@ -130,7 +184,7 @@ pub(in crate::tui::ui) fn render_messages(
     );
     let selected_card_width =
         selected_message_card_width(message_areas.list.width as usize, message_scrollbar_visible);
-    let loaded_custom_emoji_urls = loaded_custom_emoji_urls(emoji_images);
+    let loaded_custom_emoji_urls = loaded_custom_emoji_urls(media.emoji_images);
     let layout = MessageViewportLayout {
         content_width,
         list_width: message_areas.list.width as usize,
@@ -153,31 +207,54 @@ pub(in crate::tui::ui) fn render_messages(
         &owned_plan
     };
     let render_plan = MessageRenderPlan { rows, layout };
-    let lines = message_viewport_lines_from_plan(&render_plan, state, &loaded_custom_emoji_urls);
+    let (lines, body_emoji_slots) =
+        message_viewport_lines_from_plan(&render_plan, state, &loaded_custom_emoji_urls);
 
-    frame.render_widget(Paragraph::new(lines), message_areas.list);
+    frame.render_widget(
+        Paragraph::new(lines).style(theme::current().style(theme::HighlightGroup::Normal)),
+        message_areas.list,
+    );
     let selected_avatar_body_top =
         selected.and_then(|selected| render_plan.row(selected).map(|row| row.body_top));
-    for avatar in avatar_images {
+    for avatar in media.avatar_images {
         if let Some(area) = message_avatar_area(
             message_areas.list,
             avatar.row,
             avatar.visible_height,
             selected_avatar_x_offset(selected_avatar_body_top, avatar.row),
-        ) {
+        ) && !intersects_any(area, media_occlusion_areas)
+        {
             frame.render_widget(RatatuiImage::new(avatar.protocol), area);
         }
     }
-    render_inline_reaction_emojis(frame, message_areas.list, &render_plan, emoji_images);
+    render_inline_reaction_emojis(
+        frame,
+        message_areas.list,
+        &render_plan,
+        media.emoji_images,
+        media_occlusion_areas,
+        avatar_offset,
+    );
     render_inline_message_body_emojis(
         frame,
         message_areas.list,
         &render_plan,
         state,
-        emoji_images,
-        &loaded_custom_emoji_urls,
+        media.emoji_images,
+        body_emoji_slots,
+        media_occlusion_areas,
+        avatar_offset,
     );
-    for image_preview in image_previews.into_iter() {
+    for image_preview in media.image_previews.into_iter() {
+        if image_preview.thread_card {
+            render_thread_card_image_preview(
+                frame,
+                message_areas.list,
+                image_preview,
+                media_occlusion_areas,
+            );
+            continue;
+        }
         let Some(row_plan) = render_plan.row(image_preview.message_index) else {
             continue;
         };
@@ -186,7 +263,7 @@ pub(in crate::tui::ui) fn render_messages(
             .saturating_add(row_plan.metrics.body_rows() as isize)
             .saturating_add(image_preview.preview_y_offset_rows as isize)
             .saturating_sub(1);
-        if let Some(preview_area) = inline_image_preview_area(
+        if let Some(mut preview_area) = inline_image_preview_area(
             message_areas.list,
             row,
             image_preview
@@ -195,13 +272,15 @@ pub(in crate::tui::ui) fn render_messages(
             image_preview.preview_width,
             image_preview.preview_height,
             image_preview.accent_color,
+            avatar_offset,
         ) {
+            preview_area.height = preview_area
+                .height
+                .min(image_preview.visible_preview_height);
+            if intersects_any(preview_area, media_occlusion_areas) {
+                continue;
+            }
             render_image_preview(frame, preview_area, image_preview.state);
-            render_image_preview_overflow_marker(
-                frame,
-                preview_area,
-                image_preview.preview_overflow_count,
-            );
         }
     }
     render_vertical_scrollbar(
@@ -213,18 +292,30 @@ pub(in crate::tui::ui) fn render_messages(
     );
     render_new_messages_notice(frame, message_areas.list, state);
     render_typing_footer(frame, message_areas.typing, state);
-    render_composer(frame, message_areas.composer, state, emoji_images);
+    render_composer(frame, message_areas.composer, state, media.emoji_images);
     render_composer_command_picker(frame, message_areas, state);
     render_composer_mention_picker(frame, message_areas, state);
-    render_composer_emoji_picker(frame, message_areas, state, emoji_images);
+    render_composer_emoji_picker(frame, message_areas, state, media.emoji_images);
+}
+
+/// A custom-emoji image position inside one message's formatted body lines,
+/// captured while the lines are built so the emoji overlay pass does not
+/// have to re-format the message.
+struct BodyEmojiSlot {
+    line_index: usize,
+    col: u16,
+    image_size: EmojiImageSize,
+    url: String,
 }
 
 fn message_viewport_lines_from_plan(
     plan: &MessageRenderPlan<'_, '_>,
     state: &DashboardState,
     loaded_custom_emoji_urls: &[String],
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, Vec<Vec<BodyEmojiSlot>>) {
+    let avatar_offset = avatar_gutter_width(state.show_avatars());
     let mut lines = Vec::new();
+    let mut body_emoji_slots = Vec::with_capacity(plan.rows.rows().len());
     for row in plan.rows.rows() {
         let author = row.message.author.clone();
         let author_style = message_author_style(state.message_author_role_color(row.message));
@@ -245,8 +336,23 @@ fn message_viewport_lines_from_plan(
             plan.layout.content_width.max(8),
             loaded_custom_emoji_urls,
         );
+        body_emoji_slots.push(
+            content
+                .iter()
+                .chain(reactions.iter())
+                .enumerate()
+                .flat_map(|(line_index, line)| {
+                    line.image_slots.iter().map(move |slot| BodyEmojiSlot {
+                        line_index,
+                        col: slot.col,
+                        image_size: slot.image_size,
+                        url: slot.url.clone(),
+                    })
+                })
+                .collect(),
+        );
 
-        let sent_time = format_message_sent_time(row.message.id);
+        let sent_time = format_message_sent_time(row.message.id, state.hour_format_24());
         let preview_spacers = inline_preview_spacers_for_message(
             row.message,
             plan.layout.preview_width,
@@ -264,18 +370,35 @@ fn message_viewport_lines_from_plan(
             preview_spacers: &preview_spacers,
             bottom_gap: row.bottom_gap,
             line_offset: row.item_line_offset,
+            avatar_offset,
         });
-        if row.selected {
-            lines.extend(selected_message_lines(
+        let item_lines = if row.selected {
+            selected_message_lines(
                 item_lines,
                 &sent_time,
                 plan.layout.selected_card_width,
                 row.body_skip == 0,
                 row.bottom_gap,
                 row.show_header,
-            ));
+            )
         } else {
-            lines.extend(item_lines);
+            item_lines
+        };
+        lines.extend(if state.message_is_pending(row.message) {
+            pending_message_lines(item_lines)
+        } else {
+            item_lines
+        });
+    }
+    (lines, body_emoji_slots)
+}
+
+fn pending_message_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let pending_style = theme::current().style(theme::HighlightGroup::MessageSecondary);
+    for line in &mut lines {
+        line.style = line.style.patch(pending_style);
+        for span in &mut line.spans {
+            span.style = span.style.patch(pending_style);
         }
     }
     lines
@@ -301,7 +424,7 @@ pub(in crate::tui::ui) fn message_viewport_lines(
         rows: &rows,
         layout,
     };
-    message_viewport_lines_from_plan(&plan, state, loaded_custom_emoji_urls)
+    message_viewport_lines_from_plan(&plan, state, loaded_custom_emoji_urls).0
 }
 
 fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardState) {
@@ -324,7 +447,7 @@ fn render_new_messages_notice(frame: &mut Frame, list: Rect, state: &DashboardSt
         height: 1,
     };
 
-    frame.render_widget(Clear, area);
+    clear_area(frame, area);
     frame.render_widget(
         Paragraph::new(new_messages_notice_line(count, area.width as usize)),
         area,
@@ -342,7 +465,10 @@ fn render_typing_footer(frame: &mut Frame, area: Rect, state: &DashboardState) {
         return;
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(text, Style::default().fg(DIM)))),
+        Paragraph::new(Line::from(Span::styled(
+            text,
+            theme::current().style(theme::HighlightGroup::MessageSecondary),
+        ))),
         area,
     );
 }
@@ -358,56 +484,29 @@ fn render_unread_banner(frame: &mut Frame, area: Rect, state: &DashboardState) {
         return;
     };
 
-    const BG: Color = Color::Rgb(88, 101, 242);
-    const FG: Color = Color::White;
-    let style = Style::default().fg(FG).bg(BG);
+    let theme = theme::current();
+    let style = theme.apply(
+        theme::HighlightGroup::UnreadBanner,
+        theme.style(theme::HighlightGroup::Normal),
+    );
 
-    let since_label = format_unread_banner_since(banner.since_message_id);
+    let since_label = format_unread_banner_since(banner.since_message_id, state.hour_format_24());
     let left = match since_label {
         Some(time) => format!(" {} unread messages since {}", banner.unread_count, time),
         None => format!(" {} unread messages", banner.unread_count),
     };
-    let right = state.key_bindings().unread_mark_as_read_hint();
 
-    frame.render_widget(
-        Paragraph::new(unread_banner_line(left, right, area.width as usize, style)).style(style),
-        area,
-    );
+    frame.render_widget(Paragraph::new(left).style(style), area);
 }
 
-fn unread_banner_line(left: String, right: &str, width: usize, style: Style) -> Line<'static> {
-    let right_width = right.width();
-    let left_width = left.as_str().width();
-    if width == 0 {
-        return Line::from(Span::styled("", style));
-    }
-    if right_width >= width {
-        return Line::from(Span::styled(
-            truncate_display_width(right, width),
-            style.add_modifier(Modifier::BOLD),
-        ));
-    }
-    let max_left_width = width.saturating_sub(right_width);
-    let left = if left_width > max_left_width {
-        truncate_display_width(&left, max_left_width)
-    } else {
-        left
-    };
-    let used = left.as_str().width().saturating_add(right_width);
-    let padding = width.saturating_sub(used);
-    Line::from(vec![
-        Span::styled(left, style),
-        Span::styled(" ".repeat(padding), style),
-        Span::styled(right.to_owned(), style.add_modifier(Modifier::BOLD)),
-    ])
-}
-
-fn format_unread_banner_since(message_id: Id<MessageMarker>) -> Option<String> {
-    Some(
-        message_local_datetime(message_id)?
-            .format("%Y-%m-%d %H:%M")
-            .to_string(),
-    )
+fn format_unread_banner_since(
+    message_id: Id<MessageMarker>,
+    hour_format_24: bool,
+) -> Option<String> {
+    Some(format_local_date_time(
+        &message_local_datetime(message_id)?,
+        hour_format_24,
+    ))
 }
 
 fn render_inline_reaction_emojis(
@@ -415,62 +514,34 @@ fn render_inline_reaction_emojis(
     list: Rect,
     plan: &MessageRenderPlan<'_, '_>,
     emoji_images: &[EmojiImage<'_>],
+    media_occlusion_areas: &[Rect],
+    avatar_offset: u16,
 ) {
-    if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
-        return;
-    }
-
-    let list_top = list.y as isize;
-    let list_bottom = list_top + list.height as isize;
-    let list_left = list.x as isize;
-    let list_right = list_left + list.width as isize;
-    let avatar_offset = MESSAGE_AVATAR_OFFSET as isize;
-
-    for row in plan.rows.rows() {
-        if row.message_top >= list.height as isize {
-            break;
-        }
-
-        let layout = lay_out_reaction_chips_with_custom_emoji_images(
-            &row.message.reactions,
-            plan.layout.content_width,
-            true,
-        );
-        if !layout.slots.is_empty() {
-            for slot in layout.slots {
-                let row_in_list = row.reaction_top + slot.line as isize;
-                if row_in_list < 0 || row_in_list >= list.height as isize {
-                    continue;
-                }
-                let Some(image) = emoji_images.iter().find(|img| img.url == slot.url) else {
-                    continue;
-                };
-                let absolute_row = list_top + row_in_list;
-                let absolute_col = list_left
-                    + avatar_offset
-                    + selected_message_content_x_offset(row.selected) as isize
-                    + slot.col as isize;
-                if absolute_col >= list_right {
-                    continue;
-                }
-                let max_width = (list_right - absolute_col).max(0) as u16;
-                let image_width = EMOJI_REACTION_IMAGE_WIDTH.min(max_width);
-                if image_width == 0 {
-                    continue;
-                }
-                let image_area = Rect {
-                    x: absolute_col as u16,
-                    y: absolute_row as u16,
-                    width: image_width,
-                    height: 1,
-                };
-                if image_area.y >= list_bottom as u16 {
-                    continue;
-                }
-                frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-            }
-        }
-    }
+    let avatar_offset = avatar_offset as isize;
+    let slots = plan
+        .rows
+        .rows()
+        .iter()
+        .take_while(|row| row.message_top < list.height as isize)
+        .flat_map(|row| {
+            let layout = lay_out_reaction_chips_with_custom_emoji_images(
+                &row.message.reactions,
+                plan.layout.content_width,
+                true,
+            );
+            let base_col = list.x as isize
+                + avatar_offset
+                + selected_message_content_x_offset(row.selected) as isize;
+            let reaction_top = row.reaction_top;
+            layout.slots.into_iter().map(move |slot| EmojiSlot {
+                row_in_list: reaction_top + slot.line as isize,
+                col: base_col + slot.col as isize,
+                max_width: u16::MAX,
+                image_size: EmojiImageSize::Compact,
+                url: slot.url,
+            })
+        });
+    overlay_emoji_slots(frame, list, emoji_images, media_occlusion_areas, slots);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -480,69 +551,32 @@ fn render_inline_message_body_emojis(
     plan: &MessageRenderPlan<'_, '_>,
     state: &DashboardState,
     emoji_images: &[EmojiImage<'_>],
-    loaded_custom_emoji_urls: &[String],
+    body_emoji_slots: Vec<Vec<BodyEmojiSlot>>,
+    media_occlusion_areas: &[Rect],
+    avatar_offset: u16,
 ) {
-    if emoji_images.is_empty() || list.height == 0 || list.width <= MESSAGE_AVATAR_OFFSET {
-        return;
-    }
-
-    let list_top = list.y as isize;
-    let list_bottom = list_top + list.height as isize;
-    let list_left = list.x as isize;
-    let list_right = list_left + list.width as isize;
-    let avatar_offset = MESSAGE_AVATAR_OFFSET as isize;
-
-    for row in plan.rows.rows() {
-        if row.message_top >= list.height as isize {
-            break;
-        }
-
-        let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-            row.message,
-            state,
-            plan.layout.content_width.max(8),
-            loaded_custom_emoji_urls,
-        );
-        for (line_idx, line) in body_lines.iter().enumerate() {
-            if line.image_slots.is_empty() {
-                continue;
-            }
-            let row_in_list = row.body_top
-                + state.message_header_line_count_at(row.global_index) as isize
-                + line_idx as isize;
-            if row_in_list < 0 || row_in_list >= list.height as isize {
-                continue;
-            }
-            let absolute_row = list_top + row_in_list;
-            if absolute_row >= list_bottom {
-                continue;
-            }
-            for slot in &line.image_slots {
-                let absolute_col = list_left
-                    + avatar_offset
-                    + selected_message_content_x_offset(row.selected) as isize
-                    + slot.col as isize;
-                if absolute_col >= list_right {
-                    continue;
-                }
-                let Some(image) = emoji_images.iter().find(|img| img.url == slot.url) else {
-                    continue;
-                };
-                let max_width = (list_right - absolute_col).max(0) as u16;
-                let image_width = EMOJI_REACTION_IMAGE_WIDTH.min(max_width);
-                if image_width == 0 {
-                    continue;
-                }
-                let image_area = Rect {
-                    x: absolute_col as u16,
-                    y: absolute_row as u16,
-                    width: image_width,
-                    height: 1,
-                };
-                frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-            }
-        }
-    }
+    let avatar_offset = avatar_offset as isize;
+    let slots = plan
+        .rows
+        .rows()
+        .iter()
+        .zip(body_emoji_slots)
+        .take_while(|(row, _)| row.message_top < list.height as isize)
+        .flat_map(|(row, row_slots)| {
+            let base_col = list.x as isize
+                + avatar_offset
+                + selected_message_content_x_offset(row.selected) as isize;
+            let body_top =
+                row.body_top + state.message_header_line_count_at(row.global_index) as isize;
+            row_slots.into_iter().map(move |slot| EmojiSlot {
+                row_in_list: body_top + slot.line_index as isize,
+                col: base_col + slot.col as isize,
+                max_width: u16::MAX,
+                image_size: slot.image_size,
+                url: slot.url,
+            })
+        });
+    overlay_emoji_slots(frame, list, emoji_images, media_occlusion_areas, slots);
 }
 
 #[cfg(test)]
@@ -577,12 +611,13 @@ pub(in crate::tui::ui) fn message_body_custom_emoji_rows(
     };
 
     for row in plan.rows.rows() {
-        let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
-            row.message,
-            state,
-            content_width.max(8),
-            loaded_custom_emoji_urls,
-        );
+        let body_lines =
+            crate::tui::message::format::format_message_content_lines_with_loaded_custom_emoji_urls(
+                row.message,
+                state,
+                content_width.max(8),
+                loaded_custom_emoji_urls,
+            );
         for (line_idx, line) in body_lines.iter().enumerate() {
             if !line.image_slots.is_empty() {
                 rows.push(
@@ -605,44 +640,50 @@ pub(in crate::tui::ui) fn render_image_preview(
     match image_preview {
         ImagePreviewState::Loading { filename } => frame.render_widget(
             Paragraph::new(format!("loading {filename}..."))
-                .style(Style::default().fg(DIM))
+                .style(theme::current().apply(
+                    theme::HighlightGroup::Loading,
+                    theme::current().style(theme::HighlightGroup::Normal),
+                ))
                 .wrap(Wrap { trim: false }),
             area,
         ),
         ImagePreviewState::Failed { filename, message } => frame.render_widget(
             Paragraph::new(format!("{filename}: {message}"))
-                .style(Style::default().fg(Color::Yellow))
+                .style(theme::current().apply(
+                    theme::HighlightGroup::Error,
+                    theme::current().style(theme::HighlightGroup::Normal),
+                ))
                 .wrap(Wrap { trim: false }),
             area,
         ),
         ImagePreviewState::Ready { protocol, .. } => {
-            let widget = StatefulImage::new().resize(Resize::Fit(None));
-            frame.render_stateful_widget(widget, area, protocol);
+            frame.render_widget(RatatuiImage::new(protocol), area);
         }
     }
 }
 
-fn render_image_preview_overflow_marker(frame: &mut Frame, area: Rect, overflow_count: usize) {
-    if overflow_count == 0 || area.width < 3 || area.height == 0 {
+fn render_thread_card_image_preview(
+    frame: &mut Frame,
+    list: Rect,
+    image_preview: ImagePreview<'_>,
+    occlusion_areas: &[Rect],
+) {
+    let Some(mut preview_area) = thread_card::thread_card_image_preview_area(
+        list,
+        image_preview.preview_y_offset_rows as isize,
+        image_preview.preview_x_offset_columns,
+        image_preview.preview_width,
+        image_preview.preview_height,
+    ) else {
+        return;
+    };
+    preview_area.height = preview_area
+        .height
+        .min(image_preview.visible_preview_height);
+    if intersects_any(preview_area, occlusion_areas) {
         return;
     }
-
-    let marker = format!("+{overflow_count}");
-    let width = u16::try_from(marker.width())
-        .unwrap_or(u16::MAX)
-        .min(area.width);
-    let marker_area = Rect {
-        x: area.x.saturating_add(area.width.saturating_sub(width)),
-        y: area.y.saturating_add(area.height.saturating_sub(1)),
-        width,
-        height: 1,
-    };
-    frame.render_widget(
-        Paragraph::new(marker)
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::White).bg(Color::Black).bold()),
-        marker_area,
-    );
+    render_image_preview(frame, preview_area, image_preview.state);
 }
 
 #[cfg(test)]
@@ -694,6 +735,7 @@ pub(in crate::tui::ui) fn message_item_lines(
         preview_spacers: &preview_spacers,
         bottom_gap: true,
         line_offset,
+        avatar_offset: MESSAGE_AVATAR_OFFSET,
     })
 }
 
@@ -710,6 +752,7 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
         preview_spacers,
         bottom_gap,
         line_offset,
+        avatar_offset,
     } = input;
     let sent_time_width = sent_time.as_str().width();
     let bot_badge_width = usize::from(author_is_bot) * " [bot]".width();
@@ -720,13 +763,19 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
         .max(1);
     let author = truncate_display_width(&author, author_width);
     let mut lines = if show_header {
-        let mut header = vec![message_avatar_span(), Span::styled(author, author_style)];
+        let mut header = vec![
+            message_avatar_span(avatar_offset),
+            Span::styled(author, author_style),
+        ];
         if author_is_bot {
-            header.push(bot_badge_span());
+            header.extend([Span::raw(" "), bot_badge_span()]);
         }
         header.extend([
             Span::raw(" "),
-            Span::styled(sent_time, Style::default().fg(DIM)),
+            Span::styled(
+                sent_time,
+                theme::current().style(theme::HighlightGroup::MessageTimestamp),
+            ),
         ]);
         vec![Line::from(header)]
     } else {
@@ -734,18 +783,18 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
     };
     lines.extend(content.into_iter().enumerate().map(|(index, line)| {
         let mut spans = vec![if show_header && index == 0 {
-            message_avatar_span()
+            message_avatar_span(avatar_offset)
         } else {
-            message_avatar_spacer_span()
+            message_avatar_spacer_span(avatar_offset)
         }];
         spans.extend(line.spans());
         Line::from(spans)
     }));
     for spacer in preview_spacers {
-        lines.extend(image_preview_spacer_lines(spacer));
+        lines.extend(image_preview_spacer_lines(spacer, avatar_offset));
     }
     lines.extend(reactions.into_iter().map(|line| {
-        let mut spans = vec![message_avatar_spacer_span()];
+        let mut spans = vec![message_avatar_spacer_span(avatar_offset)];
         spans.extend(line.spans());
         Line::from(spans)
     }));
@@ -756,18 +805,16 @@ fn message_item_lines_with_previews(input: MessageItemLinesInput<'_>) -> Vec<Lin
 }
 
 pub(in crate::tui::ui) fn message_author_style(role_color: Option<u32>) -> Style {
-    Style::default()
-        .fg(discord_color(role_color, Color::White))
-        .bold()
+    apply_discord_foreground(
+        theme::current().apply(theme::HighlightGroup::MessageAuthor, normal_text_style()),
+        role_color,
+    )
 }
 
 fn bot_badge_span() -> Span<'static> {
     Span::styled(
-        " [bot]",
-        Style::default()
-            .fg(Color::White)
-            .bg(Color::Rgb(88, 101, 242))
-            .add_modifier(Modifier::BOLD),
+        "[bot]",
+        theme::current().style(theme::HighlightGroup::BotBadge),
     )
 }
 
@@ -796,9 +843,12 @@ pub(in crate::tui::ui) fn message_avatar_area(
     })
 }
 
-fn message_avatar_span() -> Span<'static> {
+fn message_avatar_span(avatar_offset: u16) -> Span<'static> {
     let prefix = " ".repeat(MESSAGE_SELECTION_PREFIX_WIDTH as usize);
-    let padding = (MESSAGE_AVATAR_OFFSET as usize)
+    if avatar_offset <= MESSAGE_SELECTION_PREFIX_WIDTH {
+        return Span::raw(prefix);
+    }
+    let padding = (avatar_offset as usize)
         .saturating_sub(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
         .saturating_sub(MESSAGE_AVATAR_PLACEHOLDER.width());
     Span::styled(
@@ -806,12 +856,12 @@ fn message_avatar_span() -> Span<'static> {
             "{prefix}{MESSAGE_AVATAR_PLACEHOLDER}{}",
             " ".repeat(padding)
         ),
-        Style::default().fg(DIM),
+        theme::current().style(theme::HighlightGroup::Muted),
     )
 }
 
-fn message_avatar_spacer_span() -> Span<'static> {
-    Span::raw(" ".repeat(MESSAGE_AVATAR_OFFSET as usize))
+fn message_avatar_spacer_span(avatar_offset: u16) -> Span<'static> {
+    Span::raw(" ".repeat(avatar_offset as usize))
 }
 
 fn selected_message_lines(
@@ -823,95 +873,111 @@ fn selected_message_lines(
     has_header: bool,
 ) -> Vec<Line<'static>> {
     let last_index = lines.len().saturating_sub(1);
-    let mut stamped = false;
+
+    // Header messages show the time in their header. A grouped continuation has
+    // no header, so it carries the time on the bottom border instead.
+    let border_time = (!has_header).then_some(sent_time);
+
     let mut selected_lines = Vec::new();
     if top_visible && !has_header {
         selected_lines.push(selected_message_empty_top_line(card_width));
     }
     selected_lines.extend(lines.into_iter().enumerate().map(|(index, line)| {
         if has_bottom_gap && index == last_index {
-            selected_message_bottom_line(card_width)
+            selected_message_bottom_line(card_width, border_time)
         } else {
-            let show_time = !stamped && !has_header && line_has_gutter(&line);
-            if show_time {
-                stamped = true;
-            }
-            selected_message_content_line(
-                line,
-                card_width,
-                index == 0 && top_visible && has_header,
-                show_time.then_some(sent_time),
-            )
+            selected_message_content_line(line, card_width, index == 0 && top_visible && has_header)
         }
     }));
     if !has_bottom_gap {
-        selected_lines.push(selected_message_bottom_line(card_width));
+        selected_lines.push(selected_message_bottom_line(card_width, border_time));
     }
     selected_lines
-}
-
-fn line_has_gutter(line: &Line<'_>) -> bool {
-    line.spans
-        .first()
-        .is_some_and(|span| span.content.width() == MESSAGE_AVATAR_OFFSET as usize)
-}
-
-fn selected_time_gutter_span(sent_time: &str) -> Span<'static> {
-    let gutter_width =
-        (MESSAGE_AVATAR_OFFSET as usize).saturating_sub(MESSAGE_SELECTION_PREFIX_WIDTH as usize);
-    let time = truncate_display_width(sent_time, gutter_width);
-    let padding = gutter_width.saturating_sub(time.width());
-    Span::styled(
-        format!("{time}{}", " ".repeat(padding)),
-        Style::default().fg(DIM),
-    )
 }
 
 fn selected_message_content_line(
     line: Line<'static>,
     card_width: usize,
     top_line: bool,
-    sent_time: Option<&str>,
 ) -> Line<'static> {
+    let border = theme::current().border_set(theme::BorderSurface::Message);
     let mut spans = line.spans;
-    replace_selection_prefix(&mut spans, if top_line { "╭─" } else { "│ " }, sent_time);
+    let replacement = if top_line {
+        format!("{}{}", border.top_left, border.horizontal_top)
+    } else {
+        format!("{} ", border.vertical_left)
+    };
+    replace_selection_prefix(&mut spans, &replacement);
     let used_width = spans.iter().map(|span| span.content.width()).sum::<usize>();
-    let right_border = if top_line { "╮" } else { " │" };
-    let fill_char = if top_line { '─' } else { ' ' };
+    let right_border = if top_line {
+        border.top_right.to_owned()
+    } else {
+        format!(" {}", border.vertical_right)
+    };
+    let fill = if top_line { border.horizontal_top } else { " " };
     let right_border_width = right_border.width();
     let padding = card_width
         .saturating_sub(used_width)
         .saturating_sub(right_border_width);
     spans.push(Span::styled(
-        fill_char.to_string().repeat(padding),
+        fill.repeat(padding),
         selected_message_border_style(),
     ));
-    spans.push(Span::styled(
-        right_border.to_owned(),
-        selected_message_border_style(),
-    ));
+    spans.push(Span::styled(right_border, selected_message_border_style()));
     Line::from(spans)
 }
 
 fn selected_message_empty_top_line(card_width: usize) -> Line<'static> {
+    let border = theme::current().border_set(theme::BorderSurface::Message);
     Line::from(Span::styled(
-        format!("╭{}╮", "─".repeat(card_width.saturating_sub(2))),
+        format!(
+            "{}{}{}",
+            border.top_left,
+            border.horizontal_top.repeat(card_width.saturating_sub(2)),
+            border.top_right
+        ),
         selected_message_border_style(),
     ))
 }
 
-fn selected_message_bottom_line(card_width: usize) -> Line<'static> {
+/// Bottom border of a selected card, embedding a grouped continuation's sent
+/// time near the right corner: `╰──── 14:30 ─╯`.
+fn selected_message_bottom_line(card_width: usize, sent_time: Option<&str>) -> Line<'static> {
+    let border = theme::current().border_set(theme::BorderSurface::Message);
+    let inner = card_width.saturating_sub(2);
+    if let Some(time) = sent_time.filter(|time| inner > time.width() + 3) {
+        let fill_width = inner.saturating_sub(time.width()).saturating_sub(3);
+        return Line::from(vec![
+            Span::styled(
+                format!(
+                    "{}{}",
+                    border.bottom_left,
+                    border.horizontal_bottom.repeat(fill_width)
+                ),
+                selected_message_border_style(),
+            ),
+            Span::styled(
+                format!(" {time} "),
+                theme::current().style(theme::HighlightGroup::MessageTimestamp),
+            ),
+            Span::styled(
+                format!("{}{}", border.horizontal_bottom, border.bottom_right),
+                selected_message_border_style(),
+            ),
+        ]);
+    }
     Line::from(Span::styled(
-        format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
+        format!(
+            "{}{}{}",
+            border.bottom_left,
+            border.horizontal_bottom.repeat(inner),
+            border.bottom_right
+        ),
         selected_message_border_style(),
     ))
 }
 
-fn replace_selection_prefix(
-    spans: &mut Vec<Span<'static>>,
-    replacement: &str,
-    sent_time: Option<&str>,
-) {
+fn replace_selection_prefix(spans: &mut Vec<Span<'static>>, replacement: &str) {
     if spans.first().is_some_and(|span| {
         span.content.width() >= MESSAGE_SELECTION_PREFIX_WIDTH as usize
             && span
@@ -921,19 +987,14 @@ fn replace_selection_prefix(
                 .all(|ch| ch == ' ')
     }) {
         let original = spans.remove(0);
-        let remaining = if let Some(time) = sent_time {
-            selected_time_gutter_span(time)
-        } else {
-            Span::styled(
-                original
-                    .content
-                    .chars()
-                    .skip(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
-                    .collect::<String>(),
-                original.style,
-            )
-        };
-        spans.insert(0, remaining);
+        let remaining: String = original
+            .content
+            .chars()
+            .skip(MESSAGE_SELECTION_PREFIX_WIDTH as usize)
+            .collect();
+        if !remaining.is_empty() {
+            spans.insert(0, Span::styled(remaining, original.style));
+        }
     }
     spans.insert(
         0,
@@ -942,9 +1003,7 @@ fn replace_selection_prefix(
 }
 
 fn selected_message_border_style() -> Style {
-    Style::default()
-        .fg(SELECTED_MESSAGE_BORDER)
-        .add_modifier(Modifier::BOLD)
+    theme::current().style(theme::HighlightGroup::MessageSelectedBorder)
 }
 
 const SELECTED_MESSAGE_CONTENT_X_OFFSET: u16 = 0;
@@ -974,8 +1033,11 @@ pub(in crate::tui::ui) fn selected_message_card_width(
         .max(4)
 }
 
-pub(in crate::tui::ui) fn format_message_sent_time(message_id: Id<MessageMarker>) -> String {
-    format_message_local_time(message_id)
+pub(in crate::tui::ui) fn format_message_sent_time(
+    message_id: Id<MessageMarker>,
+    hour_format_24: bool,
+) -> String {
+    format_message_local_time(message_id, hour_format_24)
 }
 
 pub(in crate::tui::ui) fn date_separator_line(
@@ -984,16 +1046,19 @@ pub(in crate::tui::ui) fn date_separator_line(
 ) -> Line<'static> {
     let date = message_local_date(message_id);
     let label = format!(" {} ", date.format("%Y-%m-%d"));
-    separator_line(&label, width, Style::default().fg(DIM))
+    separator_line(
+        &label,
+        width,
+        theme::current().style(theme::HighlightGroup::Decoration),
+    )
 }
 
 pub(in crate::tui::ui) fn unread_divider_line(width: usize) -> Line<'static> {
     // Discord-style red bar with a small "New" tag pinned to the right
     // edge so the unread boundary is unambiguous in dark and light themes.
-    const UNREAD: Color = Color::Rgb(237, 66, 69);
     const TAG: &str = " New ";
 
-    let style = Style::default().fg(UNREAD);
+    let style = theme::current().style(theme::HighlightGroup::UnreadDivider);
     if width == 0 {
         return Line::from(Span::raw(""));
     }
@@ -1004,7 +1069,10 @@ pub(in crate::tui::ui) fn unread_divider_line(width: usize) -> Line<'static> {
     let dash_count = width.saturating_sub(tag_width);
     Line::from(vec![
         Span::styled("─".repeat(dash_count), style),
-        Span::styled(TAG, style.bold()),
+        Span::styled(
+            TAG,
+            theme::current().apply(theme::HighlightGroup::Strong, style),
+        ),
     ])
 }
 
@@ -1018,7 +1086,10 @@ pub(in crate::tui::ui) fn new_messages_notice_line(count: usize, width: usize) -
         let right = padding.saturating_sub(left);
         format!("{}{}{}", " ".repeat(left), label, " ".repeat(right))
     };
-    Line::from(Span::styled(text, Style::default().fg(ACCENT).bold()))
+    Line::from(Span::styled(
+        text,
+        theme::current().style(theme::HighlightGroup::UnreadNotice),
+    ))
 }
 
 fn new_messages_notice_label(count: usize) -> String {
@@ -1037,26 +1108,32 @@ fn separator_line(label: &str, width: usize, style: Style) -> Line<'static> {
     ))
 }
 
-fn image_preview_spacer_lines(spacer: &InlinePreviewSpacer) -> Vec<Line<'static>> {
+fn image_preview_spacer_lines(
+    spacer: &InlinePreviewSpacer,
+    avatar_offset: u16,
+) -> Vec<Line<'static>> {
     let mut lines = (0..spacer.height)
-        .map(|_| preview_spacer_blank_line(spacer.accent_color))
+        .map(|_| preview_spacer_blank_line(spacer.accent_color, avatar_offset))
         .collect::<Vec<_>>();
     if spacer.overflow_count > 0 {
         lines.push(Line::from(vec![
-            message_avatar_spacer_span(),
+            message_avatar_spacer_span(avatar_offset),
             Span::styled(
                 format!("+{} more images", spacer.overflow_count),
-                Style::default().fg(Color::White).bg(Color::Black).bold(),
+                theme::current().apply(
+                    theme::HighlightGroup::ImageOverflow,
+                    theme::current().style(theme::HighlightGroup::Normal),
+                ),
             ),
         ]));
     }
     lines
 }
 
-fn preview_spacer_blank_line(accent_color: Option<u32>) -> Line<'static> {
+fn preview_spacer_blank_line(accent_color: Option<u32>, avatar_offset: u16) -> Line<'static> {
     match accent_color {
         Some(color) => Line::from(vec![
-            message_avatar_spacer_span(),
+            message_avatar_spacer_span(avatar_offset),
             Span::styled(
                 EMBED_PREVIEW_GUTTER_PREFIX,
                 Style::default().fg(embed_color(color)),

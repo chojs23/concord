@@ -2,9 +2,8 @@ use std::collections::HashSet;
 
 use crate::discord::ids::marker::{GuildMarker, UserMarker};
 
-use crate::discord::{
-    AppCommand, AppEvent, ForumPostArchiveState, MentionInfo, MessageSnapshotInfo,
-};
+use crate::discord::{AppCommand, AppEvent, MentionInfo, MessageSnapshotInfo};
+mod channel_rows;
 mod channel_tree;
 mod channels;
 mod composer;
@@ -15,6 +14,7 @@ mod emoji;
 mod events;
 mod guilds;
 mod layout_cache;
+mod local_upload_preview;
 mod member_grouping;
 mod message_history_refresh;
 mod message_layout;
@@ -24,55 +24,84 @@ mod model;
 mod navigation;
 mod options;
 mod pane_filter;
+mod pending_messages;
 mod popups;
 mod presentation;
 mod request_tracking;
 mod runtime_state;
 mod scroll;
+mod stream_info;
 mod subscriptions;
+mod text_completion;
 mod toast;
 mod user;
 mod voice_actions;
 
+use channels::ThreadCardListCacheState;
 use composer::ComposerUiState;
 use discord_ui::DiscordUiState;
 use layout_cache::{LayoutCacheState, MessageRowContentMetrics, MessageRowContentMetricsCacheKey};
 use message_history_refresh::MessageHistoryRefreshState;
 use message_render::{add_literal_mention_highlights, normalize_text_highlights};
 use message_viewport::{MessageViewportState, ThreadReturnTarget};
-use navigation::{ActiveGuildScope, FolderKey, NavigationState};
+use model::ChannelPaneCursor;
+use navigation::{ActiveGuildScope, FolderKey, FolderSettingsState, NavigationState};
 use options::SettingsState;
 use pane_filter::PaneFilterState;
-use popups::{ModalPopup, PopupUiState};
+use pending_messages::PendingMessageUiState;
+use popups::PopupUiState;
 use request_tracking::RequestTrackingState;
 use runtime_state::{
-    MediaPlaybackPreparingUiState, RuntimeUiState, ToastMessage, VoiceConnectionUiState,
+    MediaPlaybackPreparingUiState, RuntimeUiState, StreamBroadcastUiTarget, StreamPlaybackUiTarget,
+    ToastMessage, VoiceConnectionUiState,
 };
+pub(in crate::tui) use scroll::SCROLL_OFF;
 use scroll::clamp_selected_index;
 
+pub(in crate::tui) const MINIMUM_ESTABLISHED_DM_MESSAGES: usize = 5;
+
+pub(in crate::tui) use channel_rows::ChannelPaneRow;
 pub use composer::{
-    CommandPickerEntry, EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE, MentionPickerEntry,
-    MentionPickerTarget,
+    CommandPickerEntry, ComposerLock, EmojiPickerEntry, MAX_MENTION_PICKER_VISIBLE,
+    MentionPickerEntry, MentionPickerTarget,
 };
 pub use dashboard::DashboardState;
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub use message_viewport::MessagePaneSource;
+#[cfg(test)]
+pub(crate) use model::ActionAvailability;
+pub(in crate::tui) use model::ThreadCardImagePreview;
 pub use model::{
-    AttachmentDownloadProgressView, AttachmentViewerItem, ChannelActionItem, ChannelPaneEntry,
-    ChannelSearchSuggestionItem, ChannelSwitcherItem, ChannelThreadItem, EmojiReactionItem,
-    FORUM_POST_CARD_HEIGHT, FocusPane, GuildActionItem, GuildPaneEntry, MemberActionItem,
-    MemberSearchResultItem, MessageActionItem, MessageActionKind, MessageSearchResultItem,
-    MuteActionDurationItem, PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView,
-    SearchResultItem, SearchSuggestionItem, ThreadMessagePreview, ThreadSummary,
+    ActionItem, AppliedForumTag, AttachmentDownloadProgressView, AttachmentViewerItem,
+    ChannelActionItem, ChannelPaneEntry, ChannelSearchSuggestionItem, ChannelSwitcherItem,
+    ChannelThreadItem, EmojiReactionItem, FocusPane, ForumPostComposerAttachmentView,
+    ForumPostComposerField, ForumPostComposerTagView, ForumPostComposerView, GuildActionItem,
+    GuildPaneEntry, LocalUploadPreviewView, MemberActionItem, MemberSearchResultItem,
+    MessageActionItem, MessageActionKind, MessageSearchResultItem, MuteActionDurationItem,
+    PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
+    SearchSuggestionItem, ThreadActionItem, ThreadEditField, ThreadEditTagView, ThreadEditView,
+    ThreadMessagePreview, ThreadNotificationItem, ThreadSummary,
 };
-pub use model::{ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem};
-pub use options::DisplayOptionItem;
-pub(in crate::tui) use popups::ActiveModalPopupKind;
+pub use model::{
+    ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem, ThreadActionKind,
+};
+pub use options::{DisplayOptionGauge, DisplayOptionItem};
+pub(in crate::tui) use popups::{
+    ActiveModalPopupKind, ConfirmationButton, MessageConfirmationKind, PopupInputMode,
+    PopupKeymapContext, SelectablePopupSnapshot, SelectablePopupTarget, VoiceParticipantAudioField,
+};
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,
-    PollVotePickerState, ReactionUsersPopupState, UserProfileSettingsField, UserProfileSettingsTab,
+    NotificationInboxChannelLoad, NotificationInboxItem, NotificationInboxLoad,
+    NotificationInboxMessage, NotificationInboxTab, NotificationInboxUnreadItem,
+    PollVotePickerState, ReactionUsersEntry, ReactionUsersPopupState, UserProfileSettingsField,
+    UserProfileSettingsTab,
 };
-pub use presentation::{discord_color, folder_color, presence_color, presence_marker};
+pub(in crate::tui) use presentation::primary_compact_activity;
+pub use presentation::{
+    apply_discord_foreground, discord_role_mention_background, folder_style, normal_text_style,
+    presence_marker, presence_style,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToastKind {
@@ -127,17 +156,33 @@ fn truncate_notification_text(value: &str, max_chars: usize) -> String {
 }
 
 impl DashboardState {
+    /// Drives `event` the way the running app does: the client applies it to
+    /// its own state and advances the affected revisions, the TUI reattaches
+    /// the moved snapshot areas, and only then does the event reach the UI as
+    /// an effect. Tests call this so they exercise the snapshot path rather
+    /// than a shortcut that writes the TUI's cache directly.
     #[cfg(test)]
     pub fn push_event(&mut self, event: AppEvent) {
-        self.push_event_inner(event, true);
+        if let Some(areas) = event.snapshot_areas() {
+            let previous_revision = self.discord.authoritative_revision;
+            self.discord.authoritative_revision =
+                self.discord
+                    .authoritative
+                    .apply_event_advancing(&event, areas, previous_revision);
+            let snapshot = self
+                .discord
+                .authoritative
+                .snapshot(self.discord.authoritative_revision);
+            self.restore_discord_snapshot_areas(&snapshot, previous_revision);
+        }
+
+        if event.needs_effect_delivery() {
+            self.push_effect(event);
+        }
     }
 
     pub fn push_effect(&mut self, event: AppEvent) {
-        if let AppEvent::ChannelUpsert(channel) = &event {
-            self.record_thread_channel_upserted(channel);
-            return;
-        }
-        self.push_event_inner(event, false);
+        self.push_event_inner(event);
     }
 }
 

@@ -98,7 +98,8 @@ body:
     attributes:
       label: Logs
       description: |
-        Enable file logging via the in-app diagnostics popup and paste the relevant excerpt.
+        Follow the [debug logging instructions](https://github.com/chojs23/concord/blob/main/CONTRIBUTING.md#reporting-bugs),
+        reproduce the issue, and paste the relevant excerpt from `concord.log`.
         **Redact tokens, passwords, MFA codes, QR tickets, and any raw auth response bodies.**
       render: shell
 

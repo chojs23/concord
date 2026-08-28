@@ -26,7 +26,7 @@ hosting = "github"
 # Whether to install an updater program
 install-updater = false
 # Features to pass to cargo build
-features = ["voice-playback"]
+features = ["voice-playback", "stream-broadcast"]
 # A GitHub repo to push Homebrew formulas to
 tap = "chojs23/homebrew-tap"
 # Publish jobs to run in CI
@@ -34,11 +34,49 @@ publish-jobs = ["homebrew", "npm"]
 # Skip checking whether the specified configuration files are up to date
 allow-dirty = ["ci"]
 
+[dist.github-custom-runners]
+global = "ubuntu-24.04"
+aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
+x86_64-unknown-linux-gnu = "ubuntu-24.04"
+
 [dist.dependencies.homebrew]
-opus = '*'
+cmake = { stage = ["build"] }
+nasm = { stage = ["build"], targets = ["x86_64-apple-darwin"] }
 pkg-config = { stage = ["build"] }
+alsa-lib = { stage = [
+  "run",
+], targets = [
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+] }
+pipewire = { stage = [
+  "run",
+], targets = [
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+] }
+libva = { stage = [
+  "run",
+], targets = [
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+] }
+mesa = { stage = [
+  "run",
+], targets = [
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+] }
 
 [dist.dependencies.apt]
-libopus-dev = { stage = ["build"] }
+cmake = { stage = ["build"] }
 libasound2-dev = { stage = ["build"] }
+libclang-dev = { stage = ["build"] }
+"libpipewire-0.3-dev" = { stage = ["build"] }
+libva-dev = { stage = ["build"] }
+nasm = { stage = ["build"], targets = ["x86_64-unknown-linux-gnu"] }
 pkg-config = { stage = ["build"] }
+
+[dist.dependencies.chocolatey]
+cmake = { stage = ["build"], targets = ["x86_64-pc-windows-msvc"] }
+nasm = { stage = ["build"], targets = ["x86_64-pc-windows-msvc"] }

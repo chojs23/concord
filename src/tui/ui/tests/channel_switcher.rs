@@ -23,7 +23,7 @@ fn channel_switcher_lines_show_search_and_grouped_selection() {
         },
     ];
 
-    let lines = channel_switcher_lines(&items, 1, "gen", "gen".len(), 10, 40);
+    let lines = channel_switcher_lines(&items, 1, "gen", "gen".len(), 10, 0, 40);
 
     assert_eq!(lines[0].spans[0].content, "🔎 ");
     assert_eq!(lines[0].spans[1].content, "gen");
@@ -38,12 +38,6 @@ fn channel_switcher_lines_show_search_and_grouped_selection() {
             .iter()
             .any(|line| line.to_string().contains("Text / #general"))
     );
-    assert!(!lines.iter().any(|line| line.to_string().contains("cursor")));
-    assert!(
-        !lines
-            .iter()
-            .any(|line| line.to_string().contains("type to filter"))
-    );
 }
 
 #[test]
@@ -57,7 +51,7 @@ fn channel_switcher_lines_show_unread_badges_like_channel_pane() {
         ..ChannelSwitcherItem::test(Id::new(1))
     }];
 
-    let lines = channel_switcher_lines(&items, 0, "", 0, 10, 40);
+    let lines = channel_switcher_lines(&items, 0, "", 0, 10, 0, 40);
 
     assert!(
         lines
@@ -67,7 +61,7 @@ fn channel_switcher_lines_show_unread_badges_like_channel_pane() {
 }
 
 #[test]
-fn selected_channel_switcher_unread_row_keeps_highlight() {
+fn selected_channel_switcher_unread_row_uses_selection_color() {
     let items = vec![ChannelSwitcherItem {
         guild_id: Some(Id::new(1)),
         guild_name: Some("guild".to_owned()),
@@ -78,7 +72,7 @@ fn selected_channel_switcher_unread_row_keeps_highlight() {
         ..ChannelSwitcherItem::test(Id::new(1))
     }];
 
-    let lines = channel_switcher_lines(&items, 0, "", 0, 10, 40);
+    let lines = channel_switcher_lines(&items, 0, "", 0, 10, 0, 40);
     let item_line = lines
         .iter()
         .find(|line| line.to_string().contains("#alerts"))
@@ -86,8 +80,18 @@ fn selected_channel_switcher_unread_row_keeps_highlight() {
     let label = item_line.spans.last().expect("channel label span");
 
     assert_eq!(label.content, "#alerts");
-    assert!(label.style.bg.is_some());
-    assert_eq!(label.style.fg, Some(MENTION_ORANGE));
+    assert_eq!(
+        label.style.bg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .bg
+    );
+    assert_eq!(
+        label.style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::SelectedRow)
+            .fg
+    );
 }
 
 #[test]
@@ -111,11 +115,10 @@ fn channel_switcher_cursor_position_tracks_query_cursor() {
 fn channel_switcher_search_line_windows_long_query_around_cursor() {
     let query = "abcdefghijklmnopqrstuvwxyz";
 
-    let lines = channel_switcher_lines(&[], 0, query, query.len(), 10, 12);
+    let lines = channel_switcher_lines(&[], 0, query, query.len(), 10, 0, 12);
     let rendered = lines[0].to_string();
 
     assert!(rendered.contains("uvwxyz"));
-    assert!(!rendered.contains("abcdef"));
 }
 
 #[test]

@@ -1,5 +1,7 @@
 use super::*;
 
+const DEBUG_LOG_POPUP_TARGET_WIDTH: u16 = 78;
+
 pub(in crate::tui::ui) fn render_debug_log_popup(
     frame: &mut Frame,
     area: Rect,
@@ -9,8 +11,9 @@ pub(in crate::tui::ui) fn render_debug_log_popup(
         return;
     }
 
-    const POPUP_TARGET_WIDTH: u16 = 78;
-    let popup_width = POPUP_TARGET_WIDTH.min(area.width.saturating_sub(2)).max(1);
+    let popup_width = DEBUG_LOG_POPUP_TARGET_WIDTH
+        .min(area.width.saturating_sub(2))
+        .max(1);
     let visible_log_lines = usize::from(area.height).saturating_sub(6).max(1);
     let lines = debug_log_popup_lines(
         state.debug_log_lines(),
@@ -18,18 +21,33 @@ pub(in crate::tui::ui) fn render_debug_log_popup(
         visible_log_lines,
         usize::from(popup_width.saturating_sub(2)),
     );
-    let popup = centered_rect(
+    let popup = debug_log_popup_area(area, lines.len());
+    render_modal_paragraph(frame, popup, "Debug logs", lines);
+}
+
+pub(in crate::tui::ui) fn debug_log_popup_area(area: Rect, line_count: usize) -> Rect {
+    centered_rect(
         area,
-        POPUP_TARGET_WIDTH,
-        (lines.len() as u16).saturating_add(2),
+        DEBUG_LOG_POPUP_TARGET_WIDTH,
+        (line_count as u16).saturating_add(2),
+    )
+}
+
+pub(in crate::tui::ui) fn debug_log_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Rect {
+    let popup_width = DEBUG_LOG_POPUP_TARGET_WIDTH
+        .min(area.width.saturating_sub(2))
+        .max(1);
+    let visible_log_lines = usize::from(area.height).saturating_sub(6).max(1);
+    let lines = debug_log_popup_lines(
+        state.debug_log_lines(),
+        state.debug_channel_visibility(),
+        visible_log_lines,
+        usize::from(popup_width.saturating_sub(2)),
     );
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Debug logs", true))
-            .wrap(Wrap { trim: false }),
-        popup,
-    );
+    debug_log_popup_area(area, lines.len())
 }
 
 pub(in crate::tui::ui) fn debug_log_popup_lines(
@@ -49,16 +67,13 @@ pub(in crate::tui::ui) fn debug_log_popup_lines(
         "Channels: {} visible · {} hidden by permissions",
         channel_visibility.visible, channel_visibility.hidden,
     );
-    lines.push(Line::from(Span::styled(
-        visibility_text,
-        Style::default().fg(ACCENT),
-    )));
+    lines.push(Line::from(Span::styled(visibility_text, Style::default())));
     lines.push(Line::from(Span::raw(String::new())));
 
     if entries.is_empty() {
         lines.push(Line::from(Span::styled(
             "No errors recorded in this process.",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     } else {
         let wrapped = entries
@@ -69,7 +84,7 @@ pub(in crate::tui::ui) fn debug_log_popup_lines(
         for entry in wrapped.into_iter().skip(start) {
             lines.push(Line::from(Span::styled(
                 entry,
-                Style::default().fg(Color::Red),
+                theme::current().style(theme::HighlightGroup::Error),
             )));
         }
     }

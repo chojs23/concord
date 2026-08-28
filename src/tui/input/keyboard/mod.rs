@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::tui::keybindings::{GlobalAction, KeyMapLookup, PaneFilterAction, SelectionAction};
+use crate::tui::keybindings::{KeyMapLookup, PaneFilterAction, SelectionAction, SelectionKeySet};
 
 use super::super::state::{DashboardState, FocusPane};
 use crate::discord::AppCommand;
@@ -13,34 +13,29 @@ mod popups;
 
 use composer::handle_composer_key;
 use dashboard::{execute_ui_action, handle_dashboard_action};
+use leader::handle_dashboard_key_sequence;
 pub use paste::{handle_paste, handle_pasted_file_attachments, handle_pasted_user_profile_avatar};
-use popups::{PopupKeyPhase, handle_popup_key};
+use popups::handle_popup_key;
+
+fn is_key_sequence_cancel_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::Esc && key.modifiers.is_empty()
+}
 
 pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
     if key.kind != KeyEventKind::Press {
         return None;
     }
 
-    if let Some(command) = handle_popup_key(state, key, PopupKeyPhase::Priority) {
+    if state.is_leader_active() {
+        return handle_dashboard_key_sequence(state, key);
+    }
+
+    if let Some(command) = handle_popup_key(state, key) {
         return command;
     }
 
     if state.is_composing() {
         return handle_composer_key(state, key);
-    }
-
-    // The debug log is intentionally available from regular dashboard modes,
-    // but popups and the composer get first chance to handle their own keys.
-    if matches!(
-        state.key_bindings().global_action(key),
-        Some(GlobalAction::ToggleDebugLog)
-    ) {
-        state.toggle_debug_log_popup();
-        return None;
-    }
-
-    if let Some(command) = handle_popup_key(state, key, PopupKeyPhase::Deferred) {
-        return command;
     }
 
     let focus = state.focus();
@@ -53,10 +48,14 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     // Only intercept filter input when the pane that owns the filter is still
     // focused. Moving the mouse to another pane should let normal shortcuts
     // work (e.g. pressing `i` after clicking Messages).
-    if state.is_pane_filter_active(focus) {
-        if let Some(command) = handle_pane_filter_key(state, key, focus) {
-            return command;
-        }
+    if state.is_pane_filter_active(focus)
+        && let Some(command) = handle_pane_filter_key(state, key, focus)
+    {
+        return command;
+    }
+
+    if state.is_folder_settings_open() {
+        return handle_folder_settings_key(state, key);
     }
 
     if is_keymap_help_key(key) {
@@ -83,6 +82,102 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
         return None;
     }
 
+    None
+}
+
+fn handle_folder_settings_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    if state.is_folder_settings_editing() {
+        return handle_folder_settings_edit_key(state, key);
+    }
+
+    if let Some(action) = state
+        .key_bindings()
+        .selection_action(key, SelectionKeySet::Navigation)
+    {
+        match action {
+            SelectionAction::Next => state.next_folder_settings_field(),
+            SelectionAction::Previous => state.previous_folder_settings_field(),
+        }
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Esc => state.close_folder_settings(),
+        KeyCode::Enter => {
+            if state.folder_settings_submit_active() {
+                return state.commit_folder_settings_command();
+            }
+            if state.folder_settings_cancel_active() {
+                state.close_folder_settings();
+            } else {
+                state.start_or_commit_folder_settings_edit();
+            }
+        }
+        KeyCode::Char('s' | 'S')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            return state.commit_folder_settings_command();
+        }
+        KeyCode::Char('c' | 'C')
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            state.close_folder_settings();
+        }
+        KeyCode::Tab => {
+            state.next_folder_settings_field();
+        }
+        KeyCode::BackTab => {
+            state.previous_folder_settings_field();
+        }
+        _ => {}
+    }
+    None
+}
+
+fn handle_folder_settings_edit_key(
+    state: &mut DashboardState,
+    key: KeyEvent,
+) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Esc => {
+            state.cancel_folder_settings_edit();
+        }
+        KeyCode::Enter => state.start_or_commit_folder_settings_edit(),
+        KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {}
+        KeyCode::Backspace
+            if key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            state.delete_previous_folder_settings_word();
+        }
+        KeyCode::Backspace => state.pop_folder_settings_char(),
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_folder_settings_cursor_word_left();
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.move_folder_settings_cursor_word_right();
+        }
+        KeyCode::Left => state.move_folder_settings_cursor_left(),
+        KeyCode::Right => state.move_folder_settings_cursor_right(),
+        KeyCode::Home => state.move_folder_settings_cursor_home(),
+        KeyCode::End => state.move_folder_settings_cursor_end(),
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.delete_previous_folder_settings_word();
+        }
+        KeyCode::Char(value)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            state.push_folder_settings_char(value);
+        }
+        _ => {}
+    }
     None
 }
 

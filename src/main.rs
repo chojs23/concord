@@ -25,8 +25,28 @@ async fn main() -> Result<()> {
         }
     }
 
+    #[cfg(all(target_os = "macos", feature = "stream-broadcast"))]
+    initialize_macos_display_services();
+
+    // Native media libraries can write directly to stderr and corrupt the
+    // Ratatui screen. Capture those diagnostics only for the interactive app;
+    // CLI commands above keep their normal terminal output.
+    let _stderr_capture = concord::logging::capture_stderr()?;
     let app = App::new();
     app.run().await
+}
+
+#[cfg(all(target_os = "macos", feature = "stream-broadcast"))]
+fn initialize_macos_display_services() {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGMainDisplayID() -> u32;
+    }
+
+    // Concord is a terminal application, so AppKit does not initialize the
+    // process's WindowServer connection for us. Do this on the main thread
+    // before ScreenCaptureKit creates window filters on capture workers.
+    let _ = unsafe { CGMainDisplayID() };
 }
 
 fn cli_command_from_args(args: impl IntoIterator<Item = OsString>) -> CliCommand {
@@ -42,9 +62,18 @@ fn cli_command_from_args(args: impl IntoIterator<Item = OsString>) -> CliCommand
 }
 
 fn check_config() -> Result<()> {
-    let _options = concord::config::load_options()?;
-    let keymap = concord::config::load_keymap_options()?;
+    let (_options, app_warnings) = concord::config::load_options_with_warnings()?;
+    let (keymap, keymap_warnings) = concord::config::load_keymap_options_with_warnings()?;
     concord::tui::validate_keymap_options(&keymap)?;
+    let (theme, theme_parser_warnings) = concord::config::load_theme_options_with_warnings()?;
+    for warning in app_warnings
+        .into_iter()
+        .chain(keymap_warnings)
+        .chain(theme_parser_warnings)
+        .chain(concord::tui::theme_options_warnings(&theme))
+    {
+        println!("warning: {warning}");
+    }
     println!("concord config OK");
     Ok(())
 }
@@ -58,24 +87,14 @@ mod tests {
     use super::{CliCommand, cli_command_from_args};
 
     #[test]
-    fn cli_command_detects_version() {
-        assert_eq!(
-            cli_command_from_args(["--version".into()]),
-            CliCommand::Version
-        );
-    }
-
-    #[test]
-    fn cli_command_detects_config_check() {
-        assert_eq!(
-            cli_command_from_args(["--check-config".into()]),
-            CliCommand::CheckConfig
-        );
-    }
-
-    #[test]
-    fn cli_command_defaults_to_app_run() {
-        assert_eq!(cli_command_from_args([]), CliCommand::Run);
-        assert_eq!(cli_command_from_args(["--unknown".into()]), CliCommand::Run);
+    fn cli_command_maps_arguments_to_commands() {
+        for (args, expected) in [
+            (vec!["--version".into()], CliCommand::Version),
+            (vec!["--check-config".into()], CliCommand::CheckConfig),
+            (vec![], CliCommand::Run),
+            (vec!["--unknown".into()], CliCommand::Run),
+        ] {
+            assert_eq!(cli_command_from_args(args.clone()), expected, "{args:?}");
+        }
     }
 }

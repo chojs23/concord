@@ -8,10 +8,11 @@ use super::super::{
     message::format::wrap_text_lines,
     state::{AttachmentViewerZoom, DashboardState, FocusPane},
 };
+use super::LOCAL_UPLOAD_PREVIEW_HEIGHT;
+use super::panes::composer_text;
 use super::types::{
     DashboardAreas, EMBED_PREVIEW_GUTTER_PREFIX, IMAGE_PREVIEW_HEIGHT, IMAGE_PREVIEW_WIDTH,
-    MAX_REACTION_USERS_VISIBLE_LINES, MESSAGE_AVATAR_OFFSET, MIN_MESSAGE_INPUT_HEIGHT,
-    MessageAreas,
+    MAX_REACTION_USERS_VISIBLE_LINES, MIN_MESSAGE_INPUT_HEIGHT, MessageAreas,
 };
 
 const ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT: u16 = 80;
@@ -50,35 +51,24 @@ fn pane_width(visible: bool, width: u16) -> Constraint {
     Constraint::Length(if visible { width } else { 0 })
 }
 
-pub(super) fn attachment_viewer_popup(
-    messages_area: Rect,
-    frame_area: Rect,
-    zoom: AttachmentViewerZoom,
-) -> Rect {
+pub(super) fn attachment_viewer_popup(frame_area: Rect, zoom: AttachmentViewerZoom) -> Rect {
     match zoom {
         AttachmentViewerZoom::Fullscreen => frame_area,
         AttachmentViewerZoom::Default => centered_rect(
-            messages_area,
-            percentage_of(messages_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT),
-            percentage_of(
-                messages_area.height,
-                ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT,
-            ),
+            frame_area,
+            percentage_of(frame_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT),
+            percentage_of(frame_area.height, ATTACHMENT_VIEWER_POPUP_PERCENT_DEFAULT),
         ),
         AttachmentViewerZoom::Large => centered_rect(
-            messages_area,
-            percentage_of(messages_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
-            percentage_of(messages_area.height, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
+            frame_area,
+            percentage_of(frame_area.width, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
+            percentage_of(frame_area.height, ATTACHMENT_VIEWER_POPUP_PERCENT_LARGE),
         ),
     }
 }
 
-pub(super) fn attachment_viewer_image_area(
-    messages_area: Rect,
-    frame_area: Rect,
-    zoom: AttachmentViewerZoom,
-) -> Rect {
-    let inner = attachment_viewer_popup(messages_area, frame_area, zoom).inner(Margin {
+pub(super) fn attachment_viewer_image_area(frame_area: Rect, zoom: AttachmentViewerZoom) -> Rect {
+    let inner = attachment_viewer_popup(frame_area, zoom).inner(Margin {
         vertical: 1,
         horizontal: 1,
     });
@@ -129,6 +119,11 @@ pub(super) fn message_list_area(area: Rect, state: &DashboardState) -> Rect {
     message_areas(inner, state).list
 }
 
+pub(super) fn message_composer_area(area: Rect, state: &DashboardState) -> Rect {
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    message_areas(inner, state).composer
+}
+
 pub(super) fn message_areas(area: Rect, state: &DashboardState) -> MessageAreas {
     let composer_height = composer_height(area, state);
     let typing_height: u16 = state.typing_footer_for_selected_channel().is_some().into();
@@ -158,14 +153,14 @@ pub(super) fn inline_image_preview_height(area: Rect, visible: bool) -> u16 {
     }
 }
 
-pub(super) fn inline_image_preview_width(area: Rect) -> u16 {
+pub(super) fn inline_image_preview_width(area: Rect, avatar_offset: u16) -> u16 {
     area.width
-        .saturating_sub(inline_image_content_offset(area))
+        .saturating_sub(inline_image_content_offset(area, avatar_offset))
         .min(IMAGE_PREVIEW_WIDTH)
 }
 
-pub(super) fn inline_image_content_offset(area: Rect) -> u16 {
-    MESSAGE_AVATAR_OFFSET.min(area.width.saturating_sub(1))
+pub(super) fn inline_image_content_offset(area: Rect, avatar_offset: u16) -> u16 {
+    avatar_offset.min(area.width.saturating_sub(1))
 }
 
 pub(super) fn inline_image_preview_area(
@@ -175,12 +170,13 @@ pub(super) fn inline_image_preview_area(
     preview_width: u16,
     preview_height: u16,
     accent_color: Option<u32>,
+    avatar_offset: u16,
 ) -> Option<Rect> {
     if preview_width == 0 || preview_height == 0 {
         return None;
     }
 
-    let content_offset = inline_image_content_offset(list);
+    let content_offset = inline_image_content_offset(list, avatar_offset);
     let desired_top = list.y as isize + row + 1;
     let desired_bottom = desired_top.saturating_add(preview_height as isize);
     let list_top = list.y as isize;
@@ -214,35 +210,84 @@ pub(super) fn inline_image_preview_area(
 }
 
 pub(super) fn composer_height(area: Rect, state: &DashboardState) -> u16 {
-    let content_lines = if state.is_composing()
-        || !state.composer_input().is_empty()
-        || !state.pending_composer_attachments().is_empty()
-        || state.clipboard_paste_pending()
+    let content_lines = if state.composer_lock().is_none()
+        && (state.is_composing()
+            || !state.composer_input().is_empty()
+            || !state.pending_composer_attachments().is_empty()
+            || state.clipboard_paste_pending())
     {
-        composer_content_line_count(state, composer_inner_width(area.width))
+        composer_content_line_count(state, composer_content_width(area.width))
     } else {
-        1
+        composer_placeholder_line_count(state, composer_content_width(area.width))
     };
-    MIN_MESSAGE_INPUT_HEIGHT.max(content_lines.saturating_add(2))
+    let desired_height = MIN_MESSAGE_INPUT_HEIGHT.max(content_lines.saturating_add(2));
+    // Keep enough message history visible while large drafts use the composer
+    // viewport's internal scrolling. Very short layouts still need one input
+    // row plus the top and bottom borders.
+    let maximum_height = MIN_MESSAGE_INPUT_HEIGHT.max(area.height / 2);
+    desired_height.min(maximum_height)
 }
 
-pub(super) fn composer_inner_width(width: u16) -> u16 {
-    width.saturating_sub(2).max(1)
+fn composer_placeholder_line_count(state: &DashboardState, width: u16) -> u16 {
+    let text = composer_text(state, width);
+    (wrap_text_lines(&text, usize::from(width.max(1))).len() as u16).max(1)
+}
+
+/// Keep the rightmost inner column free for the shared vertical scrollbar.
+/// Reserving it at every height avoids rewrapping the draft when overflow starts.
+pub(super) fn composer_content_width(width: u16) -> u16 {
+    width.saturating_sub(3).max(1)
 }
 
 pub(super) fn composer_content_line_count(state: &DashboardState, width: u16) -> u16 {
     let mut line_count = composer_prompt_line_count(state.composer_input(), width);
     line_count = line_count.saturating_add(state.pending_composer_upload_line_count() as u16);
+    line_count = line_count.saturating_add(composer_upload_preview_line_count(state));
     if state.is_composing() && state.reply_target_message_state().is_some() {
         line_count = line_count.saturating_add(1);
     }
     line_count
 }
 
+pub(super) fn composer_rows_before_input(state: &DashboardState) -> usize {
+    let mut rows = state.pending_composer_upload_line_count();
+    rows = rows.saturating_add(usize::from(composer_upload_preview_line_count(state)));
+    if state.reply_target_message_state().is_some() {
+        rows = rows.saturating_add(1);
+    }
+    rows
+}
+
+pub(super) fn composer_upload_preview_line_count(state: &DashboardState) -> u16 {
+    if state.show_images() && state.pending_composer_preview_attachment_count() > 0 {
+        LOCAL_UPLOAD_PREVIEW_HEIGHT.saturating_add(2)
+    } else {
+        0
+    }
+}
+
 pub(super) fn composer_prompt_line_count(input: &str, width: u16) -> u16 {
     let width = usize::from(width.max(1));
     let prompt = prefixed_composer_input(input);
     wrap_text_lines(&prompt, width).len() as u16
+}
+
+pub(super) fn composer_prompt_cursor_position(
+    input: &str,
+    cursor: usize,
+    width: u16,
+) -> (usize, usize) {
+    let width = usize::from(width.max(1));
+    let cursor = cursor.min(input.len());
+    let prompt = prefixed_composer_input(&input[..cursor]);
+    let wrapped = wrap_text_lines(&prompt, width);
+    let mut row = wrapped.len().saturating_sub(1);
+    let mut column = wrapped.last().map(|line| line.width()).unwrap_or_default();
+    if column >= width {
+        row = row.saturating_add(1);
+        column = 0;
+    }
+    (row, column)
 }
 
 pub(super) fn prefixed_composer_input(input: &str) -> String {

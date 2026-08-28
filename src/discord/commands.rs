@@ -1,21 +1,53 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker, UserMarker},
+    marker::{ChannelMarker, EmojiMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker},
 };
 
-use super::application_commands::ApplicationCommandInvocation;
+use super::application_commands::{
+    ApplicationCommandAutocompleteInvocation, ApplicationCommandInvocation,
+};
+use super::emoji::custom_emoji_image_url;
 use super::message::MessageInfo;
-use super::{ActivityInfo, PresenceStatus};
+use super::{ActivityInfo, PresenceStatus, VoiceScope};
 
-pub const MAX_UPLOAD_FILE_BYTES: u64 = 10 * 1024 * 1024;
-pub const MAX_UPLOAD_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
 pub const MAX_UPLOAD_ATTACHMENT_COUNT: usize = 10;
 pub const MAX_PROFILE_AVATAR_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Memory bound for decoding a local attachment preview thumbnail, kept
+/// separate from the upload limit (now up to 500 MiB) so a preview of a huge
+/// file is skipped rather than loaded into RAM. The upload still proceeds.
+pub const MAX_UPLOAD_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Generates a unique snowflake-shaped nonce before a message enters the
+/// asynchronous send pipeline. The TUI and Discord request share this value,
+/// which lets the local pending row match the later `MESSAGE_CREATE` event.
+pub(crate) fn next_message_nonce() -> Id<MessageMarker> {
+    const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
+    static LAST_NONCE: AtomicU64 = AtomicU64::new(0);
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(DISCORD_EPOCH_MS);
+    let time_candidate = now_ms.saturating_sub(DISCORD_EPOCH_MS) << 22;
+
+    let mut previous = LAST_NONCE.load(Ordering::Relaxed);
+    loop {
+        let next = time_candidate.max(previous.saturating_add(1)).max(1);
+        match LAST_NONCE.compare_exchange_weak(previous, next, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => return Id::new(next),
+            Err(actual) => previous = actual,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AttachmentDownloadId(u64);
@@ -35,6 +67,15 @@ pub struct MessageAttachmentUpload {
     source: UploadSource,
     pub filename: String,
     pub size_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumPostCreate {
+    pub channel_id: Id<ChannelMarker>,
+    pub title: String,
+    pub content: String,
+    pub applied_tags: Vec<Id<ForumTagMarker>>,
+    pub attachments: Vec<MessageAttachmentUpload>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -195,29 +236,6 @@ pub enum ReactionEmoji {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum ForumPostArchiveState {
-    #[default]
-    Active,
-    Archived,
-}
-
-impl ForumPostArchiveState {
-    pub fn as_query_value(self) -> &'static str {
-        match self {
-            Self::Active => "false",
-            Self::Archived => "true",
-        }
-    }
-
-    pub fn as_log_label(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Archived => "archived",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MuteDuration {
     Minutes(u64),
@@ -354,12 +372,7 @@ impl ReactionEmoji {
         let Self::Custom { id, animated, .. } = self else {
             return None;
         };
-        let extension = if *animated { "gif" } else { "png" };
-        Some(format!(
-            "https://cdn.discordapp.com/emojis/{}.{}",
-            id.get(),
-            extension
-        ))
+        Some(custom_emoji_image_url(id.get(), *animated))
     }
 
     pub(crate) fn route_component(&self) -> String {
@@ -386,8 +399,32 @@ fn percent_encode_path_segment(value: &str) -> String {
     encoded
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageHistoryAfterMode {
+    GapFill,
+    CatchUp,
+}
+
+impl MessageHistoryAfterMode {
+    pub(crate) fn exhausts_on_empty(self) -> bool {
+        matches!(self, Self::GapFill)
+    }
+
+    pub(crate) fn is_catch_up(self) -> bool {
+        matches!(self, Self::CatchUp)
+    }
+}
+
+/// A reply target paired with whether it should ping the referenced author.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReplyReference {
+    pub message_id: Id<MessageMarker>,
+    pub mention_author: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppCommand {
+    SignOut,
     LoadMessageHistory {
         channel_id: Id<ChannelMarker>,
         before: Option<Id<MessageMarker>>,
@@ -398,10 +435,7 @@ pub enum AppCommand {
     LoadMessageHistoryAfter {
         channel_id: Id<ChannelMarker>,
         after: Id<MessageMarker>,
-    },
-    CatchUpMessageHistoryAfter {
-        channel_id: Id<ChannelMarker>,
-        after: Id<MessageMarker>,
+        mode: MessageHistoryAfterMode,
     },
     LoadMessageHistoryAround {
         channel_id: Id<ChannelMarker>,
@@ -411,17 +445,18 @@ pub enum AppCommand {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     },
-    LoadForumPosts {
+    LoadForumPostData {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
-        archive_state: ForumPostArchiveState,
-        offset: usize,
+        thread_ids: Vec<Id<ChannelMarker>>,
+    },
+    LoadArchivedThreads {
+        guild_id: Id<GuildMarker>,
+        channel_id: Id<ChannelMarker>,
+        before: Option<String>,
     },
     SearchMessages {
         query: MessageSearchQuery,
-    },
-    LoadGuildMembers {
-        guild_id: Id<GuildMarker>,
     },
     LoadGuildMembersByIds {
         guild_id: Id<GuildMarker>,
@@ -430,6 +465,7 @@ pub enum AppCommand {
     SearchGuildMembers {
         guild_id: Id<GuildMarker>,
         query: String,
+        limit: u16,
     },
     SetSelectedGuild {
         guild_id: Option<Id<GuildMarker>>,
@@ -440,6 +476,9 @@ pub enum AppCommand {
     },
     SetSelectedMessageChannel {
         channel_id: Option<Id<ChannelMarker>>,
+    },
+    TriggerTyping {
+        channel_id: Id<ChannelMarker>,
     },
     SubscribeDirectMessage {
         channel_id: Id<ChannelMarker>,
@@ -453,34 +492,74 @@ pub enum AppCommand {
     UpdateMemberListSubscription {
         guild_id: Id<GuildMarker>,
         channel_id: Id<ChannelMarker>,
+        thread_id: Option<Id<ChannelMarker>>,
         ranges: Vec<(u32, u32)>,
     },
     JoinVoiceChannel {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         self_mute: bool,
         self_deaf: bool,
+        input_source: Option<String>,
+        output_source: Option<String>,
         allow_microphone_transmit: bool,
-        microphone_sensitivity: crate::config::MicrophoneSensitivityDb,
-        microphone_volume: crate::config::VoiceVolumePercent,
-        voice_output_volume: crate::config::VoiceVolumePercent,
+        noise_suppression: bool,
+        microphone_sensitivity: crate::discord::MicrophoneSensitivityDb,
+        microphone_volume: crate::discord::VoiceVolumePercent,
+        voice_output_volume: crate::discord::VoiceVolumePercent,
+        participant_playback_settings: Vec<(
+            Id<UserMarker>,
+            crate::discord::VoiceParticipantPlaybackSettings,
+        )>,
     },
     UpdateVoiceState {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         self_mute: bool,
         self_deaf: bool,
     },
     UpdateVoiceCapturePermission {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         channel_id: Id<ChannelMarker>,
         allow_microphone_transmit: bool,
-        microphone_sensitivity: crate::config::MicrophoneSensitivityDb,
-        microphone_volume: crate::config::VoiceVolumePercent,
-        voice_output_volume: crate::config::VoiceVolumePercent,
+        noise_suppression: bool,
+        microphone_sensitivity: crate::discord::MicrophoneSensitivityDb,
+        microphone_volume: crate::discord::VoiceVolumePercent,
+        voice_output_volume: crate::discord::VoiceVolumePercent,
+    },
+    UpdateVoiceAudioSources {
+        input_source: Option<String>,
+        output_source: Option<String>,
+    },
+    LoadVoiceAudioSources {
+        request_id: u64,
+    },
+    UpdateVoiceParticipantPlayback {
+        user_id: Id<UserMarker>,
+        settings: crate::discord::VoiceParticipantPlaybackSettings,
+    },
+    WatchVoiceStream {
+        scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+        display_name: String,
+    },
+    LoadStreamCaptureTargets {
+        request_id: StreamCaptureTargetsRequestId,
+        scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
+    },
+    StartVoiceStream {
+        scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
+        target: crate::discord::StreamCaptureTarget,
+    },
+    StopVoiceStream {
+        scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
     },
     LeaveVoiceChannel {
-        guild_id: Id<GuildMarker>,
+        scope: VoiceScope,
         self_mute: bool,
         self_deaf: bool,
     },
@@ -493,12 +572,17 @@ pub enum AppCommand {
     },
     SendMessage {
         channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
         content: String,
-        reply_to: Option<Id<MessageMarker>>,
+        reply_to: Option<ReplyReference>,
         attachments: Vec<MessageAttachmentUpload>,
+    },
+    CreateForumPost {
+        post: ForumPostCreate,
     },
     SendTtsMessage {
         channel_id: Id<ChannelMarker>,
+        nonce: Id<MessageMarker>,
         content: String,
     },
     LoadApplicationCommands {
@@ -507,12 +591,19 @@ pub enum AppCommand {
     RunApplicationCommand {
         invocation: ApplicationCommandInvocation,
     },
+    RequestApplicationCommandAutocomplete {
+        invocation: ApplicationCommandAutocompleteInvocation,
+    },
     EditMessage {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
         content: String,
     },
     DeleteMessage {
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+    },
+    RemoveMessageEmbeds {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     },
@@ -542,7 +633,8 @@ pub enum AppCommand {
     LoadReactionUsers {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
-        reactions: Vec<ReactionEmoji>,
+        emoji: ReactionEmoji,
+        after: Option<Id<UserMarker>>,
     },
     LoadPinnedMessages {
         channel_id: Id<ChannelMarker>,
@@ -561,18 +653,23 @@ pub enum AppCommand {
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
     },
-    LoadUserNote {
-        user_id: Id<UserMarker>,
-    },
     UpdateUserProfile {
         update: UserProfileUpdate,
     },
     UpdateCurrentUserStatus {
         status: PresenceStatus,
     },
+    UpdateGuildFolderSettings {
+        folder_id: u64,
+        name: Option<String>,
+        color: Option<u32>,
+    },
     UpdateCurrentUserActivity {
         status: PresenceStatus,
         activities: Vec<ActivityInfo>,
+        /// RPC `client_id` whose live activity this is, so the RPC server keeps
+        /// re-broadcasting it. `None` for a manual activity, which RPC must not override.
+        track_client_id: Option<String>,
     },
     AckChannel {
         channel_id: Id<ChannelMarker>,
@@ -595,8 +692,80 @@ pub enum AppCommand {
         duration: Option<MuteDuration>,
         label: String,
     },
+    /// Mute a forum post (thread). Uses the thread-member settings endpoint
+    /// rather than the guild `channel_overrides`, which rejects thread types.
+    SetThreadMuted {
+        channel_id: Id<ChannelMarker>,
+        muted: bool,
+        duration: Option<MuteDuration>,
+        label: String,
+    },
+    /// Follow (join) or unfollow (leave) a forum post thread.
+    SetThreadFollowed {
+        channel_id: Id<ChannelMarker>,
+        followed: bool,
+        label: String,
+    },
+    /// Set the notification level for a thread. Flags: 2 = All messages,
+    /// 4 = Only @mentions (Discord default), 8 = Nothing.
+    SetThreadNotificationLevel {
+        channel_id: Id<ChannelMarker>,
+        flags: u64,
+        label: String,
+    },
+    /// Archive ("close") or reopen a thread (regular thread or forum post).
+    SetThreadArchived {
+        channel_id: Id<ChannelMarker>,
+        archived: bool,
+        label: String,
+    },
+    /// Lock or unlock a thread.
+    SetThreadLocked {
+        channel_id: Id<ChannelMarker>,
+        locked: bool,
+        label: String,
+    },
+    /// Pin or unpin a forum post within its parent forum (pinning is forum-only).
+    /// `current_flags` is the thread's present channel flags so the handler can
+    /// flip just the PINNED bit without clobbering the others.
+    SetThreadPinned {
+        channel_id: Id<ChannelMarker>,
+        pinned: bool,
+        current_flags: u64,
+        label: String,
+    },
+    /// Permanently delete a thread (its channel).
+    DeleteThread {
+        channel_id: Id<ChannelMarker>,
+        label: String,
+    },
+    /// Edit a thread's general settings (title, applied tags for forum posts,
+    /// slow-mode cooldown, auto-archive duration) in one PATCH. The result
+    /// arrives over the gateway THREAD_UPDATE, so there is no optimistic event.
+    EditThread {
+        channel_id: Id<ChannelMarker>,
+        name: String,
+        applied_tags: Vec<Id<ForumTagMarker>>,
+        rate_limit_per_user: u64,
+        auto_archive_duration: u64,
+        label: String,
+    },
     AckChannels {
         targets: Vec<(Id<ChannelMarker>, Id<MessageMarker>)>,
+    },
+    /// Fetch recent mentions for the inbox Mentions tab in one request.
+    LoadInboxMentions {
+        request_id: u64,
+        before: Option<Id<MessageMarker>>,
+    },
+    /// Remove one message from Discord's recent-mentions inbox.
+    DeleteInboxMention {
+        message_id: Id<MessageMarker>,
+    },
+    /// Fetch a small slice of a channel's latest messages for the inbox Unreads tab.
+    LoadInboxChannelHistory {
+        channel_id: Id<ChannelMarker>,
+        request_id: u64,
     },
 }
 
@@ -624,9 +793,32 @@ impl MediaPlaybackRequestId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamCaptureTargetsRequestId(u64);
+
+impl StreamCaptureTargetsRequestId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaPlaybackTarget {
     pub url: String,
     pub label: String,
     pub source: MediaPlaybackSource,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_nonces_are_unique_snowflake_values() {
+        let first = next_message_nonce();
+        let second = next_message_nonce();
+
+        assert_ne!(first, second);
+        assert!(second.get() > first.get());
+    }
 }

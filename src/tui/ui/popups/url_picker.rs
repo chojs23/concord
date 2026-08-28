@@ -14,18 +14,20 @@ pub(in crate::tui::ui) fn render_message_url_picker(
         return;
     }
     let selected = state.selected_message_url_index().unwrap_or(0);
-    let popup = centered_rect(area, 54, (urls.len() as u16).saturating_add(2));
-    let lines = truncate_message_url_picker_lines(
-        message_url_picker_lines(&urls, selected),
-        popup.width.saturating_sub(2) as usize,
-    );
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("Open URL", true))
-            .wrap(Wrap { trim: false }),
+    let popup = message_url_picker_popup_area(area, urls.len());
+    render_selectable_popup_list(
+        frame,
         popup,
+        "Open URL",
+        message_url_picker_lines(&urls, selected),
+        state
+            .popup_list_scroll(SelectablePopupTarget::MessageUrls)
+            .expect("message URLs have selection state"),
     );
+}
+
+pub(in crate::tui::ui) fn message_url_picker_popup_area(area: Rect, url_count: usize) -> Rect {
+    centered_rect(area, 54, (url_count as u16).saturating_add(2))
 }
 
 pub(in crate::tui::ui) fn message_url_picker_lines(
@@ -36,15 +38,18 @@ pub(in crate::tui::ui) fn message_url_picker_lines(
         .enumerate()
         .map(|(index, item)| {
             let selected = index == selected;
-            let shortcut = shortcut_prefix(
-                crate::tui::keybindings::KeyBindings::default().indexed_shortcut(index),
-            );
+            let shortcut = shortcut_prefix(crate::tui::keybindings::KeyBindings::indexed_shortcut(
+                index,
+            ));
             let style = selectable_popup_label_style(selected, true);
-            Line::from(vec![
-                selectable_popup_marker(selected),
-                selectable_popup_shortcut_span(shortcut),
-                Span::styled(item.label.to_owned(), style),
-            ])
+            selected_row_line(
+                Line::from(vec![
+                    selectable_popup_marker(selected),
+                    selectable_popup_shortcut_span(shortcut),
+                    Span::styled(item.label.to_owned(), style),
+                ]),
+                selected,
+            )
         })
         .collect()
 }
@@ -58,6 +63,7 @@ pub(in crate::tui::ui) fn message_url_picker_lines_for_width(
     truncate_message_url_picker_lines(message_url_picker_lines(urls, selected), width)
 }
 
+#[cfg(test)]
 fn truncate_message_url_picker_lines(
     lines: Vec<Line<'static>>,
     width: usize,

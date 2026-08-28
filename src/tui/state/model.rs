@@ -1,14 +1,13 @@
-use crate::discord::AttachmentDownloadId;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
 };
-
-use crate::discord::PresenceStatus;
 use crate::discord::{
-    ChannelState, ChannelUnreadState, GuildFolder, GuildState, MuteDuration, ReactionEmoji,
+    AttachmentDownloadId, AttachmentInfo, AttachmentMediaType, ChannelState, ChannelUnreadState,
+    DiscordAction, GuildFolder, GuildState, MuteDuration, PresenceStatus, ReactionEmoji,
     ReactionInfo, VoiceParticipantState,
 };
+use ratatui_image::protocol::Protocol;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelSwitcherItem {
@@ -71,6 +70,7 @@ pub enum MessageActionKind {
     OpenDeleteConfirmation,
     Edit,
     OpenUrl,
+    RemoveEmbeds,
     PlayMedia,
     ViewAttachment,
     ShowProfile,
@@ -81,25 +81,76 @@ pub enum MessageActionKind {
     GoToReferencedMessage,
 }
 
-// Message action will be removed.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MessageActionItem {
-    pub kind: MessageActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-impl MessageActionItem {
-    pub(crate) fn test(kind: MessageActionKind) -> Self {
-        Self {
-            kind,
-            label: String::new(),
-            enabled: true,
+impl MessageActionKind {
+    pub(crate) const fn discord_action(self) -> Option<DiscordAction> {
+        match self {
+            Self::OpenReactionPicker => Some(DiscordAction::AddReaction),
+            Self::Reply => Some(DiscordAction::SendMessage),
+            Self::OpenDeleteConfirmation => Some(DiscordAction::DeleteMessage),
+            Self::Edit => Some(DiscordAction::EditMessage),
+            Self::RemoveEmbeds => Some(DiscordAction::RemoveMessageEmbeds),
+            Self::OpenPinConfirmation => Some(DiscordAction::PinMessage),
+            Self::OpenPollVotePicker => Some(DiscordAction::VotePoll),
+            Self::CopyContent
+            | Self::OpenUrl
+            | Self::PlayMedia
+            | Self::ViewAttachment
+            | Self::ShowProfile
+            | Self::OpenThread
+            | Self::ShowReactionUsers
+            | Self::GoToReferencedMessage => None,
         }
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ActionAvailability {
+    Enabled,
+    Disabled(String),
+}
+
+impl From<Option<String>> for ActionAvailability {
+    fn from(disabled_reason: Option<String>) -> Self {
+        match disabled_reason {
+            Some(reason) => Self::Disabled(reason),
+            None => Self::Enabled,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActionItem<K> {
+    pub kind: K,
+    pub label: String,
+    availability: ActionAvailability,
+}
+
+impl<K> ActionItem<K> {
+    pub(crate) fn new(
+        kind: K,
+        label: impl Into<String>,
+        availability: impl Into<ActionAvailability>,
+    ) -> Self {
+        Self {
+            kind,
+            label: label.into(),
+            availability: availability.into(),
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self.availability, ActionAvailability::Enabled)
+    }
+
+    pub fn disabled_reason(&self) -> Option<&str> {
+        match &self.availability {
+            ActionAvailability::Enabled => None,
+            ActionAvailability::Disabled(reason) => Some(reason),
+        }
+    }
+}
+
+pub type MessageActionItem = ActionItem<MessageActionKind>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageUrlItem {
@@ -120,6 +171,7 @@ pub struct SearchFieldView {
 pub struct MessageSearchResultItem {
     pub channel_id: Id<ChannelMarker>,
     pub message_id: Id<MessageMarker>,
+    pub author_id: Id<UserMarker>,
     pub channel_label: String,
     pub author: String,
     pub content: String,
@@ -175,12 +227,133 @@ pub struct SearchPopupView {
     pub fields: Vec<SearchFieldView>,
     pub suggestions: Vec<SearchSuggestionItem>,
     pub selected_suggestion: usize,
+    pub suggestion_scroll: usize,
     pub results: Vec<SearchResultItem>,
     pub selected: usize,
+    pub scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
     pub total_results: Option<usize>,
     pub has_more: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ForumPostComposerField {
+    Title,
+    Body,
+    Attachments,
+    Tags,
+    Submit,
+    Cancel,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumPostComposerTagView {
+    pub name: String,
+    /// Unicode emoji shown inline. `None` for a custom or emoji-less tag.
+    pub unicode_emoji: Option<String>,
+    /// CDN url of a custom tag emoji, overlaid as an image on a reserved gap.
+    pub custom_emoji_url: Option<String>,
+    /// Resolved `:name:` text fallback shown until the custom emoji image loads.
+    pub custom_emoji_label: Option<String>,
+    pub selected: bool,
+    pub active: bool,
+    /// Whether this tag can still be toggled on. `false` for unselected tags
+    /// once the five-tag cap is reached, so the renderer can dim them.
+    pub selectable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumPostComposerAttachmentView {
+    pub filename: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumPostComposerView {
+    pub channel_label: String,
+    pub active_field: ForumPostComposerField,
+    pub editing_field: Option<ForumPostComposerField>,
+    pub title: String,
+    pub title_cursor: usize,
+    pub body: String,
+    pub body_cursor: usize,
+    /// First wrapped body row shown inside the bounded body editor.
+    pub body_scroll: usize,
+    /// Character count after shortcode expansion and trimming, matching the
+    /// payload that is validated on submit.
+    pub body_character_count: usize,
+    pub body_character_limit: usize,
+    pub attachments: Vec<ForumPostComposerAttachmentView>,
+    pub tags: Vec<ForumPostComposerTagView>,
+    pub tag_scroll: usize,
+    pub requires_tag: bool,
+    pub paste_pending: bool,
+    pub status: Option<String>,
+    /// Field that owns the current validation message. `None` is a form-level
+    /// request error or editing hint.
+    pub status_field: Option<ForumPostComposerField>,
+}
+
+/// Focusable cells in the thread edit popup. A leaner mirror of
+/// [`ForumPostComposerField`]: there is no body or attachments, and the
+/// slow-mode and auto-archive selectors replace them. The Tags cell only
+/// applies to forum posts and is hidden for regular threads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ThreadEditField {
+    Title,
+    Tags,
+    SlowMode,
+    AutoArchive,
+    Submit,
+    Cancel,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadEditTagView {
+    pub name: String,
+    /// Unicode emoji shown inline. `None` for a custom or emoji-less tag.
+    pub unicode_emoji: Option<String>,
+    /// CDN url of a custom tag emoji, overlaid as an image on a reserved gap.
+    pub custom_emoji_url: Option<String>,
+    /// Resolved `:name:` text fallback shown until the custom emoji image loads.
+    pub custom_emoji_label: Option<String>,
+    pub selected: bool,
+    pub active: bool,
+    /// Whether this tag can still be toggled on. `false` for unselected tags
+    /// once the five-tag cap is reached, so the renderer can dim them.
+    pub selectable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadEditView {
+    pub channel_label: String,
+    pub active_field: ThreadEditField,
+    pub editing_title: bool,
+    pub editing_tags: bool,
+    pub title: String,
+    pub title_cursor: usize,
+    /// Whether the edited thread is a forum post. Only forum posts have tags, so
+    /// the renderer omits the Tags row entirely when this is `false`.
+    pub is_forum_post: bool,
+    pub tags: Vec<ThreadEditTagView>,
+    pub tag_scroll: usize,
+    pub requires_tag: bool,
+    /// Display label for the current slow-mode option, e.g. "5s" or "Off".
+    pub slow_mode_label: String,
+    /// Whether the slow-mode selector can be changed (Manage Threads permission).
+    pub can_set_slow_mode: bool,
+    /// Display label for the current auto-archive option, e.g. "1 day".
+    pub auto_archive_label: String,
+    pub status: Option<String>,
+    /// Field that owns the current validation message. `None` is form-level.
+    pub status_field: Option<ThreadEditField>,
+}
+
+pub enum LocalUploadPreviewView<'a> {
+    Loading { filename: String },
+    Ready { protocol: &'a Protocol },
+    Failed { filename: String, message: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -190,8 +363,7 @@ pub struct AttachmentViewerItem {
     pub filename: String,
     pub url: Option<String>,
     pub size_bytes: u64,
-    pub is_image: bool,
-    pub is_video: bool,
+    pub media_type: Option<AttachmentMediaType>,
 }
 
 #[cfg(test)]
@@ -204,8 +376,7 @@ impl AttachmentViewerItem {
             filename: String::new(),
             url: None,
             size_bytes: 0,
-            is_image: false,
-            is_video: false,
+            media_type: None,
         }
     }
 }
@@ -214,28 +385,54 @@ impl AttachmentViewerItem {
 pub enum ChannelActionKind {
     JoinVoice,
     LeaveVoice,
-    LoadPinnedMessages,
+    ToggleStream,
+    ShowPinnedMessages,
     ShowThreads,
     MarkAsRead,
     ToggleMute,
+    WatchStream,
+    ParticipantAudioSettings,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChannelActionItem {
-    pub kind: ChannelActionKind,
-    pub label: String,
-    pub enabled: bool,
+pub type ChannelActionItem = ActionItem<ChannelActionKind>;
+
+/// Actions on a thread (a regular thread or a forum post). Mirrors Discord's
+/// thread/forum-post right-click menu. `Pin` only applies to forum posts. The
+/// rest apply to every thread (see `selected_thread_action_items`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ThreadActionKind {
+    MarkAsRead,
+    ToggleFollow,
+    Close,
+    Lock,
+    Edit,
+    CopyLink,
+    ToggleMute,
+    NotificationSettings,
+    Pin,
+    Delete,
+    CopyId,
 }
 
-impl ChannelActionItem {
-    pub(crate) fn new(kind: ChannelActionKind, label: impl Into<String>, enabled: bool) -> Self {
-        Self {
-            kind,
-            label: label.into(),
-            enabled,
+impl ThreadActionKind {
+    pub(crate) const fn discord_action(self) -> Option<DiscordAction> {
+        match self {
+            Self::ToggleFollow => Some(DiscordAction::ChangeThreadMembership),
+            Self::Lock => Some(DiscordAction::ChangeThreadLock),
+            Self::Edit => Some(DiscordAction::EditThread),
+            Self::Pin => Some(DiscordAction::PinForumPost),
+            Self::Delete => Some(DiscordAction::DeleteThread),
+            Self::MarkAsRead
+            | Self::Close
+            | Self::CopyLink
+            | Self::ToggleMute
+            | Self::NotificationSettings
+            | Self::CopyId => None,
         }
     }
 }
+
+pub type ThreadActionItem = ActionItem<ThreadActionKind>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GuildActionKind {
@@ -243,29 +440,37 @@ pub enum GuildActionKind {
     MarkAsRead,
     ToggleMute,
     LeaveServer,
+    FolderSettings,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GuildActionItem {
-    pub kind: GuildActionKind,
-    pub label: String,
-    pub enabled: bool,
-}
-
-impl GuildActionItem {
-    pub(crate) fn new(kind: GuildActionKind, label: impl Into<String>, enabled: bool) -> Self {
-        Self {
-            kind,
-            label: label.into(),
-            enabled,
-        }
-    }
-}
+pub type GuildActionItem = ActionItem<GuildActionKind>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MuteActionDurationItem {
     pub label: &'static str,
     pub duration: MuteDuration,
+}
+
+/// A single row in the thread notification-settings submenu. The label already
+/// includes the `[x]`/`[ ]` radio prefix so the renderer needs no extra logic.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadNotificationItem {
+    pub label: String,
+    pub flags: u64,
+}
+
+impl ThreadNotificationItem {
+    pub(crate) fn new(raw_label: &str, flags: u64, current_flags: u64) -> Self {
+        let prefix = if flags == current_flags {
+            "[x] "
+        } else {
+            "[ ] "
+        };
+        Self {
+            label: format!("{prefix}{raw_label}"),
+            flags,
+        }
+    }
 }
 
 pub const MUTE_ACTION_DURATIONS: [MuteActionDurationItem; 6] = [
@@ -300,24 +505,37 @@ pub enum MemberActionKind {
     ShowProfile,
 }
 
+pub type MemberActionItem = ActionItem<MemberActionKind>;
+
+/// A forum tag applied to a post, resolved into display-ready form. At most one
+/// emoji field is set: a unicode character, or a custom emoji's CDN image url.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MemberActionItem {
-    pub kind: MemberActionKind,
-    pub label: String,
-    pub enabled: bool,
+pub struct AppliedForumTag {
+    pub name: String,
+    pub unicode_emoji: Option<String>,
+    pub custom_emoji_url: Option<String>,
 }
 
-impl MemberActionItem {
-    pub(crate) fn new(kind: MemberActionKind, label: impl Into<String>, enabled: bool) -> Self {
+#[cfg(test)]
+#[allow(dead_code)]
+impl AppliedForumTag {
+    pub(crate) fn test(name: impl Into<String>) -> Self {
         Self {
-            kind,
-            label: label.into(),
-            enabled,
+            name: name.into(),
+            unicode_emoji: None,
+            custom_emoji_url: None,
         }
     }
 }
 
-pub const FORUM_POST_CARD_HEIGHT: usize = 5;
+/// The first image attachment shown in a thread card. Keeping the source
+/// attachment here lets the shared media runtime choose its normal proxy and
+/// quality settings instead of adding a second image-loading path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadCardImagePreview {
+    pub message_id: Id<MessageMarker>,
+    pub attachment: AttachmentInfo,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelThreadItem {
@@ -331,16 +549,13 @@ pub struct ChannelThreadItem {
     pub preview_author: Option<String>,
     pub preview_author_color: Option<u32>,
     pub preview_content: Option<String>,
+    pub preview_loading: bool,
+    pub preview_image: Option<ThreadCardImagePreview>,
+    pub applied_tags: Vec<AppliedForumTag>,
     pub preview_reactions: Vec<ReactionInfo>,
     pub comment_count: Option<u64>,
     pub new_message_count: usize,
     pub last_activity_message_id: Option<Id<MessageMarker>>,
-}
-
-impl ChannelThreadItem {
-    pub fn rendered_height(&self) -> usize {
-        FORUM_POST_CARD_HEIGHT + usize::from(self.section_label.is_some())
-    }
 }
 
 #[cfg(test)]
@@ -358,6 +573,9 @@ impl ChannelThreadItem {
             preview_author: None,
             preview_author_color: None,
             preview_content: None,
+            preview_loading: false,
+            preview_image: None,
+            applied_tags: Vec::new(),
             preview_reactions: Vec::new(),
             comment_count: None,
             new_message_count: 0,
@@ -442,6 +660,7 @@ pub enum ChannelPaneEntry<'a> {
         branch: ChannelBranch,
     },
     VoiceParticipant {
+        channel_id: Id<ChannelMarker>,
         participant: VoiceParticipantState,
         parent_branch: ChannelBranch,
     },
@@ -469,11 +688,33 @@ impl ChannelPaneEntry<'_> {
     }
 
     pub(super) fn is_selectable(&self) -> bool {
-        matches!(
-            self,
-            Self::CategoryHeader { .. } | Self::Channel { .. } | Self::Thread { .. }
-        )
+        true
     }
+
+    pub(super) fn cursor(&self) -> ChannelPaneCursor {
+        match self {
+            Self::CategoryHeader { state, .. }
+            | Self::Channel { state, .. }
+            | Self::Thread { state, .. } => ChannelPaneCursor::Channel(state.id),
+            Self::VoiceParticipant {
+                channel_id,
+                participant,
+                ..
+            } => ChannelPaneCursor::VoiceParticipant {
+                channel_id: *channel_id,
+                user_id: participant.user_id,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ChannelPaneCursor {
+    Channel(Id<ChannelMarker>),
+    VoiceParticipant {
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

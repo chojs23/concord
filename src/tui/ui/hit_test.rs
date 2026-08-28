@@ -1,13 +1,12 @@
 use ratatui::layout::Rect;
 
-use super::super::state::{ActiveModalPopupKind, DashboardState, FocusPane};
+use super::super::state::{DashboardState, FocusPane};
 use super::{
-    layout::{centered_rect, dashboard_areas, message_areas},
+    channel_pane_header_height,
+    layout::{dashboard_areas, message_areas},
     panel_block, panel_block_owned,
-    popups::{
-        channel_switcher_item_index_at, channel_switcher_popup_area, user_profile_popup_area,
-    },
-    types::{MouseTarget, PopupListTarget},
+    popups::active_selectable_popup_layout,
+    types::MouseTarget,
 };
 
 pub(crate) fn focus_pane_at(
@@ -35,11 +34,11 @@ pub(crate) fn mouse_target_at(
     row: u16,
 ) -> Option<MouseTarget> {
     let areas = dashboard_areas(area, state);
-    if let Some(target) = channel_switcher_mouse_target(areas.messages, state, column, row) {
+    if let Some(target) = selectable_popup_mouse_target(area, state, column, row) {
         return Some(target);
     }
-    if let Some(target) = popup_list_mouse_target(areas.messages, state, column, row) {
-        return Some(target);
+    if state.active_modal_popup_kind().is_some() || state.is_folder_settings_open() {
+        return Some(MouseTarget::ModalBackdrop);
     }
     if state.is_pane_visible(FocusPane::Guilds)
         && let Some(target) = pane_row_mouse_target(
@@ -60,7 +59,7 @@ pub(crate) fn mouse_target_at(
             column,
             row,
             state.channel_pane_filter_query().is_some(),
-            1,
+            channel_pane_header_height(state),
         )
     {
         return Some(target);
@@ -77,90 +76,23 @@ pub(crate) fn mouse_target_at(
     None
 }
 
-fn channel_switcher_mouse_target(
+fn selectable_popup_mouse_target(
     area: Rect,
     state: &DashboardState,
     column: u16,
     row: u16,
 ) -> Option<MouseTarget> {
-    if state.active_modal_popup_kind() != Some(ActiveModalPopupKind::ChannelSwitcher) {
-        return None;
-    }
-    let popup = channel_switcher_popup_area(area);
-    if !rect_contains(popup, column, row) {
+    let layout = active_selectable_popup_layout(area, state)?;
+    if !rect_contains(layout.popup, column, row) {
         return Some(MouseTarget::ModalBackdrop);
     }
-    channel_switcher_item_index_at(area, state, column, row)
-        .map(|row| MouseTarget::ChannelSwitcherRow { row })
+    layout
+        .item_at(column, row)
+        .map(|row| MouseTarget::PopupRow {
+            target: layout.target,
+            row,
+        })
         .or(Some(MouseTarget::ModalBackdrop))
-}
-
-pub(crate) fn user_profile_popup_contains(
-    area: Rect,
-    state: &DashboardState,
-    column: u16,
-    row: u16,
-) -> bool {
-    let areas = dashboard_areas(area, state);
-    rect_contains(user_profile_popup_area(areas.messages), column, row)
-}
-
-fn popup_list_mouse_target(
-    area: Rect,
-    state: &DashboardState,
-    column: u16,
-    row: u16,
-) -> Option<MouseTarget> {
-    match state.active_modal_popup_kind()? {
-        ActiveModalPopupKind::MessageUrlPicker => popup_list_row_target(
-            message_url_picker_area(area, state),
-            state.selected_message_url_items().len(),
-            PopupListTarget::MessageUrl,
-            column,
-            row,
-        ),
-        ActiveModalPopupKind::MessageActionMenu => popup_list_row_target(
-            message_action_menu_area(area, state),
-            state.selected_message_action_items().len(),
-            PopupListTarget::MessageAction,
-            column,
-            row,
-        ),
-        _ => None,
-    }
-}
-
-fn popup_list_row_target(
-    popup: Option<Rect>,
-    item_count: usize,
-    target: PopupListTarget,
-    column: u16,
-    row: u16,
-) -> Option<MouseTarget> {
-    let Some(popup) = popup else {
-        return Some(MouseTarget::ModalBackdrop);
-    };
-    if !rect_contains(popup, column, row) {
-        return Some(MouseTarget::ModalBackdrop);
-    }
-    let inner = panel_block("", false).inner(popup);
-    if rect_contains(inner, column, row) {
-        let row = row.saturating_sub(inner.y) as usize;
-        if row < item_count {
-            return Some(MouseTarget::PopupRow { target, row });
-        }
-    }
-    Some(MouseTarget::ModalBackdrop)
-}
-
-fn message_action_menu_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    let item_count = state.selected_message_action_items().len();
-    (item_count > 0).then(|| centered_rect(area, 54, (item_count as u16).saturating_add(2)))
-}
-
-fn message_url_picker_area(area: Rect, state: &DashboardState) -> Option<Rect> {
-    let item_count = state.selected_message_url_items().len();
-    (item_count > 0).then(|| centered_rect(area, 54, (item_count as u16).saturating_add(2)))
 }
 
 fn pane_row_mouse_target(

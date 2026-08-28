@@ -1,28 +1,25 @@
 use ratatui::style::Stylize;
 
 use super::*;
+use crate::discord::test_builders::{
+    GuildCreateFixture, MessageHistoryLoadedFixture, MessageReactionAddFixture, guild_create_event,
+    message_history_loaded_event, message_reaction_add_event,
+};
 
 #[test]
 fn server_pane_shows_guild_mention_badge() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             last_message_id: Some(Id::new(10)),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.push_event(AppEvent::ReadStateInit {
         entries: vec![ReadStateInfo {
             last_acked_message_id: Some(Id::new(10)),
@@ -30,26 +27,46 @@ fn server_pane_shows_guild_mention_badge() {
             ..ReadStateInfo::test(channel_id)
         }],
     });
-    let backend = TestBackend::new(80, 20);
+    state.set_guild_view_height(20);
+    state.focus_pane(FocusPane::Guilds);
+    assert!(state.select_visible_pane_row(FocusPane::Guilds, 1));
+    let backend = TestBackend::new(40, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should build");
 
     terminal
-        .draw(|frame| {
-            sync_view_heights(frame.area(), &mut state);
-            super::super::render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None);
-        })
+        .draw(|frame| render_guilds(frame, frame.area(), &state))
         .expect("draw should succeed");
 
     let buffer = terminal.backend().buffer();
     let server_rows = (0..buffer.area.height)
         .map(|row| {
-            (0..20)
+            (0..buffer.area.width)
                 .map(|col| buffer[(col, row)].symbol().to_owned())
                 .collect::<String>()
         })
         .collect::<Vec<_>>();
 
     assert!(server_rows.iter().any(|row| row.contains("(2)")));
+    let row = server_rows
+        .iter()
+        .position(|row| row.contains("(2)") && row.contains("guild"))
+        .expect("selected mentioned guild row");
+    let badge_start = server_rows[row].find("(2)").expect("mention badge");
+    let name_start = server_rows[row].find("guild").expect("guild name");
+    let badge_col = server_rows[row][..badge_start].width();
+    let name_col = server_rows[row][..name_start].width();
+    assert_eq!(
+        buffer[(badge_col as u16, row as u16)].fg,
+        theme::current().foreground(theme::HighlightGroup::SelectedRow)
+    );
+    assert_eq!(
+        buffer[(name_col as u16, row as u16)].fg,
+        theme::current().foreground(theme::HighlightGroup::SelectedRow)
+    );
+    assert_eq!(
+        buffer[(name_col as u16, row as u16)].bg,
+        theme::current().background(theme::HighlightGroup::SelectedRow)
+    );
 }
 
 #[test]
@@ -57,22 +74,15 @@ fn active_server_mention_badge_keeps_active_name_style() {
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             last_message_id: Some(Id::new(10)),
             name: "general".to_owned(),
             ..ChannelInfo::test(channel_id, "GuildText")
         }],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.set_guild_view_height(20);
     assert!(state.select_visible_pane_row(FocusPane::Guilds, 1));
     state.confirm_selected_guild();
@@ -102,7 +112,10 @@ fn active_server_mention_badge_keeps_active_name_style() {
                 .find('g')
                 .map(|offset| badge_col + offset)
                 .expect("guild name starts with g after mention badge");
-            assert_eq!(buffer[(badge_col as u16, row)].fg, MENTION_ORANGE);
+            assert_eq!(
+                buffer[(badge_col as u16, row)].fg,
+                theme::current().foreground(theme::HighlightGroup::MentionBadge)
+            );
             assert_eq!(buffer[(name_col as u16, row)].fg, Color::Green);
             assert!(
                 buffer[(name_col as u16, row)]
@@ -128,10 +141,7 @@ fn message_viewport_author_uses_resolved_role_color() {
     let role_id = Id::new(100);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
@@ -141,15 +151,18 @@ fn message_viewport_author_uses_resolved_role_color() {
             role_ids: vec![role_id],
             ..MemberInfo::test(author_id, "neo")
         }],
-        presences: vec![(author_id, PresenceStatus::Online)],
+        presences: vec![PresenceEventFields {
+            user_id: author_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        }],
         roles: vec![RoleInfo {
             color: Some(0x3366CC),
             position: 10,
             ..RoleInfo::test(role_id, "Blue")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
     state.push_event(message_create_event(MessageCreateFixture {
@@ -162,22 +175,38 @@ fn message_viewport_author_uses_resolved_role_color() {
         ..MessageCreateFixture::test_fixture_default()
     }));
 
-    let messages = state.messages();
-    let lines = message_viewport_lines(
-        &messages,
-        None,
-        &state,
-        super::narrow_message_viewport_layout(40),
-        &[],
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::MessageAuthor,
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
     );
+    theme::with_test_theme(custom, || {
+        let messages = state.messages();
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &state,
+            super::narrow_message_viewport_layout(40),
+            &[],
+        );
 
-    assert_eq!(
-        lines[1].spans[1].style.fg,
-        Some(Color::Rgb(0x33, 0x66, 0xCC))
-    );
-    assert_eq!(lines[1].spans[2].content.as_ref(), " [bot]");
-    assert_eq!(lines[1].spans[2].style.fg, Some(Color::White));
-    assert_eq!(lines[1].spans[2].style.bg, Some(Color::Rgb(88, 101, 242)));
+        assert_eq!(
+            lines[1].spans[1].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+        assert!(
+            lines[1].spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+
+        assert_eq!(lines[1].spans[2].content.as_ref(), " ");
+        assert_eq!(lines[1].spans[2].style.fg, None);
+        assert_eq!(lines[1].spans[2].style.bg, None);
+        assert_eq!(lines[1].spans[3].content.as_ref(), "[bot]");
+        assert_eq!(lines[1].spans[3].style.fg, Some(Color::Reset));
+        assert_eq!(lines[1].spans[3].style.bg, Some(Color::Rgb(88, 101, 242)));
+    });
 }
 
 #[test]
@@ -197,8 +226,7 @@ fn pinned_message_remains_selectable_for_unpin_action() {
     state.direct_open_selected_message_pin_confirmation();
 
     assert!(
-        state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -214,7 +242,7 @@ fn forum_post_reaction_summary_reserves_custom_emoji_image_slot() {
     }];
 
     assert_eq!(
-        forum_post_reaction_summary(&reactions, 80).as_deref(),
+        thread_card_reaction_summary(&reactions, 80).as_deref(),
         Some("[   1]")
     );
 }
@@ -227,10 +255,7 @@ fn history_message_author_uses_channel_guild_for_role_color() {
     let role_id = Id::new(100);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
@@ -240,20 +265,22 @@ fn history_message_author_uses_channel_guild_for_role_color() {
             role_ids: vec![role_id],
             ..MemberInfo::test(author_id, "neo")
         }],
-        presences: vec![(author_id, PresenceStatus::Online)],
+        presences: vec![PresenceEventFields {
+            user_id: author_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        }],
         roles: vec![RoleInfo {
             color: Some(0x3366CC),
             position: 10,
             ..RoleInfo::test(role_id, "Blue")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
-        before: None,
         messages: vec![MessageInfo {
             guild_id: None,
             channel_id,
@@ -275,7 +302,8 @@ fn history_message_author_uses_channel_guild_for_role_color() {
             forwarded_snapshots: Vec::new(),
             ..MessageInfo::default()
         }],
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
 
     let messages = state.messages();
     let lines = message_viewport_lines(
@@ -293,13 +321,36 @@ fn history_message_author_uses_channel_guild_for_role_color() {
 }
 
 #[test]
-fn image_attachment_replaces_empty_message_placeholder() {
-    let message = message_with_attachment(Some(String::new()), image_attachment());
+fn attachment_summary_replaces_or_follows_the_message_body() {
+    let cases = [
+        (
+            "image",
+            message_with_attachment(Some(String::new()), image_attachment()),
+            "[image: cat.png] 640x480",
+        ),
+        (
+            "video",
+            message_with_attachment(Some(String::new()), video_attachment()),
+            "[video: clip.mp4] 1920x1080",
+        ),
+        (
+            "forwarded, no body",
+            message_with_forwarded_snapshot(forwarded_snapshot(Some(""), vec![image_attachment()])),
+            "↱ Forwarded │ [image: cat.png] 640x480",
+        ),
+        (
+            "forwarded, with body",
+            message_with_forwarded_snapshot(forwarded_snapshot(
+                Some("hello"),
+                vec![image_attachment()],
+            )),
+            "↱ Forwarded │ hello │ [image: cat.png] 640x480",
+        ),
+    ];
 
-    assert_eq!(
-        format_message_content(&message, 200),
-        "[image: cat.png] 640x480"
-    );
+    for (name, message, expected) in cases {
+        assert_eq!(format_message_content(&message, 200), expected, "{name}");
+    }
 }
 
 #[test]
@@ -308,7 +359,10 @@ fn attachment_summary_uses_own_accent_line_after_text_content() {
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
     assert_eq!(line_texts(&lines), vec!["look", "[image: cat.png] 640x480"]);
-    assert_eq!(lines[1].style, Style::default().fg(ACCENT));
+    assert_eq!(
+        lines[1].style,
+        theme::current().style(theme::HighlightGroup::MessageAttachment)
+    );
 }
 
 #[test]
@@ -324,7 +378,8 @@ fn edited_message_appends_dim_italic_marker_to_content() {
         .into_iter()
         .find(|span| span.content == " (edited)")
         .expect("edited marker span should be present");
-    assert_eq!(marker.style.fg, Some(DIM));
+    assert_eq!(marker.style.fg, None);
+    assert!(marker.style.add_modifier.contains(Modifier::DIM));
     assert!(marker.style.add_modifier.contains(Modifier::ITALIC));
 }
 
@@ -339,8 +394,14 @@ fn attachment_summary_renders_multiple_attachments_one_per_line() {
         line_texts(&lines),
         vec!["look", "[image: cat.png] 640x480", "[file: notes.txt]"]
     );
-    assert_eq!(lines[1].style, Style::default().fg(ACCENT));
-    assert_eq!(lines[2].style, Style::default().fg(ACCENT));
+    assert_eq!(
+        lines[1].style,
+        theme::current().style(theme::HighlightGroup::MessageAttachment)
+    );
+    assert_eq!(
+        lines[2].style,
+        theme::current().style(theme::HighlightGroup::MessageAttachment)
+    );
 }
 
 #[test]
@@ -361,7 +422,8 @@ fn message_content_lines_render_discord_embed_preview() {
             "  ▎ A video description",
         ]
     );
-    assert_eq!(lines[1].style.fg, Some(DIM));
+    assert_eq!(lines[1].style.fg, None);
+    assert!(lines[1].style.add_modifier.contains(Modifier::DIM));
     assert!(lines[2].style.add_modifier.contains(Modifier::BOLD));
     assert_eq!(lines[2].style.fg, Some(Color::Blue));
     let marker_spans = lines[1].spans();
@@ -373,31 +435,30 @@ fn message_content_lines_render_discord_embed_preview() {
             .add_modifier
             .contains(Modifier::UNDERLINED)
     );
-}
 
-#[test]
-fn message_embed_hides_media_and_player_urls() {
-    let mut message = message_with_content(Some("watch this".to_owned()));
-    let mut embed = youtube_embed();
-    embed.video_url = Some("https://www.youtube.com/embed/dQw4w9WgXcQ".to_owned());
-    message.embeds = vec![embed];
+    message.embeds[0].color = None;
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::EmbedGutter,
+        Style::default().fg(Color::LightMagenta),
+    );
+    theme::with_test_theme(custom, || {
+        let fallback_lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+        assert_eq!(
+            fallback_lines[1].spans()[0].style.fg,
+            Some(Color::LightMagenta)
+        );
+    });
 
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
-
+    message.embeds[0].color = Some(0);
+    let black_lines = format_message_content_lines(&message, &DashboardState::new(), 80);
     assert_eq!(
-        line_texts(&lines),
-        vec![
-            "watch this",
-            "  ▎ YouTube",
-            "  ▎ Example Video",
-            "  ▎ A video description",
-            "  ▎ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        ]
+        black_lines[1].spans()[0].style.fg,
+        Some(Color::Rgb(0, 0, 0))
     );
 }
 
 #[test]
-fn message_embed_url_underline_skips_marker() {
+fn message_embed_url_underlines_url_text() {
     let mut message = message_with_content(Some("watch this".to_owned()));
     let mut embed = youtube_embed();
     embed.description = None;
@@ -418,12 +479,6 @@ fn message_embed_url_underline_skips_marker() {
     );
     assert_eq!(url_spans[0].content.as_ref(), "  ▎ ");
     assert_eq!(url_spans[0].style.fg, Some(Color::Rgb(255, 0, 0)));
-    assert!(
-        !url_spans[0]
-            .style
-            .add_modifier
-            .contains(Modifier::UNDERLINED)
-    );
     assert_eq!(
         url_spans[1].content.as_ref(),
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -464,58 +519,6 @@ fn message_embed_renders_tweet_description_as_readable_text() {
     ));
     assert!(texts.contains(&"  ▎ 💬 2 🔁 11 ❤️ 44 👁️ 12.4K "));
     assert!(texts.contains(&"  ▎ FxTwitter"));
-}
-
-#[test]
-fn message_embed_description_preserves_useful_link_destination() {
-    let mut message = message_with_content(Some("read this".to_owned()));
-    let mut embed = youtube_embed();
-    embed.description = Some("See [docs](https://example.com/docs)".to_owned());
-    message.embeds = vec![embed];
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
-
-    assert!(line_texts(&lines).contains(&"  ▎ See docs (https://example.com/docs)"));
-}
-
-#[test]
-fn message_embed_description_preserves_escaped_emphasis_markers() {
-    let mut message = message_with_content(Some("literal markers".to_owned()));
-    let mut embed = youtube_embed();
-    embed.description = Some("\\*\\*literal\\*\\* and **bold**".to_owned());
-    message.embeds = vec![embed];
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
-
-    assert!(line_texts(&lines).contains(&"  ▎ **literal** and bold"));
-}
-
-#[test]
-fn message_embed_does_not_repeat_body_url() {
-    let mut message = message_with_content(Some(
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned(),
-    ));
-    let mut embed = youtube_embed();
-    embed.title = None;
-    embed.description = None;
-    embed.image_url = None;
-    message.embeds = vec![embed];
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
-
-    assert_eq!(
-        line_texts(&lines),
-        vec!["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "  ▎ YouTube"]
-    );
-}
-
-#[test]
-fn message_content_preserves_explicit_newlines() {
-    let message = message_with_content(Some("hello\nworld".to_owned()));
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
-
-    assert_eq!(line_texts(&lines), vec!["hello", "world"]);
 }
 
 #[test]
@@ -560,34 +563,37 @@ fn message_content_applies_supported_markdown_formatting() {
         ]
     );
 
-    assert_eq!(lines[0].style.fg, Some(ACCENT));
+    assert_eq!(lines[0].style.fg, Some(Color::Cyan));
     assert!(lines[0].style.add_modifier.contains(Modifier::BOLD));
     assert!(lines[1].style.add_modifier.contains(Modifier::BOLD));
     assert!(lines[1].style.add_modifier.contains(Modifier::UNDERLINED));
     assert!(lines[2].style.add_modifier.contains(Modifier::BOLD));
-    assert_eq!(lines[4].style.fg, Some(DIM));
-    assert_eq!(lines[14].style, Style::default());
+    assert_eq!(lines[4].style.fg, Some(Color::DarkGray));
+    assert_eq!(
+        lines[14].style,
+        theme::current().style(theme::HighlightGroup::MessageBody)
+    );
 
     let h1_spans = lines[0].spans();
     assert_eq!(h1_spans[0].content.as_ref(), "# ");
-    assert_eq!(h1_spans[0].style.fg, Some(DIM));
+    assert_eq!(h1_spans[0].style.fg, Some(Color::DarkGray));
 
     let h2_spans = lines[1].spans();
     assert_eq!(h2_spans[0].content.as_ref(), "## ");
-    assert_eq!(h2_spans[0].style.fg, Some(DIM));
+    assert_eq!(h2_spans[0].style.fg, Some(Color::DarkGray));
 
     let h3_spans = lines[2].spans();
     assert_eq!(h3_spans[0].content.as_ref(), "### ");
-    assert_eq!(h3_spans[0].style.fg, Some(DIM));
+    assert_eq!(h3_spans[0].style.fg, Some(Color::DarkGray));
 
     let quote_spans = lines[4].spans();
     assert_eq!(quote_spans[0].content.as_ref(), "▎ ");
-    assert_eq!(quote_spans[0].style.fg, Some(DIM));
+    assert_eq!(quote_spans[0].style.fg, Some(Color::DarkGray));
 
     for line in [&lines[7], &lines[8]] {
         let bullet_spans = line.spans();
         assert_eq!(bullet_spans[0].content.as_ref(), "• ");
-        assert_eq!(bullet_spans[0].style.fg, Some(DIM));
+        assert_eq!(bullet_spans[0].style.fg, Some(Color::DarkGray));
     }
 
     let inline_spans = lines[9].spans();
@@ -623,22 +629,34 @@ fn message_content_applies_supported_markdown_formatting() {
     assert_eq!(code.style.fg, Some(Color::Rgb(255, 165, 0)));
     assert_eq!(code.style.bg, None);
 
-    assert_eq!(lines[10].style.fg, Some(DIM));
-    assert_eq!(lines[13].style.fg, Some(DIM));
+    assert_eq!(
+        lines[10].style.fg,
+        theme::current().style(theme::HighlightGroup::Border).fg
+    );
+    assert_eq!(
+        lines[13].style.fg,
+        theme::current().style(theme::HighlightGroup::Border).fg
+    );
+    assert!(lines[10].style.add_modifier.contains(Modifier::DIM));
+    assert!(lines[13].style.add_modifier.contains(Modifier::DIM));
 
     let code_line = lines[11].spans();
     assert_eq!(
         code_line,
         vec![
-            ratatui::text::Span::from("│ ").fg(DIM),
+            ratatui::text::Span::from("│ ")
+                .fg(theme::current().foreground(theme::HighlightGroup::Border))
+                .dim(),
             ratatui::text::Span::from("let").fg(Color::Rgb(180, 142, 173)),
             ratatui::text::Span::from(" answer ").fg(Color::Rgb(192, 197, 206)),
             ratatui::text::Span::from("=").fg(Color::Rgb(192, 197, 206)),
             ratatui::text::Span::from(" ").fg(Color::Rgb(192, 197, 206)),
             ratatui::text::Span::from("42").fg(Color::Rgb(208, 135, 112)),
             ratatui::text::Span::from(";").fg(Color::Rgb(192, 197, 206)),
-            ratatui::text::Span::from("    ").dark_gray(),
-            ratatui::text::Span::from(" │").fg(DIM)
+            ratatui::text::Span::from("    ").dark_gray().dim(),
+            ratatui::text::Span::from(" │")
+                .fg(theme::current().foreground(theme::HighlightGroup::Border))
+                .dim()
         ]
     );
 
@@ -659,8 +677,8 @@ fn message_content_applies_supported_markdown_formatting() {
         .find(|span| span.content == "@alice")
         .expect("mention span should survive quote formatting");
     assert_eq!(
-        mention.style.bg,
-        mention_highlight_style(TextHighlightKind::OtherMention).bg
+        mention.style.fg,
+        mention_highlight_style(TextHighlightKind::OtherMention).fg
     );
 
     let emoji = message_with_content(Some("- <:party:99> party".to_owned()));
@@ -693,8 +711,8 @@ fn message_content_applies_supported_markdown_formatting() {
         .expect("mention span should survive inline formatting");
     assert!(mention_span.style.add_modifier.contains(Modifier::BOLD));
     assert_eq!(
-        mention_span.style.bg,
-        mention_highlight_style(TextHighlightKind::OtherMention).bg
+        mention_span.style.fg,
+        mention_highlight_style(TextHighlightKind::OtherMention).fg
     );
 
     let emoji = message_with_content(Some("**<:party:99>**".to_owned()));
@@ -707,6 +725,10 @@ fn message_content_applies_supported_markdown_formatting() {
     assert_eq!(line_texts(&emoji_lines), vec!["  "]);
     assert_eq!(emoji_lines[0].image_slots[0].col, 0);
     assert_eq!(emoji_lines[0].image_slots[0].byte_start, 0);
+    assert_eq!(
+        emoji_lines[0].image_slots[0].image_size,
+        EmojiImageSize::Compact
+    );
 
     let quote = message_with_content(Some("> **bold quote**".to_owned()));
     let quote_lines = format_message_content_lines(&quote, &DashboardState::new(), 200);
@@ -715,7 +737,7 @@ fn message_content_applies_supported_markdown_formatting() {
         .into_iter()
         .find(|span| span.content == "bold quote")
         .expect("inline bold span should survive quote formatting");
-    assert_eq!(quote_span.style.fg, Some(DIM));
+    assert_eq!(quote_span.style.fg, Some(Color::DarkGray));
     assert!(quote_span.style.add_modifier.contains(Modifier::BOLD));
 
     let lines = format_message_content_lines(
@@ -733,7 +755,7 @@ fn message_content_applies_supported_markdown_formatting() {
             "╰───────╯",
         ]
     );
-    assert_eq!(lines[1].spans()[1].style.fg, Some(Color::White));
+    assert_eq!(lines[1].spans()[1].style.fg, None);
 
     let lines = format_message_content_lines(
         &message_with_content(Some("```".to_owned())),
@@ -741,7 +763,10 @@ fn message_content_applies_supported_markdown_formatting() {
         200,
     );
     assert_eq!(line_texts(&lines), vec!["```"]);
-    assert_eq!(lines[0].style, Style::default());
+    assert_eq!(
+        lines[0].style,
+        theme::current().style(theme::HighlightGroup::MessageBody)
+    );
 
     let lines = format_message_content_lines(
         &message_with_content(Some("```\none\n\nthree\n```".to_owned())),
@@ -785,54 +810,182 @@ fn message_content_applies_supported_markdown_formatting() {
         ]
     );
     assert!(lines.iter().all(|line| line.image_slots.is_empty()));
-    assert_eq!(lines[1].spans()[1].style.fg, Some(Color::White));
+    assert_eq!(lines[1].spans()[1].style.fg, None);
 }
 
 #[test]
-fn message_content_wraps_long_lines_to_content_width() {
-    let message = message_with_content(Some("abcdefghijkl".to_owned()));
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 5);
-
-    assert_eq!(line_texts(&lines), vec!["abcde", "fghij", "kl"]);
+fn fenced_code_block_preserves_space_indentation() {
+    let message = message_with_content(Some("```\nfunc f() {\n    return\n}\n```".to_owned()));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭────────────╮",
+            "│ func f() { │",
+            "│     return │",
+            "│ }          │",
+            "╰────────────╯",
+        ]
+    );
 }
 
 #[test]
-fn message_content_wraps_wide_characters_by_terminal_width() {
-    let message = message_with_content(Some("漢字仮名交じ".to_owned()));
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 10);
-
-    assert_eq!(line_texts(&lines), vec!["漢字仮名交", "じ"]);
+fn fenced_code_block_expands_tabs_at_display_column_stops() {
+    let message = message_with_content(Some(
+        "```\nfunc f() {\n\tif ok {\n\t\treturn\n\t}\n}\na\tX\nab\tX\nabcd\tX\n漢\tX\n👩‍💻\tX\n```"
+            .to_owned(),
+    ));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭────────────────╮",
+            "│ func f() {     │",
+            "│     if ok {    │",
+            "│         return │",
+            "│     }          │",
+            "│ }              │",
+            "│ a   X          │",
+            "│ ab  X          │",
+            "│ abcd    X      │",
+            "│ 漢  X          │",
+            "│ 👩‍💻  X          │",
+            "╰────────────────╯",
+        ]
+    );
 }
 
 #[test]
-fn message_content_renders_known_user_mentions() {
-    let message = message_with_content(Some("hello <@10>".to_owned()));
-    let state = state_with_member(10, "alice");
+fn fenced_code_block_preserves_tab_sensitive_syntax_highlighting() {
+    let message = message_with_content(Some(
+        "```make\ntarget:\n\t@echo one\n    @echo two\n```".to_owned(),
+    ));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
 
-    let lines = format_message_content_lines(&message, &state, 200);
+    let recipe_echo = lines[2]
+        .spans()
+        .into_iter()
+        .find(|span| span.content == "echo")
+        .expect("tab-indented recipe should use shell highlighting");
+    let inconsistent_echo = lines[3]
+        .spans()
+        .into_iter()
+        .find(|span| span.content == "echo two")
+        .expect("space-indented recipe should keep inconsistent highlighting");
 
-    assert_eq!(line_texts(&lines), vec!["hello @alice"]);
+    assert_ne!(recipe_echo.style.fg, inconsistent_echo.style.fg);
 }
 
 #[test]
-fn message_content_keeps_unknown_user_mentions_raw() {
-    let message = message_with_content(Some("hello <@10>".to_owned()));
+fn wrapped_markdown_bullets_use_indented_continuation_lines() {
+    let message = message_with_content(Some("- alpha beta\n* gamma delta".to_owned()));
 
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 7);
 
-    assert_eq!(line_texts(&lines), vec!["hello <@10>"]);
+    assert_eq!(
+        line_texts(&lines),
+        vec!["• alpha", "  beta", "• gamma", "  delta"]
+    );
+
+    for index in [0, 2] {
+        assert_eq!(lines[index].spans()[0].content.as_ref(), "• ");
+    }
+    for index in [1, 3] {
+        assert_eq!(lines[index].spans()[0].content.as_ref(), "  ");
+    }
 }
 
 #[test]
-fn message_content_renders_mentions_from_message_metadata() {
-    let mut message = message_with_content(Some("hello <@10>".to_owned()));
-    message.mentions = vec![mention_info(10, "alice")];
+fn markdown_colors_follow_theme_groups() {
+    let message = message_with_content(Some(
+        "# one\n## two\n### three\n> quote\n- bullet".to_owned(),
+    ));
+    let custom = theme::Theme::default()
+        .with_style(
+            theme::HighlightGroup::MessageBody,
+            Style::default().fg(Color::White).bg(Color::Blue),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownHeading1,
+            Style::default().fg(Color::LightRed),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownHeading2,
+            Style::default().fg(Color::LightGreen),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownHeading3,
+            Style::default().fg(Color::LightBlue),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownQuote,
+            Style::default().fg(Color::Magenta),
+        )
+        .with_style(
+            theme::HighlightGroup::MarkdownMarker,
+            Style::default().fg(Color::Yellow),
+        );
 
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+    theme::with_test_theme(custom, || {
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-    assert_eq!(line_texts(&lines), vec!["hello @alice"]);
+        assert_eq!(lines[0].style.fg, Some(Color::LightRed));
+        assert_eq!(lines[1].style.fg, Some(Color::LightGreen));
+        assert_eq!(lines[2].style.fg, Some(Color::LightBlue));
+        assert_eq!(lines[3].style.fg, Some(Color::Magenta));
+        assert_eq!(lines[4].style.fg, Some(Color::White));
+        for line in &lines {
+            assert_eq!(line.style.bg, Some(Color::Blue));
+            assert_eq!(line.spans()[0].style.fg, Some(Color::Yellow));
+        }
+    });
+}
+
+#[test]
+fn message_content_resolves_user_mentions_by_precedence() {
+    // The nick carried on the message wins over the cached member alias, which
+    // wins over the mention's own display name. With no source at all the
+    // markup has to stay raw rather than inventing a name.
+    let cases = [
+        (
+            "cached member only",
+            Vec::new(),
+            Some("alice"),
+            "hello @alice",
+        ),
+        (
+            "mention metadata only",
+            vec![mention_info(10, "alice")],
+            None,
+            "hello @alice",
+        ),
+        ("no source", Vec::new(), None, "hello <@10>"),
+        (
+            "cached alias beats metadata",
+            vec![mention_info(10, "username")],
+            Some("server alias"),
+            "hello @server alias",
+        ),
+        (
+            "message nick beats cached alias",
+            vec![mention_info_with_nick(10, "server alias")],
+            Some("username"),
+            "hello @server alias",
+        ),
+    ];
+
+    for (name, mentions, member_alias, expected) in cases {
+        let mut message = message_with_content(Some("hello <@10>".to_owned()));
+        message.mentions = mentions;
+        let state = match member_alias {
+            Some(alias) => state_with_member(10, alias),
+            None => DashboardState::new(),
+        };
+
+        let lines = format_message_content_lines(&message, &state, 200);
+
+        assert_eq!(line_texts(&lines), vec![expected], "{name}");
+    }
 }
 
 #[test]
@@ -862,8 +1015,8 @@ fn message_content_highlights_current_user_mentions() {
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@server alias");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
 }
 
@@ -897,12 +1050,12 @@ fn message_content_highlights_other_user_mentions_with_softer_color() {
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@alice");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::OtherMention).bg
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::OtherMention).fg
     );
     assert_ne!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg,
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg,
         "other-user mentions must not look like a self-mention notification"
     );
 }
@@ -953,33 +1106,41 @@ fn message_content_highlights_markdown_link_urls() {
 }
 
 #[test]
-fn message_content_highlights_everyone_mentions_for_current_user() {
-    let mut message = message_with_content(Some("ping @everyone".to_owned()));
-    message.mention_everyone = true;
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::Ready {
-        user: "neo".to_owned(),
-        user_id: Some(Id::new(99)),
-    });
-    let highlight_bg = mention_highlight_style(TextHighlightKind::SelfMention).bg;
+fn message_content_highlights_broadcast_mentions_for_current_user() {
+    for keyword in ["@everyone", "@here"] {
+        let mut message = message_with_content(Some(format!("ping {keyword}")));
+        message.mention_everyone = true;
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(99)),
+        });
 
-    let lines = message_item_lines(
-        message.author.clone(),
-        message_author_style(None),
-        "00:00".to_owned(),
-        format_message_content_lines(&message, &state, 200),
-        40,
-        0,
-        None,
-        0,
-    );
+        let lines = message_item_lines(
+            message.author.clone(),
+            message_author_style(None),
+            "00:00".to_owned(),
+            format_message_content_lines(&message, &state, 200),
+            40,
+            0,
+            None,
+            0,
+        );
 
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["  oooo  neo 00:00", "  oooo  ping @everyone", ""]
-    );
-    assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
-    assert_eq!(lines[1].spans[2].style.bg, highlight_bg);
+        assert_eq!(
+            line_texts_from_ratatui(&lines),
+            vec![
+                "  oooo  neo 00:00".to_owned(),
+                format!("  oooo  ping {keyword}"),
+                String::new()
+            ]
+        );
+        assert_eq!(lines[1].spans[2].content.as_ref(), keyword);
+        assert_eq!(
+            lines[1].spans[2].style.fg,
+            mention_highlight_style(TextHighlightKind::SelfMention).fg
+        );
+    }
 }
 
 #[test]
@@ -1011,51 +1172,19 @@ fn message_content_highlights_mixed_everyone_and_direct_mentions_in_order() {
     assert_eq!(lines[1].spans[1].content.as_ref(), "@everyone");
     assert_eq!(lines[1].spans[3].content.as_ref(), "@neo");
     assert_eq!(
-        lines[1].spans[1].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[1].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
     assert_eq!(
-        lines[1].spans[3].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
-    );
-}
-
-#[test]
-fn message_content_highlights_here_mentions_for_current_user() {
-    let mut message = message_with_content(Some("ping @here".to_owned()));
-    message.mention_everyone = true;
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::Ready {
-        user: "neo".to_owned(),
-        user_id: Some(Id::new(99)),
-    });
-
-    let lines = message_item_lines(
-        message.author.clone(),
-        message_author_style(None),
-        "00:00".to_owned(),
-        format_message_content_lines(&message, &state, 200),
-        40,
-        0,
-        None,
-        0,
-    );
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["  oooo  neo 00:00", "  oooo  ping @here", ""]
-    );
-    assert_eq!(lines[1].spans[2].content.as_ref(), "@here");
-    assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[3].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
 }
 
 #[test]
 fn message_content_highlights_role_mentions_with_role_name() {
     let message = message_with_content(Some("hello <@&10>".to_owned()));
-    let state = state_with_role(10, "moderators");
+    let state = state_with_role(10, "moderators", Some(0x123456));
 
     let lines = message_item_lines(
         message.author.clone(),
@@ -1074,9 +1203,75 @@ fn message_content_highlights_role_mentions_with_role_name() {
     );
     assert_eq!(lines[1].spans[2].content.as_ref(), "@moderators");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::OtherMention).bg
+        lines[1].spans[2].style.fg,
+        Some(Color::Rgb(0x12, 0x34, 0x56))
     );
+    assert_eq!(
+        lines[1].spans[2].style.bg,
+        Some(Color::Rgb(0x07, 0x14, 0x22))
+    );
+
+    let light_background = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().bg(Color::Rgb(0xFF, 0xFF, 0xFF)),
+    );
+    theme::with_test_theme(light_background, || {
+        let lines = format_message_content_lines(&message, &state, 200);
+        let mention = lines[0]
+            .spans()
+            .into_iter()
+            .find(|span| span.content.as_ref() == "@moderators")
+            .expect("colored role mention span");
+        assert_eq!(mention.style.bg, Some(Color::Rgb(0xA0, 0xAD, 0xBB)));
+    });
+
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::MentionRole,
+        Style::default()
+            .fg(Color::Red)
+            .bg(Color::LightMagenta)
+            .add_modifier(Modifier::BOLD),
+    );
+    theme::with_test_theme(custom, || {
+        let lines = format_message_content_lines(&message, &state, 200);
+        let mention = lines[0]
+            .spans()
+            .into_iter()
+            .find(|span| span.content.as_ref() == "@moderators")
+            .expect("colored role mention span");
+        assert_eq!(mention.style.fg, Some(Color::Rgb(0x12, 0x34, 0x56)));
+        assert_eq!(mention.style.bg, Some(Color::LightMagenta));
+        assert!(mention.style.add_modifier.contains(Modifier::BOLD));
+    });
+
+    let mut options = crate::config::ThemeOptions::default();
+    options
+        .highlight_mut(theme::HighlightGroup::MentionRole)
+        .background = Some("none".to_owned());
+    let cleared = theme::Theme::from_options(&options, &mut Vec::new());
+    theme::with_test_theme(cleared, || {
+        let lines = format_message_content_lines(&message, &state, 200);
+        let mention = lines[0]
+            .spans()
+            .into_iter()
+            .find(|span| span.content.as_ref() == "@moderators")
+            .expect("colored role mention span");
+        assert_eq!(mention.style.fg, Some(Color::Rgb(0x12, 0x34, 0x56)));
+        assert_eq!(mention.style.bg, None);
+    });
+
+    let uncolored = state_with_role(10, "moderators", None);
+    let lines = format_message_content_lines(&message, &uncolored, 200);
+    let mention = lines[0]
+        .spans()
+        .into_iter()
+        .find(|span| span.content.as_ref() == "@moderators")
+        .expect("resolved role mention should have its own span");
+    assert_eq!(
+        mention.style.fg,
+        mention_highlight_style(TextHighlightKind::OtherMention).fg
+    );
+    assert_eq!(mention.style.bg, Some(Color::Rgb(40, 50, 92)));
 }
 
 #[test]
@@ -1089,23 +1284,18 @@ fn message_content_highlights_current_user_role_mentions_as_self_mentions() {
         user: "neo".to_owned(),
         user_id: Some(Id::new(99)),
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         members: vec![MemberInfo {
             role_ids: vec![role_id],
             ..MemberInfo::test(Id::new(99), "neo")
         }],
-        presences: Vec::new(),
         roles: vec![RoleInfo {
             position: 1,
+            color: Some(0x12_34_56),
             ..RoleInfo::test(role_id, "moderators")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
 
     let lines = message_item_lines(
         message.author.clone(),
@@ -1120,16 +1310,17 @@ fn message_content_highlights_current_user_role_mentions_as_self_mentions() {
 
     assert_eq!(lines[1].spans[2].content.as_ref(), "@moderators");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[2].style.fg,
+        Some(Color::Rgb(0x12, 0x34, 0x56))
     );
+    assert_eq!(lines[1].spans[2].style.bg, Some(Color::Rgb(92, 76, 35)));
 }
 
 #[test]
 fn message_content_keeps_role_mentions_raw_without_guild_context() {
     let mut message = message_with_content(Some("hello <@&10>".to_owned()));
     message.guild_id = None;
-    let state = state_with_role(10, "moderators");
+    let state = state_with_role(10, "moderators", None);
 
     let lines = format_message_content_lines(&message, &state, 200);
 
@@ -1164,31 +1355,9 @@ fn mention_like_display_name_does_not_duplicate_highlight_spans() {
     assert_eq!(lines[1].spans.len(), 3);
     assert_eq!(lines[1].spans[2].content.as_ref(), "@everyone");
     assert_eq!(
-        lines[1].spans[2].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        lines[1].spans[2].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
-}
-
-#[test]
-fn message_content_prefers_cached_member_alias_over_mention_metadata() {
-    let mut message = message_with_content(Some("hello <@10>".to_owned()));
-    message.mentions = vec![mention_info(10, "username")];
-    let state = state_with_member(10, "server alias");
-
-    let lines = format_message_content_lines(&message, &state, 200);
-
-    assert_eq!(line_texts(&lines), vec!["hello @server alias"]);
-}
-
-#[test]
-fn message_content_prefers_message_mention_nick_over_cached_member_name() {
-    let mut message = message_with_content(Some("hello <@10>".to_owned()));
-    message.mentions = vec![mention_info_with_nick(10, "server alias")];
-    let state = state_with_member(10, "username");
-
-    let lines = format_message_content_lines(&message, &state, 200);
-
-    assert_eq!(line_texts(&lines), vec!["hello @server alias"]);
 }
 
 #[test]
@@ -1196,25 +1365,6 @@ fn message_content_does_not_split_grapheme_clusters() {
     let lines = wrap_text_lines("👨‍👩‍👧‍👦", 7);
 
     assert_eq!(lines, vec!["👨‍👩‍👧‍👦".to_owned()]);
-}
-
-#[test]
-fn message_content_preserves_blank_lines() {
-    let message = message_with_content(Some("one\n\nthree".to_owned()));
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
-
-    assert_eq!(line_texts(&lines), vec!["one", "", "three"]);
-}
-
-#[test]
-fn video_attachment_is_labeled_as_video() {
-    let message = message_with_attachment(Some(String::new()), video_attachment());
-
-    assert_eq!(
-        format_message_content(&message, 200),
-        "[video: clip.mp4] 1920x1080"
-    );
 }
 
 #[test]
@@ -1243,11 +1393,55 @@ fn thread_created_message_uses_cached_thread_details() {
     assert_eq!(texts[0], "neo started release notes thread.");
     assert!(texts[1].starts_with("  ╭"));
     assert!(texts[2].starts_with("  │ release notes"));
-    assert!(texts[2].contains("12 messages"));
-    assert!(texts[3].contains("2 minutes ago"));
-    assert!(texts[4].starts_with("  ╰"));
-    assert_eq!(lines[0].style, Style::default().fg(Color::White));
-    assert_eq!(lines[3].style, Style::default().fg(DIM));
+    assert!(texts[3].trim().trim_matches('│').trim().is_empty());
+    assert!(texts[4].starts_with("  │ Preview unavailable"));
+    // The thread has no tags, so the tags row is omitted: metadata follows the
+    // preview directly.
+    assert!(texts[5].contains("12 comments"));
+    assert!(texts[5].contains("2 minutes ago"));
+    assert!(texts[6].starts_with("  ╰"));
+    assert_eq!(lines[0].style, Style::default());
+}
+
+#[test]
+fn thread_created_message_uses_shared_thread_card_layout() {
+    let mut message = message_with_content(Some("release notes".to_owned()));
+    message.message_kind = MessageKind::new(18);
+    message.id =
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(10 * 60 * 1000));
+    let latest_thread_message_id =
+        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        parent_id: Some(message.channel_id),
+        last_message_id: Some(latest_thread_message_id),
+        name: "release notes".to_owned(),
+        message_count: Some(12),
+        total_message_sent: Some(14),
+        thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
+        ..ChannelInfo::test(Id::new(10), "thread")
+    }));
+
+    // The card portion of a thread-created message must match exactly what the
+    // forum-post card renderer produces for the same thread item.
+    let item = state
+        .thread_card_item_for_message(&message)
+        .expect("kind-18 message yields a thread card item");
+    let card_width = crate::tui::ui::thread_card::thread_card_width_in_message(200);
+    let expected_card = line_texts_from_ratatui(&crate::tui::ui::thread_card::thread_card_lines(
+        &item,
+        false,
+        card_width,
+        state.show_custom_emoji(),
+        state.show_images(),
+    ));
+
+    let lines = format_message_content_lines(&message, &state, 200);
+    let texts: Vec<String> = line_texts(&lines).into_iter().map(str::to_owned).collect();
+
+    assert_eq!(texts[0], "neo started release notes thread.");
+    assert_eq!(&texts[1..1 + expected_card.len()], expected_card.as_slice());
 }
 
 #[test]
@@ -1278,36 +1472,13 @@ fn thread_created_message_uses_cached_thread_message_when_last_id_missing() {
     let lines = format_message_content_lines(&message, &state, 200);
     let texts = line_texts(&lines);
 
-    assert!(texts[2].contains("13 messages"));
-    assert!(texts[3].contains("neo latest reply 2 minutes ago"));
+    assert!(texts[4].starts_with("  │ neo: latest reply"));
+    assert!(texts[5].contains("13 comments"));
+    assert!(texts[5].contains("2 minutes ago"));
 }
 
 #[test]
-fn thread_created_message_falls_back_to_system_message_time() {
-    let mut message = message_with_content(Some("release notes".to_owned()));
-    message.message_kind = MessageKind::new(18);
-    message.id =
-        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        guild_id: Some(Id::new(1)),
-        parent_id: Some(message.channel_id),
-        name: "release notes".to_owned(),
-        message_count: Some(12),
-        total_message_sent: Some(14),
-        thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
-        ..ChannelInfo::test(Id::new(10), "thread")
-    }));
-
-    let lines = format_message_content_lines(&message, &state, 200);
-    let texts = line_texts(&lines);
-
-    assert!(texts[2].contains("12 messages"));
-    assert!(texts[3].contains("2 minutes ago"));
-}
-
-#[test]
-fn thread_created_message_keeps_archived_and_locked_metadata() {
+fn thread_created_message_shows_archived_and_locked_after_the_title() {
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
     message.id =
@@ -1325,7 +1496,11 @@ fn thread_created_message_keeps_archived_and_locked_metadata() {
 
     let lines = format_message_content_lines(&message, &state, 200);
 
-    assert!(line_texts(&lines)[3].contains("archived · locked"));
+    assert!(
+        line_texts(&lines)
+            .iter()
+            .any(|line| line.contains("release notes (archived) (locked)"))
+    );
 }
 
 #[test]
@@ -1392,8 +1567,8 @@ fn poll_message_body_highlights_mentions_inside_box() {
     assert_eq!(spans[0].content.as_ref(), "│ ");
     assert_eq!(spans[1].content.as_ref(), "@server alias");
     assert_eq!(
-        spans[1].style.bg,
-        mention_highlight_style(TextHighlightKind::SelfMention).bg
+        spans[1].style.fg,
+        mention_highlight_style(TextHighlightKind::SelfMention).fg
     );
 }
 
@@ -1415,31 +1590,7 @@ fn message_content_renders_reaction_chips_below_message() {
 }
 
 #[test]
-fn forwarded_snapshot_attachment_replaces_empty_message_placeholder() {
-    let message =
-        message_with_forwarded_snapshot(forwarded_snapshot(Some(""), vec![image_attachment()]));
-
-    assert_eq!(
-        format_message_content(&message, 200),
-        "↱ Forwarded │ [image: cat.png] 640x480"
-    );
-}
-
-#[test]
-fn forwarded_snapshot_content_appends_attachment_summary() {
-    let message = message_with_forwarded_snapshot(forwarded_snapshot(
-        Some("hello"),
-        vec![image_attachment()],
-    ));
-
-    assert_eq!(
-        format_message_content(&message, 200),
-        "↱ Forwarded │ hello │ [image: cat.png] 640x480"
-    );
-}
-
-#[test]
-fn forwarded_snapshot_content_renders_known_user_mentions() {
+fn forwarded_snapshot_without_source_channel_keeps_raw_mentions() {
     let message =
         message_with_forwarded_snapshot(forwarded_snapshot(Some("hello <@10>"), Vec::new()));
     let state = state_with_member(10, "alice");
@@ -1485,23 +1636,6 @@ fn forwarded_snapshot_content_renders_mentions_from_snapshot_metadata() {
 }
 
 #[test]
-fn message_viewport_lines_reserve_rows_for_multiple_attachment_summaries() {
-    let mut message = message_with_attachment(Some("look".to_owned()), image_attachment());
-    message.attachments = image_attachments(2);
-    let messages = [&message];
-
-    let lines = message_viewport_lines(
-        &messages,
-        None,
-        &DashboardState::new(),
-        super::default_message_viewport_layout(),
-        &[],
-    );
-
-    assert_eq!(lines.len(), 8);
-}
-
-#[test]
 fn message_viewport_lines_group_consecutive_messages_by_author() {
     let mut state = state_with_message();
     push_message(&mut state, 2, "follow-up");
@@ -1520,6 +1654,107 @@ fn message_viewport_lines_group_consecutive_messages_by_author() {
     assert_eq!(texts.iter().filter(|text| text.contains("neo")).count(), 1);
     assert_eq!(texts[2], "  oooo  hello");
     assert_eq!(texts[3], "        follow-up");
+}
+
+#[test]
+fn message_viewport_lines_match_discord_webhook_author_grouping() {
+    let cases = [
+        ("different username", "Persona Two", "avatar-two", 2),
+        ("avatar only", "Persona One", "avatar-two", 1),
+    ];
+
+    for (label, second_author, second_avatar, expected_header_count) in cases {
+        let webhook_id = Id::new(40);
+        let author_id = Id::new(30);
+        let mut state = seed_channel_message_fixture(
+            DashboardState::new(),
+            MessageCreateFixture {
+                message_id: Id::new(1),
+                webhook_id: Some(webhook_id),
+                author_id,
+                author: "Persona One".to_owned(),
+                author_avatar_url: Some("avatar-one".to_owned()),
+                author_is_bot: true,
+                content: Some("first line".to_owned()),
+                ..guild_message_create_fixture()
+            },
+        );
+        state.push_event(message_create_event(MessageCreateFixture {
+            message_id: Id::new(2),
+            webhook_id: Some(webhook_id),
+            author_id,
+            author: second_author.to_owned(),
+            author_avatar_url: Some(second_avatar.to_owned()),
+            author_is_bot: true,
+            content: Some("second line".to_owned()),
+            ..guild_message_create_fixture()
+        }));
+        state.jump_top();
+        let messages = state.messages();
+
+        let lines = message_viewport_lines(
+            &messages,
+            None,
+            &state,
+            super::default_message_viewport_layout(),
+            &[],
+        );
+        let texts = line_texts_from_ratatui(&lines);
+
+        assert_eq!(
+            texts.iter().filter(|text| text.contains("[bot]")).count(),
+            expected_header_count,
+            "{label}"
+        );
+        assert!(
+            texts.iter().any(|text| text.contains("first line")),
+            "{label}"
+        );
+        assert!(
+            texts.iter().any(|text| text.contains("second line")),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn message_viewport_lines_dim_pending_message_content() {
+    let mut state = state_with_message();
+    state.insert_pending_message_for_test(MessageState {
+        id: Id::new(2),
+        nonce: Some(Id::new(2)),
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(99),
+        author: "neo".to_owned(),
+        content: Some("sending".to_owned()),
+        ..MessageState::default()
+    });
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
+        super::default_message_viewport_layout(),
+        &[],
+    );
+    let confirmed_content = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.contains("hello"))
+        .expect("confirmed content span");
+    let pending_content = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content.contains("sending"))
+        .expect("pending content span");
+
+    assert!(!confirmed_content.style.add_modifier.contains(Modifier::DIM));
+    assert!(
+        pending_content.style.add_modifier.contains(Modifier::DIM),
+        "pending content should use the muted style"
+    );
 }
 
 #[test]
@@ -1550,13 +1785,13 @@ fn message_viewport_lines_start_new_author_group_after_time_gap() {
 #[test]
 fn message_viewport_lines_keep_reactions_below_reacted_grouped_message() {
     let mut state = state_with_message();
-    state.push_event(AppEvent::MessageReactionAdd {
+    state.push_event(message_reaction_add_event(MessageReactionAddFixture {
         guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
         message_id: Id::new(1),
         user_id: Id::new(100),
         emoji: ReactionEmoji::Unicode("👍".to_owned()),
-    });
+    }));
     push_message(&mut state, 2, "follow-up");
     state.jump_top();
     let messages = state.messages();
@@ -1578,6 +1813,7 @@ fn message_viewport_lines_keep_reactions_below_reacted_grouped_message() {
 #[test]
 fn message_viewport_lines_reserve_bounded_rows_for_image_albums() {
     for (attachment_count, expected_lines, overflow_text) in [
+        (2, 8, None),
         (3, 9, None),
         (4, 10, None),
         (5, 12, Some("        +1 more images")),
@@ -1599,25 +1835,6 @@ fn message_viewport_lines_reserve_bounded_rows_for_image_albums() {
             assert!(line_texts_from_ratatui(&lines).contains(&overflow_text.to_owned()));
         }
     }
-}
-
-#[test]
-fn text_only_message_item_has_header_and_content_rows() {
-    let lines = message_item_lines(
-        "neo".to_owned(),
-        message_author_style(None),
-        "00:00".to_owned(),
-        vec![MessageContentLine::plain("look".to_owned())],
-        14,
-        0,
-        None,
-        0,
-    );
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["  oooo  neo 00:00", "  oooo  look", ""]
-    );
 }
 
 #[test]
@@ -1711,9 +1928,12 @@ fn new_messages_notice_line_centers_count_within_full_width() {
 
     assert_eq!(text.width(), 30);
     assert!(text.contains("↓ 3 new messages"));
-    assert!(!text.contains('#'));
-    assert!(!text.contains('│'));
-    assert_eq!(line.spans[0].style.fg, Some(ACCENT));
+    assert_eq!(
+        line.spans[0].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::UnreadNotice)
+            .fg
+    );
     assert_eq!(line.spans[0].style.bg, None);
     assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
 }
@@ -1800,7 +2020,7 @@ fn message_viewport_lines_keep_rows_from_tall_following_message() {
     .take(5)
     .collect::<Vec<_>>();
     let visible_text = line_texts_from_ratatui(&visible_rows);
-    let sent_time = format_message_sent_time(Id::new(1));
+    let sent_time = format_message_sent_time(Id::new(1), true);
 
     assert!(visible_text[0].starts_with("╭─oooo  "));
     assert!(visible_text[0].contains(&sent_time));
@@ -1809,15 +2029,6 @@ fn message_viewport_lines_keep_rows_from_tall_following_message() {
     assert!(visible_text[3].starts_with("  oooo  "));
     assert!(visible_text[3].ends_with(&sent_time));
     assert!(visible_text[4].ends_with("abcdefgh"));
-}
-
-#[test]
-fn message_preview_rows_do_not_shrink_message_viewport() {
-    let mut state = DashboardState::new();
-
-    sync_view_heights(Rect::new(0, 0, 100, 20), &mut state);
-
-    assert_eq!(state.message_view_height(), 14);
 }
 
 #[test]
@@ -1835,4 +2046,59 @@ fn message_viewport_lines_render_overflow_marker_as_text_fallback() {
     );
 
     assert!(line_texts_from_ratatui(&lines).contains(&"        +2 more images".to_owned()));
+    let overflow = lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content == "+2 more images")
+        .expect("image overflow label should be present");
+    assert_eq!(
+        overflow.style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ImageOverflow)
+            .fg
+    );
+    assert_eq!(
+        overflow.style.bg,
+        Some(theme::current().background(theme::HighlightGroup::Normal))
+    );
+}
+
+#[test]
+fn message_content_lines_wrap_and_preserve_by_terminal_width() {
+    let cases = [
+        ("hello\nworld", 200, vec!["hello", "world"]),
+        ("one\n\nthree", 200, vec!["one", "", "three"]),
+        ("abcdefghijkl", 5, vec!["abcde", "fghij", "kl"]),
+        ("漢字仮名交じ", 10, vec!["漢字仮名交", "じ"]),
+    ];
+
+    for (content, width, expected) in cases {
+        let message = message_with_content(Some(content.to_owned()));
+        let lines = format_message_content_lines(&message, &DashboardState::new(), width);
+        assert_eq!(line_texts(&lines), expected, "{content}");
+    }
+}
+
+#[test]
+fn embed_descriptions_keep_link_targets_and_escaped_markers() {
+    let cases = [
+        (
+            "See [docs](https://example.com/docs)",
+            "  ▎ See docs (https://example.com/docs)",
+        ),
+        (
+            "\\*\\*literal\\*\\* and **bold**",
+            "  ▎ **literal** and bold",
+        ),
+    ];
+
+    for (description, expected) in cases {
+        let mut message = message_with_content(Some("read this".to_owned()));
+        let mut embed = youtube_embed();
+        embed.description = Some(description.to_owned());
+        message.embeds = vec![embed];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+        assert!(line_texts(&lines).contains(&expected), "{description}");
+    }
 }

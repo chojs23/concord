@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use crate::discord::AppCommand;
 
 use super::super::{
-    state::{ActiveModalPopupKind, DashboardState, FocusPane},
+    state::{DashboardState, FocusPane},
     ui,
 };
 
@@ -53,24 +53,12 @@ pub fn handle_mouse_event(
     area: Rect,
     clicks: &mut MouseClickTracker,
 ) -> MouseOutcome {
-    if state.is_leader_active() {
-        state.close_all_action_contexts();
-        state.close_leader();
+    if state.is_key_sequence_active() {
+        state.close_key_sequence();
         clicks.clear();
     }
 
     let target = ui::mouse_target_at(area, state, mouse.column, mouse.row);
-    let modal_mouse = matches!(
-        target,
-        Some(
-            ui::MouseTarget::PopupRow { .. }
-                | ui::MouseTarget::ChannelSwitcherRow { .. }
-                | ui::MouseTarget::ModalBackdrop
-        )
-    );
-    if ignores_dashboard_mouse(state) && !modal_mouse {
-        return MouseOutcome::ignored();
-    }
     let blurred_composer = state.is_composing()
         && target != Some(ui::MouseTarget::Composer)
         && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left));
@@ -84,15 +72,6 @@ pub fn handle_mouse_event(
 
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            // The user-profile popup absorbs clicks only inside its drawn
-            // rectangle. Clicks outside the popup should still reach the
-            // dashboard instead of making the whole screen inert.
-            if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile)
-                && ui::user_profile_popup_contains(area, state, mouse.column, mouse.row)
-            {
-                clicks.clear();
-                return MouseOutcome::handled(None);
-            }
             let Some(target) = target else {
                 clicks.clear();
                 return if blurred_composer {
@@ -105,14 +84,10 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::ScrollDown => {
             clicks.clear();
-            if modal_mouse {
-                move_modal_down(state);
-                return MouseOutcome::handled(None);
+            if state.active_modal_popup_kind().is_some() {
+                return MouseOutcome::handled(state.move_active_popup_down());
             }
-            // Wheel events while the user-profile popup is open should scroll
-            // the popup body, not the pane below it.
-            if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
-                state.scroll_user_profile_popup_down();
+            if state.is_folder_settings_open() {
                 return MouseOutcome::handled(None);
             }
             let pane = ui::focus_pane_at(area, state, mouse.column, mouse.row);
@@ -124,12 +99,10 @@ pub fn handle_mouse_event(
         }
         MouseEventKind::ScrollUp => {
             clicks.clear();
-            if modal_mouse {
-                move_modal_up(state);
-                return MouseOutcome::handled(None);
+            if state.active_modal_popup_kind().is_some() {
+                return MouseOutcome::handled(state.move_active_popup_up());
             }
-            if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
-                state.scroll_user_profile_popup_up();
+            if state.is_folder_settings_open() {
                 return MouseOutcome::handled(None);
             }
             let pane = ui::focus_pane_at(area, state, mouse.column, mouse.row);
@@ -182,26 +155,13 @@ fn handle_left_click(
             MouseOutcome::handled(None)
         }
         ui::MouseTarget::PopupRow { target, row } => {
-            let selected = select_popup_row(state, target, row);
+            let selected = state.select_active_popup_row(target, row);
             if !selected {
                 clicks.clear();
                 return MouseOutcome::handled(None);
             }
             let command = if clicks.record_left_click(ui::MouseTarget::PopupRow { target, row }) {
-                activate_popup_row(state, target)
-            } else {
-                None
-            };
-            MouseOutcome::handled(command)
-        }
-        ui::MouseTarget::ChannelSwitcherRow { row } => {
-            let selected = state.select_channel_switcher_item(row);
-            if !selected {
-                clicks.clear();
-                return MouseOutcome::handled(None);
-            }
-            let command = if clicks.record_left_click(target) {
-                state.activate_selected_channel_switcher_item()
+                state.activate_active_popup_row(target)
             } else {
                 None
             };
@@ -226,41 +186,6 @@ fn handle_left_click(
             };
             MouseOutcome::handled(command)
         }
-    }
-}
-
-fn move_modal_down(state: &mut DashboardState) {
-    match state.active_modal_popup_kind() {
-        Some(ActiveModalPopupKind::ChannelSwitcher) => state.move_channel_switcher_down(),
-        Some(ActiveModalPopupKind::MessageUrlPicker) => state.move_message_url_picker_down(),
-        Some(ActiveModalPopupKind::MessageActionMenu) => state.move_message_action_down(),
-        _ => {}
-    }
-}
-
-fn move_modal_up(state: &mut DashboardState) {
-    match state.active_modal_popup_kind() {
-        Some(ActiveModalPopupKind::ChannelSwitcher) => state.move_channel_switcher_up(),
-        Some(ActiveModalPopupKind::MessageUrlPicker) => state.move_message_url_picker_up(),
-        Some(ActiveModalPopupKind::MessageActionMenu) => state.move_message_action_up(),
-        _ => {}
-    }
-}
-
-fn select_popup_row(state: &mut DashboardState, target: ui::PopupListTarget, row: usize) -> bool {
-    match target {
-        ui::PopupListTarget::MessageAction => state.select_message_action_row(row),
-        ui::PopupListTarget::MessageUrl => state.select_message_url_row(row),
-    }
-}
-
-fn activate_popup_row(
-    state: &mut DashboardState,
-    target: ui::PopupListTarget,
-) -> Option<AppCommand> {
-    match target {
-        ui::PopupListTarget::MessageAction => state.activate_selected_message_action(),
-        ui::PopupListTarget::MessageUrl => state.activate_selected_message_url(),
     }
 }
 
@@ -291,22 +216,4 @@ fn activate_focused_target(state: &mut DashboardState) -> Option<AppCommand> {
         FocusPane::Messages => state.activate_selected_message_pane_item(),
         FocusPane::Members => state.show_selected_member_profile(),
     }
-}
-
-fn ignores_dashboard_mouse(state: &DashboardState) -> bool {
-    matches!(
-        state.active_modal_popup_kind(),
-        Some(
-            ActiveModalPopupKind::DebugLog
-                | ActiveModalPopupKind::ReactionUsers
-                | ActiveModalPopupKind::PollVotePicker
-                | ActiveModalPopupKind::EmojiReactionPicker
-                | ActiveModalPopupKind::MessageActionMenu
-                | ActiveModalPopupKind::MessageUrlPicker
-                | ActiveModalPopupKind::AttachmentViewer
-                | ActiveModalPopupKind::ChannelSwitcher
-        )
-    ) || state.is_guild_leader_action_active()
-        || state.is_channel_leader_action_active()
-        || state.is_member_leader_action_active()
 }

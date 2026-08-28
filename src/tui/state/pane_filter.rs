@@ -125,24 +125,24 @@ impl DashboardState {
 
     fn pane_filter(&self, pane: FocusPane) -> Option<&PaneFilterState> {
         match pane {
-            FocusPane::Guilds => self.navigation.guild_pane_filter.as_ref(),
-            FocusPane::Channels => self.navigation.channel_pane_filter.as_ref(),
+            FocusPane::Guilds => self.navigation.guilds.filter.as_ref(),
+            FocusPane::Channels => self.navigation.channels.filter.as_ref(),
             FocusPane::Messages | FocusPane::Members => None,
         }
     }
 
     fn pane_filter_mut(&mut self, pane: FocusPane) -> Option<&mut PaneFilterState> {
         match pane {
-            FocusPane::Guilds => self.navigation.guild_pane_filter.as_mut(),
-            FocusPane::Channels => self.navigation.channel_pane_filter.as_mut(),
+            FocusPane::Guilds => self.navigation.guilds.filter.as_mut(),
+            FocusPane::Channels => self.navigation.channels.filter.as_mut(),
             FocusPane::Messages | FocusPane::Members => None,
         }
     }
 
     fn set_pane_filter(&mut self, pane: FocusPane, filter: Option<PaneFilterState>) {
         match pane {
-            FocusPane::Guilds => self.navigation.guild_pane_filter = filter,
-            FocusPane::Channels => self.navigation.channel_pane_filter = filter,
+            FocusPane::Guilds => self.navigation.guilds.filter = filter,
+            FocusPane::Channels => self.navigation.channels.filter = filter,
             FocusPane::Messages | FocusPane::Members => {}
         }
     }
@@ -150,8 +150,8 @@ impl DashboardState {
     fn reset_pane_filter_view(&mut self, pane: FocusPane) {
         self.reset_pane_filter_selection(pane);
         match pane {
-            FocusPane::Guilds => self.navigation.guilds.keep_selection_visible(),
-            FocusPane::Channels => self.navigation.channels.keep_selection_visible(),
+            FocusPane::Guilds => self.navigation.guilds.list.keep_selection_visible(),
+            FocusPane::Channels => self.navigation.channels.list.keep_selection_visible(),
             FocusPane::Messages | FocusPane::Members => {}
         }
     }
@@ -159,10 +159,10 @@ impl DashboardState {
     fn reset_pane_filter_selection(&mut self, pane: FocusPane) {
         match pane {
             FocusPane::Guilds => {
-                self.navigation.guilds.reset_selection_and_scroll();
+                self.navigation.guilds.list.reset_selection_and_scroll();
             }
             FocusPane::Channels => {
-                self.navigation.channels.reset_selection_and_scroll();
+                self.navigation.channels.list.reset_selection_and_scroll();
             }
             FocusPane::Messages | FocusPane::Members => {}
         }

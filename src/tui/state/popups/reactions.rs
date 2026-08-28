@@ -1,6 +1,10 @@
-use crate::discord::AppCommand;
-use crate::discord::ids::{Id, marker::GuildMarker};
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, MessageMarker},
+};
+use crate::discord::{AppCommand, ReactionEmoji};
 use crate::tui::fuzzy::{FuzzyScore, fuzzy_text_score};
+use crate::tui::keybindings::SelectionAction;
 
 use super::super::emoji::{
     custom_emoji_can_be_used_directly, custom_emoji_reaction_item, is_quick_unicode_emoji,
@@ -9,7 +13,7 @@ use super::super::emoji::{
 use super::super::{
     DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
 };
-use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup};
+use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupTarget};
 
 impl DashboardState {
     pub fn reaction_users_popup(&self) -> Option<&ReactionUsersPopupState> {
@@ -28,7 +32,8 @@ impl DashboardState {
         &self,
         guild_id: Option<Id<GuildMarker>>,
     ) -> Vec<EmojiReactionItem> {
-        let mut items = quick_unicode_emoji_reaction_items();
+        let favorites = &self.options.reaction_options.favorite_emojis;
+        let mut items = quick_unicode_emoji_reaction_items(favorites);
 
         if let Some(guild_id) = guild_id {
             items.extend(
@@ -48,7 +53,16 @@ impl DashboardState {
             );
         }
 
-        if self.current_user_has_nitro() {
+        let can_use_external_emojis = self
+            .selected_message_state()
+            .and_then(|message| self.discord.cache.channel(message.channel_id))
+            .or_else(|| self.selected_channel_state())
+            .is_none_or(|channel| {
+                self.discord
+                    .cache
+                    .can_use_external_emojis_in_channel(channel)
+            });
+        if self.current_user_has_nitro() && can_use_external_emojis {
             items.extend(
                 self.discord
                     .cache
@@ -69,7 +83,7 @@ impl DashboardState {
             );
         }
 
-        items.extend(remaining_unicode_emoji_reaction_items());
+        items.extend(remaining_unicode_emoji_reaction_items(favorites));
 
         items
     }
@@ -84,7 +98,11 @@ impl DashboardState {
             return items;
         };
 
-        filter_emoji_reaction_items(items, filter)
+        filter_emoji_reaction_items(
+            items,
+            filter,
+            &self.options.reaction_options.favorite_emojis,
+        )
     }
 
     pub fn filtered_emoji_reaction_items_slice(&self) -> Option<&[EmojiReactionItem]> {
@@ -135,37 +153,91 @@ impl DashboardState {
         }
     }
 
-    pub fn scroll_reaction_users_popup_down(&mut self) {
-        if let Some(popup) = self.popups.reaction_users_popup_mut() {
-            popup.scroll.scroll_down();
+    pub fn open_reaction_users_popup(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        reactions: Vec<(ReactionEmoji, u64)>,
+    ) {
+        let popup = ReactionUsersPopupState::new(channel_id, message_id, reactions);
+        self.popups.set_modal(ModalPopup::ReactionUsers(popup));
+    }
+
+    pub fn navigate_reaction_users_popup(&mut self, action: SelectionAction) -> Option<AppCommand> {
+        if !self.popups.reaction_users_popup()?.is_viewing_users() {
+            self.move_selectable_popup(SelectablePopupTarget::ReactionList, action);
+            return None;
+        }
+        let popup = self.popups.reaction_users_popup_mut()?;
+        match action {
+            SelectionAction::Previous => {
+                popup.user_scroll.scroll_up();
+                None
+            }
+            SelectionAction::Next => {
+                popup.user_scroll.scroll_down();
+                let (emoji, after) = popup.take_load_more()?;
+                Some(AppCommand::LoadReactionUsers {
+                    channel_id: popup.channel_id,
+                    message_id: popup.message_id,
+                    emoji,
+                    after: Some(after),
+                })
+            }
         }
     }
 
-    pub fn scroll_reaction_users_popup_up(&mut self) {
-        if let Some(popup) = self.popups.reaction_users_popup_mut() {
-            popup.scroll.scroll_up();
-        }
+    /// Fetches the next page after a page or half-page scroll of the user list,
+    /// when the reader is near the bottom and more users remain.
+    pub fn reaction_users_popup_take_load_more(&mut self) -> Option<AppCommand> {
+        let popup = self.popups.reaction_users_popup_mut()?;
+        let (emoji, after) = popup.take_load_more()?;
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: popup.channel_id,
+            message_id: popup.message_id,
+            emoji,
+            after: Some(after),
+        })
     }
 
-    pub fn set_reaction_users_popup_view_height(&mut self, height: usize) {
+    pub fn activate_reaction_users_popup(&mut self) -> Option<AppCommand> {
+        let popup = self.popups.reaction_users_popup_mut()?;
+        if popup.is_viewing_users() {
+            return None;
+        }
+        let emoji = popup.open_selected()?;
+        Some(AppCommand::LoadReactionUsers {
+            channel_id: popup.channel_id,
+            message_id: popup.message_id,
+            emoji,
+            after: None,
+        })
+    }
+
+    pub fn reaction_users_popup_back(&mut self) -> bool {
+        self.popups
+            .reaction_users_popup_mut()
+            .is_some_and(|popup| popup.back_to_list())
+    }
+
+    pub fn set_reaction_users_document_view_height(&mut self, height: usize) {
         if let Some(popup) = self.popups.reaction_users_popup_mut() {
-            let total_lines = popup.data_line_count();
-            popup.scroll.set_view_height(height);
-            popup.scroll.set_total_lines(total_lines);
+            if !popup.is_viewing_users() {
+                return;
+            }
+            popup.set_user_view_height(height);
         }
     }
 
     pub fn move_emoji_reaction_down(&mut self) {
-        let reactions_len = self.filtered_emoji_reaction_items().len();
-        if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
-            picker.selection.move_down(reactions_len);
-        }
+        self.move_selectable_popup(SelectablePopupTarget::EmojiReactions, SelectionAction::Next);
     }
 
     pub fn move_emoji_reaction_up(&mut self) {
-        if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
-            picker.selection.move_up();
-        }
+        self.move_selectable_popup(
+            SelectablePopupTarget::EmojiReactions,
+            SelectionAction::Previous,
+        );
     }
 
     pub fn selected_emoji_reaction_index_for_len(&self, len: usize) -> Option<usize> {
@@ -186,12 +258,6 @@ impl DashboardState {
         let selected_message = self.selected_message_state().filter(|message| {
             message.channel_id == picker.channel_id && message.id == picker.message_id
         });
-        if let Some(message) = selected_message
-            && !self.can_add_reaction_to_message(message, &reaction.emoji)
-        {
-            self.close_emoji_reaction_picker();
-            return None;
-        }
         let already_reacted = selected_message.is_some_and(|message| {
             message.channel_id == picker.channel_id
                 && message.id == picker.message_id
@@ -200,6 +266,13 @@ impl DashboardState {
                     .iter()
                     .any(|existing| existing.me && existing.emoji == reaction.emoji)
         });
+        if !already_reacted
+            && selected_message
+                .is_some_and(|message| !self.can_add_reaction_to_message(message, &reaction.emoji))
+        {
+            self.close_emoji_reaction_picker();
+            return None;
+        }
         let command = if already_reacted {
             AppCommand::RemoveReaction {
                 channel_id: picker.channel_id,
@@ -225,11 +298,10 @@ impl DashboardState {
             .iter()
             .enumerate()
             .position(|(index, _)| {
-                self.options.key_bindings().emoji_reaction_shortcut(
-                    &picker.filtered_items,
-                    &picker.existing_reactions,
-                    index,
-                ) == Some(shortcut)
+                self.options
+                    .key_bindings()
+                    .emoji_reaction_shortcut(&picker.filtered_items, index)
+                    == Some(shortcut)
             })?;
         if let Some(picker) = self.popups.emoji_reaction_picker_mut() {
             picker.selection.select(index);
@@ -253,21 +325,25 @@ impl DashboardState {
     }
 
     pub fn push_emoji_reaction_filter_char(&mut self, value: char) {
+        let favorites = &self.options.reaction_options.favorite_emojis;
         if let Some(picker) = self.popups.emoji_reaction_picker_mut()
             && let Some(filter) = &mut picker.filter
         {
             filter.push(value);
-            picker.filtered_items = filter_emoji_reaction_items_from_slice(&picker.items, filter);
+            picker.filtered_items =
+                filter_emoji_reaction_items_from_slice(&picker.items, filter, favorites);
             picker.selection.select(0);
         }
     }
 
     pub fn pop_emoji_reaction_filter_char(&mut self) {
+        let favorites = &self.options.reaction_options.favorite_emojis;
         if let Some(picker) = self.popups.emoji_reaction_picker_mut()
             && let Some(filter) = &mut picker.filter
         {
             filter.pop();
-            picker.filtered_items = filter_emoji_reaction_items_from_slice(&picker.items, filter);
+            picker.filtered_items =
+                filter_emoji_reaction_items_from_slice(&picker.items, filter, favorites);
             picker.selection.select(0);
         }
     }
@@ -306,18 +382,19 @@ impl DashboardState {
                     })
                     .collect()
             };
-            self.popups.modal = Some(ModalPopup::EmojiReactionPicker(EmojiReactionPickerState {
-                selection: Default::default(),
-                filter: None,
-                filter_editing: false,
-                filtered_items: items.clone(),
-                items,
-                existing_reactions,
-                own_reactions,
-                guild_id,
-                channel_id: message.channel_id,
-                message_id: message.id,
-            }));
+            self.popups
+                .set_modal(ModalPopup::EmojiReactionPicker(EmojiReactionPickerState {
+                    selection: Default::default(),
+                    filter: None,
+                    filter_editing: false,
+                    filtered_items: items.clone(),
+                    items,
+                    existing_reactions,
+                    own_reactions,
+                    guild_id,
+                    channel_id: message.channel_id,
+                    message_id: message.id,
+                }));
         }
     }
 
@@ -336,8 +413,9 @@ impl DashboardState {
 fn filter_emoji_reaction_items(
     items: Vec<EmojiReactionItem>,
     filter: &str,
+    favorites: &[String],
 ) -> Vec<EmojiReactionItem> {
-    filter_emoji_reaction_items_from_slice(&items, filter)
+    filter_emoji_reaction_items_from_slice(&items, filter, favorites)
 }
 
 fn prioritize_existing_reactions(
@@ -370,6 +448,7 @@ fn prioritize_existing_reactions(
 fn filter_emoji_reaction_items_from_slice(
     items: &[EmojiReactionItem],
     filter: &str,
+    favorites: &[String],
 ) -> Vec<EmojiReactionItem> {
     let filter = filter.trim();
     if filter.is_empty() {
@@ -382,7 +461,7 @@ fn filter_emoji_reaction_items_from_slice(
         .filter_map(|(index, item)| {
             emoji_reaction_filter_score(item, filter).map(|score| {
                 (
-                    usize::from(emoji_reaction_is_remaining_unicode(item)),
+                    usize::from(emoji_reaction_is_remaining_unicode(item, favorites)),
                     score,
                     index,
                     item.clone(),
@@ -397,8 +476,11 @@ fn filter_emoji_reaction_items_from_slice(
     scored.into_iter().map(|(_, _, _, item)| item).collect()
 }
 
-fn emoji_reaction_is_remaining_unicode(item: &EmojiReactionItem) -> bool {
-    matches!(&item.emoji, crate::discord::ReactionEmoji::Unicode(emoji) if !is_quick_unicode_emoji(emoji))
+fn emoji_reaction_is_remaining_unicode(item: &EmojiReactionItem, favorites: &[String]) -> bool {
+    matches!(
+        &item.emoji,
+        crate::discord::ReactionEmoji::Unicode(emoji) if !is_quick_unicode_emoji(emoji, favorites)
+    )
 }
 
 fn emoji_reaction_filter_score(item: &EmojiReactionItem, filter: &str) -> Option<FuzzyScore> {

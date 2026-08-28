@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::{KeymapBinding, KeymapOptions};
+use crate::tui::text_input::TextEditAction;
 
 use super::{
     ComposerAction, KeyChord, KeymapBindingSummary, MAX_KEYMAP_MAPPINGS, char_chord, ctrl_chord,
@@ -31,6 +32,8 @@ enum ComposerShortcutAction {
     RemoveLastAttachment,
     DeletePreviousChar,
     DeletePreviousWord,
+    DeleteToLineStart,
+    DeleteToLineEnd,
     MoveCursorUp,
     MoveCursorDown,
     MoveCursorWordLeft,
@@ -39,6 +42,7 @@ enum ComposerShortcutAction {
     MoveCursorRight,
     MoveCursorHome,
     MoveCursorEnd,
+    ToggleReplyPing,
 }
 
 impl Default for ComposerKeyBindings {
@@ -141,6 +145,8 @@ impl ComposerShortcutAction {
             "RemoveLastAttachment" => Some(Self::RemoveLastAttachment),
             "DeletePreviousChar" => Some(Self::DeletePreviousChar),
             "DeletePreviousWord" => Some(Self::DeletePreviousWord),
+            "DeleteToLineStart" => Some(Self::DeleteToLineStart),
+            "DeleteToLineEnd" => Some(Self::DeleteToLineEnd),
             "MoveCursorUp" => Some(Self::MoveCursorUp),
             "MoveCursorDown" => Some(Self::MoveCursorDown),
             "MoveCursorWordLeft" => Some(Self::MoveCursorWordLeft),
@@ -149,6 +155,7 @@ impl ComposerShortcutAction {
             "MoveCursorRight" => Some(Self::MoveCursorRight),
             "MoveCursorHome" => Some(Self::MoveCursorHome),
             "MoveCursorEnd" => Some(Self::MoveCursorEnd),
+            "ToggleReplyPing" => Some(Self::ToggleReplyPing),
             _ => None,
         }
     }
@@ -164,6 +171,8 @@ impl ComposerShortcutAction {
             Self::RemoveLastAttachment => "RemoveLastAttachment",
             Self::DeletePreviousChar => "DeletePreviousChar",
             Self::DeletePreviousWord => "DeletePreviousWord",
+            Self::DeleteToLineStart => "DeleteToLineStart",
+            Self::DeleteToLineEnd => "DeleteToLineEnd",
             Self::MoveCursorUp => "MoveCursorUp",
             Self::MoveCursorDown => "MoveCursorDown",
             Self::MoveCursorWordLeft => "MoveCursorWordLeft",
@@ -172,6 +181,7 @@ impl ComposerShortcutAction {
             Self::MoveCursorRight => "MoveCursorRight",
             Self::MoveCursorHome => "MoveCursorHome",
             Self::MoveCursorEnd => "MoveCursorEnd",
+            Self::ToggleReplyPing => "ToggleReplyPing",
         }
     }
 
@@ -184,16 +194,27 @@ impl ComposerShortcutAction {
             Self::Close => ComposerAction::Close,
             Self::ClearInput => ComposerAction::ClearInput,
             Self::RemoveLastAttachment => ComposerAction::RemoveLastAttachment,
-            Self::DeletePreviousChar => ComposerAction::DeletePreviousChar,
-            Self::DeletePreviousWord => ComposerAction::DeletePreviousWord,
-            Self::MoveCursorUp => ComposerAction::MoveCursorUp,
-            Self::MoveCursorDown => ComposerAction::MoveCursorDown,
-            Self::MoveCursorWordLeft => ComposerAction::MoveCursorWordLeft,
-            Self::MoveCursorLeft => ComposerAction::MoveCursorLeft,
-            Self::MoveCursorWordRight => ComposerAction::MoveCursorWordRight,
-            Self::MoveCursorRight => ComposerAction::MoveCursorRight,
-            Self::MoveCursorHome => ComposerAction::MoveCursorHome,
-            Self::MoveCursorEnd => ComposerAction::MoveCursorEnd,
+            Self::DeletePreviousChar => {
+                ComposerAction::EditText(TextEditAction::DeletePreviousChar)
+            }
+            Self::DeletePreviousWord => {
+                ComposerAction::EditText(TextEditAction::DeletePreviousWord)
+            }
+            Self::DeleteToLineStart => ComposerAction::EditText(TextEditAction::DeleteToLineStart),
+            Self::DeleteToLineEnd => ComposerAction::EditText(TextEditAction::DeleteToLineEnd),
+            Self::MoveCursorUp => ComposerAction::EditText(TextEditAction::MoveCursorUp),
+            Self::MoveCursorDown => ComposerAction::EditText(TextEditAction::MoveCursorDown),
+            Self::MoveCursorWordLeft => {
+                ComposerAction::EditText(TextEditAction::MoveCursorWordLeft)
+            }
+            Self::MoveCursorLeft => ComposerAction::EditText(TextEditAction::MoveCursorLeft),
+            Self::MoveCursorWordRight => {
+                ComposerAction::EditText(TextEditAction::MoveCursorWordRight)
+            }
+            Self::MoveCursorRight => ComposerAction::EditText(TextEditAction::MoveCursorRight),
+            Self::MoveCursorHome => ComposerAction::EditText(TextEditAction::MoveCursorHome),
+            Self::MoveCursorEnd => ComposerAction::EditText(TextEditAction::MoveCursorEnd),
+            Self::ToggleReplyPing => ComposerAction::ToggleReplyPing,
         }
     }
 }
@@ -275,6 +296,14 @@ fn default_composer_key_bindings() -> BTreeMap<ComposerShortcutAction, Vec<KeyCh
             ],
         ),
         (
+            ComposerShortcutAction::DeleteToLineStart,
+            vec![ctrl_chord('u')],
+        ),
+        (
+            ComposerShortcutAction::DeleteToLineEnd,
+            vec![ctrl_chord('k')],
+        ),
+        (
             ComposerShortcutAction::MoveCursorUp,
             vec![key_chord(KeyCode::Up)],
         ),
@@ -305,6 +334,10 @@ fn default_composer_key_bindings() -> BTreeMap<ComposerShortcutAction, Vec<KeyCh
         (
             ComposerShortcutAction::MoveCursorEnd,
             vec![key_chord(KeyCode::End)],
+        ),
+        (
+            ComposerShortcutAction::ToggleReplyPing,
+            vec![modified_key_chord(KeyCode::Char('p'), KeyModifiers::ALT)],
         ),
     ])
 }

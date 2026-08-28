@@ -1,49 +1,88 @@
-use std::ops::Range;
+use std::{
+    collections::HashMap,
+    ops::Range,
+    time::{Duration, Instant},
+};
 
+use chrono::Utc;
+
+use crate::AppError;
+use crate::discord::ActionBlockReason;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, MessageMarker},
 };
 use crate::discord::{
     APPLICATION_COMMAND_CHANNEL_KIND, APPLICATION_COMMAND_MENTIONABLE_KIND,
-    APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND, ApplicationCommandIdentity,
-    ApplicationCommandInfo, ApplicationCommandInvocation, BuiltinSlashCommandParse,
-    BuiltinSlashCommandSubmit, GlobalUserProfileUpdate, GuildUserProfileUpdate,
-    MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload, UserProfileUpdate,
-    application_command_content_is_complete, application_command_option_scope,
+    APPLICATION_COMMAND_ROLE_KIND, APPLICATION_COMMAND_USER_KIND,
+    ApplicationCommandAutocompleteInvocation, ApplicationCommandChoiceInfo,
+    ApplicationCommandIdentity, ApplicationCommandInfo, ApplicationCommandInvocation,
+    BuiltinSlashCommandParse, BuiltinSlashCommandSubmit, DiscordAction, GlobalUserProfileUpdate,
+    GuildParticipationBlock, GuildParticipationRestriction, GuildUserProfileUpdate,
+    MAX_UPLOAD_ATTACHMENT_COUNT, MessageAttachmentUpload, MessageSendLimits, UserProfileUpdate,
+    application_command_content_is_complete, application_command_option_scope, next_message_nonce,
     parse_builtin_slash_command, parsed_application_command_option_names,
+    validate_attachment_sizes, validate_message_content_length, validate_message_payload,
 };
 
-use super::super::scroll::clamp_list_scroll;
+use super::super::MINIMUM_ESTABLISHED_DM_MESSAGES;
+use super::super::local_upload_preview::{
+    LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
+    local_upload_preview_view,
+};
+use super::super::popups::{LongMessageConfirmationState, ModalPopup};
+use super::super::request_tracking::LatestMessageHistoryState;
+use super::super::scroll::{VerticalScrollState, clamp_list_scroll};
+use super::super::text_completion::EmojiCompletionState;
 use super::super::{
     ActiveModalPopupKind, CommandPickerEntry, DashboardState, EmojiPickerEntry, FocusPane,
-    MentionPickerEntry,
+    LocalUploadPreviewView, MentionPickerEntry,
 };
 use super::completions::{
     ComposerEmojiImageCompletion, EmojiCompletion, MAX_MENTION_PICKER_VISIBLE, MentionCompletion,
     MentionExpansionMode, build_builtin_command_candidates, build_channel_mention_candidates,
-    build_command_candidates, build_command_choice_candidates, build_command_option_candidates,
+    build_command_candidates, build_command_choice_candidates,
+    build_command_choice_candidates_from_choices, build_command_option_candidates,
     build_emoji_candidates, build_mention_candidates, expand_composer_completions,
-    expand_emoji_shortcodes, is_command_query_char, is_emoji_query_char, is_mention_query_char,
-    move_picker_selection, should_start_completion_query,
+    expand_emoji_shortcodes, is_command_query_char, is_mention_query_char, move_picker_selection,
+    should_start_completion_query,
 };
-use crate::discord::AppCommand;
-use crate::tui::text_cursor::{
-    clamp_cursor_index, next_char_boundary, next_word_boundary, previous_char_boundary,
-    previous_word_boundary,
-};
+use crate::discord::{AppCommand, ReplyReference};
+use crate::tui::text_cursor::{previous_char_boundary, previous_word_boundary};
+use crate::tui::text_input::{TextEditAction, TextInputState};
+
+/// Why the composer is locked. Drives the send gate, hint, and visual style.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ComposerLock {
+    LoadingMessages,
+    MessageLoadFailed,
+    Spam,
+    MessageRequest,
+    NewConversation,
+    EmptyChannel,
+    SlowMode { remaining_seconds: u64 },
+    Verification(GuildParticipationBlock),
+}
+
+/// Discord keeps a typing indicator alive for about ten seconds, so resend a
+/// little sooner while the user keeps typing.
+const COMPOSER_TYPING_INTERVAL: Duration = Duration::from_secs(8);
+const DISCORD_EPOCH_MILLIS: i64 = 1_420_070_400_000;
 
 #[derive(Debug, Default)]
 pub(in crate::tui::state) struct ComposerUiState {
-    pub(in crate::tui::state) composer_input: String,
-    pub(in crate::tui::state) composer_cursor_byte_index: usize,
+    pub(in crate::tui::state) composer_input: TextInputState,
+    composer_scroll: VerticalScrollState,
     pub(in crate::tui::state) pending_composer_attachments: Vec<MessageAttachmentUpload>,
+    pub(in crate::tui::state) pending_composer_attachment_previews: Vec<LocalUploadPreviewState>,
+    pub(in crate::tui::state) pending_composer_attachment_preview_generation: u64,
     pub(in crate::tui::state) composer_active: bool,
     pub(in crate::tui::state) reply_target_message_id: Option<Id<MessageMarker>>,
     pub(in crate::tui::state) edit_target_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
     pub(in crate::tui::state) composer_picker: ComposerPickerState,
     pub(in crate::tui::state) composer_selected_command_identity:
         Option<ApplicationCommandIdentity>,
+    application_command_autocomplete: Option<ApplicationCommandAutocompleteState>,
     /// Records `@displayname` substrings that the picker inserted, so the
     /// composer can rewrite them to Discord's `<@USER_ID>` wire format on
     /// submit even though the visible text is still the friendly form.
@@ -52,6 +91,31 @@ pub(in crate::tui::state) struct ComposerUiState {
     /// the readable `:name:` text while submit rewrites these ranges to
     /// Discord's `<:name:id>` or `<a:name:id>` wire format.
     pub(in crate::tui::state) composer_emoji_completions: Vec<EmojiCompletion>,
+    /// `:shortcode` emoji autocomplete. Lives outside [`ComposerPickerState`]
+    /// (which owns the mention/command pickers) on the shared controller.
+    /// Mutually exclusive with those pickers, enforced in
+    /// `refresh_active_mention_query`.
+    pub(in crate::tui::state) emoji_completion: EmojiCompletionState,
+    /// Channel and time of the last typing indicator sent while composing, used
+    /// to throttle resends.
+    pub(in crate::tui::state) last_typing_sent: Option<(Id<ChannelMarker>, Instant)>,
+    pub(in crate::tui::state) slow_mode_deadlines: HashMap<Id<ChannelMarker>, Instant>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ApplicationCommandAutocompleteKey {
+    channel_id: Id<ChannelMarker>,
+    command_identity: ApplicationCommandIdentity,
+    command_version: String,
+    focused_option_name: String,
+    content: String,
+}
+
+#[derive(Debug)]
+struct ApplicationCommandAutocompleteState {
+    key: ApplicationCommandAutocompleteKey,
+    nonce: String,
+    choices: Vec<ApplicationCommandChoiceInfo>,
 }
 
 #[derive(Debug, Default)]
@@ -66,11 +130,6 @@ enum ActiveComposerPicker {
     Mention {
         query: String,
         start: usize,
-    },
-    Emoji {
-        query: String,
-        start: usize,
-        candidates: Vec<EmojiPickerEntry>,
     },
     Command {
         query: String,
@@ -112,35 +171,30 @@ impl ComposerPickerState {
     }
 }
 
-impl ComposerUiState {
-    fn composer_cursor_byte_index(&self) -> usize {
-        let mut index = self
-            .composer_cursor_byte_index
-            .min(self.composer_input.len());
-        while index > 0 && !self.composer_input.is_char_boundary(index) {
-            index -= 1;
-        }
-        index
-    }
-}
-
 impl DashboardState {
     pub fn is_composing(&self) -> bool {
         self.composer.composer_active
+    }
+
+    pub fn ping_on_reply(&self) -> bool {
+        self.options.composer_options.ping_on_reply
+    }
+
+    pub fn toggle_ping_on_reply(&mut self) {
+        self.options.composer_options.ping_on_reply = !self.options.composer_options.ping_on_reply;
+        self.options.config_save_pending = true;
     }
 
     pub(in crate::tui::state) fn start_reply_composer(&mut self) {
         let Some(message_id) = self.selected_message_state().map(|message| message.id) else {
             return;
         };
-        // Replies are sends, so the channel must allow SEND_MESSAGES for the
-        // action to be useful.
-        if !self.can_send_in_selected_channel() {
+        if !self.can_reply_to_selected_message() {
             return;
         }
         self.composer.composer_input.clear();
-        self.composer.composer_cursor_byte_index = 0;
         self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.composer.reply_target_message_id = Some(message_id);
         self.composer.edit_target_message = None;
@@ -149,13 +203,26 @@ impl DashboardState {
         self.navigation.focus = FocusPane::Messages;
     }
 
+    pub(in crate::tui::state) fn can_reply_to_selected_message(&self) -> bool {
+        if !self.can_send_in_selected_channel() {
+            return false;
+        }
+        let Some(message) = self.selected_message_state() else {
+            return false;
+        };
+        let Some(channel) = self.discord.cache.channel(message.channel_id) else {
+            return true;
+        };
+        self.discord
+            .cache
+            .can_read_message_history_in_channel(channel)
+    }
+
     pub(in crate::tui::state) fn start_edit_composer(&mut self) {
         let Some(message) = self.selected_message_state() else {
             return;
         };
-        if Some(message.author_id) != self.discord.current_user_id
-            || !message.message_kind.is_regular_or_reply()
-        {
+        if !self.can_edit_message(message) {
             return;
         }
         let Some(content) = message.content.clone() else {
@@ -163,9 +230,9 @@ impl DashboardState {
         };
         let channel_id = message.channel_id;
         let message_id = message.id;
-        self.composer.composer_input = content;
-        self.composer.composer_cursor_byte_index = self.composer.composer_input.len();
+        self.composer.composer_input.set_value(content);
         self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.composer.reply_target_message_id = None;
         self.composer.edit_target_message = Some((channel_id, message_id));
@@ -175,32 +242,107 @@ impl DashboardState {
     }
 
     pub fn composer_input(&self) -> &str {
-        &self.composer.composer_input
+        self.composer.composer_input.value()
     }
 
     pub fn composer_cursor_byte_index(&self) -> usize {
-        clamp_cursor_index(
-            &self.composer.composer_input,
-            self.composer.composer_cursor_byte_index,
-        )
+        self.composer.composer_input.cursor_byte_index()
+    }
+
+    pub(in crate::tui) fn sync_composer_scroll(
+        &mut self,
+        view_height: usize,
+        total_lines: usize,
+        cursor_row: usize,
+    ) {
+        self.composer.composer_scroll.set_view_height(view_height);
+        self.composer.composer_scroll.set_total_lines(total_lines);
+        self.composer
+            .composer_scroll
+            .reveal(cursor_row, cursor_row.saturating_add(1));
+    }
+
+    pub(in crate::tui) fn composer_scroll_for(
+        &self,
+        view_height: usize,
+        total_lines: usize,
+        cursor_row: usize,
+    ) -> usize {
+        let mut scroll = self.composer.composer_scroll.clone();
+        scroll.set_view_height(view_height);
+        scroll.set_total_lines(total_lines);
+        scroll.reveal(cursor_row, cursor_row.saturating_add(1));
+        scroll.scroll()
     }
 
     pub fn pending_composer_attachments(&self) -> &[MessageAttachmentUpload] {
         &self.composer.pending_composer_attachments
     }
 
-    pub fn composer_title(&self) -> &'static str {
+    pub fn composer_attachment_previews(&self) -> Vec<LocalUploadPreviewView<'_>> {
+        self.composer
+            .pending_composer_attachment_previews
+            .iter()
+            .map(local_upload_preview_view)
+            .collect()
+    }
+
+    pub fn pending_composer_preview_attachment_count(&self) -> usize {
+        self.composer.pending_composer_attachment_previews.len()
+    }
+
+    pub fn composer_title(&self) -> String {
         if self.composer.edit_target_message.is_some() {
-            " Edit Message "
+            " Edit Message ".to_owned()
         } else if self.composer.reply_target_message_id.is_some() {
-            " Reply "
+            " Reply ".to_owned()
         } else {
-            " Message Input "
+            " Message Input ".to_owned()
+        }
+    }
+
+    pub fn composer_character_count(&self) -> usize {
+        self.expanded_composer_message_content().chars().count()
+    }
+
+    pub fn composer_character_limit(&self) -> usize {
+        self.composer_channel_id()
+            .map(|channel_id| {
+                self.discord
+                    .cache
+                    .message_send_limits(channel_id)
+                    .max_content_chars
+            })
+            .unwrap_or_else(|| MessageSendLimits::default().max_content_chars)
+    }
+
+    pub(in crate::tui) fn long_message_confirmation_counts(&self) -> Option<(usize, usize)> {
+        let confirmation = self.popups.long_message_confirmation()?;
+        Some((confirmation.character_count, confirmation.character_limit))
+    }
+
+    pub(in crate::tui) fn close_long_message_confirmation(&mut self) {
+        if self.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation) {
+            self.popups.clear_modal();
         }
     }
 
     pub fn add_pending_composer_attachments(&mut self, attachments: Vec<MessageAttachmentUpload>) {
-        if attachments.is_empty() || !self.composer_accepts_attachments() {
+        if attachments.is_empty() {
+            return;
+        }
+        if self.composer.edit_target_message.is_some() {
+            self.show_error_toast(
+                "Attachments cannot be added while editing a message",
+                std::time::Instant::now(),
+            );
+            return;
+        }
+        if !self.can_attach_in_selected_channel() {
+            self.show_error_toast(
+                "Attach Files permission is required in this channel",
+                std::time::Instant::now(),
+            );
             return;
         }
         let available = MAX_UPLOAD_ATTACHMENT_COUNT
@@ -208,14 +350,99 @@ impl DashboardState {
         self.composer
             .pending_composer_attachments
             .extend(attachments.into_iter().take(available));
+        self.refresh_composer_attachment_previews();
     }
 
     pub fn pop_pending_composer_attachment(&mut self) {
         self.composer.pending_composer_attachments.pop();
+        self.refresh_composer_attachment_previews();
     }
 
-    pub fn composer_accepts_attachments(&self) -> bool {
-        self.composer.edit_target_message.is_none() && self.can_attach_in_selected_channel()
+    pub(in crate::tui::state) fn refresh_composer_attachment_previews(&mut self) {
+        if !self.show_images() {
+            self.composer.pending_composer_attachment_previews.clear();
+            return;
+        }
+        let mut previous = std::mem::take(&mut self.composer.pending_composer_attachment_previews);
+        let mut previews = Vec::new();
+        for (index, attachment) in self
+            .composer
+            .pending_composer_attachments
+            .iter()
+            .enumerate()
+            .filter(|(_, attachment)| local_upload_preview_candidate(attachment))
+        {
+            if let Some(previous_index) = previous.iter().position(|preview| {
+                preview.attachment_index == index && preview.filename == attachment.filename
+            }) {
+                previews.push(previous.remove(previous_index));
+                continue;
+            }
+            self.composer.pending_composer_attachment_preview_generation = self
+                .composer
+                .pending_composer_attachment_preview_generation
+                .saturating_add(1);
+            previews.push(LocalUploadPreviewState {
+                attachment_index: index,
+                generation: self.composer.pending_composer_attachment_preview_generation,
+                filename: attachment.filename.clone(),
+                state: LocalUploadPreviewStatus::Pending,
+            });
+        }
+        self.composer.pending_composer_attachment_previews = previews;
+    }
+
+    pub(in crate::tui) fn take_pending_composer_attachment_preview(
+        &mut self,
+    ) -> Option<(usize, u64, String, MessageAttachmentUpload)> {
+        if !self.show_images() {
+            return None;
+        }
+        let preview = self
+            .composer
+            .pending_composer_attachment_previews
+            .iter_mut()
+            .find(|preview| matches!(preview.state, LocalUploadPreviewStatus::Pending))?;
+        let attachment = self
+            .composer
+            .pending_composer_attachments
+            .get(preview.attachment_index)?
+            .clone();
+        preview.state = LocalUploadPreviewStatus::Loading;
+        Some((
+            preview.attachment_index,
+            preview.generation,
+            preview.filename.clone(),
+            attachment,
+        ))
+    }
+
+    pub(in crate::tui) fn store_composer_attachment_preview_result(
+        &mut self,
+        attachment_index: usize,
+        generation: u64,
+        filename: String,
+        result: std::result::Result<ratatui_image::protocol::Protocol, String>,
+    ) {
+        let Some(preview) = self
+            .composer
+            .pending_composer_attachment_previews
+            .iter_mut()
+            .find(|preview| {
+                preview.attachment_index == attachment_index && preview.generation == generation
+            })
+        else {
+            return;
+        };
+        preview.filename = filename;
+        preview.state = match result {
+            Ok(protocol) => LocalUploadPreviewStatus::Ready(protocol),
+            Err(message) => LocalUploadPreviewStatus::Failed(message),
+        };
+    }
+
+    pub fn composer_is_editing_message(&self) -> bool {
+        self.composer.edit_target_message.is_some()
     }
 
     /// Whether the user can post messages in the currently selected channel.
@@ -224,8 +451,193 @@ impl DashboardState {
     pub fn can_send_in_selected_channel(&self) -> bool {
         match self.selected_channel_state() {
             Some(channel) if channel.is_forum() => false,
-            Some(channel) => self.discord.cache.can_send_in_channel(channel),
+            Some(_) if self.composer_lock().is_some() => false,
+            Some(channel) => self
+                .discord
+                .cache
+                .channel_action_decision(channel, crate::discord::DiscordAction::SendMessage)
+                .optimistic_ui_block_reason()
+                .is_none(),
             None => true,
+        }
+    }
+
+    pub fn composer_lock(&self) -> Option<ComposerLock> {
+        let channel = self.selected_channel_state()?;
+        if channel.is_forum() {
+            if let Some(restriction) = self.discord.cache.guild_participation_block(channel) {
+                return Some(ComposerLock::Verification(restriction));
+            }
+            if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
+                return Some(ComposerLock::SlowMode { remaining_seconds });
+            }
+            return None;
+        }
+        match self.latest_message_history_state(channel.id) {
+            LatestMessageHistoryState::Loading => return Some(ComposerLock::LoadingMessages),
+            LatestMessageHistoryState::Failed => return Some(ComposerLock::MessageLoadFailed),
+            LatestMessageHistoryState::Loaded => {}
+        }
+
+        let has_cached_messages = self.discord.cache.channel_has_cached_messages(channel.id);
+
+        if channel.is_dm() {
+            if channel.is_spam == Some(true) {
+                return Some(ComposerLock::Spam);
+            }
+            if channel.is_message_request == Some(true) {
+                return Some(ComposerLock::MessageRequest);
+            }
+            if channel.last_message_id.is_none() && !has_cached_messages {
+                return Some(ComposerLock::EmptyChannel);
+            }
+            if self
+                .navigation
+                .channels
+                .established_dms
+                .contains(&channel.id)
+            {
+                return None;
+            }
+            let Some(current_user_id) = self.current_user_id() else {
+                return Some(ComposerLock::NewConversation);
+            };
+            if self
+                .discord
+                .cache
+                .channel_cached_message_count_from(channel.id, current_user_id)
+                >= MINIMUM_ESTABLISHED_DM_MESSAGES
+            {
+                return None;
+            }
+            return Some(ComposerLock::NewConversation);
+        }
+
+        if channel.guild_id.is_none() || !self.discord.cache.can_send_in_channel(channel) {
+            return None;
+        }
+        if let Some(restriction) = self.discord.cache.guild_participation_block(channel) {
+            return Some(ComposerLock::Verification(restriction));
+        }
+        if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
+            return Some(ComposerLock::SlowMode { remaining_seconds });
+        }
+        // Threads can report counts even when no last message is cached. Those
+        // fields prove that a server conversation already exists.
+        if channel.message_count.is_some_and(|count| count > 0)
+            || channel.total_message_sent.is_some_and(|count| count > 0)
+            || has_cached_messages
+        {
+            return None;
+        }
+
+        Some(ComposerLock::EmptyChannel)
+    }
+
+    pub(in crate::tui::state) fn record_slow_mode_deadline(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        duration: Duration,
+    ) {
+        if duration.is_zero() {
+            return;
+        }
+        let deadline = Instant::now() + duration;
+        self.composer
+            .slow_mode_deadlines
+            .entry(channel_id)
+            .and_modify(|existing| *existing = (*existing).max(deadline))
+            .or_insert(deadline);
+        self.close_composer();
+    }
+
+    pub(in crate::tui::state) fn slow_mode_remaining_seconds(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> Option<u64> {
+        let deadline_remaining_millis = self
+            .composer
+            .slow_mode_deadlines
+            .get(&channel_id)
+            .and_then(|deadline| deadline.checked_duration_since(Instant::now()))
+            .map(|remaining| {
+                u64::try_from(remaining.as_millis())
+                    .unwrap_or(u64::MAX)
+                    .max(1)
+            });
+        let cached_remaining_millis = self.cached_slow_mode_remaining_millis(channel_id);
+        deadline_remaining_millis
+            .into_iter()
+            .chain(cached_remaining_millis)
+            .max()
+            .map(|remaining_millis| remaining_millis.div_ceil(1_000).max(1))
+    }
+
+    fn cached_slow_mode_remaining_millis(&self, channel_id: Id<ChannelMarker>) -> Option<u64> {
+        let channel = self.discord.cache.channel(channel_id)?;
+        if self.discord.cache.bypasses_slow_mode(channel) {
+            return None;
+        }
+        let slow_mode_millis = channel.rate_limit_per_user?.checked_mul(1_000)?;
+        if slow_mode_millis == 0 {
+            return None;
+        }
+        let current_user_id = self.current_user_id()?;
+        let latest_message_id = self
+            .discord
+            .cache
+            .messages_for_channel(channel_id)
+            .into_iter()
+            .filter(|message| message.author_id == current_user_id)
+            .map(|message| message.id.get())
+            .max()?;
+        let sent_at_millis = i64::try_from(latest_message_id >> 22)
+            .unwrap_or(i64::MAX)
+            .saturating_add(DISCORD_EPOCH_MILLIS);
+        let expires_at_millis =
+            sent_at_millis.saturating_add(i64::try_from(slow_mode_millis).unwrap_or(i64::MAX));
+        let remaining_millis = expires_at_millis.saturating_sub(Utc::now().timestamp_millis());
+        (remaining_millis > 0).then(|| u64::try_from(remaining_millis).unwrap_or(u64::MAX).max(1))
+    }
+
+    pub(in crate::tui) fn next_composer_lock_refresh_deadline(&self) -> Option<Instant> {
+        match self.composer_lock()? {
+            ComposerLock::SlowMode {
+                remaining_seconds: _,
+            }
+            | ComposerLock::Verification(GuildParticipationBlock::Restricted(
+                GuildParticipationRestriction::AccountTooNew { .. }
+                | GuildParticipationRestriction::MemberTooNew { .. },
+            )) => Some(Instant::now() + Duration::from_secs(1)),
+            _ => None,
+        }
+    }
+
+    pub(in crate::tui::state) fn close_composer_for_safety_lock(&mut self) {
+        let permission_was_revoked = self.is_composing()
+            && !self.composer_is_editing_message()
+            && self
+                .selected_channel_state()
+                .is_some_and(|channel| !self.discord.cache.can_send_in_channel(channel));
+        if permission_was_revoked
+            || matches!(
+                self.composer_lock(),
+                Some(ComposerLock::SlowMode { .. } | ComposerLock::Verification(_))
+            )
+        {
+            self.close_composer();
+        }
+    }
+
+    pub(in crate::tui::state) fn record_dm_established(&mut self, channel_id: Id<ChannelMarker>) {
+        if self
+            .discord
+            .cache
+            .channel(channel_id)
+            .is_some_and(|channel| channel.is_dm())
+            && self.navigation.channels.established_dms.insert(channel_id)
+        {
+            self.options.ui_state_save_pending = true;
         }
     }
 
@@ -248,8 +660,32 @@ impl DashboardState {
         }
     }
 
+    pub fn can_create_post_in_selected_channel(&self) -> bool {
+        match self.selected_channel_state() {
+            Some(channel) if channel.is_forum() => {
+                self.discord.cache.can_send_in_channel(channel)
+                    && self
+                        .discord
+                        .cache
+                        .guild_participation_block(channel)
+                        .is_none()
+                    && self.slow_mode_remaining_seconds(channel.id).is_none()
+            }
+            _ => false,
+        }
+    }
+
     pub fn start_composer(&mut self) {
         if self.selected_channel_id().is_none() {
+            return;
+        }
+        if let Some(channel_id) = self
+            .selected_channel_state()
+            .filter(|channel| channel.is_forum())
+            .map(|channel| channel.id)
+            .filter(|_| self.can_create_post_in_selected_channel())
+        {
+            self.open_forum_post_composer(channel_id);
             return;
         }
         // Refusing here keeps the shortcut simple: the same key that opens the
@@ -268,8 +704,7 @@ impl DashboardState {
     }
 
     pub fn replace_composer_input_from_editor(&mut self, value: String) {
-        self.composer.composer_input = value;
-        self.composer.composer_cursor_byte_index = self.composer.composer_input.len();
+        self.composer.composer_input.set_value(value);
         self.reset_mention_picker_state();
         self.refresh_active_mention_query();
     }
@@ -277,8 +712,8 @@ impl DashboardState {
     pub fn cancel_composer(&mut self) {
         self.composer.composer_active = false;
         self.composer.composer_input.clear();
-        self.composer.composer_cursor_byte_index = 0;
         self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.composer.reply_target_message_id = None;
         self.composer.edit_target_message = None;
@@ -299,8 +734,8 @@ impl DashboardState {
 
     pub fn clear_composer_input(&mut self) {
         self.composer.composer_input.clear();
-        self.composer.composer_cursor_byte_index = 0;
         self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.reset_mention_picker_state();
     }
@@ -311,17 +746,44 @@ impl DashboardState {
         self.insert_composer_text_at_cursor(&text);
     }
 
+    pub fn note_composer_typing(&mut self) -> Option<AppCommand> {
+        self.note_composer_typing_at(Instant::now())
+    }
+
+    pub(in crate::tui::state) fn note_composer_typing_at(
+        &mut self,
+        now: Instant,
+    ) -> Option<AppCommand> {
+        // Discord does not broadcast typing while editing an existing message.
+        if self.composer.edit_target_message.is_some() {
+            return None;
+        }
+        let channel_id = self.selected_channel_id()?;
+        let due = match self.composer.last_typing_sent {
+            Some((last_channel, at)) if last_channel == channel_id => {
+                now.saturating_duration_since(at) >= COMPOSER_TYPING_INTERVAL
+            }
+            _ => true,
+        };
+        if !due {
+            return None;
+        }
+        self.composer.last_typing_sent = Some((channel_id, now));
+        Some(AppCommand::TriggerTyping { channel_id })
+    }
+
     pub fn insert_composer_text_at_cursor(&mut self, value: &str) {
         if value.is_empty() {
             return;
         }
-        let cursor = self.composer.composer_cursor_byte_index();
+        let cursor = self.composer.composer_input.cursor_byte_index();
         self.replace_composer_range(cursor..cursor, value);
     }
 
     pub fn open_composer_reaction_picker_from_plus_colon(&mut self) -> bool {
-        let cursor = self.composer.composer_cursor_byte_index();
-        if !composer_plus_colon_trigger_before_cursor(&self.composer.composer_input, cursor) {
+        let cursor = self.composer.composer_input.cursor_byte_index();
+        if !composer_plus_colon_trigger_before_cursor(self.composer.composer_input.value(), cursor)
+        {
             return false;
         }
 
@@ -336,93 +798,111 @@ impl DashboardState {
     }
 
     pub fn pop_composer_char(&mut self) {
-        let end = self.composer.composer_cursor_byte_index();
+        let end = self.composer.composer_input.cursor_byte_index();
         if end == 0 {
             return;
         }
-        let start = previous_char_boundary(&self.composer.composer_input, end);
+        let start = previous_char_boundary(self.composer.composer_input.value(), end);
         self.replace_composer_range(start..end, "");
     }
 
     pub fn delete_previous_composer_word(&mut self) {
-        let end = self.composer.composer_cursor_byte_index();
+        let end = self.composer.composer_input.cursor_byte_index();
         if end == 0 {
             return;
         }
-        let start = previous_word_boundary(&self.composer.composer_input, end);
+        let start = previous_word_boundary(self.composer.composer_input.value(), end);
         self.replace_composer_range(start..end, "");
     }
 
+    pub fn delete_composer_to_line_start(&mut self) {
+        let end = self.composer.composer_input.cursor_byte_index();
+        let start = self.composer.composer_input.value()[..end]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+        self.replace_composer_range(start..end, "");
+    }
+
+    pub fn delete_composer_to_line_end(&mut self) {
+        let start = self.composer.composer_input.cursor_byte_index();
+        let end = self.composer.composer_input.value()[start..]
+            .find('\n')
+            .map_or(self.composer.composer_input.value().len(), |offset| {
+                start + offset
+            });
+        self.replace_composer_range(start..end, "");
+    }
+
+    pub fn edit_composer_text_input(&mut self, action: TextEditAction) {
+        match action {
+            TextEditAction::DeletePreviousChar => self.pop_composer_char(),
+            TextEditAction::DeletePreviousWord => self.delete_previous_composer_word(),
+            TextEditAction::DeleteToLineStart => self.delete_composer_to_line_start(),
+            TextEditAction::DeleteToLineEnd => self.delete_composer_to_line_end(),
+            TextEditAction::MoveCursorUp => self.move_composer_cursor_up(),
+            TextEditAction::MoveCursorDown => self.move_composer_cursor_down(),
+            TextEditAction::MoveCursorWordLeft => self.move_composer_cursor_word_left(),
+            TextEditAction::MoveCursorLeft => self.move_composer_cursor_left(),
+            TextEditAction::MoveCursorWordRight => self.move_composer_cursor_word_right(),
+            TextEditAction::MoveCursorRight => self.move_composer_cursor_right(),
+            TextEditAction::MoveCursorHome => self.move_composer_cursor_home(),
+            TextEditAction::MoveCursorEnd => self.move_composer_cursor_end(),
+        }
+    }
+
     pub fn move_composer_cursor_left(&mut self) {
-        let cursor = self.composer.composer_cursor_byte_index();
-        self.composer.composer_cursor_byte_index =
-            previous_char_boundary(&self.composer.composer_input, cursor);
+        self.composer.composer_input.move_left();
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_right(&mut self) {
-        let cursor = self.composer.composer_cursor_byte_index();
-        self.composer.composer_cursor_byte_index =
-            next_char_boundary(&self.composer.composer_input, cursor);
+        self.composer.composer_input.move_right();
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_up(&mut self) {
-        let cursor = self.composer.composer_cursor_byte_index();
-        if let Some(target) = vertical_cursor_target(&self.composer.composer_input, cursor, -1) {
-            self.composer.composer_cursor_byte_index = target;
-            self.refresh_active_mention_query();
-        }
+        self.composer.composer_input.move_up();
+        self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_down(&mut self) {
-        let cursor = self.composer.composer_cursor_byte_index();
-        if let Some(target) = vertical_cursor_target(&self.composer.composer_input, cursor, 1) {
-            self.composer.composer_cursor_byte_index = target;
-            self.refresh_active_mention_query();
-        }
+        self.composer.composer_input.move_down();
+        self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_word_left(&mut self) {
-        let cursor = self.composer.composer_cursor_byte_index();
-        self.composer.composer_cursor_byte_index =
-            previous_word_boundary(&self.composer.composer_input, cursor);
+        self.composer.composer_input.move_word_left();
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_word_right(&mut self) {
-        let cursor = self.composer.composer_cursor_byte_index();
-        self.composer.composer_cursor_byte_index =
-            next_word_boundary(&self.composer.composer_input, cursor);
+        self.composer.composer_input.move_word_right();
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_home(&mut self) {
-        self.composer.composer_cursor_byte_index = 0;
+        self.composer.composer_input.move_home();
         self.refresh_active_mention_query();
     }
 
     pub fn move_composer_cursor_end(&mut self) {
-        self.composer.composer_cursor_byte_index = self.composer.composer_input.len();
+        self.composer.composer_input.move_end();
         self.refresh_active_mention_query();
     }
 
     pub fn submit_composer(&mut self) -> Option<AppCommand> {
-        let expanded = expand_composer_completions(
-            &self.composer.composer_input,
-            &self.composer.composer_mention_completions,
-            &self.composer.composer_emoji_completions,
-            MentionExpansionMode::Message,
-        );
-        let expanded = expand_emoji_shortcodes(&expanded);
-        let content = expanded.trim().to_owned();
+        let content = self.expanded_composer_message_content();
         let has_attachments = !self.composer.pending_composer_attachments.is_empty();
         if content.is_empty() && !has_attachments {
             return None;
         }
-        if let Some((channel_id, message_id)) = self.composer.edit_target_message.take() {
+
+        if let Some((channel_id, message_id)) = self.composer.edit_target_message {
             if content.is_empty() {
-                self.composer.edit_target_message = Some((channel_id, message_id));
+                return None;
+            }
+            if let Err(error) = self.composer_edit_preflight(channel_id, message_id, &content) {
+                self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
                 return None;
             }
             self.cancel_composer();
@@ -432,26 +912,13 @@ impl DashboardState {
                 content,
             });
         }
+
         let channel_id = self.selected_channel_id()?;
-        // Defense in depth: the channel could have lost SEND_MESSAGES while
-        // the composer was open (role change, channel overwrite update). Drop
-        // the message rather than fire a request that would 403.
-        if !self.can_send_in_selected_channel() {
-            self.cancel_composer();
-            return None;
-        }
-        if has_attachments && !self.can_attach_in_selected_channel() {
-            self.cancel_composer();
-            return None;
-        }
 
         if !has_attachments && self.composer.reply_target_message_id.is_none() {
             match self.builtin_slash_command_submit_for_content(&content, channel_id) {
                 BuiltinCommandSubmit::Ready(command) => {
-                    self.clear_submitted_composer_text();
-                    self.composer.reply_target_message_id = None;
-                    self.composer.pending_composer_attachments.clear();
-                    return Some(command);
+                    return self.submit_ready_composer_command(command);
                 }
                 BuiltinCommandSubmit::Incomplete => return None,
                 BuiltinCommandSubmit::Error(message) => {
@@ -463,9 +930,17 @@ impl DashboardState {
             let command_content = self.expanded_composer_command_content();
             match self.application_command_submit_for_content(&command_content) {
                 ApplicationCommandSubmit::Ready(interaction) => {
-                    self.clear_submitted_composer_text();
-                    self.composer.reply_target_message_id = None;
-                    self.composer.pending_composer_attachments.clear();
+                    if let Err(error) = self.channel_action_preflight(
+                        interaction.channel_id,
+                        DiscordAction::RunApplicationCommand,
+                    ) {
+                        self.show_error_toast(
+                            composer_preflight_error_message(&error),
+                            Instant::now(),
+                        );
+                        return None;
+                    }
+                    self.clear_submitted_composer();
                     return Some(AppCommand::RunApplicationCommand {
                         invocation: interaction,
                     });
@@ -475,35 +950,357 @@ impl DashboardState {
             }
         }
 
-        self.clear_submitted_composer_text();
-        let reply_to = self.composer.reply_target_message_id.take();
-        let attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
-        // Stay in insert mode so the user can send several messages in a
-        // row without re-pressing `i`. The composer closes only when the
-        // user explicitly bails with Esc or the channel revokes
-        // SEND_MESSAGES (handled above).
-        Some(AppCommand::SendMessage {
+        let file_content = self.composer.composer_input.value().trim().to_owned();
+        self.submit_composer_message(channel_id, content, file_content)
+    }
+
+    pub(in crate::tui) fn confirm_long_message_upload(&mut self) -> Option<AppCommand> {
+        let confirmation = self.popups.take_long_message_confirmation()?;
+        if self.selected_channel_id() != Some(confirmation.channel_id) {
+            self.show_error_toast(
+                "The selected channel changed. The draft was kept.",
+                Instant::now(),
+            );
+            return None;
+        }
+
+        if let Err(error) = self
+            .long_message_fallback_preflight(confirmation.channel_id, &confirmation.file_content)
+        {
+            self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
+            return None;
+        }
+
+        let attachment = MessageAttachmentUpload::from_bytes(
+            "message.txt".to_owned(),
+            confirmation.file_content.into_bytes(),
+        );
+        Some(self.finish_composer_message_submission(
+            confirmation.channel_id,
+            String::new(),
+            Some(attachment),
+        ))
+    }
+
+    fn submit_composer_message(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        content: String,
+        file_content: String,
+    ) -> Option<AppCommand> {
+        let result = self.message_submission_preflight(
             channel_id,
+            &content,
+            self.composer.reply_target_message_id.is_some(),
+            &self.composer.pending_composer_attachments,
+        );
+        match result {
+            Ok(_) => Some(self.finish_composer_message_submission(channel_id, content, None)),
+            Err(AppError::MessageTooLong { len, limit }) => {
+                self.offer_long_message_fallback(channel_id, file_content, len, limit);
+                None
+            }
+            Err(error) => {
+                self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
+                None
+            }
+        }
+    }
+
+    fn submit_ready_composer_command(&mut self, command: AppCommand) -> Option<AppCommand> {
+        match &command {
+            AppCommand::SendMessage {
+                channel_id,
+                content,
+                reply_to,
+                attachments,
+                ..
+            } => {
+                match self.message_submission_preflight(
+                    *channel_id,
+                    content,
+                    reply_to.is_some(),
+                    attachments,
+                ) {
+                    Ok(_) => {}
+                    Err(AppError::MessageTooLong { len, limit }) => {
+                        self.offer_long_message_fallback(*channel_id, content.clone(), len, limit);
+                        return None;
+                    }
+                    Err(error) => {
+                        self.show_error_toast(
+                            composer_preflight_error_message(&error),
+                            Instant::now(),
+                        );
+                        return None;
+                    }
+                }
+            }
+            AppCommand::SendTtsMessage {
+                channel_id,
+                content,
+                ..
+            } => {
+                if let Err(error) =
+                    self.channel_action_preflight(*channel_id, DiscordAction::SendTtsMessage)
+                {
+                    self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
+                    return None;
+                }
+                let limit = self
+                    .discord
+                    .cache
+                    .message_send_limits(*channel_id)
+                    .max_content_chars;
+                if let Err(error) = validate_message_content_length(content, limit) {
+                    match error {
+                        AppError::MessageTooLong { len, limit } => {
+                            self.offer_long_message_fallback(
+                                *channel_id,
+                                content.clone(),
+                                len,
+                                limit,
+                            );
+                        }
+                        error => self.show_error_toast(
+                            composer_preflight_error_message(&error),
+                            Instant::now(),
+                        ),
+                    }
+                    return None;
+                }
+            }
+            _ => {}
+        }
+
+        self.clear_submitted_composer();
+        match &command {
+            AppCommand::SendMessage {
+                channel_id,
+                nonce,
+                content,
+                reply_to,
+                attachments,
+            } => self.stage_pending_message(*channel_id, *nonce, content, *reply_to, attachments),
+            AppCommand::SendTtsMessage {
+                channel_id,
+                nonce,
+                content,
+            } => self.stage_pending_message(*channel_id, *nonce, content, None, &[]),
+            _ => {}
+        }
+        Some(command)
+    }
+
+    fn finish_composer_message_submission(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        content: String,
+        additional_attachment: Option<MessageAttachmentUpload>,
+    ) -> AppCommand {
+        self.clear_submitted_composer_text();
+        let mention_author = self.options.composer_options.ping_on_reply;
+        let reply_to = self
+            .composer
+            .reply_target_message_id
+            .take()
+            .map(|message_id| ReplyReference {
+                message_id,
+                mention_author,
+            });
+        let mut attachments = std::mem::take(&mut self.composer.pending_composer_attachments);
+        if let Some(attachment) = additional_attachment {
+            attachments.push(attachment);
+        }
+        self.composer.pending_composer_attachment_previews.clear();
+        let nonce = crate::discord::next_message_nonce();
+        self.stage_pending_message(channel_id, nonce, &content, reply_to, &attachments);
+        AppCommand::SendMessage {
+            channel_id,
+            nonce,
             content,
             reply_to,
             attachments,
-        })
+        }
+    }
+
+    fn message_submission_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        content: &str,
+        has_reply: bool,
+        attachments: &[MessageAttachmentUpload],
+    ) -> crate::Result<MessageSendLimits> {
+        let limits =
+            self.message_permission_preflight(channel_id, has_reply, !attachments.is_empty())?;
+        validate_message_payload(content, attachments, limits)?;
+        Ok(limits)
+    }
+
+    fn message_permission_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        has_reply: bool,
+        has_attachments: bool,
+    ) -> crate::Result<MessageSendLimits> {
+        let channel =
+            self.discord
+                .cache
+                .channel(channel_id)
+                .ok_or(AppError::DiscordActionBlocked {
+                    action: DiscordAction::SendMessage,
+                    reason: crate::discord::ActionBlockReason::ChannelDataUnavailable,
+                })?;
+        if let Some(reason) = self
+            .discord
+            .cache
+            .message_send_decision(channel, has_reply, has_attachments)
+            .block_reason()
+        {
+            return Err(AppError::DiscordActionBlocked {
+                action: DiscordAction::SendMessage,
+                reason,
+            });
+        }
+        Ok(self.discord.cache.message_send_limits(channel_id))
+    }
+
+    fn long_message_fallback_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        file_content: &str,
+    ) -> crate::Result<()> {
+        let limits = self.message_permission_preflight(
+            channel_id,
+            self.composer.reply_target_message_id.is_some(),
+            true,
+        )?;
+        let attachment_count = self
+            .composer
+            .pending_composer_attachments
+            .len()
+            .saturating_add(1);
+        let attachments = self
+            .composer
+            .pending_composer_attachments
+            .iter()
+            .map(|attachment| (attachment.filename.as_str(), attachment.size_bytes))
+            .chain(std::iter::once(("message.txt", file_content.len() as u64)));
+        validate_attachment_sizes(attachment_count, attachments, limits.max_attachment_bytes)
+    }
+
+    fn composer_edit_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        message_id: Id<MessageMarker>,
+        content: &str,
+    ) -> crate::Result<()> {
+        self.channel_action_preflight(channel_id, DiscordAction::EditMessage)?;
+        let message = self
+            .discord
+            .cache
+            .messages_for_channel(channel_id)
+            .into_iter()
+            .find(|message| message.id == message_id)
+            .ok_or_else(|| {
+                AppError::DiscordRequest("the message is no longer available".to_owned())
+            })?;
+        if Some(message.author_id) != self.current_user_id() {
+            return Err(AppError::DiscordRequest(
+                "only the message author can edit this message".to_owned(),
+            ));
+        }
+        let limit = self
+            .discord
+            .cache
+            .message_send_limits(channel_id)
+            .max_content_chars;
+        validate_message_content_length(content, limit)
+    }
+
+    fn channel_action_preflight(
+        &self,
+        channel_id: Id<ChannelMarker>,
+        action: DiscordAction,
+    ) -> crate::Result<()> {
+        let channel =
+            self.discord
+                .cache
+                .channel(channel_id)
+                .ok_or(AppError::DiscordActionBlocked {
+                    action,
+                    reason: crate::discord::ActionBlockReason::ChannelDataUnavailable,
+                })?;
+        if let Some(reason) = self
+            .discord
+            .cache
+            .channel_action_decision(channel, action)
+            .block_reason()
+        {
+            return Err(AppError::DiscordActionBlocked { action, reason });
+        }
+        Ok(())
+    }
+
+    fn offer_long_message_fallback(
+        &mut self,
+        channel_id: Id<ChannelMarker>,
+        file_content: String,
+        character_count: usize,
+        character_limit: usize,
+    ) {
+        if let Err(error) = self.long_message_fallback_preflight(channel_id, &file_content) {
+            self.show_error_toast(composer_preflight_error_message(&error), Instant::now());
+            return;
+        }
+        self.popups.confirmation_button = Default::default();
+        self.popups.set_modal(ModalPopup::LongMessageConfirmation(
+            LongMessageConfirmationState::new(
+                channel_id,
+                file_content,
+                character_count,
+                character_limit,
+            ),
+        ));
+    }
+
+    fn clear_submitted_composer(&mut self) {
+        self.clear_submitted_composer_text();
+        self.composer.reply_target_message_id = None;
+        self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
     }
 
     fn clear_submitted_composer_text(&mut self) {
         self.composer.composer_input.clear();
-        self.composer.composer_cursor_byte_index = 0;
         self.reset_mention_picker_state();
     }
 
     fn expanded_composer_command_content(&self) -> String {
         let expanded = expand_composer_completions(
-            &self.composer.composer_input,
+            self.composer.composer_input.value(),
             &self.composer.composer_mention_completions,
             &self.composer.composer_emoji_completions,
             MentionExpansionMode::Command,
         );
         expand_emoji_shortcodes(&expanded).trim().to_owned()
+    }
+
+    fn expanded_composer_message_content(&self) -> String {
+        let expanded = expand_composer_completions(
+            self.composer.composer_input.value(),
+            &self.composer.composer_mention_completions,
+            &self.composer.composer_emoji_completions,
+            MentionExpansionMode::Message,
+        );
+        expand_emoji_shortcodes(&expanded).trim().to_owned()
+    }
+
+    fn composer_channel_id(&self) -> Option<Id<ChannelMarker>> {
+        self.composer
+            .edit_target_message
+            .map(|(channel_id, _)| channel_id)
+            .or_else(|| self.selected_channel_id())
     }
 
     /// Returns the characters typed after the `@` if the picker is open.
@@ -536,10 +1333,9 @@ impl DashboardState {
         )
     }
 
-    /// Builds the full suggestion list for the picker, ordered by best match
-    /// across the member's display name AND username: prefix matches beat
-    /// substring matches, alias matches beat username matches at the same rank,
-    /// and ties are broken alphabetically by display name.
+    /// Builds the full suggestion list for the picker. Member matching uses
+    /// the same username or nickname prefix rule as Gateway Opcode 8 so a
+    /// cached member and a remotely loaded member have the same search meaning.
     pub fn composer_mention_candidates(&self) -> Vec<MentionPickerEntry> {
         let Some(query) = self.composer_mention_query() else {
             return Vec::new();
@@ -549,7 +1345,7 @@ impl DashboardState {
         } else {
             build_mention_candidates(
                 query,
-                self.flattened_members(),
+                self.searchable_members(),
                 self.composer_role_candidates(),
                 self.composer_everyone_role_id(),
             )
@@ -561,7 +1357,7 @@ impl DashboardState {
             Some(ActiveComposerPicker::Mention { start, .. }) => *start,
             _ => return None,
         };
-        self.composer.composer_input[start..]
+        self.composer.composer_input.value()[start..]
             .chars()
             .next()
             .filter(|value| matches!(value, '@' | '#'))
@@ -591,39 +1387,23 @@ impl DashboardState {
     }
 
     pub fn composer_emoji_query(&self) -> Option<&str> {
-        match &self.composer.composer_picker.active {
-            Some(ActiveComposerPicker::Emoji { query, .. }) => Some(query.as_str()),
-            _ => None,
-        }
+        self.composer.emoji_completion.query()
     }
 
     pub fn composer_emoji_selected(&self) -> usize {
-        self.composer
-            .composer_picker
-            .active
-            .as_ref()
-            .filter(|picker| matches!(picker, ActiveComposerPicker::Emoji { .. }))
-            .map(|_| self.composer.composer_picker.selected)
-            .unwrap_or(0)
+        self.composer.emoji_completion.selected()
     }
 
     pub(in crate::tui) fn composer_emoji_window_start(
         &self,
         visible_count: usize,
-        candidate_count: usize,
+        _candidate_count: usize,
     ) -> usize {
-        self.composer.composer_picker.window_start_for(
-            |picker| matches!(picker, ActiveComposerPicker::Emoji { .. }),
-            visible_count,
-            candidate_count,
-        )
+        self.composer.emoji_completion.window_start(visible_count)
     }
 
     pub fn composer_emoji_candidates(&self) -> Vec<EmojiPickerEntry> {
-        match &self.composer.composer_picker.active {
-            Some(ActiveComposerPicker::Emoji { candidates, .. }) => candidates.clone(),
-            _ => Vec::new(),
-        }
+        self.composer.emoji_completion.candidates().to_vec()
     }
 
     pub fn composer_command_query(&self) -> Option<&str> {
@@ -673,7 +1453,7 @@ impl DashboardState {
 
     pub(in crate::tui) fn composer_command_can_submit(&self) -> bool {
         let expanded = expand_composer_completions(
-            &self.composer.composer_input,
+            self.composer.composer_input.value(),
             &self.composer.composer_mention_completions,
             &self.composer.composer_emoji_completions,
             MentionExpansionMode::Command,
@@ -686,7 +1466,7 @@ impl DashboardState {
     }
 
     pub(in crate::tui) fn composer_has_active_picker(&self) -> bool {
-        self.composer.composer_picker.active.is_some()
+        self.composer.composer_picker.active.is_some() || self.composer.emoji_completion.is_active()
     }
 
     pub(in crate::tui) fn active_composer_picker_is_command(&self) -> bool {
@@ -697,9 +1477,12 @@ impl DashboardState {
     }
 
     pub fn move_active_composer_picker_selection(&mut self, delta: isize) {
+        if self.composer.emoji_completion.is_active() {
+            self.composer.emoji_completion.move_selection(delta);
+            return;
+        }
         let len = match &self.composer.composer_picker.active {
             Some(ActiveComposerPicker::Mention { .. }) => self.composer_mention_candidates().len(),
-            Some(ActiveComposerPicker::Emoji { candidates, .. }) => candidates.len(),
             Some(ActiveComposerPicker::Command { candidates, .. }) => candidates.len(),
             None => return,
         };
@@ -707,9 +1490,11 @@ impl DashboardState {
     }
 
     pub fn confirm_active_composer_picker(&mut self) -> bool {
+        if self.composer.emoji_completion.is_active() {
+            return self.confirm_composer_emoji();
+        }
         match &self.composer.composer_picker.active {
             Some(ActiveComposerPicker::Mention { .. }) => self.confirm_composer_mention(),
-            Some(ActiveComposerPicker::Emoji { .. }) => self.confirm_composer_emoji(),
             Some(ActiveComposerPicker::Command { .. }) => self.confirm_composer_command(),
             None => false,
         }
@@ -717,6 +1502,7 @@ impl DashboardState {
 
     pub fn cancel_active_composer_picker(&mut self) {
         self.composer.composer_picker.close();
+        self.composer.emoji_completion.close();
     }
 
     /// Confirms the currently highlighted mention. Replaces the trailing
@@ -736,7 +1522,7 @@ impl DashboardState {
         };
         let entry = entry.clone();
 
-        let cursor = self.composer.composer_cursor_byte_index();
+        let cursor = self.composer.composer_input.cursor_byte_index();
         if mention_start > cursor {
             return false;
         }
@@ -761,26 +1547,23 @@ impl DashboardState {
     /// byte range so submit can send Discord's wire markup. Unavailable custom
     /// emoji stay visible in the picker as a hint, but cannot be confirmed.
     pub fn confirm_composer_emoji(&mut self) -> bool {
-        let (emoji_start, entry) = match &self.composer.composer_picker.active {
-            Some(ActiveComposerPicker::Emoji {
-                start, candidates, ..
-            }) => {
-                let Some(entry) = candidates.get(self.composer.composer_picker.selected) else {
-                    return false;
-                };
-                (*start, entry.clone())
-            }
-            _ => return false,
+        let Some(emoji_start) = self.composer.emoji_completion.start() else {
+            return false;
+        };
+        let Some(entry) = self.composer.emoji_completion.selected_entry().cloned() else {
+            return false;
         };
         if !entry.available {
             return false;
         }
 
-        let cursor = self.composer.composer_cursor_byte_index();
+        let cursor = self.composer.composer_input.cursor_byte_index();
         if emoji_start > cursor {
             return false;
         }
 
+        // Keep the readable `:name:` form so custom emoji can show an inline
+        // image preview, and record the byte range for submit-time rewriting.
         let replacement = if entry.wire_format.is_some() {
             format!(":{}: ", entry.shortcode)
         } else {
@@ -798,7 +1581,7 @@ impl DashboardState {
                     custom_image_url: entry.custom_image_url,
                 });
         }
-        self.close_composer_emoji_query();
+        self.composer.emoji_completion.close();
         true
     }
 
@@ -814,7 +1597,7 @@ impl DashboardState {
             }
             _ => return false,
         };
-        let cursor = self.composer_cursor_byte_index();
+        let cursor = self.composer.composer_input.cursor_byte_index();
         if command_start > cursor {
             return false;
         }
@@ -834,7 +1617,7 @@ impl DashboardState {
         self.composer
             .composer_emoji_completions
             .iter()
-            .filter(|completion| completion.byte_end <= self.composer.composer_input.len())
+            .filter(|completion| completion.byte_end <= self.composer.composer_input.value().len())
             .filter_map(|completion| {
                 completion
                     .custom_image_url
@@ -852,24 +1635,17 @@ impl DashboardState {
     /// stays in the composer.
     fn reset_mention_picker_state(&mut self) {
         self.composer.composer_picker.close();
+        self.composer.emoji_completion.close();
         self.composer.composer_mention_completions.clear();
         self.composer.composer_emoji_completions.clear();
         self.composer.composer_selected_command_identity = None;
+        self.composer.application_command_autocomplete = None;
     }
 
     fn close_composer_mention_query(&mut self) {
         if matches!(
             self.composer.composer_picker.active,
             Some(ActiveComposerPicker::Mention { .. })
-        ) {
-            self.composer.composer_picker.close();
-        }
-    }
-
-    fn close_composer_emoji_query(&mut self) {
-        if matches!(
-            self.composer.composer_picker.active,
-            Some(ActiveComposerPicker::Emoji { .. })
         ) {
             self.composer.composer_picker.close();
         }
@@ -884,43 +1660,63 @@ impl DashboardState {
         }
     }
 
+    /// Rebuild the emoji picker candidates in place when the emoji data the
+    /// picker draws from changes (guild emoji loaded, nitro state updated). The
+    /// controller preserves the highlighted row across the rebuild.
     pub(in crate::tui::state) fn refresh_composer_emoji_candidates_for_current_query(&mut self) {
-        let (query, start) = match &self.composer.composer_picker.active {
-            Some(ActiveComposerPicker::Emoji { query, start, .. }) => (query.clone(), *start),
-            _ => return,
-        };
-
-        let candidates = self.emoji_candidates_for_query(&query);
-        if candidates.is_empty() {
-            self.close_composer_emoji_query();
+        if !self.composer.emoji_completion.is_active() {
             return;
         }
+        let cursor = self.composer.composer_input.cursor_byte_index();
+        let detected = EmojiCompletionState::detect(self.composer.composer_input.value(), cursor);
+        let candidates = match &detected {
+            Some((_, query)) => self.emoji_candidates_for_query(query),
+            None => Vec::new(),
+        };
+        self.composer.emoji_completion.set(detected, candidates);
+    }
 
-        let selected = self
-            .composer
-            .composer_picker
-            .selected
-            .min(candidates.len() - 1);
-        let scroll = clamp_picker_scroll(
-            selected,
-            self.composer.composer_picker.scroll,
-            MAX_MENTION_PICKER_VISIBLE,
-            candidates.len(),
-        );
-        self.composer.composer_picker.active = Some(ActiveComposerPicker::Emoji {
-            query,
-            start,
-            candidates,
-        });
-        self.composer.composer_picker.selected = selected;
-        self.composer.composer_picker.scroll = scroll;
+    pub(in crate::tui::state) fn apply_application_command_autocomplete_response(
+        &mut self,
+        nonce: Option<&str>,
+        choices: &[ApplicationCommandChoiceInfo],
+    ) {
+        let Some(nonce) = nonce else {
+            return;
+        };
+        let Some(autocomplete) = self.composer.application_command_autocomplete.as_mut() else {
+            return;
+        };
+        if autocomplete.nonce != nonce {
+            return;
+        }
+        autocomplete.choices = choices.to_vec();
+        self.refresh_active_mention_query();
+    }
+
+    pub(in crate::tui::state) fn invalidate_application_command_autocomplete(&mut self) {
+        self.composer.application_command_autocomplete = None;
+        if matches!(
+            self.composer.composer_picker.active,
+            Some(ActiveComposerPicker::Command { .. })
+        ) {
+            self.composer.composer_picker.close();
+        }
     }
 
     fn replace_composer_range(&mut self, range: Range<usize>, replacement: &str) {
         if range.start > range.end
-            || range.end > self.composer.composer_input.len()
-            || !self.composer.composer_input.is_char_boundary(range.start)
-            || !self.composer.composer_input.is_char_boundary(range.end)
+            || range.end > self.composer.composer_input.value().len()
+            || !self
+                .composer
+                .composer_input
+                .value()
+                .is_char_boundary(range.start)
+            || !self
+                .composer
+                .composer_input
+                .value()
+                .is_char_boundary(range.end)
         {
             return;
         }
@@ -929,17 +1725,17 @@ impl DashboardState {
         self.composer
             .composer_input
             .replace_range(range.clone(), replacement);
-        self.composer.composer_cursor_byte_index = range.start + replacement.len();
         self.refresh_active_mention_query();
     }
 
     pub(in crate::tui::state) fn refresh_active_mention_query(&mut self) {
-        let cursor = self.composer.composer_cursor_byte_index();
+        let cursor = self.composer.composer_input.cursor_byte_index();
         let mut query_start = cursor;
 
         while query_start > 0 {
-            let previous = previous_char_boundary(&self.composer.composer_input, query_start);
-            let value = self.composer.composer_input[previous..query_start]
+            let previous =
+                previous_char_boundary(self.composer.composer_input.value(), query_start);
+            let value = self.composer.composer_input.value()[previous..query_start]
                 .chars()
                 .next()
                 .expect("character boundary slice contains one character");
@@ -950,56 +1746,38 @@ impl DashboardState {
         }
 
         if query_start > 0 {
-            let mention_start = previous_char_boundary(&self.composer.composer_input, query_start);
-            let trigger = &self.composer.composer_input[mention_start..query_start];
+            let mention_start =
+                previous_char_boundary(self.composer.composer_input.value(), query_start);
+            let trigger = &self.composer.composer_input.value()[mention_start..query_start];
             if matches!(trigger, "@" | "#")
                 && self.should_start_composer_mention_query(mention_start, trigger)
             {
+                // The emoji picker is on its own controller, so close it
+                // explicitly to keep the pickers mutually exclusive.
+                self.composer.emoji_completion.close();
                 self.composer
                     .composer_picker
                     .open(ActiveComposerPicker::Mention {
-                        query: self.composer.composer_input[query_start..cursor].to_owned(),
+                        query: self.composer.composer_input.value()[query_start..cursor].to_owned(),
                         start: mention_start,
                     });
                 return;
             }
         }
 
-        let mut query_start = cursor;
-
-        while query_start > 0 {
-            let previous = previous_char_boundary(&self.composer.composer_input, query_start);
-            let value = self.composer.composer_input[previous..query_start]
-                .chars()
-                .next()
-                .expect("character boundary slice contains one character");
-            if !is_emoji_query_char(value) {
-                break;
-            }
-            query_start = previous;
-        }
-
-        if query_start > 0 {
-            let emoji_start = previous_char_boundary(&self.composer.composer_input, query_start);
-            let query = &self.composer.composer_input[query_start..cursor];
-            if &self.composer.composer_input[emoji_start..query_start] == ":"
-                && query.chars().count() >= 2
-                && should_start_completion_query(&self.composer.composer_input[..emoji_start])
-            {
-                let candidates = self.emoji_candidates_for_query(query);
-                if candidates.is_empty() {
-                    self.composer.composer_picker.close();
-                    return;
-                }
+        // Emoji autocomplete is delegated to the shared controller. A detected
+        // `:query` closes the mention/command picker, and anything else closes
+        // the emoji picker and falls through to commands.
+        match EmojiCompletionState::detect(self.composer.composer_input.value(), cursor) {
+            Some((start, query)) => {
+                let candidates = self.emoji_candidates_for_query(&query);
+                self.composer.composer_picker.close();
                 self.composer
-                    .composer_picker
-                    .open(ActiveComposerPicker::Emoji {
-                        query: query.to_owned(),
-                        start: emoji_start,
-                        candidates,
-                    });
+                    .emoji_completion
+                    .set(Some((start, query)), candidates);
                 return;
             }
+            None => self.composer.emoji_completion.close(),
         }
 
         if let Some((query_start, candidates)) = self.command_completion_at_cursor() {
@@ -1031,7 +1809,7 @@ impl DashboardState {
                     0
                 };
                 self.composer.composer_picker.active = Some(ActiveComposerPicker::Command {
-                    query: self.composer.composer_input[query_start..cursor].to_owned(),
+                    query: self.composer.composer_input.value()[query_start..cursor].to_owned(),
                     start: query_start,
                     candidates,
                 });
@@ -1045,12 +1823,12 @@ impl DashboardState {
     }
 
     fn should_start_composer_mention_query(&self, mention_start: usize, trigger: &str) -> bool {
-        should_start_completion_query(&self.composer.composer_input[..mention_start])
+        should_start_completion_query(&self.composer.composer_input.value()[..mention_start])
             || self.command_option_accepts_mention_trigger(mention_start, trigger)
     }
 
     fn command_option_accepts_mention_trigger(&self, mention_start: usize, trigger: &str) -> bool {
-        let before_marker = &self.composer.composer_input[..mention_start];
+        let before_marker = &self.composer.composer_input.value()[..mention_start];
         let token_start = before_marker
             .rfind(char::is_whitespace)
             .map(|index| index + before_marker[index..].chars().next().unwrap().len_utf8())
@@ -1084,9 +1862,16 @@ impl DashboardState {
     }
 
     fn queue_application_commands_for_selected_channel(&mut self) {
-        let guild_id = self
-            .selected_channel_state()
-            .and_then(|channel| channel.guild_id);
+        let selected_channel = self.selected_channel_state();
+        if selected_channel.is_some_and(|channel| {
+            !self
+                .discord
+                .cache
+                .can_use_application_commands_in_channel(channel)
+        }) {
+            return;
+        }
+        let guild_id = selected_channel.and_then(|channel| channel.guild_id);
         if self.discord.application_commands.contains_key(&guild_id) {
             return;
         }
@@ -1094,22 +1879,23 @@ impl DashboardState {
     }
 
     fn command_completion_at_cursor(&mut self) -> Option<(usize, Vec<CommandPickerEntry>)> {
-        if self.composer.composer_input.is_empty() || !self.composer.composer_input.starts_with('/')
+        if self.composer.composer_input.value().is_empty()
+            || !self.composer.composer_input.value().starts_with('/')
         {
             return None;
         }
         self.queue_application_commands_for_selected_channel();
 
-        let cursor = self.composer.composer_cursor_byte_index();
-        if cursor == 0 || cursor > self.composer.composer_input.len() {
+        let cursor = self.composer.composer_input.cursor_byte_index();
+        if cursor == 0 || cursor > self.composer.composer_input.value().len() {
             return None;
         }
-        let before_cursor = &self.composer.composer_input[..cursor];
+        let before_cursor = &self.composer.composer_input.value()[..cursor];
         let token_start = before_cursor
             .rfind(char::is_whitespace)
             .map(|index| index + before_cursor[index..].chars().next().unwrap().len_utf8())
             .unwrap_or(0);
-        let token = &self.composer.composer_input[token_start..cursor];
+        let token = &self.composer.composer_input.value()[token_start..cursor];
         let commands = self.application_commands_for_selected_channel();
 
         if token_start == 0 {
@@ -1122,8 +1908,8 @@ impl DashboardState {
             return None;
         }
 
-        let command = self.application_command_for_input()?;
-        let option_scope = application_command_option_scope(command, before_cursor)?;
+        let command = self.application_command_for_input()?.clone();
+        let option_scope = application_command_option_scope(&command, before_cursor)?;
         if let Some((option_name, value_query)) = token.split_once(':') {
             let option = option_scope
                 .iter()
@@ -1134,6 +1920,19 @@ impl DashboardState {
                     build_command_choice_candidates(value_query, option),
                 ));
             }
+            if option.autocomplete {
+                let value_start = token_start + option_name.len() + ':'.len_utf8();
+                let value_query = value_query.to_owned();
+                let content = before_cursor.to_owned();
+                let option_name = option.name.clone();
+                let candidates = self.application_command_autocomplete_candidates(
+                    &value_query,
+                    &command,
+                    &option_name,
+                    content,
+                );
+                return Some((value_start, candidates));
+            }
             let candidates = self.command_option_value_candidates(value_query, option);
             if !candidates.is_empty() {
                 return Some((token_start + option_name.len() + ':'.len_utf8(), candidates));
@@ -1143,8 +1942,8 @@ impl DashboardState {
 
         if token.chars().all(is_command_query_char) {
             let used = parsed_application_command_option_names(
-                &self.composer.composer_input,
-                command,
+                self.composer.composer_input.value(),
+                &command,
                 option_scope,
             );
             let options = option_scope
@@ -1161,6 +1960,53 @@ impl DashboardState {
         None
     }
 
+    fn application_command_autocomplete_candidates(
+        &mut self,
+        query: &str,
+        command: &ApplicationCommandInfo,
+        focused_option_name: &str,
+        content: String,
+    ) -> Vec<CommandPickerEntry> {
+        let Some(channel_id) = self.selected_channel_id() else {
+            return Vec::new();
+        };
+        let key = ApplicationCommandAutocompleteKey {
+            channel_id,
+            command_identity: command.identity(),
+            command_version: command.version.clone(),
+            focused_option_name: focused_option_name.to_owned(),
+            content: content.clone(),
+        };
+        if let Some(autocomplete) = &self.composer.application_command_autocomplete
+            && autocomplete.key == key
+        {
+            return build_command_choice_candidates_from_choices(query, &autocomplete.choices);
+        }
+
+        let nonce = next_message_nonce().to_string();
+        self.composer.application_command_autocomplete =
+            Some(ApplicationCommandAutocompleteState {
+                key,
+                nonce: nonce.clone(),
+                choices: Vec::new(),
+            });
+        self.enqueue_pending_command(AppCommand::RequestApplicationCommandAutocomplete {
+            invocation: ApplicationCommandAutocompleteInvocation {
+                guild_id: self
+                    .selected_channel_state()
+                    .and_then(|channel| channel.guild_id),
+                channel_id,
+                command_identity: command.identity(),
+                command_version: command.version.clone(),
+                command_name: command.name.clone(),
+                content,
+                focused_option_name: focused_option_name.to_owned(),
+                nonce,
+            },
+        });
+        Vec::new()
+    }
+
     fn command_option_value_candidates(
         &self,
         value_query: &str,
@@ -1169,7 +2015,7 @@ impl DashboardState {
         let query = value_query.trim_start_matches(['@', '#']);
         let mention_candidates = match option.kind {
             APPLICATION_COMMAND_USER_KIND => {
-                build_mention_candidates(query, self.flattened_members(), Vec::new(), None)
+                build_mention_candidates(query, self.searchable_members(), Vec::new(), None)
             }
             APPLICATION_COMMAND_ROLE_KIND => build_mention_candidates(
                 query,
@@ -1182,7 +2028,7 @@ impl DashboardState {
             }
             APPLICATION_COMMAND_MENTIONABLE_KIND => build_mention_candidates(
                 query,
-                self.flattened_members(),
+                self.searchable_members(),
                 self.composer_role_candidates(),
                 self.composer_everyone_role_id(),
             ),
@@ -1210,6 +2056,14 @@ impl DashboardState {
     }
 
     fn application_commands_for_selected_channel(&self) -> &[ApplicationCommandInfo] {
+        if self.selected_channel_state().is_some_and(|channel| {
+            !self
+                .discord
+                .cache
+                .can_use_application_commands_in_channel(channel)
+        }) {
+            return &[];
+        }
         let guild_id = self
             .selected_channel_state()
             .and_then(|channel| channel.guild_id);
@@ -1224,6 +2078,7 @@ impl DashboardState {
         let name = self
             .composer
             .composer_input
+            .value()
             .strip_prefix('/')?
             .split_whitespace()
             .next()?;
@@ -1258,11 +2113,13 @@ impl DashboardState {
                     }
                     BuiltinCommandSubmit::Ready(AppCommand::SendTtsMessage {
                         channel_id,
+                        nonce: crate::discord::next_message_nonce(),
                         content,
                     })
                 } else {
                     BuiltinCommandSubmit::Ready(AppCommand::SendMessage {
                         channel_id,
+                        nonce: crate::discord::next_message_nonce(),
                         content,
                         reply_to: None,
                         attachments: Vec::new(),
@@ -1393,14 +2250,19 @@ impl DashboardState {
     }
 
     fn emoji_candidates_for_query(&self, query: &str) -> Vec<EmojiPickerEntry> {
-        let selected_guild_channle = self.selected_channel_guild_id();
+        let selected_guild_channel = self.selected_channel_guild_id();
+        let can_use_external_emojis = self.selected_channel_state().is_none_or(|channel| {
+            self.discord
+                .cache
+                .can_use_external_emojis_in_channel(channel)
+        });
 
         let foreign_emojis = self
             .discord
             .cache
             .all_custom_emojis()
             .filter(|(id, _)| {
-                selected_guild_channle.is_none_or(|guild_channel| **id != guild_channel)
+                selected_guild_channel.is_none_or(|guild_channel| **id != guild_channel)
             })
             .flat_map(|(_, emojis)| emojis);
 
@@ -1415,6 +2277,7 @@ impl DashboardState {
             foreign_emojis,
             guild_emojis,
             self.current_user_has_nitro(),
+            can_use_external_emojis,
             self.options.composer_options.emojis_as_links,
         )
     }
@@ -1433,60 +2296,33 @@ enum BuiltinCommandSubmit {
     NotCommand,
 }
 
-fn vertical_cursor_target(input: &str, cursor: usize, direction: isize) -> Option<usize> {
-    let cursor = clamp_cursor_index(input, cursor);
-    let line_start = line_start_before(input, cursor);
-    let line_end = line_end_after(input, cursor);
-    let column = input[line_start..cursor].chars().count();
-
-    match direction {
-        -1 => {
-            if line_start == 0 {
-                return None;
-            }
-            let target_end = line_start - 1;
-            let target_start = line_start_before(input, target_end);
-            Some(byte_index_for_line_column(
-                input,
-                target_start,
-                target_end,
-                column,
-            ))
+fn composer_preflight_error_message(error: &AppError) -> String {
+    match error {
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::PermissionDenied(permission),
+            ..
+        } => format!("{permission} permission is required in this channel"),
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::PermissionDataUnavailable(_),
+            ..
+        } => "Channel permissions are still loading. Your draft was kept.".to_owned(),
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::ChannelDataUnavailable,
+            ..
+        } => "This channel is no longer available. Your draft was kept.".to_owned(),
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::ThreadStateUnavailable,
+            ..
+        } => "Thread details are still loading. Your draft was kept.".to_owned(),
+        AppError::DiscordActionBlocked {
+            reason: ActionBlockReason::ThreadArchived,
+            ..
+        } => "This thread is archived. Your draft was kept.".to_owned(),
+        AppError::DiscordRequest(message) => {
+            format!("{message}. Your draft was kept.")
         }
-        1 => {
-            let next_start = line_end.checked_add(1)?;
-            if next_start > input.len() {
-                return None;
-            }
-            let target_end = line_end_after(input, next_start);
-            Some(byte_index_for_line_column(
-                input, next_start, target_end, column,
-            ))
-        }
-        _ => None,
+        _ => error.to_string(),
     }
-}
-
-fn line_start_before(input: &str, index: usize) -> usize {
-    input[..index]
-        .rfind('\n')
-        .map(|offset| offset + '\n'.len_utf8())
-        .unwrap_or(0)
-}
-
-fn line_end_after(input: &str, index: usize) -> usize {
-    input[index..]
-        .find('\n')
-        .map(|offset| index + offset)
-        .unwrap_or(input.len())
-}
-
-fn byte_index_for_line_column(input: &str, start: usize, end: usize, column: usize) -> usize {
-    input[start..end]
-        .char_indices()
-        .nth(column)
-        .map(|(offset, _)| start + offset)
-        .unwrap_or(end)
 }
 
 fn shift_byte_index(index: usize, delta: isize) -> usize {
@@ -1539,9 +2375,8 @@ fn clamp_picker_scroll(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        composer_plus_colon_trigger_before_cursor, next_word_boundary, previous_word_boundary,
-    };
+    use super::composer_plus_colon_trigger_before_cursor;
+    use crate::tui::text_cursor::{next_word_boundary, previous_word_boundary};
 
     #[derive(Clone, Copy)]
     enum Dir {

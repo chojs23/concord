@@ -1,8 +1,11 @@
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::discord::{
-    ChannelInfo, ChannelNotificationOverrideInfo, CustomEmojiInfo, GuildNotificationSettingsInfo,
-    NotificationLevel, RoleInfo,
+    ChannelInfo, ChannelNotificationOverrideInfo, CustomEmojiInfo, GuildBoostTier,
+    GuildNotificationSettingsInfo, GuildOnboardingInfo, GuildOnboardingMode,
+    GuildVerificationLevel, NotificationLevel, PremiumTier, RoleInfo, ThreadMemberInfo,
+    UserGuildSettingsInfo,
     events::AppEvent,
     ids::{
         Id,
@@ -11,16 +14,17 @@ use crate::discord::{
 };
 
 use super::{
-    channels::parse_channel_info, members::parse_member_info, presence::parse_presence_entry,
-    shared::parse_id,
+    channels::{parse_channel_info, parse_thread_gateway_info},
+    members::parse_member_info,
+    presence::parse_presence_entry,
+    shared::{parse_id, parse_nonnegative_i64},
 };
 
 pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("id")?)?;
-    // With user-account `capabilities` containing LAZY_USER_NOTIFICATIONS
-    // (bit 0), Discord nests the guild's name / icon / owner_id under a
-    // `properties` sub-object instead of placing them at the root. Fall back
-    // to that location so guilds don't all render as "unknown".
+    // With the CLIENT_STATE_V2 capability, Discord nests guild fields such as
+    // name and owner_id under `properties`. Fall back to that location so
+    // guilds do not render as "unknown".
     let name = guild_field(data, "name")
         .and_then(Value::as_str)
         .unwrap_or("unknown")
@@ -36,12 +40,22 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
                 .collect()
         })
         .unwrap_or_default();
-    if let Some(threads) = data.get("threads").and_then(Value::as_array) {
-        channels.extend(
-            threads
-                .iter()
-                .filter_map(|channel| parse_channel_info(channel, Some(guild_id))),
-        );
+    let mut current_user_thread_members: Vec<ThreadMemberInfo> = Vec::new();
+    let thread_snapshot = data.get("threads").and_then(Value::as_array);
+    let thread_snapshot_complete = thread_snapshot.is_some();
+    if let Some(threads) = thread_snapshot {
+        for raw_thread in threads {
+            let Some(thread) = parse_thread_gateway_info(raw_thread, Some(guild_id)) else {
+                continue;
+            };
+            let thread_id = thread.channel.channel_id;
+            current_user_thread_members.push(
+                thread
+                    .current_user_member
+                    .unwrap_or_else(|| ThreadMemberInfo::joined_snapshot(thread_id)),
+            );
+            channels.push(thread.channel);
+        }
     }
 
     let members = data
@@ -56,24 +70,16 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .unwrap_or_default();
     let member_count = data.get("member_count").and_then(Value::as_u64);
 
-    // Activities reach state via PresenceUpdate events, not GuildCreate.
     let presences = data
         .get("presences")
         .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(parse_presence_entry)
-                .map(|presence| (presence.user_id, presence.status))
-                .collect()
-        })
+        .map(|items| items.iter().filter_map(parse_presence_entry).collect())
         .unwrap_or_default();
 
     let roles = data
         .get("roles")
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(parse_role_info).collect())
-        .unwrap_or_default();
+        .map(|items| items.iter().filter_map(parse_role_info).collect());
 
     let emojis = data
         .get("emojis")
@@ -82,17 +88,119 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .unwrap_or_default();
 
     let owner_id = guild_field(data, "owner_id").and_then(parse_id::<UserMarker>);
+    let boost_tier = parse_guild_boost_tier(data);
+    let boost_count = parse_guild_boost_count(data).unwrap_or(0);
+    let verification_level = parse_guild_verification_level(data);
+    let mfa_level = parse_guild_mfa_level(data);
+    let features = parse_guild_features(data);
+    let onboarding = parse_guild_onboarding_from_guild(data, guild_id);
 
     Some(AppEvent::GuildCreate {
         guild_id,
         name,
         member_count,
         owner_id,
+        boost_tier,
+        boost_count,
+        verification_level,
+        mfa_level,
+        features,
+        onboarding,
         channels,
+        thread_snapshot_complete,
+        current_user_thread_members,
         members,
         presences,
         roles,
         emojis,
+    })
+}
+
+fn parse_guild_boost_tier(data: &Value) -> GuildBoostTier {
+    guild_field(data, "premium_tier")
+        .and_then(Value::as_u64)
+        .map_or(GuildBoostTier::None, GuildBoostTier::from_premium_tier)
+}
+
+fn parse_guild_boost_count(data: &Value) -> Option<u32> {
+    guild_field(data, "premium_subscription_count")
+        .and_then(Value::as_u64)
+        .and_then(|count| u32::try_from(count).ok())
+}
+
+fn parse_guild_verification_level(data: &Value) -> Option<GuildVerificationLevel> {
+    guild_field(data, "verification_level")
+        .and_then(Value::as_u64)
+        .map(GuildVerificationLevel::from_value)
+}
+
+fn parse_guild_mfa_level(data: &Value) -> Option<u64> {
+    guild_field(data, "mfa_level").and_then(Value::as_u64)
+}
+
+fn parse_guild_features(data: &Value) -> Option<Vec<String>> {
+    guild_field(data, "features")
+        .and_then(Value::as_array)
+        .map(|features| {
+            features
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+}
+
+pub(super) fn parse_guild_onboarding_from_guild(
+    data: &Value,
+    guild_id: Id<GuildMarker>,
+) -> Option<GuildOnboardingInfo> {
+    guild_field(data, "guild_onboarding")
+        .or_else(|| guild_field(data, "onboarding"))
+        .and_then(|onboarding| parse_guild_onboarding(onboarding, Some(guild_id)))
+}
+
+fn parse_guild_onboarding(
+    value: &Value,
+    fallback_guild_id: Option<Id<GuildMarker>>,
+) -> Option<GuildOnboardingInfo> {
+    let guild_id = value
+        .get("guild_id")
+        .and_then(parse_id::<GuildMarker>)
+        .or(fallback_guild_id)?;
+    let enabled = value.get("enabled").and_then(Value::as_bool);
+    let mode = value
+        .get("mode")
+        .and_then(Value::as_u64)
+        .map(GuildOnboardingMode::from_value);
+    let default_channel_ids = value
+        .get("default_channel_ids")
+        .and_then(Value::as_array)
+        .map(|channel_ids| {
+            channel_ids
+                .iter()
+                .filter_map(parse_id::<ChannelMarker>)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(GuildOnboardingInfo {
+        guild_id,
+        enabled,
+        mode,
+        default_channel_ids,
+        raw: Arc::new(value.clone()),
+    })
+}
+
+pub(super) fn parse_guild_onboarding_update(data: &Value) -> Option<AppEvent> {
+    let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>)?;
+    let value = data
+        .get("guild_onboarding")
+        .or_else(|| data.get("onboarding"))
+        .unwrap_or(data);
+    let onboarding = parse_guild_onboarding(value, Some(guild_id))?;
+    Some(AppEvent::GuildOnboardingUpdate {
+        guild_id,
+        onboarding,
     })
 }
 
@@ -158,12 +266,10 @@ fn parse_custom_emoji(value: &Value) -> Option<CustomEmojiInfo> {
     })
 }
 
-pub(super) fn parse_user_has_nitro(user: &Value) -> Option<bool> {
-    // Discord exposes `premium_type` on the current user object. Any non-zero
-    // value represents a Nitro tier.
+pub(super) fn parse_user_premium_tier(user: &Value) -> Option<PremiumTier> {
     user.get("premium_type")
         .and_then(Value::as_u64)
-        .map(|premium_type| premium_type != 0)
+        .map(PremiumTier::from_premium_type)
 }
 
 pub(super) fn parse_guild_emojis_update(data: &Value) -> Option<AppEvent> {
@@ -193,9 +299,8 @@ pub(super) fn parse_guild_role_delete(data: &Value) -> Option<AppEvent> {
 
 pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("id")?)?;
-    // Same lazy-mode caveat as `parse_guild_create`: with capabilities such
-    // as LAZY_USER_NOTIFICATIONS enabled, name/owner_id can ride inside a
-    // `properties` sub-object instead of at the root.
+    // Same CLIENT_STATE_V2 caveat as `parse_guild_create`: name and owner_id
+    // can be nested under `properties` instead of appearing at the root.
     let name = guild_field(data, "name")
         .and_then(Value::as_str)
         .unwrap_or("unknown")
@@ -209,10 +314,26 @@ pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_role_info).collect());
     let owner_id = guild_field(data, "owner_id").and_then(parse_id::<UserMarker>);
+    // `None` unless the payload reports it, so an unrelated update does not
+    // reset the stored boost state.
+    let boost_tier = guild_field(data, "premium_tier")
+        .and_then(Value::as_u64)
+        .map(GuildBoostTier::from_premium_tier);
+    let boost_count = parse_guild_boost_count(data);
+    let verification_level = parse_guild_verification_level(data);
+    let mfa_level = parse_guild_mfa_level(data);
+    let features = parse_guild_features(data);
+    let onboarding = parse_guild_onboarding_from_guild(data, guild_id);
     Some(AppEvent::GuildUpdate {
         guild_id,
         name,
         owner_id,
+        boost_tier,
+        boost_count,
+        verification_level,
+        mfa_level,
+        features,
+        onboarding,
         roles,
         emojis,
     })
@@ -220,25 +341,41 @@ pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
 
 pub(super) fn parse_guild_delete(data: &Value) -> Option<AppEvent> {
     let guild_id = parse_id::<GuildMarker>(data.get("id")?)?;
-    Some(AppEvent::GuildDelete { guild_id })
+    if data
+        .get("unavailable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        Some(AppEvent::GuildUnavailable { guild_id })
+    } else {
+        Some(AppEvent::GuildDelete { guild_id })
+    }
 }
 
 pub(super) fn parse_user_guild_settings_update(data: &Value) -> Option<AppEvent> {
-    parse_user_guild_notification_settings(data)
-        .map(|settings| AppEvent::UserGuildNotificationSettingsUpdate { settings })
+    let settings = parse_user_guild_settings_info(data)?;
+    parse_nonnegative_i64(data.get("version")?)?;
+    Some(AppEvent::UserGuildSettingsUpdate { settings })
 }
 
 pub(super) fn parse_user_guild_settings_entries(
     value: Option<&Value>,
-) -> Option<Vec<GuildNotificationSettingsInfo>> {
+) -> Option<Vec<UserGuildSettingsInfo>> {
     let entries = value
         .and_then(|node| node.get("entries").or(Some(node)))
         .and_then(Value::as_array)?;
-    let settings: Vec<GuildNotificationSettingsInfo> = entries
+    let settings: Vec<UserGuildSettingsInfo> = entries
         .iter()
-        .filter_map(parse_user_guild_notification_settings)
+        .filter_map(parse_user_guild_settings_info)
         .collect();
-    (!settings.is_empty()).then_some(settings)
+    Some(settings)
+}
+
+fn parse_user_guild_settings_info(value: &Value) -> Option<UserGuildSettingsInfo> {
+    Some(UserGuildSettingsInfo {
+        notification_settings: parse_user_guild_notification_settings(value)?,
+        extra_fields: parse_extra_user_guild_settings_fields(value),
+    })
 }
 
 fn parse_user_guild_notification_settings(value: &Value) -> Option<GuildNotificationSettingsInfo> {
@@ -250,6 +387,7 @@ fn parse_user_guild_notification_settings(value: &Value) -> Option<GuildNotifica
         message_notifications: parse_notification_level(value.get("message_notifications")),
         muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
         mute_end_time: parse_mute_end_time(value),
+        selected_time_window: parse_selected_time_window(value),
         suppress_everyone: value
             .get("suppress_everyone")
             .and_then(Value::as_bool)
@@ -258,6 +396,24 @@ fn parse_user_guild_notification_settings(value: &Value) -> Option<GuildNotifica
             .get("suppress_roles")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        flags: value.get("flags").and_then(Value::as_u64).unwrap_or(0),
+        hide_muted_channels: value
+            .get("hide_muted_channels")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        mobile_push: value
+            .get("mobile_push")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        mute_scheduled_events: value
+            .get("mute_scheduled_events")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        notify_highlights: value
+            .get("notify_highlights")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        version: value.get("version").and_then(Value::as_u64).unwrap_or(0),
         channel_overrides,
     })
 }
@@ -297,6 +453,12 @@ fn parse_channel_notification_override(value: &Value) -> Option<ChannelNotificat
         message_notifications: parse_notification_level(value.get("message_notifications")),
         muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
         mute_end_time: parse_mute_end_time(value),
+        selected_time_window: parse_selected_time_window(value),
+        collapsed: value
+            .get("collapsed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        flags: value.get("flags").and_then(Value::as_u64).unwrap_or(0),
     })
 }
 
@@ -309,6 +471,12 @@ fn parse_channel_notification_override_with_key(
         message_notifications: parse_notification_level(value.get("message_notifications")),
         muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
         mute_end_time: parse_mute_end_time(value),
+        selected_time_window: parse_selected_time_window(value),
+        collapsed: value
+            .get("collapsed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        flags: value.get("flags").and_then(Value::as_u64).unwrap_or(0),
     })
 }
 
@@ -327,9 +495,42 @@ fn parse_mute_end_time(value: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn parse_selected_time_window(value: &Value) -> Option<i64> {
+    value
+        .get("mute_config")
+        .and_then(|config| config.get("selected_time_window"))
+        .and_then(Value::as_i64)
+}
+
 fn guild_field<'a>(data: &'a Value, key: &str) -> Option<&'a Value> {
     data.get(key).or_else(|| {
         data.get("properties")
             .and_then(|properties| properties.get(key))
     })
+}
+
+fn parse_extra_user_guild_settings_fields(
+    value: &Value,
+) -> std::collections::BTreeMap<String, Value> {
+    let Some(settings) = value.as_object() else {
+        return std::collections::BTreeMap::new();
+    };
+    settings
+        .iter()
+        .filter(|(field, _)| !is_known_user_guild_settings_field(field))
+        .map(|(field, value)| (field.clone(), value.clone()))
+        .collect()
+}
+
+fn is_known_user_guild_settings_field(field: &str) -> bool {
+    matches!(
+        field,
+        "guild_id"
+            | "message_notifications"
+            | "muted"
+            | "mute_config"
+            | "suppress_everyone"
+            | "suppress_roles"
+            | "channel_overrides"
+    )
 }

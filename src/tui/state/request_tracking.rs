@@ -1,23 +1,23 @@
 use std::collections::{HashMap, VecDeque};
 
+use crate::discord::AppCommand;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker},
 };
-use crate::discord::{AppCommand, AppEvent, ForumPostArchiveState};
 
 use super::DashboardState;
 
-#[derive(Debug, Default)]
-pub(super) struct ForumPostListState {
-    pub(super) active_post_ids: Vec<Id<ChannelMarker>>,
-    pub(super) archived_post_ids: Vec<Id<ChannelMarker>>,
-    pub(super) has_more: bool,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LatestMessageHistoryState {
+    Loading,
+    Loaded,
+    Failed,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct RequestTrackingState {
-    pub(super) forum_post_lists: HashMap<Id<ChannelMarker>, ForumPostListState>,
+    latest_message_history: HashMap<Id<ChannelMarker>, LatestMessageHistoryState>,
     pub(super) pending_commands: VecDeque<AppCommand>,
 }
 
@@ -62,42 +62,33 @@ impl DashboardState {
     ) {
         self.enqueue_pending_command(AppCommand::AckChannels { targets });
     }
-}
 
-impl DashboardState {
-    pub(super) fn discord_event_for_apply(&self, event: &AppEvent) -> AppEvent {
-        let AppEvent::ForumPostsLoaded {
-            channel_id,
-            archive_state: ForumPostArchiveState::Archived,
-            offset,
-            next_offset,
-            threads,
-            first_messages,
-            has_more,
-        } = event
-        else {
-            return event.clone();
-        };
+    pub(super) fn record_latest_message_history_loaded(&mut self, channel_id: Id<ChannelMarker>) {
+        self.requests
+            .latest_message_history
+            .insert(channel_id, LatestMessageHistoryState::Loaded);
+    }
 
-        let Some(list) = self.requests.forum_post_lists.get(channel_id) else {
-            return event.clone();
-        };
-        AppEvent::ForumPostsLoaded {
-            channel_id: *channel_id,
-            archive_state: ForumPostArchiveState::Archived,
-            offset: *offset,
-            next_offset: *next_offset,
-            threads: threads
-                .iter()
-                .filter(|thread| !list.active_post_ids.contains(&thread.channel_id))
-                .cloned()
-                .collect(),
-            first_messages: first_messages
-                .iter()
-                .filter(|message| !list.active_post_ids.contains(&message.channel_id))
-                .cloned()
-                .collect(),
-            has_more: *has_more,
-        }
+    pub(super) fn record_latest_message_history_loading(&mut self, channel_id: Id<ChannelMarker>) {
+        self.requests
+            .latest_message_history
+            .insert(channel_id, LatestMessageHistoryState::Loading);
+    }
+
+    pub(super) fn record_latest_message_history_failed(&mut self, channel_id: Id<ChannelMarker>) {
+        self.requests
+            .latest_message_history
+            .insert(channel_id, LatestMessageHistoryState::Failed);
+    }
+
+    pub(super) fn latest_message_history_state(
+        &self,
+        channel_id: Id<ChannelMarker>,
+    ) -> LatestMessageHistoryState {
+        self.requests
+            .latest_message_history
+            .get(&channel_id)
+            .copied()
+            .unwrap_or(LatestMessageHistoryState::Loading)
     }
 }

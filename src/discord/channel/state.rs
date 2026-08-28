@@ -1,10 +1,19 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::discord::ids::{
     Id,
-    marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+    marker::{ChannelMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker},
 };
-use crate::discord::{ChannelInfo, ChannelRecipientInfo, PermissionOverwriteInfo, PresenceStatus};
+use crate::discord::{
+    ChannelInfo, ChannelRecipientInfo, ForumTagInfo, PermissionOverwriteInfo, PresenceStatus,
+    VoiceScope,
+};
 
 use crate::discord::state::DiscordState;
+
+const ACTIVE_CHANNELS_REMOVED: u64 = 1 << 2;
+const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
+const MILLIS_PER_MINUTE: u64 = 60_000;
 
 pub(crate) fn is_thread_kind(kind: &str) -> bool {
     matches!(
@@ -36,12 +45,19 @@ pub struct ChannelState {
     pub total_message_sent: Option<u64>,
     pub thread_metadata: Option<crate::discord::ThreadMetadataInfo>,
     pub flags: Option<u64>,
-    pub current_user_joined_thread: bool,
+    /// Slow-mode cooldown in seconds (Discord's `rate_limit_per_user`).
+    pub rate_limit_per_user: Option<u64>,
+    pub available_tags: Vec<ForumTagInfo>,
+    pub applied_tags: Vec<Id<ForumTagMarker>>,
     pub recipients: Vec<ChannelRecipientState>,
     /// Channel-level permission overrides used by `can_view_channel`. Threads
     /// inherit from their parent channel, so this stays empty for threads
     /// even after a payload arrives.
     pub permission_overwrites: Vec<PermissionOverwriteInfo>,
+    /// Discord's DM `is_message_request`: a pending request from a non-friend.
+    pub is_message_request: Option<bool>,
+    /// Discord's DM `is_spam`: a message request classified as spam.
+    pub is_spam: Option<bool>,
 }
 
 impl ChannelState {
@@ -54,11 +70,52 @@ impl ChannelState {
     }
 
     pub fn is_forum(&self) -> bool {
-        matches!(self.kind.as_str(), "forum" | "GuildForum")
+        matches!(self.kind.as_str(), "forum" | "media" | "GuildForum")
+    }
+
+    /// A one-to-one direct message. Group DMs (`group-dm`) are excluded.
+    pub fn is_dm(&self) -> bool {
+        matches!(self.kind.as_str(), "dm" | "Private")
+    }
+
+    /// Sidebar tag for a DM Discord flagged as spam or a message request. Spam
+    /// wins. `None` otherwise.
+    pub fn dm_request_tag(&self) -> Option<&'static str> {
+        if !self.is_dm() {
+            return None;
+        }
+        if self.is_spam == Some(true) {
+            return Some("spam");
+        }
+        if self.is_message_request == Some(true) {
+            return Some("request");
+        }
+        None
     }
 
     pub fn is_voice(&self) -> bool {
         matches!(self.kind.as_str(), "voice" | "GuildVoice")
+    }
+
+    /// A 1:1 DM or a group DM. Unlike [`Self::is_dm`], this also matches group
+    /// DMs, which together are the channels that support a private call.
+    pub fn is_dm_or_group_dm(&self) -> bool {
+        matches!(self.kind.as_str(), "dm" | "Private" | "group-dm" | "Group")
+    }
+
+    /// Whether a voice call can be placed here: a guild voice channel, or a DM /
+    /// group-DM conversation.
+    pub fn supports_voice_call(&self) -> bool {
+        self.is_voice() || self.is_dm_or_group_dm()
+    }
+
+    /// The voice connection scope for this channel: a guild voice channel routes
+    /// by its guild, while a DM or group DM routes a call by its own channel id.
+    pub fn voice_scope(&self) -> VoiceScope {
+        match self.guild_id {
+            Some(guild_id) => VoiceScope::Guild(guild_id),
+            None => VoiceScope::Private(self.id),
+        }
     }
 
     pub fn is_private_thread(&self) -> bool {
@@ -80,6 +137,70 @@ impl ChannelState {
     pub fn thread_pinned(&self) -> Option<bool> {
         self.flags.map(|flags| flags & (1 << 1) != 0)
     }
+
+    pub fn removed_from_active_channels(&self) -> bool {
+        self.flags
+            .is_some_and(|flags| flags & ACTIVE_CHANNELS_REMOVED != 0)
+    }
+
+    pub(in crate::discord) fn is_active_thread(&self) -> bool {
+        self.is_thread()
+            && !self.thread_archived().unwrap_or(false)
+            && !self.removed_from_active_channels()
+    }
+
+    /// Discord keeps joined threads in the channel tree only until their
+    /// auto-archive inactivity window expires. Pinned forum posts remain in the
+    /// tree. The Gateway can briefly report an overdue thread as unarchived, so
+    /// the client derives the deadline from its latest message or archive-state
+    /// change.
+    pub(in crate::discord) fn shows_in_active_channel_tree(&self) -> bool {
+        let now_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        self.shows_in_active_channel_tree_at(now_millis)
+    }
+
+    fn shows_in_active_channel_tree_at(&self, now_millis: u64) -> bool {
+        if !self.is_active_thread() {
+            return false;
+        }
+        if self.thread_pinned() == Some(true) {
+            return true;
+        }
+        let Some(auto_archive_minutes) = self
+            .thread_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.auto_archive_duration)
+        else {
+            return true;
+        };
+        let activity_snowflake = self
+            .last_message_id
+            .map(Id::get)
+            .unwrap_or_else(|| self.id.get());
+        let snowflake_millis = (activity_snowflake >> 22).saturating_add(DISCORD_EPOCH_MILLIS);
+        let archive_change_millis = self
+            .thread_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.archive_timestamp.as_deref())
+            .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).ok())
+            .and_then(|timestamp| u64::try_from(timestamp.timestamp_millis()).ok())
+            .unwrap_or(0);
+        let activity_millis = snowflake_millis.max(archive_change_millis);
+        let deadline =
+            activity_millis.saturating_add(auto_archive_minutes.saturating_mul(MILLIS_PER_MINUTE));
+        now_millis < deadline
+    }
+
+    pub fn requires_forum_tag(&self) -> bool {
+        const REQUIRE_TAG: u64 = 1 << 4;
+        self.flags
+            .is_some_and(|flags| flags & REQUIRE_TAG == REQUIRE_TAG)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,21 +216,35 @@ pub struct ChannelRecipientState {
 }
 
 impl ChannelRecipientState {
-    pub(super) fn from_info(
+    pub(in crate::discord) fn from_info(
         recipient: &ChannelRecipientInfo,
-        previous_status: Option<PresenceStatus>,
+        previous: Option<&Self>,
+        ready_user: Option<&ChannelRecipientInfo>,
         known_status: Option<PresenceStatus>,
         display_name: String,
     ) -> Self {
         Self {
             user_id: recipient.user_id,
             display_name,
-            username: recipient.username.clone(),
-            is_bot: recipient.is_bot,
-            avatar_url: recipient.avatar_url.clone(),
+            username: recipient
+                .username
+                .clone()
+                .or_else(|| ready_user.and_then(|user| user.username.clone()))
+                .or_else(|| previous.and_then(|user| user.username.clone())),
+            // DM channel recipients are partial user objects and omit `bot`.
+            // Once another source proves the account is a bot, a later
+            // partial channel payload must not turn it back into a user.
+            is_bot: recipient.is_bot
+                || ready_user.is_some_and(|user| user.is_bot)
+                || previous.is_some_and(|user| user.is_bot),
+            avatar_url: recipient
+                .avatar_url
+                .clone()
+                .or_else(|| ready_user.and_then(|user| user.avatar_url.clone()))
+                .or_else(|| previous.and_then(|user| user.avatar_url.clone())),
             status: recipient
                 .status
-                .or(previous_status)
+                .or_else(|| previous.map(|user| user.status))
                 .or(known_status)
                 .unwrap_or(PresenceStatus::Unknown),
         }
@@ -150,6 +285,19 @@ impl DiscordState {
             .collect()
     }
 
+    /// Channels shown in the main channel sidebar. Notification settings can
+    /// hide muted or non-opted-in channels there, but they must not affect
+    /// permission checks, search, composer completion, or subscriptions.
+    pub fn sidebar_channels_for_guild(
+        &self,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Vec<&ChannelState> {
+        self.viewable_channels_for_guild(guild_id)
+            .into_iter()
+            .filter(|channel| self.channel_visible_in_notification_settings(channel.id))
+            .collect()
+    }
+
     /// Visible/hidden channel counts for a guild scope. DM scope reports
     /// `(visible, 0)` since DMs are never hidden. Threads are excluded from
     /// both sides. The debug-panel readout focuses on top-level channels
@@ -177,6 +325,21 @@ impl DiscordState {
         self.navigation.channels.get(&channel_id)
     }
 
+    /// Whether a joined thread belongs in Discord's active channel tree.
+    ///
+    /// The separate indexes are populated by Gateway active-thread and
+    /// current-user member payloads. Forum card hydration cannot add a sidebar
+    /// row by itself.
+    pub fn thread_is_sidebar_active(&self, channel_id: Id<ChannelMarker>) -> bool {
+        self.threads.is_active(channel_id)
+            && self.threads.current_user_member(channel_id).is_some()
+            && self
+                .navigation
+                .channels
+                .get(&channel_id)
+                .is_some_and(ChannelState::shows_in_active_channel_tree)
+    }
+
     pub(in crate::discord) fn channel_guild_id(
         &self,
         channel_id: Id<ChannelMarker>,
@@ -199,27 +362,41 @@ impl DiscordState {
                 recipients
                     .iter()
                     .map(|recipient| {
-                        let previous_status = existing
-                            .and_then(|existing| {
-                                existing
-                                    .recipients
-                                    .iter()
-                                    .find(|existing| existing.user_id == recipient.user_id)
-                            })
-                            .map(|recipient| recipient.status);
+                        let previous = existing.and_then(|existing| {
+                            existing
+                                .recipients
+                                .iter()
+                                .find(|existing| existing.user_id == recipient.user_id)
+                        });
+                        let ready_user = self.session.ready_users.get(&recipient.user_id);
                         let known_status = self
                             .presence
                             .user_presences
                             .get(&recipient.user_id)
                             .copied();
+                        let fallback_display_name = if recipient.username.is_none()
+                            && recipient.display_name == "unknown"
+                        {
+                            ready_user
+                                .map(|user| user.display_name.as_str())
+                                .or_else(|| previous.map(|user| user.display_name.as_str()))
+                                .unwrap_or(recipient.display_name.as_str())
+                        } else {
+                            recipient.display_name.as_str()
+                        };
                         let display_name = self.private_user_display_name(
                             recipient.user_id,
-                            Some(recipient.display_name.as_str()),
-                            recipient.username.as_deref(),
+                            Some(fallback_display_name),
+                            recipient
+                                .username
+                                .as_deref()
+                                .or_else(|| ready_user.and_then(|user| user.username.as_deref()))
+                                .or_else(|| previous.and_then(|user| user.username.as_deref())),
                         );
                         ChannelRecipientState::from_info(
                             recipient,
-                            previous_status,
+                            previous,
+                            ready_user,
                             known_status,
                             display_name,
                         )
@@ -275,52 +452,63 @@ impl DiscordState {
         } else {
             channel.permission_overwrites.clone()
         };
-        let current_user_joined_thread = channel
-            .current_user_joined_thread
-            .or_else(|| existing.map(|existing| existing.current_user_joined_thread))
-            .or_else(|| {
-                let created_by_current_user = is_thread_kind(&channel.kind)
-                    && channel.owner_id.is_some()
-                    && channel.owner_id == self.session.current_user_id;
-                created_by_current_user.then_some(true)
-            })
-            .unwrap_or(false);
-
-        self.navigation.channels.insert(
-            channel.channel_id,
-            ChannelState {
-                id: channel.channel_id,
-                guild_id: channel.guild_id,
-                parent_id: channel.parent_id,
-                owner_id: channel.owner_id,
-                position: channel.position,
-                last_message_id,
-                name,
-                kind: channel.kind.clone(),
-                message_count: channel.message_count,
-                member_count: channel.member_count,
-                total_message_sent: channel.total_message_sent,
-                thread_metadata: channel.thread_metadata.clone(),
-                flags: channel.flags,
-                current_user_joined_thread,
-                recipients,
-                permission_overwrites,
-            },
-        );
+        // Supplemental and partial channel payloads may omit these fields.
+        // Preserve the last explicit values so an unrelated update cannot
+        // revive an archived or ACTIVE_CHANNELS_REMOVED thread.
+        let thread_metadata = channel
+            .thread_metadata
+            .clone()
+            .or_else(|| existing.and_then(|existing| existing.thread_metadata.clone()));
+        let flags = channel
+            .flags
+            .or_else(|| existing.and_then(|existing| existing.flags));
+        let state = ChannelState {
+            id: channel.channel_id,
+            guild_id: channel.guild_id,
+            parent_id: channel.parent_id,
+            owner_id: channel.owner_id,
+            position: channel.position,
+            last_message_id,
+            name,
+            kind: channel.kind.clone(),
+            message_count: channel.message_count,
+            member_count: channel.member_count,
+            total_message_sent: channel.total_message_sent,
+            thread_metadata,
+            flags,
+            rate_limit_per_user: channel
+                .rate_limit_per_user
+                .or_else(|| existing.and_then(|existing| existing.rate_limit_per_user)),
+            available_tags: channel.available_tags.clone(),
+            applied_tags: channel.applied_tags.clone(),
+            recipients,
+            permission_overwrites,
+            // Preserve across upserts: a partial CHANNEL_UPDATE that omits
+            // these must not silently unlock a request/spam DM.
+            is_message_request: channel
+                .is_message_request
+                .or_else(|| existing.and_then(|existing| existing.is_message_request)),
+            is_spam: channel
+                .is_spam
+                .or_else(|| existing.and_then(|existing| existing.is_spam)),
+        };
+        self.navigation_mut()
+            .channels
+            .insert(channel.channel_id, state);
     }
 
-    pub(in crate::discord) fn set_current_user_thread_membership(
+    pub(in crate::discord) fn set_thread_member_count(
         &mut self,
         channel_id: Id<ChannelMarker>,
-        joined: bool,
+        member_count: u64,
     ) {
         if let Some(channel) = self
-            .navigation
+            .navigation_mut()
             .channels
             .get_mut(&channel_id)
             .filter(|channel| channel.is_thread())
         {
-            channel.current_user_joined_thread = joined;
+            channel.member_count = Some(member_count);
         }
     }
 
@@ -331,7 +519,7 @@ impl DiscordState {
         username: Option<&str>,
         avatar_url: Option<&str>,
     ) {
-        for channel in self.navigation.channels.values_mut() {
+        for channel in self.navigation_mut().channels.values_mut() {
             if channel.guild_id.is_some() {
                 continue;
             }
@@ -364,7 +552,7 @@ impl DiscordState {
         user_id: Id<UserMarker>,
         status: PresenceStatus,
     ) {
-        for channel in self.navigation.channels.values_mut() {
+        for channel in self.navigation_mut().channels.values_mut() {
             for recipient in &mut channel.recipients {
                 if recipient.user_id == user_id {
                     recipient.status = status;
@@ -378,7 +566,7 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
         message_id: Id<MessageMarker>,
     ) {
-        if let Some(channel) = self.navigation.channels.get_mut(&channel_id) {
+        if let Some(channel) = self.navigation_mut().channels.get_mut(&channel_id) {
             channel.last_message_id = channel.last_message_id.max(Some(message_id));
         }
     }
@@ -388,7 +576,7 @@ impl DiscordState {
         channel_id: Id<ChannelMarker>,
     ) {
         let Some(channel) = self
-            .navigation
+            .navigation_mut()
             .channels
             .get_mut(&channel_id)
             .filter(|channel| channel.is_thread())
@@ -424,7 +612,7 @@ pub(super) fn private_channel_name_follows_recipients(
         || current_name == recipient_names.join(", ")
 }
 
-pub(super) fn refresh_private_channel_name_from_recipients(
+pub(in crate::discord) fn refresh_private_channel_name_from_recipients(
     channel: &mut ChannelState,
     previous_names: &[String],
 ) {
@@ -440,9 +628,11 @@ pub(super) fn refresh_private_channel_name_from_recipients(
         return;
     }
     let new_name = joined_recipient_display_names(&channel.recipients);
-    if !new_name.is_empty() {
-        channel.name = new_name;
-    }
+    channel.name = if new_name.is_empty() {
+        format!("dm-{}", channel.id.get())
+    } else {
+        new_name
+    };
 }
 
 #[cfg(test)]

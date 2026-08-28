@@ -1,50 +1,209 @@
 use super::*;
+use crate::discord::test_builders::{
+    GuildCreateFixture, MessageHistoryLoadedFixture, guild_create_event,
+    message_history_loaded_event,
+};
 
 #[test]
 fn channel_unread_decoration_matches_unread_state() {
-    let base = Style::default().fg(Color::White);
-    let cases = [
-        (ChannelUnreadState::Seen, None, Some(READ_DIM), false),
-        (ChannelUnreadState::Unread, None, Some(UNREAD_BRIGHT), true),
-        (
-            ChannelUnreadState::Mentioned(3),
-            Some(("(3) ", MENTION_ORANGE)),
-            Some(MENTION_ORANGE),
-            true,
-        ),
-        (
-            ChannelUnreadState::Notified(3),
-            Some(("(3) ", UNREAD_BRIGHT)),
-            Some(UNREAD_BRIGHT),
-            true,
-        ),
-    ];
+    let custom = theme::Theme::default()
+        .with_style(
+            theme::HighlightGroup::NavigationMentioned,
+            Style::default().fg(Color::Red),
+        )
+        .with_style(
+            theme::HighlightGroup::NavigationNotified,
+            Style::default().fg(Color::Green),
+        )
+        .with_style(
+            theme::HighlightGroup::NavigationUnread,
+            Style::default().fg(Color::Blue),
+        )
+        .with_style(
+            theme::HighlightGroup::MentionBadge,
+            Style::default().fg(Color::Yellow),
+        )
+        .with_style(
+            theme::HighlightGroup::NotificationBadge,
+            Style::default().fg(Color::Magenta),
+        );
+    theme::with_test_theme(custom, || {
+        let base = Style::default().fg(Color::White);
+        let cases = [
+            (
+                ChannelUnreadState::Seen,
+                None,
+                Some(Color::White),
+                false,
+                true,
+            ),
+            (
+                ChannelUnreadState::Unread,
+                None,
+                Some(Color::Blue),
+                true,
+                false,
+            ),
+            (
+                ChannelUnreadState::Mentioned(3),
+                Some(("(3) ", Color::Yellow)),
+                Some(Color::Red),
+                true,
+                false,
+            ),
+            (
+                ChannelUnreadState::Notified(3),
+                Some(("(3) ", Color::Magenta)),
+                Some(Color::Green),
+                true,
+                false,
+            ),
+        ];
 
-    for (unread, expected_badge, expected_fg, expect_bold) in cases {
-        let (badge, style) = channel_unread_decoration(unread, base, false);
-        match expected_badge {
-            Some((content, color)) => {
-                let badge = badge.expect("unread state should include a count badge");
-                assert_eq!(badge.content.as_ref(), content);
-                assert_eq!(badge.style.fg, Some(color));
-                assert!(badge.style.add_modifier.contains(Modifier::BOLD));
+        for (unread, expected_badge, expected_fg, expect_bold, expect_dim) in cases {
+            let (badge, style) = channel_unread_decoration(unread, base, false);
+            match expected_badge {
+                Some((content, color)) => {
+                    let badge = badge.expect("unread state should include a count badge");
+                    assert_eq!(badge.content.as_ref(), content);
+                    assert_eq!(badge.style.fg, Some(color));
+                    assert!(badge.style.add_modifier.contains(Modifier::BOLD));
+                }
+                None => assert!(badge.is_none()),
             }
-            None => assert!(badge.is_none()),
+            assert_eq!(style.fg, expected_fg);
+            assert_eq!(style.add_modifier.contains(Modifier::BOLD), expect_bold);
+            assert_eq!(style.add_modifier.contains(Modifier::DIM), expect_dim);
         }
-        assert_eq!(style.fg, expected_fg);
-        assert_eq!(style.add_modifier.contains(Modifier::BOLD), expect_bold);
-        if unread == ChannelUnreadState::Seen {
-            assert!(!style.add_modifier.contains(Modifier::DIM));
-        }
-    }
 
-    let active_base = Style::default()
-        .fg(Color::Green)
-        .add_modifier(Modifier::BOLD);
-    let (badge, style) =
-        channel_unread_decoration(ChannelUnreadState::Mentioned(2), active_base, true);
-    assert!(badge.is_none());
-    assert_eq!(style, active_base);
+        let active_base = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let (badge, style) =
+            channel_unread_decoration(ChannelUnreadState::Mentioned(2), active_base, true);
+        assert!(badge.is_none());
+        assert_eq!(style, active_base);
+    });
+}
+
+#[test]
+fn dashboard_repaints_every_cell_with_custom_app_background() {
+    let background = Color::Rgb(12, 34, 56);
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().fg(Color::Reset).bg(background),
+    );
+
+    theme::with_test_theme(custom, || {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        let state = DashboardState::new();
+
+        terminal
+            .draw(|frame| render(frame, &state, Vec::new(), Vec::new(), Vec::new(), None))
+            .expect("draw should succeed");
+
+        let buffer = terminal.backend().buffer();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                assert_eq!(buffer[(x, y)].bg, background, "cell ({x}, {y})");
+            }
+        }
+
+        let backend = TestBackend::new(8, 4);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        let area = Rect::new(2, 1, 4, 2);
+
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new("XXXXXXXX\nXXXXXXXX")
+                        .style(Style::default().bg(Color::Red)),
+                    frame.area(),
+                );
+                clear_area(frame, area);
+            })
+            .expect("draw should succeed");
+
+        let buffer = terminal.backend().buffer();
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                assert_eq!(buffer[(x, y)].symbol(), " ");
+                assert_eq!(buffer[(x, y)].bg, background);
+            }
+        }
+    });
+}
+
+#[test]
+fn focused_structural_border_is_separate_from_selection_color() {
+    let selection_background = Color::Rgb(40, 45, 90);
+    let custom = theme::Theme::default()
+        .with_border_type(theme::BorderSurface::Pane, BorderType::Double)
+        .with_style(
+            theme::HighlightGroup::PaneBorder,
+            Style::default().fg(Color::Red),
+        )
+        .with_style(
+            theme::HighlightGroup::FocusedPaneBorder,
+            Style::default()
+                .fg(Color::LightMagenta)
+                .add_modifier(Modifier::BOLD),
+        )
+        .with_style(
+            theme::HighlightGroup::SelectionMarker,
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(selection_background)
+                .add_modifier(Modifier::BOLD),
+        )
+        .with_style(
+            theme::HighlightGroup::SelectedRow,
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(selection_background)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    theme::with_test_theme(custom, || {
+        let backend = TestBackend::new(12, 4);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| frame.render_widget(panel_block("Panel", true), frame.area()))
+            .expect("draw should succeed");
+
+        let border = &terminal.backend().buffer()[(0, 0)];
+        assert_eq!(border.symbol(), "╔");
+        assert_eq!(border.fg, Color::LightMagenta);
+        assert!(border.modifier.contains(Modifier::BOLD));
+
+        let marker = selection_marker(true);
+        assert_eq!(marker.style.fg, Some(Color::Cyan));
+        assert_ne!(marker.style.fg, Some(Color::LightMagenta));
+        assert_ne!(marker.style.fg, Some(Color::Red));
+
+        let selected = highlight_style();
+        assert_eq!(selected.fg, Some(Color::Cyan));
+        assert_eq!(selected.bg, Some(selection_background));
+    });
+}
+
+#[test]
+fn selection_marker_uses_the_theme_glyph_and_reserves_its_display_width() {
+    let (options, parse_warnings) =
+        crate::config::parse_theme_options_for_test("[ui.indicator]\nselection = \"界 \"\n")
+            .expect("selection marker config should parse");
+    assert!(parse_warnings.is_empty());
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+
+    theme::with_test_theme(custom, || {
+        let selected = selection_marker(true);
+        let unselected = selection_marker(false);
+
+        assert_eq!(selected.content, "界 ");
+        assert_eq!(unselected.content, "   ");
+        assert_eq!(selected.content.width(), unselected.content.width());
+    });
 }
 
 #[test]
@@ -62,11 +221,11 @@ fn later_history_does_not_clear_loaded_pin_state() {
             .all(|message| message.id != Id::new(10))
     );
 
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id: Id::new(2),
-        before: None,
         messages: vec![message_info(10, "mod", "important announcement", false)],
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
 
     state.enter_pinned_message_view(Id::new(2));
     assert_eq!(state.messages().len(), 1);
@@ -80,66 +239,73 @@ fn later_history_does_not_clear_loaded_pin_state() {
 }
 
 #[test]
-fn primary_activity_summary_prefers_game_over_custom_status() {
-    let activities = vec![
-        ActivityInfo::test(ActivityKind::Playing, "Concord"),
-        ActivityInfo {
-            state: Some("Coding hard".to_owned()),
-            emoji: Some(ActivityEmoji {
-                name: "🦀".to_owned(),
-                id: None,
-                animated: false,
-            }),
-            ..ActivityInfo::test(ActivityKind::Custom, "Custom Status")
-        },
-    ];
-
-    assert_eq!(
-        primary_activity_summary(&activities, &[]).map(|r| r.to_display_string()),
-        Some("▶ Concord".to_owned())
-    );
-}
-
-#[test]
-fn primary_activity_summary_listening_includes_track_and_artist() {
-    let activities = vec![ActivityInfo {
-        details: Some("Bohemian Rhapsody".to_owned()),
-        state: Some("Queen".to_owned()),
-        ..ActivityInfo::test(ActivityKind::Listening, "Spotify")
-    }];
-    assert_eq!(
-        primary_activity_summary(&activities, &[]).map(|r| r.to_display_string()),
-        Some("♪ Spotify - Bohemian Rhapsody by Queen".to_owned())
-    );
-}
-
-#[test]
-fn primary_activity_summary_sanitizes_custom_status_emoji() {
-    let activities = vec![ActivityInfo {
-        state: Some("curse of rah".to_owned()),
-        emoji: Some(ActivityEmoji {
-            name: "⚜".to_owned(),
-            id: None,
-            animated: false,
-        }),
-        ..ActivityInfo::test(ActivityKind::Custom, "Custom Status")
-    }];
-
-    assert_eq!(
-        primary_activity_summary(&activities, &[]).map(|render| render.to_display_string()),
-        Some("? curse of rah".to_owned())
-    );
+fn primary_activity_summary_picks_and_renders_the_leading_activity() {
+    for (name, activities, expected) in [
+        (
+            "a game outranks a custom status",
+            vec![
+                ActivityInfo::test(ActivityKind::Playing, "Concord"),
+                ActivityInfo {
+                    state: Some("Coding hard".to_owned()),
+                    emoji: Some(ActivityEmoji {
+                        name: "🦀".to_owned(),
+                        id: None,
+                        animated: false,
+                    }),
+                    ..ActivityInfo::test(ActivityKind::Custom, "Custom Status")
+                },
+            ],
+            "▶ Concord",
+        ),
+        (
+            "listening spells out the track and artist",
+            vec![ActivityInfo {
+                details: Some("Bohemian Rhapsody".to_owned()),
+                state: Some("Queen".to_owned()),
+                ..ActivityInfo::test(ActivityKind::Listening, "Spotify")
+            }],
+            "♪ Spotify - Bohemian Rhapsody by Queen",
+        ),
+        (
+            "a custom status emoji the terminal cannot width is sanitized",
+            vec![ActivityInfo {
+                state: Some("curse of rah".to_owned()),
+                emoji: Some(ActivityEmoji {
+                    name: "⚜".to_owned(),
+                    id: None,
+                    animated: false,
+                }),
+                ..ActivityInfo::test(ActivityKind::Custom, "Custom Status")
+            }],
+            "? curse of rah",
+        ),
+    ] {
+        assert_eq!(
+            primary_activity_summary(&activities, &[]).map(|render| render.to_display_string()),
+            Some(expected.to_owned()),
+            "{name}"
+        );
+    }
 }
 
 #[test]
 fn offline_like_dm_status_uses_empty_dim_presence_marker() {
-    for status in [PresenceStatus::Offline, PresenceStatus::Unknown] {
-        let channel = channel_with_recipients("dm", &[status]);
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::PresenceOffline,
+        Style::default()
+            .fg(Color::LightMagenta)
+            .add_modifier(Modifier::DIM),
+    );
+    theme::with_test_theme(custom, || {
+        for status in [PresenceStatus::Offline, PresenceStatus::Unknown] {
+            let channel = channel_with_recipients("dm", &[status]);
 
-        let dot = dm_presence_dot_span(&channel).expect("DM should still produce a dot");
-        assert_eq!(dot.content.as_ref(), "○ ");
-        assert_eq!(dot.style.fg, Some(Color::DarkGray));
-    }
+            let dot = dm_presence_dot_span(&channel).expect("DM should still produce a dot");
+            assert_eq!(dot.content.as_ref(), "○ ");
+            assert_eq!(dot.style.fg, Some(Color::LightMagenta));
+            assert!(dot.style.add_modifier.contains(Modifier::DIM));
+        }
+    });
 }
 
 #[test]
@@ -155,7 +321,8 @@ fn wrapped_edited_marker_keeps_dim_italic_style() {
         .into_iter()
         .next()
         .expect("wrapped edited marker span should be present");
-    assert_eq!(marker.style.fg, Some(DIM));
+    assert_eq!(marker.style.fg, None);
+    assert!(marker.style.add_modifier.contains(Modifier::DIM));
     assert!(marker.style.add_modifier.contains(Modifier::ITALIC));
 }
 
@@ -181,17 +348,55 @@ fn embed_text_emits_inline_emoji_slot_for_image_overlay() {
 }
 
 #[test]
-fn non_default_message_type_adds_dim_label_line() {
-    let mut message = message_with_attachment(Some("reply body".to_owned()), image_attachment());
-    message.message_kind = MessageKind::new(19);
+fn message_kind_decides_the_dim_first_line() {
+    for (name, message, expected) in [
+        (
+            "reply kind without a reply preview falls back to a label",
+            {
+                let mut message =
+                    message_with_attachment(Some("reply body".to_owned()), image_attachment());
+                message.message_kind = MessageKind::new(19);
+                message
+            },
+            vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"],
+        ),
+        (
+            "reply kind with a preview replaces the label",
+            {
+                let mut message =
+                    message_with_attachment(Some("message body".to_owned()), image_attachment());
+                message.message_kind = MessageKind::new(19);
+                message.reply = Some(ReplyInfo {
+                    content: Some("looks good".to_owned()),
+                    ..ReplyInfo::test("casey")
+                });
+                message
+            },
+            vec![
+                "╭─ casey : looks good",
+                "message body",
+                "[image: cat.png] 640x480",
+            ],
+        ),
+        (
+            "join kind renders only its label",
+            {
+                let mut message = message_with_content(Some(String::new()));
+                message.message_kind = MessageKind::new(7);
+                message
+            },
+            vec!["joined the server"],
+        ),
+    ] {
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
-
-    assert_eq!(
-        line_texts(&lines),
-        vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"]
-    );
-    assert_eq!(lines[0].style, Style::default().fg(DIM));
+        assert_eq!(line_texts(&lines), expected, "{name}");
+        assert_eq!(
+            lines[0].style,
+            Style::default().add_modifier(Modifier::DIM),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -201,10 +406,7 @@ fn chat_input_command_message_keeps_embed_text() {
     let user_id = Id::new(30);
     let role_id = Id::new(100);
     let mut state = DashboardState::new();
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![ChannelInfo {
             guild_id: Some(guild_id),
             name: "general".to_owned(),
@@ -215,15 +417,13 @@ fn chat_input_command_message_keeps_embed_text() {
             role_ids: vec![role_id],
             ..MemberInfo::test(user_id, "casey")
         }],
-        presences: Vec::new(),
         roles: vec![RoleInfo {
             color: Some(0x3366CC),
             position: 10,
             ..RoleInfo::test(role_id, "Blue")
         }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(guild_id)
+    }));
     let mut message = message_with_content(Some(String::new()));
     message.message_kind = MessageKind::new(20);
     message.interaction = Some(MessageInteractionInfo {
@@ -245,7 +445,7 @@ fn chat_input_command_message_keeps_embed_text() {
             "  ▎ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         ]
     );
-    assert_eq!(lines[0].style, Style::default().fg(DIM));
+    assert_eq!(lines[0].style, Style::default().add_modifier(Modifier::DIM));
     let spans = lines[0].spans();
 
     assert_eq!(spans[0].content.as_ref(), "┌ ");
@@ -253,21 +453,16 @@ fn chat_input_command_message_keeps_embed_text() {
     assert_eq!(spans[1].style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
     assert!(spans[1].style.add_modifier.contains(Modifier::DIM));
     assert_eq!(spans[2].content.as_ref(), " used ");
-    assert_eq!(spans[2].style.fg, Some(DIM));
+    assert_eq!(spans[2].style.fg, None);
+    assert!(spans[2].style.add_modifier.contains(Modifier::DIM));
     assert_eq!(spans[3].content.as_ref(), "/anime search");
-    assert_eq!(spans[3].style.fg, Some(Color::Rgb(88, 101, 242)));
+    assert_eq!(
+        spans[3].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::CommandName)
+            .fg
+    );
     assert!(spans[3].style.add_modifier.contains(Modifier::DIM));
-}
-
-#[test]
-fn user_join_message_type_uses_join_label() {
-    let mut message = message_with_content(Some(String::new()));
-    message.message_kind = MessageKind::new(7);
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
-
-    assert_eq!(line_texts(&lines), vec!["joined the server"]);
-    assert_eq!(lines[0].style, Style::default().fg(DIM));
 }
 
 #[test]
@@ -284,7 +479,10 @@ fn boost_message_types_use_discord_like_copy() {
         let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
         assert_eq!(line_texts(&lines), vec![label]);
-        assert_eq!(lines[0].style, Style::default().fg(ACCENT));
+        assert_eq!(
+            lines[0].style,
+            theme::current().style(theme::HighlightGroup::Info)
+        );
     }
 }
 
@@ -313,28 +511,6 @@ fn poll_result_message_uses_result_card() {
             "7 total votes · Final results"
         ]
     );
-}
-
-#[test]
-fn reply_message_uses_preview_instead_of_type_label() {
-    let mut message = message_with_attachment(Some("message body".to_owned()), image_attachment());
-    message.message_kind = MessageKind::new(19);
-    message.reply = Some(ReplyInfo {
-        content: Some("looks good".to_owned()),
-        ..ReplyInfo::test("casey")
-    });
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
-
-    assert_eq!(
-        line_texts(&lines),
-        vec![
-            "╭─ casey : looks good",
-            "message body",
-            "[image: cat.png] 640x480"
-        ]
-    );
-    assert_eq!(lines[0].style, Style::default().fg(DIM));
 }
 
 #[test]
@@ -379,7 +555,7 @@ fn poll_message_notes_multiselect() {
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
     assert!(lines[2].text.starts_with("│ Select one or more answers"));
-    assert_eq!(lines[2].style, Style::default().fg(DIM));
+    assert_eq!(lines[2].style, Style::default().add_modifier(Modifier::DIM));
 }
 
 #[test]
@@ -413,7 +589,10 @@ fn lay_out_reaction_chips_unicode_only_emits_no_image_slots() {
     let spans = reaction_line_test_spans(&layout.lines[0], &layout.self_ranges, 0);
     assert_eq!(spans[0].content.as_ref(), "[👍 3]");
     assert_eq!(spans[0].style, Style::default().fg(Color::Yellow));
-    assert_eq!(spans[1].style, Style::default().fg(ACCENT));
+    assert_eq!(
+        spans[1].style,
+        theme::current().style(theme::HighlightGroup::Reaction)
+    );
     assert!(layout.slots.is_empty());
 }
 
@@ -477,40 +656,26 @@ fn lay_out_reaction_chips_wraps_at_chip_boundary() {
 }
 
 #[test]
-fn forwarded_snapshot_replaces_empty_message_placeholder() {
-    let message =
-        message_with_forwarded_snapshot(forwarded_snapshot(Some("forwarded text"), Vec::new()));
-
-    assert_eq!(
-        format_message_content(&message, 200),
-        "↱ Forwarded │ forwarded text"
-    );
-}
-
-#[test]
 fn forwarded_snapshot_content_wraps_after_prefix() {
-    let message =
-        message_with_forwarded_snapshot(forwarded_snapshot(Some("abcdefghijkl"), Vec::new()));
+    for (content, width, expected) in [
+        (
+            "abcdefghijkl",
+            7,
+            vec!["↱ Forwarded", "│ abcde", "│ fghij", "│ kl"],
+        ),
+        (
+            "漢字仮名交じ",
+            12,
+            vec!["↱ Forwarded", "│ 漢字仮名交", "│ じ"],
+        ),
+    ] {
+        let message =
+            message_with_forwarded_snapshot(forwarded_snapshot(Some(content), Vec::new()));
 
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 7);
+        let lines = format_message_content_lines(&message, &DashboardState::new(), width);
 
-    assert_eq!(
-        line_texts(&lines),
-        vec!["↱ Forwarded", "│ abcde", "│ fghij", "│ kl"]
-    );
-}
-
-#[test]
-fn forwarded_snapshot_content_wraps_wide_characters_after_prefix() {
-    let message =
-        message_with_forwarded_snapshot(forwarded_snapshot(Some("漢字仮名交じ"), Vec::new()));
-
-    let lines = format_message_content_lines(&message, &DashboardState::new(), 12);
-
-    assert_eq!(
-        line_texts(&lines),
-        vec!["↱ Forwarded", "│ 漢字仮名交", "│ じ"]
-    );
+        assert_eq!(line_texts(&lines), expected, "{content}");
+    }
 }
 
 #[test]
@@ -525,16 +690,23 @@ fn forwarded_snapshot_lines_include_channel_and_time() {
     ));
     let mut snapshot = forwarded_snapshot(Some("hello"), Vec::new());
     snapshot.source_channel_id = Some(Id::new(9));
-    snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
+    let timestamp = "2026-04-30T12:34:56.000000+00:00";
+    snapshot.timestamp = Some(timestamp.to_owned());
     let message = message_with_forwarded_snapshot(snapshot);
+    let expected_time = crate::tui::message::time::format_rfc3339_local_time(timestamp, true)
+        .expect("static timestamp is valid");
 
     let lines = format_message_content_lines(&message, &state, 200);
 
     assert_eq!(
         line_texts(&lines),
-        vec!["↱ Forwarded", "│ hello", "│ #general · 12:34"]
+        vec![
+            "↱ Forwarded".to_owned(),
+            "│ hello".to_owned(),
+            format!("│ #general · {expected_time}"),
+        ]
     );
-    assert_eq!(lines[2].style, Style::default().fg(DIM));
+    assert_eq!(lines[2].style, Style::default().add_modifier(Modifier::DIM));
 }
 
 #[test]
@@ -577,9 +749,53 @@ fn forwarded_snapshot_renders_discord_embed_preview() {
 }
 
 #[test]
-fn selected_grouped_continuation_shows_time_gutter() {
+fn selected_grouped_continuation_stamps_time_on_border() {
     let mut state = state_with_message();
     push_message(&mut state, 2, "follow-up");
+    state.jump_top();
+    let messages = state.messages();
+
+    let custom =
+        theme::Theme::default().with_border_type(theme::BorderSurface::Message, BorderType::Double);
+    let lines = theme::with_test_theme(custom, || {
+        message_viewport_lines(
+            &messages,
+            Some(1),
+            &state,
+            super::default_message_viewport_layout(),
+            &[],
+        )
+    });
+    let texts = line_texts_from_ratatui(&lines);
+
+    let sent_time = format_message_sent_time(Id::new(2), true);
+    assert!(texts[3].starts_with("╔"));
+    assert!(texts[4].starts_with("║ "));
+    assert!(texts[4].contains("follow-up"));
+    assert!(!texts[4].contains(&sent_time));
+
+    let border = texts
+        .iter()
+        .find(|line| line.starts_with("╚"))
+        .expect("selected card bottom border");
+    assert!(border.contains(&sent_time));
+    assert!(border.ends_with("═╝"));
+    let border_line = lines
+        .iter()
+        .find(|line| line.to_string().starts_with("╚"))
+        .expect("selected card bottom border line");
+    assert_eq!(
+        border_line.spans[0].style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::MessageSelectedBorder)
+            .fg
+    );
+}
+
+#[test]
+fn selected_multiline_continuation_keeps_time_off_content_lines() {
+    let mut state = state_with_message();
+    push_message(&mut state, 2, "alpha bravo charlie delta echo foxtrot golf");
     state.jump_top();
     let messages = state.messages();
 
@@ -587,14 +803,56 @@ fn selected_grouped_continuation_shows_time_gutter() {
         &messages,
         Some(1),
         &state,
+        super::selected_message_viewport_layout(20),
+        &[],
+    );
+    let texts = line_texts_from_ratatui(&lines);
+
+    let sent_time = format_message_sent_time(Id::new(2), true);
+    let content_lines: Vec<&String> = texts.iter().filter(|line| line.starts_with("│ ")).collect();
+
+    assert!(
+        content_lines.len() >= 2,
+        "content should wrap onto multiple lines"
+    );
+    assert!(content_lines.iter().all(|line| !line.contains(&sent_time)));
+
+    let border = texts
+        .iter()
+        .find(|line| line.starts_with("╰"))
+        .expect("selected card bottom border");
+    assert!(border.contains(&sent_time));
+    assert!(border.ends_with("─╯"));
+}
+
+#[test]
+fn avatars_off_collapses_message_gutter() {
+    let display = DisplayOptions {
+        show_avatars: false,
+        ..DisplayOptions::default()
+    };
+    let state = seed_channel_message(
+        DashboardState::new_with_display_options(display),
+        Id::new(1),
+        "hello",
+    );
+    let messages = state.messages();
+
+    let lines = message_viewport_lines(
+        &messages,
+        None,
+        &state,
         super::default_message_viewport_layout(),
         &[],
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    let sent_time = format_message_sent_time(Id::new(2));
-    assert!(texts[3].starts_with("╭"));
-    assert!(texts[4].starts_with(&format!("│ {sent_time} follow-up")));
+    assert!(!texts.iter().any(|line| line.contains("oooo")));
+    let body = texts
+        .iter()
+        .find(|line| line.contains("hello"))
+        .expect("body line renders");
+    assert!(body.starts_with("  h"));
 }
 
 #[test]
@@ -617,52 +875,210 @@ fn grouped_continuation_custom_emoji_image_uses_body_row() {
 }
 
 #[test]
-fn shared_truncation_uses_display_width_for_wide_characters() {
-    let author = truncate_display_width("漢字仮名交じり", 8);
+fn standalone_custom_emoji_reserves_a_large_four_row_image() {
+    let state = seed_channel_message(DashboardState::new(), Id::new(1), "  <:solo:42>  ");
+    let message = state.messages()[0];
+    let url = "https://cdn.discordapp.com/emojis/42.png".to_owned();
+    let width = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
+    assert_eq!(width, 8);
+    assert_eq!(height, 4);
 
-    assert_eq!(author, "漢字...");
-    assert_eq!(author.width(), 7);
+    let fallback_lines =
+        format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, 80, &[]);
+    assert_eq!(fallback_lines.len(), height);
+    assert_eq!(fallback_lines[0].text.width(), width);
+    assert_eq!(fallback_lines[0].image_slots.len(), 1);
+    assert_eq!(
+        fallback_lines[0].image_slots[0].image_size,
+        EmojiImageSize::Standalone
+    );
+    assert!(
+        fallback_lines[1..]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
+
+    let loaded_lines =
+        format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, 80, &[url]);
+    assert_eq!(loaded_lines.len(), height);
+    assert_eq!(loaded_lines[0].text, " ".repeat(width));
+    assert_eq!(
+        state.message_base_line_count_for_width(message, 80),
+        1 + height
+    );
+
+    let narrow_state = seed_channel_message(
+        DashboardState::new(),
+        Id::new(2),
+        "<:a_very_long_custom_emoji_name:42>",
+    );
+    let narrow_message = narrow_state.messages()[0];
+    let fallback_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        narrow_message,
+        &narrow_state,
+        8,
+        &[],
+    );
+    let loaded_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        narrow_message,
+        &narrow_state,
+        8,
+        &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
+    );
+    assert_eq!(fallback_lines.len(), height);
+    assert_eq!(loaded_lines.len(), height);
 }
 
 #[test]
-fn member_label_truncates_by_display_width() {
-    let member = GuildMemberState {
-        status: PresenceStatus::Online,
-        ..GuildMemberState::test(Id::new(10), "漢字仮名交じり文章")
-    };
+fn emoji_only_messages_enlarge_unicode_and_custom_emoji() {
+    let state = seed_channel_message(DashboardState::new(), Id::new(1), "  😀 <:wave:42> ❤️  ");
+    let message = state.messages()[0];
+    let urls = [
+        "https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/72x72/1f600.png".to_owned(),
+        "https://cdn.discordapp.com/emojis/42.png".to_owned(),
+        "https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/72x72/2764.png".to_owned(),
+    ];
+    let cell = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        message,
+        &state,
+        cell * 3,
+        &urls,
+    );
 
-    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
-
-    assert_eq!(label, "漢字仮名...");
-    assert!(label.width() <= 12);
+    assert_eq!(lines.len(), height);
+    assert_eq!(lines[0].text, " ".repeat(cell * 3));
+    assert!(
+        lines[1..]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
+    assert_eq!(lines[0].image_slots.len(), 3);
+    assert_eq!(
+        lines[0]
+            .image_slots
+            .iter()
+            .map(|slot| (slot.col, slot.image_size, slot.url.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, EmojiImageSize::Standalone, urls[0].as_str()),
+            (cell as u16, EmojiImageSize::Standalone, urls[1].as_str()),
+            (
+                (cell * 2) as u16,
+                EmojiImageSize::Standalone,
+                urls[2].as_str()
+            ),
+        ]
+    );
 }
 
 #[test]
-fn member_label_sanitizes_ambiguous_width_emoji_before_truncating() {
-    let member = GuildMemberState {
-        status: PresenceStatus::Online,
-        ..GuildMemberState::test(Id::new(10), "user ⚜ status")
-    };
+fn emoji_only_messages_wrap_large_grapheme_sequences_by_cell_width() {
+    let state = seed_channel_message(DashboardState::new(), Id::new(1), "👍🏽 👨‍❤️‍👨 🇰🇷 #️⃣");
+    let message = state.messages()[0];
+    let cell = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
+    let lines =
+        format_message_content_lines_with_loaded_custom_emoji_urls(message, &state, cell * 2, &[]);
 
-    let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
-
-    assert_eq!(label, "user ? st...");
-    assert!(label.width() <= 12);
+    assert_eq!(lines.len(), height * 2);
+    assert_eq!(lines[0].image_slots.len(), 2);
+    assert!(
+        lines[1..height]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
+    assert_eq!(lines[height].image_slots.len(), 2);
+    assert!(
+        lines[height + 1..]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
+    assert!(
+        lines
+            .iter()
+            .flat_map(|line| &line.image_slots)
+            .all(|slot| slot.image_size == EmojiImageSize::Standalone)
+    );
 }
 
 #[test]
-fn horizontal_truncation_skips_display_width_offset() {
-    let label = truncate_display_width_from("abcdef", 2, 4);
+fn emoji_mixed_with_text_keeps_compact_size() {
+    let state = seed_channel_message(DashboardState::new(), Id::new(1), "hello <:inline:42>");
+    let url = "https://cdn.discordapp.com/emojis/42.png".to_owned();
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        state.messages()[0],
+        &state,
+        80,
+        std::slice::from_ref(&url),
+    );
 
-    assert_eq!(label, "cdef");
+    let width = usize::from(EmojiImageSize::Compact.width());
+
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].text, format!("hello {}", " ".repeat(width)));
+    assert_eq!(lines[0].image_slots.len(), 1);
+    assert_eq!(lines[0].image_slots[0].col, 6);
+    assert_eq!(lines[0].image_slots[0].image_size, EmojiImageSize::Compact);
+    assert_eq!(lines[0].image_slots[0].url, url);
 }
 
 #[test]
-fn horizontal_truncation_respects_wide_character_boundaries() {
-    let label = truncate_display_width_from("가나다abc", 2, 6);
+fn unicode_mixed_with_text_stays_inline_glyphs() {
+    let state = seed_channel_message(DashboardState::new(), Id::new(1), "hello 😀");
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        state.messages()[0],
+        &state,
+        80,
+        &[],
+    );
 
-    assert_eq!(label, "나...");
-    assert!(label.width() <= 6);
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].image_slots.is_empty());
+}
+
+#[test]
+fn edited_marker_stays_outside_the_standalone_emoji_image_rows() {
+    let state = seed_channel_message_fixture(
+        DashboardState::new(),
+        MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some("<:solo:42>".to_owned()),
+            edited_timestamp: Some("2026-08-19T00:00:00Z".to_owned()),
+            ..guild_message_create_fixture()
+        },
+    );
+    let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        state.messages()[0],
+        &state,
+        8,
+        &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
+    );
+
+    let width = usize::from(EmojiImageSize::Standalone.width());
+    let height = usize::from(EmojiImageSize::Standalone.height());
+
+    assert_eq!(lines.len(), height + 1);
+    assert_eq!(lines[0].text, " ".repeat(width));
+    assert!(
+        lines[1..height]
+            .iter()
+            .all(|line| line.text.is_empty() && line.image_slots.is_empty())
+    );
+    assert_eq!(lines[height].text, "(edited)");
+}
+
+#[test]
+fn horizontal_truncation_skips_the_offset_and_fits_the_width() {
+    for (text, offset, width, expected) in [("abcdef", 2, 4, "cdef"), ("가나다abc", 2, 6, "나...")]
+    {
+        let label = truncate_display_width_from(text, offset, width);
+
+        assert_eq!(label, expected, "{text}");
+        assert!(label.width() <= width, "{text}");
+    }
 }
 
 #[test]
@@ -678,72 +1094,76 @@ fn member_label_uses_horizontal_scroll_offset() {
 }
 
 #[test]
-fn channel_label_truncates_by_display_width_after_prefixes() {
-    let branch_prefix = "├ ";
-    let channel_prefix = "# ";
-    let max_width = 14usize;
-    let label_width = max_width
-        .saturating_sub(branch_prefix.width())
-        .saturating_sub(channel_prefix.width());
-    let label = truncate_display_width("漢字仮名交じり", label_width);
-
-    assert_eq!(label, "漢字仮...");
-    assert!(branch_prefix.width() + channel_prefix.width() + label.width() <= max_width);
-}
-
-#[test]
 fn offline_member_name_keeps_role_color_and_dims() {
     let member = GuildMemberState::test(Id::new(10), "neo");
-
-    let style = member_name_style(MemberEntry::Guild(&member), Some(0x3366CC), false);
-
-    assert_eq!(style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
-    assert!(style.add_modifier.contains(Modifier::DIM));
-}
-
-#[test]
-fn no_role_member_name_stays_white_for_online_like_statuses() {
-    for status in [
-        PresenceStatus::Online,
-        PresenceStatus::Idle,
-        PresenceStatus::DoNotDisturb,
-    ] {
-        let member = GuildMemberState {
-            status,
-            ..GuildMemberState::test(Id::new(10), "neo")
-        };
-
-        let style = member_name_style(MemberEntry::Guild(&member), None, false);
-
-        assert_eq!(style.fg, Some(Color::White));
-        assert!(!style.add_modifier.contains(Modifier::DIM));
-    }
-}
-
-#[test]
-fn no_role_offline_member_name_is_white_and_dimmed() {
-    let member = GuildMemberState::test(Id::new(10), "neo");
-
-    let style = member_name_style(MemberEntry::Guild(&member), None, false);
-
-    assert_eq!(style.fg, Some(Color::White));
-    assert!(style.add_modifier.contains(Modifier::DIM));
-}
-
-#[test]
-fn selected_bot_member_name_preserves_role_color_and_selection_style() {
-    let member = GuildMemberState {
+    let selected_bot = GuildMemberState {
         is_bot: true,
         status: PresenceStatus::Online,
-        ..GuildMemberState::test(Id::new(10), "bot")
+        ..GuildMemberState::test(Id::new(11), "bot")
     };
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Muted,
+        Style::default().fg(Color::Red).add_modifier(Modifier::DIM),
+    );
 
-    let style = member_name_style(MemberEntry::Guild(&member), Some(0x3366CC), true);
+    theme::with_test_theme(custom, || {
+        let style = member_name_style(MemberEntry::Guild(&member), Some(0x3366CC), false);
 
-    assert_eq!(style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
-    assert_eq!(style.bg, Some(Color::Rgb(24, 54, 65)));
-    assert!(style.add_modifier.contains(Modifier::BOLD));
-    assert!(style.add_modifier.contains(Modifier::ITALIC));
+        assert_eq!(style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
+        assert!(style.add_modifier.contains(Modifier::DIM));
+
+        let style = member_name_style(MemberEntry::Guild(&selected_bot), Some(0x3366CC), true);
+        assert_eq!(style.fg, Some(Color::Rgb(0x33, 0x66, 0xCC)));
+        assert_eq!(
+            style.bg,
+            theme::current()
+                .style(theme::HighlightGroup::SelectedRow)
+                .bg
+        );
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+        assert!(style.add_modifier.contains(Modifier::ITALIC));
+    });
+}
+
+#[test]
+fn no_role_member_name_uses_normal_foreground_for_online_like_statuses() {
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().fg(Color::LightMagenta),
+    );
+    theme::with_test_theme(custom, || {
+        for status in [
+            PresenceStatus::Online,
+            PresenceStatus::Idle,
+            PresenceStatus::DoNotDisturb,
+        ] {
+            let member = GuildMemberState {
+                status,
+                ..GuildMemberState::test(Id::new(10), "neo")
+            };
+
+            let style = member_name_style(MemberEntry::Guild(&member), None, false);
+
+            assert_eq!(style.fg, Some(Color::LightMagenta));
+            assert!(!style.add_modifier.contains(Modifier::DIM));
+        }
+    });
+}
+
+#[test]
+fn no_role_offline_member_name_uses_normal_foreground_and_dim() {
+    let member = GuildMemberState::test(Id::new(10), "neo");
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::Normal,
+        Style::default().fg(Color::LightMagenta),
+    );
+
+    theme::with_test_theme(custom, || {
+        let style = member_name_style(MemberEntry::Guild(&member), None, false);
+
+        assert_eq!(style.fg, Some(Color::LightMagenta));
+        assert!(style.add_modifier.contains(Modifier::DIM));
+    });
 }
 
 #[test]
@@ -806,7 +1226,7 @@ fn second_inline_preview_slot_uses_album_column_offset() {
 
     assert_eq!(row, 3);
     assert_eq!(
-        inline_image_preview_area(area, row, 8, 8, 3, None),
+        inline_image_preview_area(area, row, 8, 8, 3, None, MESSAGE_AVATAR_OFFSET),
         Some(Rect::new(26, 9, 8, 3))
     );
 }
@@ -824,30 +1244,20 @@ fn forwarded_card_rows_push_inline_preview_slot_down() {
 }
 
 #[test]
-fn inline_album_overflow_marker_is_visible() {
-    let mut state = state_with_message();
-    let dump = render_dashboard_dump_with_previews(
-        120,
-        20,
-        &mut state,
-        vec![ImagePreview {
-            viewer: false,
-            message_index: 0,
-            preview_x_offset_columns: 0,
-            preview_y_offset_rows: 0,
-            preview_width: 16,
-            preview_height: 3,
-            preview_overflow_count: 2,
-            accent_color: None,
-            state: ImagePreviewState::Loading {
-                filename: "image-4.png".to_owned(),
-            },
-        }],
-    );
+fn member_label_sanitizes_then_truncates_to_display_width() {
+    let cases = [
+        ("漢字仮名交じり文章", "漢字仮名..."),
+        ("user ⚜ status", "user ? st..."),
+    ];
 
-    assert!(
-        dump.iter().any(|line| line.contains("+2")),
-        "dashboard dump did not contain overflow overlay marker:\n{}",
-        dump.join("\n")
-    );
+    for (display_name, expected) in cases {
+        let member = GuildMemberState {
+            status: PresenceStatus::Online,
+            ..GuildMemberState::test(Id::new(10), display_name)
+        };
+
+        let label = member_display_label(MemberEntry::Guild(&member), &member.display_name, 0, 12);
+        assert_eq!(label, expected, "{display_name}");
+        assert!(label.width() <= 12, "{display_name}");
+    }
 }

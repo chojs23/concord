@@ -1,7 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::HashSet, time::Instant};
 
-use image::DynamicImage;
-use ratatui_image::{picker::Picker, protocol::Protocol};
+use ratatui_image::picker::Picker;
 
 use crate::{
     discord::{AppCommand, AppEvent, ProfileAvatarUpload},
@@ -9,22 +8,24 @@ use crate::{
 };
 
 use super::{
-    AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, AvatarTarget, ImagePreviewRenderInfo,
+    AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, AvatarTarget, MediaProtocolRenderSpec,
     PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH, avatar_preview_url,
-    cache::{MediaImageCacheCore, MediaImageCacheEntry},
-    clipped_preview_protocol,
-    decode::{MediaImageDecodeJob, MediaImageDecodeKey},
-    query_image_picker,
+    cache::{MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
+    decode::{DecodedMediaImage, MediaImageDecodeKey, MediaImageDecodeRequest},
+    protocol_job::{MediaProtocolBuildJob, MediaProtocolBuildResult, MediaProtocolBuildTarget},
+    work::{MediaWorkError, MediaWorkResult},
 };
 
 /// Avatar images are small on screen but decoded originals can still add up
 /// as users scroll through large servers. Keep a generous URL-keyed LRU cap.
 pub(super) const MAX_AVATAR_IMAGE_CACHE_ENTRIES: usize = 32;
+const AVATAR_IMAGE_CACHE_DECODED_BYTE_BUDGET: u64 = 32 * 1024 * 1024;
 
 pub(in crate::tui) struct AvatarImageCache {
     pub(super) picker: Option<Picker>,
     pub(super) cache: MediaImageCacheCore<String, AvatarImageEntry>,
     pub(super) active_popup_avatar_url: Option<String>,
+    pub(super) protocol_jobs: Vec<MediaProtocolBuildJob>,
 }
 
 pub(super) enum AvatarImageEntry {
@@ -36,18 +37,14 @@ pub(super) enum AvatarImageEntry {
         last_used: u64,
     },
     Ready {
-        image: DynamicImage,
-        protocols: HashMap<AvatarProtocolKey, AvatarProtocolEntry>,
+        generation: u64,
+        image: DecodedMediaImage,
+        protocols: Box<RenderProtocolCache<AvatarFrameProtocolKey>>,
         last_used: u64,
     },
     Failed {
         last_used: u64,
     },
-}
-
-pub(super) struct AvatarProtocolEntry {
-    protocol: Protocol,
-    protocol_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -57,6 +54,18 @@ pub(super) struct AvatarProtocolKey {
     visible_preview_height: u16,
     top_clip_rows: u16,
     circular: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(in crate::tui) struct AvatarFrameProtocolKey {
+    layout: AvatarProtocolKey,
+    frame_index: usize,
+}
+
+impl AvatarFrameProtocolKey {
+    pub(super) fn render_spec(self) -> MediaProtocolRenderSpec {
+        self.layout.render_spec()
+    }
 }
 
 impl AvatarProtocolKey {
@@ -70,28 +79,26 @@ impl AvatarProtocolKey {
         }
     }
 
-    pub(super) fn profile_popup(circular: bool) -> Self {
+    pub(super) fn profile_popup(
+        visible_preview_height: u16,
+        top_clip_rows: u16,
+        circular: bool,
+    ) -> Self {
         Self {
             preview_width: PROFILE_POPUP_AVATAR_WIDTH,
             preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
-            visible_preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
-            top_clip_rows: 0,
+            visible_preview_height: visible_preview_height.min(PROFILE_POPUP_AVATAR_HEIGHT),
+            top_clip_rows: top_clip_rows.min(PROFILE_POPUP_AVATAR_HEIGHT),
             circular,
         }
     }
 
-    fn render_info(self) -> ImagePreviewRenderInfo {
-        ImagePreviewRenderInfo {
-            viewer: false,
-            message_index: 0,
-            preview_x_offset_columns: 0,
-            preview_y_offset_rows: 0,
-            preview_width: self.preview_width,
-            preview_height: self.preview_height,
-            preview_overflow_count: 0,
-            visible_preview_height: self.visible_preview_height,
+    pub(super) fn render_spec(self) -> MediaProtocolRenderSpec {
+        MediaProtocolRenderSpec {
+            width: self.preview_width,
+            height: self.preview_height,
+            visible_height: self.visible_preview_height,
             top_clip_rows: self.top_clip_rows,
-            accent_color: None,
             show_play_marker: false,
             mask_circular: self.circular,
         }
@@ -105,6 +112,24 @@ impl MediaImageCacheEntry for AvatarImageEntry {
             | AvatarImageEntry::Decoding { last_used, .. }
             | AvatarImageEntry::Ready { last_used, .. }
             | AvatarImageEntry::Failed { last_used } => *last_used,
+        }
+    }
+
+    fn decoded_image(&self) -> Option<&DecodedMediaImage> {
+        match self {
+            AvatarImageEntry::Ready { image, .. } => Some(image),
+            AvatarImageEntry::Loading { .. }
+            | AvatarImageEntry::Decoding { .. }
+            | AvatarImageEntry::Failed { .. } => None,
+        }
+    }
+
+    fn decoded_image_mut(&mut self) -> Option<&mut DecodedMediaImage> {
+        match self {
+            AvatarImageEntry::Ready { image, .. } => Some(image),
+            AvatarImageEntry::Loading { .. }
+            | AvatarImageEntry::Decoding { .. }
+            | AvatarImageEntry::Failed { .. } => None,
         }
     }
 
@@ -132,22 +157,20 @@ impl MediaImageCacheEntry for AvatarImageEntry {
 }
 
 impl AvatarImageCache {
-    pub(in crate::tui) fn new() -> Self {
+    pub(in crate::tui) fn new(picker: Option<Picker>) -> Self {
         Self {
-            picker: query_image_picker("avatar", "avatar image picker unavailable"),
+            picker,
             cache: MediaImageCacheCore::new(),
             active_popup_avatar_url: None,
+            protocol_jobs: Vec::new(),
         }
-    }
-
-    pub(in crate::tui) fn refresh_protocols(&mut self) {
-        self.cache.refresh_protocols();
     }
 
     pub(in crate::tui) fn render_state_with_popup(
         &mut self,
         targets: &[AvatarTarget],
         popup_url: Option<&str>,
+        popup_clip: Option<(u16, u16)>,
         circular: bool,
     ) -> (Vec<AvatarImage<'_>>, Option<AvatarImage<'_>>) {
         for target in targets {
@@ -166,53 +189,57 @@ impl AvatarImageCache {
             let Some(picker) = self.picker.as_ref() else {
                 return (Vec::new(), None);
             };
-            let protocol_generation = self.cache.protocol_generation;
 
             for target in targets {
                 let url =
                     avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
                 let key = AvatarProtocolKey::message_avatar(target, circular);
                 let Some(AvatarImageEntry::Ready {
-                    image, protocols, ..
+                    generation,
+                    image,
+                    protocols,
+                    ..
                 }) = self.cache.entries.get_mut(&url)
                 else {
                     continue;
                 };
-                if protocols
-                    .get(&key)
-                    .is_none_or(|entry| entry.protocol_generation != protocol_generation)
-                    && let Some(protocol) =
-                        clipped_preview_protocol(picker, image, key.render_info())
-                {
-                    protocols.insert(
-                        key,
-                        AvatarProtocolEntry {
-                            protocol,
-                            protocol_generation,
-                        },
-                    );
+                let frame_key = AvatarFrameProtocolKey {
+                    layout: key,
+                    frame_index: image.current_frame_index(),
+                };
+                if protocols.request_build(&frame_key) {
+                    self.protocol_jobs.push(MediaProtocolBuildJob::avatar(
+                        url,
+                        *generation,
+                        frame_key,
+                        picker.clone(),
+                        image.current_frame_shared(),
+                    ));
                 }
             }
 
-            if let Some(url) = popup_cache_url.as_deref()
+            if let (Some(url), Some((visible_height, top_clip_rows))) =
+                (popup_cache_url.as_deref(), popup_clip)
                 && let Some(AvatarImageEntry::Ready {
-                    image, protocols, ..
+                    generation,
+                    image,
+                    protocols,
+                    ..
                 }) = self.cache.entries.get_mut(url)
             {
-                let key = AvatarProtocolKey::profile_popup(circular);
-                if protocols
-                    .get(&key)
-                    .is_none_or(|entry| entry.protocol_generation != protocol_generation)
-                    && let Some(protocol) =
-                        clipped_preview_protocol(picker, image, key.render_info())
-                {
-                    protocols.insert(
-                        key,
-                        AvatarProtocolEntry {
-                            protocol,
-                            protocol_generation,
-                        },
-                    );
+                let key = AvatarProtocolKey::profile_popup(visible_height, top_clip_rows, circular);
+                let frame_key = AvatarFrameProtocolKey {
+                    layout: key,
+                    frame_index: image.current_frame_index(),
+                };
+                if protocols.request_build(&frame_key) {
+                    self.protocol_jobs.push(MediaProtocolBuildJob::avatar(
+                        url.to_owned(),
+                        *generation,
+                        frame_key,
+                        picker.clone(),
+                        image.current_frame_shared(),
+                    ));
                 }
             }
         }
@@ -222,28 +249,46 @@ impl AvatarImageCache {
             .filter_map(|target| {
                 let url =
                     avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
-                let AvatarImageEntry::Ready { protocols, .. } = self.cache.entries.get(&url)?
+                let AvatarImageEntry::Ready {
+                    image, protocols, ..
+                } = self.cache.entries.get(&url)?
                 else {
                     return None;
                 };
                 let key = AvatarProtocolKey::message_avatar(target, circular);
-                protocols.get(&key).map(|entry| AvatarImage {
-                    row: target.row,
-                    visible_height: target.visible_height,
-                    protocol: &entry.protocol,
-                })
+                let frame_key = AvatarFrameProtocolKey {
+                    layout: key,
+                    frame_index: image.current_frame_index(),
+                };
+                protocols
+                    .get_or_last_matching(&frame_key, |candidate| candidate.layout == key)
+                    .map(|protocol| AvatarImage {
+                        row: target.row,
+                        visible_height: target.visible_height,
+                        protocol,
+                    })
             })
             .collect();
         let popup_avatar = popup_cache_url.and_then(|url| {
-            let AvatarImageEntry::Ready { protocols, .. } = self.cache.entries.get(&url)? else {
+            let (visible_height, top_clip_rows) = popup_clip?;
+            let AvatarImageEntry::Ready {
+                image, protocols, ..
+            } = self.cache.entries.get(&url)?
+            else {
                 return None;
             };
-            let key = AvatarProtocolKey::profile_popup(circular);
-            protocols.get(&key).map(|entry| AvatarImage {
-                row: 0,
-                visible_height: PROFILE_POPUP_AVATAR_HEIGHT,
-                protocol: &entry.protocol,
-            })
+            let key = AvatarProtocolKey::profile_popup(visible_height, top_clip_rows, circular);
+            let frame_key = AvatarFrameProtocolKey {
+                layout: key,
+                frame_index: image.current_frame_index(),
+            };
+            protocols
+                .get_or_last_matching(&frame_key, |candidate| candidate.layout == key)
+                .map(|protocol| AvatarImage {
+                    row: 0,
+                    visible_height,
+                    protocol,
+                })
         });
 
         (avatars, popup_avatar)
@@ -305,9 +350,12 @@ impl AvatarImageCache {
         None
     }
 
-    pub(in crate::tui) fn record_event(&mut self, event: &AppEvent) -> Option<MediaImageDecodeJob> {
+    pub(in crate::tui) fn record_event(
+        &mut self,
+        event: &AppEvent,
+    ) -> Option<MediaImageDecodeRequest> {
         match event {
-            AppEvent::AttachmentPreviewLoaded { url, bytes } => self.store_loaded(url, bytes),
+            AppEvent::AttachmentPreviewLoaded { url, .. } => self.store_loaded(url),
             AppEvent::AttachmentPreviewLoadFailed { url, .. } => {
                 self.store_failed(url);
                 None
@@ -316,10 +364,9 @@ impl AvatarImageCache {
         }
     }
 
-    fn store_loaded(&mut self, url: &str, bytes: &[u8]) -> Option<MediaImageDecodeJob> {
-        self.cache.start_decode_job(
+    fn store_loaded(&mut self, url: &str) -> Option<MediaImageDecodeRequest> {
+        self.cache.start_decode_request(
             url.to_owned(),
-            std::sync::Arc::from(bytes.to_vec()),
             self.picker.is_some(),
             |generation, last_used| AvatarImageEntry::Decoding {
                 generation,
@@ -334,7 +381,7 @@ impl AvatarImageCache {
         &mut self,
         key: String,
         result_generation: u64,
-        result: std::result::Result<DynamicImage, String>,
+        result: MediaWorkResult<DecodedMediaImage>,
     ) {
         if !self
             .cache
@@ -349,13 +396,17 @@ impl AvatarImageCache {
                 self.cache.entries.insert(
                     key,
                     AvatarImageEntry::Ready {
+                        generation: result_generation,
                         image,
-                        protocols: HashMap::new(),
+                        protocols: Box::new(RenderProtocolCache::new()),
                         last_used,
                     },
                 );
             }
-            Err(_) => {
+            Err(MediaWorkError::Busy) => {
+                self.cache.entries.remove(&key);
+            }
+            Err(MediaWorkError::Failed(_)) => {
                 self.cache
                     .entries
                     .insert(key, AvatarImageEntry::Failed { last_used });
@@ -370,6 +421,71 @@ impl AvatarImageCache {
             });
     }
 
+    pub(in crate::tui) fn sync_animation_visibility(
+        &mut self,
+        targets: &[AvatarTarget],
+        now: Instant,
+    ) {
+        let visible = targets
+            .iter()
+            .map(|target| {
+                avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT)
+            })
+            .chain(self.active_popup_avatar_url.iter().cloned())
+            .collect::<HashSet<_>>();
+        for (url, entry) in &mut self.cache.entries {
+            let AvatarImageEntry::Ready {
+                image, protocols, ..
+            } = entry
+            else {
+                continue;
+            };
+            if visible.contains(url) && !protocols.is_empty() {
+                image.start_animation(now);
+            } else {
+                image.pause_animation();
+            }
+        }
+    }
+
+    pub(in crate::tui) fn pause_animations(&mut self) {
+        self.cache.pause_animations();
+    }
+
+    pub(in crate::tui) fn next_animation_deadline(&self) -> Option<Instant> {
+        self.cache.next_animation_deadline()
+    }
+
+    pub(in crate::tui) fn advance_animations(&mut self, now: Instant) -> bool {
+        self.cache.advance_animations(now)
+    }
+
+    pub(in crate::tui) fn take_protocol_jobs(&mut self) -> Vec<MediaProtocolBuildJob> {
+        std::mem::take(&mut self.protocol_jobs)
+    }
+
+    pub(in crate::tui) fn store_protocol(&mut self, completed: MediaProtocolBuildResult) {
+        let MediaProtocolBuildTarget::Avatar { url, key } = completed.target else {
+            return;
+        };
+        let failed = match self.cache.entries.get_mut(&url) {
+            Some(AvatarImageEntry::Ready {
+                generation,
+                protocols,
+                ..
+            }) if *generation == completed.generation => {
+                protocols.store_result(key, completed.result).is_err()
+            }
+            _ => false,
+        };
+        if failed {
+            let last_used = self.cache.next_tick();
+            self.cache
+                .entries
+                .insert(url, AvatarImageEntry::Failed { last_used });
+        }
+    }
+
     pub(super) fn prune_to_limit(&mut self, targets: &[AvatarTarget]) {
         let protected = targets
             .iter()
@@ -379,9 +495,10 @@ impl AvatarImageCache {
             })
             .chain(self.active_popup_avatar_url.iter().cloned())
             .collect::<HashSet<_>>();
-        self.cache
-            .prune_to_limit(MAX_AVATAR_IMAGE_CACHE_ENTRIES, |url| {
-                protected.contains(url.as_str())
-            });
+        self.cache.prune_to_limits(
+            MAX_AVATAR_IMAGE_CACHE_ENTRIES,
+            AVATAR_IMAGE_CACHE_DECODED_BYTE_BUDGET,
+            |url| protected.contains(url.as_str()),
+        );
     }
 }

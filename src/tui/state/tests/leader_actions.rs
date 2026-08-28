@@ -5,55 +5,19 @@ use crate::discord::AppCommand;
 fn leader_message_action_copy_closes_action_popup() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
-    state.open_leader_actions_for_focused_target();
+    state.open_focused_pane_actions();
 
-    assert!(state.is_leader_action_mode());
-    assert!(state.is_message_action_context_active());
+    assert!(state.is_message_action_menu_active());
 
     let command = state.activate_message_action_kind(MessageActionKind::CopyContent);
 
     assert_eq!(command, None);
     assert!(!state.is_leader_active());
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert_eq!(
-        state.take_copy_message_content_request(),
-        Some("msg 1".to_owned())
+        state.take_copy_text_request(),
+        Some(("msg 1".to_owned(), "Message copied"))
     );
-}
-
-#[test]
-fn channel_leader_action_lists_threads_for_selected_channel() {
-    let mut state = state_with_thread_created_message();
-    state.focus_pane(FocusPane::Channels);
-    state.open_selected_channel_actions();
-
-    assert!(state.is_channel_leader_action_active());
-    let actions = state.selected_channel_action_items();
-    assert_eq!(actions.len(), 6);
-    assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
-    assert_eq!(actions[0].label, "Join voice");
-    assert!(!actions[0].enabled);
-    assert_eq!(actions[1].kind, ChannelActionKind::LeaveVoice);
-    assert_eq!(actions[1].label, "Leave voice");
-    assert!(!actions[1].enabled);
-    assert_eq!(actions[2].kind, ChannelActionKind::LoadPinnedMessages);
-    assert_eq!(actions[2].label, "Show pinned messages");
-    assert!(actions[2].enabled);
-    assert_eq!(actions[3].kind, ChannelActionKind::ShowThreads);
-    assert!(actions[3].enabled);
-    assert_eq!(actions[4].kind, ChannelActionKind::MarkAsRead);
-    assert_eq!(actions[4].label, "Mark as read");
-    assert_eq!(actions[5].kind, ChannelActionKind::ToggleMute);
-    assert_eq!(actions[5].label, "Mute channel");
-
-    let command = state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
-    assert_eq!(command, None);
-    assert!(state.is_channel_action_threads_phase());
-
-    let threads = state.channel_action_thread_items();
-    assert_eq!(threads.len(), 1);
-    assert_eq!(threads[0].channel_id, Id::new(10));
-    assert_eq!(threads[0].label, "release notes");
 }
 
 #[test]
@@ -98,40 +62,22 @@ fn mark_as_read_action_enablement_is_scoped_to_action_channel() {
         .iter()
         .find(|action| action.kind == ChannelActionKind::MarkAsRead)
         .expect("channel actions include Mark as read");
-    assert!(!mark_as_read.enabled);
+    assert!(!mark_as_read.is_enabled());
 }
 
 #[test]
-fn channel_leader_action_open_thread_activates_and_subscribes() {
-    let mut state = state_with_thread_created_message();
-    state.focus_pane(FocusPane::Channels);
-    state.open_selected_channel_actions();
-    state.activate_channel_action_shortcut("t".parse().expect("t should parse"));
-    let command = state.activate_selected_channel_action();
-
-    assert_eq!(state.selected_channel_id(), Some(Id::new(10)));
-    assert!(!state.is_channel_leader_action_active());
-    assert_eq!(
-        command,
-        Some(AppCommand::SubscribeGuildChannel {
-            guild_id: Id::new(1),
-            channel_id: Id::new(10),
-        })
-    );
-}
-
-#[test]
-fn guild_leader_action_lists_disabled_mark_server_read_when_guild_is_read() {
+fn guild_action_menu_lists_disabled_mark_server_read_when_guild_is_read() {
     let mut state = state_with_many_guilds(1);
     state.focus_pane(FocusPane::Guilds);
     state.open_selected_guild_actions();
 
-    assert!(state.is_guild_leader_action_active());
+    assert!(state.is_guild_action_menu_active());
     let actions = state.selected_guild_action_items();
     assert_eq!(actions.len(), 3);
     assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
     assert_eq!(actions[0].label, "Mark server as read");
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
+    assert_eq!(actions[0].disabled_reason(), Some("no unread messages"));
     assert_eq!(actions[1].kind, GuildActionKind::ToggleMute);
     assert_eq!(actions[1].label, "Mute server");
     assert_eq!(actions[2].kind, GuildActionKind::LeaveServer);
@@ -140,12 +86,30 @@ fn guild_leader_action_lists_disabled_mark_server_read_when_guild_is_read() {
 }
 
 #[test]
-fn channel_leader_action_toggle_mute_opens_duration_then_dispatches_command() {
+fn folder_leader_action_opens_settings() {
+    let mut state = state_with_folder(Some(42));
+    state.focus_pane(FocusPane::Guilds);
+    state.open_selected_guild_actions();
+
+    let actions = state.selected_guild_action_items();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].kind, GuildActionKind::FolderSettings);
+    assert_eq!(actions[0].label, "Folder settings");
+    assert!(actions[0].is_enabled());
+
+    assert_eq!(state.activate_selected_guild_action(), None);
+    assert!(state.is_folder_settings_open());
+    assert_eq!(state.folder_settings_name_value(), Some("folder"));
+    assert_eq!(state.folder_settings_color_value(), Some(""));
+}
+
+#[test]
+fn channel_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
     state.move_down();
     state.open_selected_channel_actions();
-    state.select_channel_action_row(5);
+    state.select_channel_action_row(6);
 
     assert_eq!(state.activate_selected_channel_action(), None);
     assert!(state.is_channel_action_mute_duration_phase());
@@ -162,7 +126,7 @@ fn channel_leader_action_toggle_mute_opens_duration_then_dispatches_command() {
             label: "#general".to_owned(),
         })
     );
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_channel_action_menu_active());
 }
 
 #[test]
@@ -172,26 +136,28 @@ fn category_leader_action_lists_disabled_rows_and_dispatches_mute_command() {
     state.move_up();
     state.open_selected_channel_actions();
 
-    assert!(state.is_channel_leader_action_active());
+    assert!(state.is_channel_action_menu_active());
     let actions = state.selected_channel_action_items();
-    assert_eq!(actions.len(), 6);
+    assert_eq!(actions.len(), 7);
     assert_eq!(actions[0].kind, ChannelActionKind::JoinVoice);
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
     assert_eq!(actions[1].kind, ChannelActionKind::LeaveVoice);
-    assert!(!actions[1].enabled);
-    assert_eq!(actions[2].kind, ChannelActionKind::LoadPinnedMessages);
-    assert!(!actions[2].enabled);
-    assert_eq!(actions[3].kind, ChannelActionKind::ShowThreads);
-    assert!(!actions[3].enabled);
-    assert_eq!(actions[4].kind, ChannelActionKind::MarkAsRead);
-    assert!(!actions[4].enabled);
-    assert_eq!(actions[5].kind, ChannelActionKind::ToggleMute);
-    assert_eq!(actions[5].label, "Mute category");
-    assert!(actions[5].enabled);
+    assert!(!actions[1].is_enabled());
+    assert_eq!(actions[2].kind, ChannelActionKind::ToggleStream);
+    assert!(!actions[2].is_enabled());
+    assert_eq!(actions[3].kind, ChannelActionKind::ShowPinnedMessages);
+    assert!(!actions[3].is_enabled());
+    assert_eq!(actions[4].kind, ChannelActionKind::ShowThreads);
+    assert!(!actions[4].is_enabled());
+    assert_eq!(actions[5].kind, ChannelActionKind::MarkAsRead);
+    assert!(!actions[5].is_enabled());
+    assert_eq!(actions[6].kind, ChannelActionKind::ToggleMute);
+    assert_eq!(actions[6].label, "Mute category");
+    assert!(actions[6].is_enabled());
 
     assert_eq!(state.activate_selected_channel_action(), None);
-    assert!(state.is_channel_leader_action_active());
-    state.select_channel_action_row(5);
+    assert!(state.is_channel_action_menu_active());
+    state.select_channel_action_row(6);
     assert_eq!(state.activate_selected_channel_action(), None);
     assert!(state.is_channel_action_mute_duration_phase());
 
@@ -207,11 +173,11 @@ fn category_leader_action_lists_disabled_rows_and_dispatches_mute_command() {
             label: "Text Channels".to_owned(),
         })
     );
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_channel_action_menu_active());
 }
 
 #[test]
-fn guild_leader_action_toggle_mute_opens_duration_then_dispatches_command() {
+fn guild_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
     let mut state = state_with_many_guilds(1);
     state.focus_pane(FocusPane::Guilds);
     state.open_selected_guild_actions();
@@ -231,51 +197,49 @@ fn guild_leader_action_toggle_mute_opens_duration_then_dispatches_command() {
             label: "guild 1".to_owned(),
         })
     );
-    assert!(!state.is_guild_leader_action_active());
+    assert!(!state.is_guild_action_menu_active());
 }
 
 #[test]
-fn current_guild_leave_confirmation_dispatches_leave_command() {
-    let mut state = state_with_many_guilds(1);
-    state.activate_guild(super::ActiveGuildScope::Guild(Id::new(1)));
+fn guild_leave_confirmation_targets_the_active_guild_or_the_cursor() {
+    let mut active = state_with_many_guilds(1);
+    active.activate_guild(super::ActiveGuildScope::Guild(Id::new(1)));
 
-    state.open_current_guild_leave_confirmation();
+    active.open_current_guild_leave_confirmation();
 
     assert!(
-        state
+        active
             .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::GuildLeaveConfirmation)
     );
     assert_eq!(
-        state.guild_leave_confirmation_name(),
+        active.guild_leave_confirmation_name(),
         Some("guild 1".to_owned())
     );
     assert_eq!(
-        state.confirm_guild_leave(),
+        active.confirm_guild_leave(),
         Some(AppCommand::LeaveGuild {
             guild_id: Id::new(1),
             label: "guild 1".to_owned(),
         })
     );
     assert!(
-        !state
+        !active
             .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::GuildLeaveConfirmation)
     );
-}
 
-#[test]
-fn focused_guild_cursor_leave_confirmation_does_not_require_active_guild() {
-    let mut state = state_with_many_guilds(1);
-    state.focus_pane(FocusPane::Guilds);
-    state.move_down();
+    // Nothing is open yet: the highlighted guild in the pane is enough.
+    let mut cursor_only = state_with_many_guilds(1);
+    cursor_only.focus_pane(FocusPane::Guilds);
+    cursor_only.move_down();
 
-    state.open_current_guild_leave_confirmation();
+    cursor_only.open_current_guild_leave_confirmation();
 
     assert!(
-        state
+        cursor_only
             .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::GuildLeaveConfirmation)
     );
     assert_eq!(
-        state.confirm_guild_leave(),
+        cursor_only.confirm_guild_leave(),
         Some(AppCommand::LeaveGuild {
             guild_id: Id::new(1),
             label: "guild 1".to_owned(),
@@ -284,7 +248,7 @@ fn focused_guild_cursor_leave_confirmation_does_not_require_active_guild() {
 }
 
 #[test]
-fn guild_leader_action_leave_server_opens_confirmation() {
+fn guild_action_menu_leave_server_opens_confirmation() {
     let mut state = state_with_many_guilds(1);
     state.focus_pane(FocusPane::Guilds);
     state.move_down();
@@ -293,7 +257,7 @@ fn guild_leader_action_leave_server_opens_confirmation() {
 
     assert_eq!(state.activate_selected_guild_action(), None);
 
-    assert!(!state.is_guild_leader_action_active());
+    assert!(!state.is_guild_action_menu_active());
     assert!(
         state
             .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::GuildLeaveConfirmation)
@@ -322,7 +286,7 @@ fn direct_messages_do_not_open_guild_leave_confirmation() {
 }
 
 #[test]
-fn guild_leader_action_marks_unread_server_channels_as_read() {
+fn guild_action_menu_marks_unread_server_channels_as_read() {
     let guild_id: Id<GuildMarker> = Id::new(1);
     let mut state = DashboardState::new();
     state.push_event(guild_create_event(
@@ -358,7 +322,7 @@ fn guild_leader_action_marks_unread_server_channels_as_read() {
 
     let actions = state.selected_guild_action_items();
     assert_eq!(actions[0].kind, GuildActionKind::MarkAsRead);
-    assert!(actions[0].enabled);
+    assert!(actions[0].is_enabled());
 
     let command = state.activate_selected_guild_action();
     let ack_commands = command.clone().into_iter().collect::<Vec<_>>();
@@ -368,7 +332,7 @@ fn guild_leader_action_marks_unread_server_channels_as_read() {
         state.sidebar_guild_unread(guild_id),
         ChannelUnreadState::Seen
     );
-    assert!(!state.is_guild_leader_action_active());
+    assert!(!state.is_guild_action_menu_active());
     let Some(AppCommand::AckChannels { mut targets }) = command else {
         panic!("expected bulk channel ack command");
     };
@@ -380,7 +344,7 @@ fn guild_leader_action_marks_unread_server_channels_as_read() {
 }
 
 #[test]
-fn guild_leader_action_skips_hidden_channels_when_marking_server_read() {
+fn guild_action_menu_skips_hidden_channels_when_marking_server_read() {
     let mut state = state_with_hidden_and_visible_channels();
     state.push_event(AppEvent::ReadStateInit {
         entries: vec![
@@ -416,5 +380,5 @@ fn direct_messages_keep_placeholder_guild_action() {
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].kind, GuildActionKind::NoActionsYet);
     assert_eq!(actions[0].label, "No server actions yet");
-    assert!(!actions[0].enabled);
+    assert!(!actions[0].is_enabled());
 }

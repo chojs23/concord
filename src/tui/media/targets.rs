@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::{
     config::ImagePreviewQualityPreset,
     discord::{
-        InlinePreviewInfo,
+        ActivityInfo, InlinePreviewInfo,
         ids::{Id, marker::MessageMarker},
     },
 };
@@ -11,8 +11,12 @@ use crate::{
 use super::super::{
     message::{format::format_message_content_lines, layout::MessageViewportPlan},
     selection,
-    state::{ActiveModalPopupKind, DashboardState, MAX_MENTION_PICKER_VISIBLE},
-    ui::ImagePreviewLayout,
+    state::{
+        ActiveModalPopupKind, ChannelThreadItem, DashboardState, MAX_MENTION_PICKER_VISIBLE,
+        SelectablePopupTarget,
+    },
+    text::EmojiImageSize,
+    ui::{ImagePreviewLayout, avatar_gutter_width, thread_card},
 };
 
 /// Wide-enough wrap width for the prefetch walk. URL emission is
@@ -48,22 +52,23 @@ enum YoutubeThumbnailSize {
     High,
 }
 
+#[derive(Clone)]
 pub(in crate::tui) struct ImagePreviewTarget {
-    pub(super) viewer: bool,
-    pub(super) message_index: usize,
-    pub(super) preview_index: usize,
-    pub(super) preview_x_offset_columns: u16,
-    pub(super) preview_y_offset_rows: usize,
-    pub(super) preview_width: u16,
-    pub(super) preview_height: u16,
-    pub(super) preview_overflow_count: usize,
-    pub(super) visible_preview_height: u16,
-    pub(super) top_clip_rows: u16,
-    pub(super) accent_color: Option<u32>,
-    pub(super) show_play_marker: bool,
-    pub(super) message_id: Id<MessageMarker>,
-    pub(super) url: String,
-    pub(super) filename: String,
+    pub(in crate::tui) viewer: bool,
+    pub(in crate::tui) thread_card: bool,
+    pub(in crate::tui) message_index: usize,
+    pub(in crate::tui) preview_index: usize,
+    pub(in crate::tui) preview_x_offset_columns: u16,
+    pub(in crate::tui) preview_y_offset_rows: usize,
+    pub(in crate::tui) preview_width: u16,
+    pub(in crate::tui) preview_height: u16,
+    pub(in crate::tui) visible_preview_height: u16,
+    pub(in crate::tui) top_clip_rows: u16,
+    pub(in crate::tui) accent_color: Option<u32>,
+    pub(in crate::tui) show_play_marker: bool,
+    pub(in crate::tui) message_id: Id<MessageMarker>,
+    pub(in crate::tui) url: String,
+    pub(in crate::tui) filename: String,
 }
 
 #[derive(Clone)]
@@ -74,9 +79,28 @@ pub(in crate::tui) struct AvatarTarget {
     pub(super) url: String,
 }
 
+impl AvatarTarget {
+    pub(in crate::tui) fn row(&self) -> isize {
+        self.row
+    }
+
+    pub(in crate::tui) fn visible_height(&self) -> u16 {
+        self.visible_height
+    }
+
+    pub(in crate::tui) fn top_clip_rows(&self) -> u16 {
+        self.top_clip_rows
+    }
+
+    pub(in crate::tui) fn url(&self) -> &str {
+        &self.url
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::tui) struct EmojiImageTarget {
     pub(super) url: String,
+    pub(super) image_size: EmojiImageSize,
 }
 
 const MAX_ALBUM_PREVIEW_TILES: usize = 4;
@@ -102,44 +126,6 @@ pub(in crate::tui) fn visible_image_preview_targets(
     state: &DashboardState,
     layout: ImagePreviewLayout,
 ) -> Vec<ImagePreviewTarget> {
-    if let Some((message_id, preview_index, preview)) = state.selected_attachment_viewer_preview()
-        && state.show_images()
-    {
-        let quality = state.image_preview_quality();
-        let (preview_width, preview_height) = image_preview_size_for_dimensions(
-            layout.viewer_preview_width,
-            layout.viewer_max_preview_height,
-            preview.width,
-            preview.height,
-            true,
-            layout.font_size,
-        );
-        if preview_height == 0 {
-            return Vec::new();
-        }
-        return vec![ImagePreviewTarget {
-            viewer: true,
-            message_index: 0,
-            preview_index,
-            preview_x_offset_columns: 0,
-            preview_y_offset_rows: 0,
-            preview_width,
-            preview_height,
-            preview_overflow_count: 0,
-            visible_preview_height: preview_height,
-            top_clip_rows: 0,
-            accent_color: preview.accent_color,
-            show_play_marker: preview.show_play_marker,
-            message_id,
-            url: preview_request_url(preview, preview_width, preview_height, quality),
-            filename: preview.filename.to_owned(),
-        }];
-    }
-
-    if !state.show_images() {
-        return Vec::new();
-    }
-
     let messages = state.visible_messages();
     let selected = state.focused_message_selection();
     let plan = MessageViewportPlan::new(
@@ -161,7 +147,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
     if let Some((message_id, preview_index, preview)) = state.selected_attachment_viewer_preview()
         && state.show_images()
     {
-        let quality = state.image_preview_quality();
+        let quality = state.attachment_viewer_quality();
         let (preview_width, preview_height) = image_preview_size_for_dimensions(
             layout.viewer_preview_width,
             layout.viewer_max_preview_height,
@@ -175,13 +161,13 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
         }
         return vec![ImagePreviewTarget {
             viewer: true,
+            thread_card: false,
             message_index: 0,
             preview_index,
             preview_x_offset_columns: 0,
             preview_y_offset_rows: 0,
             preview_width,
             preview_height,
-            preview_overflow_count: 0,
             visible_preview_height: preview_height,
             top_clip_rows: 0,
             accent_color: preview.accent_color,
@@ -196,7 +182,11 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
         return Vec::new();
     }
 
-    let mut targets = Vec::new();
+    if state.message_pane_uses_thread_cards() {
+        return visible_thread_card_image_preview_targets(state, layout);
+    }
+
+    let mut targets = visible_embedded_thread_card_image_preview_targets(state, layout, plan);
     let quality = state.image_preview_quality();
 
     for (message_index, row) in plan.rows().iter().enumerate() {
@@ -213,11 +203,6 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             .flatten();
         for cell in &album.cells {
             let preview = previews[cell.preview_index];
-            let preview_overflow_count = if cell.preview_index + 1 == MAX_ALBUM_PREVIEW_TILES {
-                previews.len().saturating_sub(MAX_ALBUM_PREVIEW_TILES)
-            } else {
-                0
-            };
             let preview_top = preview_top_base + cell.y_offset_rows as isize;
             let preview_bottom = preview_top.saturating_add(cell.height as isize);
             let visible_top = preview_top.max(0);
@@ -225,13 +210,13 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             if cell.width > 0 && cell.height > 0 && visible_top < visible_bottom {
                 targets.push(ImagePreviewTarget {
                     viewer: false,
+                    thread_card: false,
                     message_index,
                     preview_index: cell.preview_index,
                     preview_x_offset_columns: cell.x_offset_columns,
                     preview_y_offset_rows: cell.y_offset_rows,
                     preview_width: cell.width,
                     preview_height: cell.height,
-                    preview_overflow_count,
                     visible_preview_height: u16::try_from(visible_bottom - visible_top)
                         .unwrap_or(u16::MAX),
                     top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
@@ -246,6 +231,138 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
     }
 
     targets
+}
+
+fn visible_thread_card_image_preview_targets(
+    state: &DashboardState,
+    layout: ImagePreviewLayout,
+) -> Vec<ImagePreviewTarget> {
+    let posts = state.visible_thread_card_items();
+    let total_rows = state.message_total_rendered_rows(layout.content_width, 0, 0);
+    let scrollbar_visible = layout.list_height > 0 && total_rows > layout.list_height.max(1);
+    let card_width = usize::from(layout.list_width)
+        .saturating_sub(usize::from(scrollbar_visible))
+        .max(4);
+    let quality = state.image_preview_quality();
+    let mut rendered_row = 0usize;
+    let mut targets = Vec::new();
+
+    for (post_index, post) in posts.iter().enumerate() {
+        if post.section_label.is_some() {
+            rendered_row = rendered_row.saturating_add(1);
+        }
+        if rendered_row >= layout.list_height {
+            break;
+        }
+
+        if let Some(target) = thread_card_image_preview_target(
+            post,
+            post_index,
+            card_width,
+            isize::try_from(rendered_row).unwrap_or(isize::MAX),
+            0,
+            layout.list_height,
+            layout.font_size,
+            quality,
+        ) {
+            targets.push(target);
+        }
+        rendered_row =
+            rendered_row.saturating_add(thread_card::thread_card_height(post, card_width, true));
+    }
+
+    targets
+}
+
+fn visible_embedded_thread_card_image_preview_targets(
+    state: &DashboardState,
+    layout: ImagePreviewLayout,
+    plan: &MessageViewportPlan<'_>,
+) -> Vec<ImagePreviewTarget> {
+    let card_width = thread_card::thread_card_width_in_message(layout.content_width);
+    let card_left = avatar_gutter_width(state.show_avatars());
+    let quality = state.image_preview_quality();
+
+    plan.rows()
+        .iter()
+        .enumerate()
+        .take_while(|(_, row)| row.message_top < layout.list_height as isize)
+        .filter_map(|(message_index, row)| {
+            let post = state.thread_card_item_for_message(row.message)?;
+            let card_top = row
+                .body_top
+                .saturating_add(row.metrics.header_rows as isize)
+                .saturating_add(1);
+            thread_card_image_preview_target(
+                &post,
+                message_index,
+                card_width,
+                card_top,
+                card_left,
+                layout.list_height,
+                layout.font_size,
+                quality,
+            )
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn thread_card_image_preview_target(
+    post: &ChannelThreadItem,
+    message_index: usize,
+    card_width: usize,
+    card_top: isize,
+    card_left: u16,
+    list_height: usize,
+    font_size: Option<(u16, u16)>,
+    quality: ImagePreviewQualityPreset,
+) -> Option<ImagePreviewTarget> {
+    let image = post.preview_image.as_ref()?;
+    let slot = thread_card::thread_card_image_slot(post, card_width, true)?;
+    let preview = image.attachment.inline_preview_info()?;
+    let (preview_width, preview_height) = image_preview_size_for_dimensions(
+        slot.width,
+        slot.height,
+        preview.width,
+        preview.height,
+        false,
+        font_size,
+    );
+    if preview_width == 0 || preview_height == 0 {
+        return None;
+    }
+
+    let centered_row =
+        1usize.saturating_add(usize::from(slot.height.saturating_sub(preview_height) / 2));
+    let preview_top = card_top.saturating_add(isize::try_from(centered_row).unwrap_or(isize::MAX));
+    let preview_bottom =
+        preview_top.saturating_add(isize::try_from(preview_height).unwrap_or(isize::MAX));
+    let visible_top = preview_top.max(0);
+    let visible_bottom = preview_bottom.min(isize::try_from(list_height).unwrap_or(isize::MAX));
+    if visible_top >= visible_bottom {
+        return None;
+    }
+
+    Some(ImagePreviewTarget {
+        viewer: false,
+        thread_card: true,
+        message_index,
+        preview_index: 0,
+        preview_x_offset_columns: card_left
+            .saturating_add(slot.column)
+            .saturating_add(slot.width.saturating_sub(preview_width)),
+        preview_y_offset_rows: usize::try_from(visible_top).ok()?,
+        preview_width,
+        preview_height,
+        visible_preview_height: u16::try_from(visible_bottom - visible_top).unwrap_or(u16::MAX),
+        top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
+        accent_color: None,
+        show_play_marker: false,
+        message_id: image.message_id,
+        url: preview_request_url(preview, preview_width, preview_height, quality),
+        filename: preview.filename.to_owned(),
+    })
 }
 
 fn image_preview_size_for_dimensions(
@@ -319,6 +436,7 @@ fn preview_request_url(
             preview.width,
             preview.height,
             quality,
+            preview.animated,
         );
     }
 
@@ -388,6 +506,7 @@ fn discord_media_proxy_preview_url(
     source_width: Option<u64>,
     source_height: Option<u64>,
     quality: ImagePreviewQualityPreset,
+    animated: bool,
 ) -> String {
     let (width, height) = discord_media_proxy_preview_dimensions(
         width_columns,
@@ -402,11 +521,14 @@ fn discord_media_proxy_preview_url(
         .filter(|param| !param.is_empty())
         .filter(|param| {
             let key = param.split_once('=').map_or(*param, |(key, _)| key);
-            !matches!(key, "format" | "quality" | "width" | "height")
+            !matches!(key, "format" | "quality" | "width" | "height" | "animated")
         })
         .map(str::to_owned)
         .collect::<Vec<_>>();
     params.push(format!("format={DISCORD_MEDIA_PROXY_PREVIEW_FORMAT}"));
+    if animated {
+        params.push("animated=true".to_owned());
+    }
     match quality {
         ImagePreviewQualityPreset::Efficient => {
             params.push(format!("quality={DISCORD_MEDIA_PROXY_LOW_QUALITY}"));
@@ -600,11 +722,12 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
 
     if state.is_composing() {
         for completion in state.composer_emoji_image_completions() {
-            if seen.insert(completion.url.clone()) {
-                targets.push(EmojiImageTarget {
-                    url: completion.url,
-                });
-            }
+            push_emoji_image_target(
+                completion.url,
+                EmojiImageSize::Compact,
+                &mut seen,
+                &mut targets,
+            );
         }
     }
 
@@ -615,33 +738,47 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
             let window_start = state.composer_emoji_window_start(visible_items, candidates.len());
             let window_end = (window_start + visible_items).min(candidates.len());
             for candidate in &candidates[window_start..window_end] {
-                if let Some(url) = candidate.custom_image_url.clone()
-                    && seen.insert(url.clone())
-                {
-                    targets.push(EmojiImageTarget { url });
+                if let Some(url) = candidate.custom_image_url.clone() {
+                    push_emoji_image_target(url, EmojiImageSize::Compact, &mut seen, &mut targets);
                 }
             }
         }
     }
 
+    if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
+        push_activity_emoji_targets(
+            state.user_profile_popup_activities().iter(),
+            &mut seen,
+            &mut targets,
+        );
+    }
+
     if state.is_active_modal_popup(ActiveModalPopupKind::EmojiReactionPicker) {
         let reactions = state.filtered_emoji_reaction_items_slice().unwrap_or(&[]);
         if !reactions.is_empty() {
-            let selected = state
-                .selected_emoji_reaction_index_for_len(reactions.len())
-                .unwrap_or(0)
-                .min(reactions.len().saturating_sub(1));
+            // The stored scroll can be one frame stale, which prefetch tolerates.
             let visible_items = reactions
                 .len()
                 .clamp(1, selection::MAX_EMOJI_REACTION_VISIBLE_ITEMS);
-            let visible_range =
-                selection::visible_item_range(reactions.len(), selected, visible_items);
-            for reaction in &reactions[visible_range] {
-                if let Some(url) = reaction.custom_image_url()
-                    && seen.insert(url.clone())
-                {
-                    targets.push(EmojiImageTarget { url });
+            let start = state
+                .popup_list_scroll(SelectablePopupTarget::EmojiReactions)
+                .expect("emoji reactions have selection state")
+                .min(reactions.len().saturating_sub(visible_items));
+            let end = (start + visible_items).min(reactions.len());
+            for reaction in &reactions[start..end] {
+                if let Some(url) = reaction.custom_image_url() {
+                    push_emoji_image_target(url, EmojiImageSize::Compact, &mut seen, &mut targets);
                 }
+            }
+        }
+    }
+
+    // The reacted-users popup draws the same custom-emoji images as the message
+    // view, so its reactions feed the shared cache too.
+    if let Some(popup) = state.reaction_users_popup() {
+        for entry in popup.entries() {
+            if let Some(url) = entry.emoji().custom_image_url() {
+                push_emoji_image_target(url, EmojiImageSize::Compact, &mut seen, &mut targets);
             }
         }
     }
@@ -653,51 +790,80 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
             if reaction.count == 0 {
                 continue;
             }
-            if let Some(url) = reaction.emoji.custom_image_url()
-                && seen.insert(url.clone())
-            {
-                targets.push(EmojiImageTarget { url });
+            if let Some(url) = reaction.emoji.custom_image_url() {
+                push_emoji_image_target(url, EmojiImageSize::Compact, &mut seen, &mut targets);
             }
         }
         for line in format_message_content_lines(message, state, EMOJI_PREFETCH_FORMAT_WIDTH) {
             for slot in &line.image_slots {
-                if seen.insert(slot.url.clone()) {
-                    targets.push(EmojiImageTarget {
-                        url: slot.url.clone(),
-                    });
-                }
+                push_emoji_image_target(slot.url.clone(), slot.image_size, &mut seen, &mut targets);
             }
         }
     }
 
-    // Forum post cards render preview-message reactions through a separate
-    // card pipeline, so they do not appear in `visible_messages()` while a
-    // forum channel is selected. Collect those URLs here so the shared emoji
-    // image cache can still load and render them.
-    for post in state.visible_forum_post_items() {
-        for reaction in &post.preview_reactions {
-            if reaction.count == 0 {
-                continue;
+    // Thread cards render preview reactions outside `visible_messages()`, so
+    // collect their URLs here for the shared emoji image cache.
+    for post in state.visible_thread_card_items() {
+        for reaction in thread_card::thread_card_visible_reactions(&post) {
+            if let Some(url) = reaction.emoji.custom_image_url() {
+                push_emoji_image_target(url, EmojiImageSize::Compact, &mut seen, &mut targets);
             }
-            if let Some(url) = reaction.emoji.custom_image_url()
-                && seen.insert(url.clone())
-            {
-                targets.push(EmojiImageTarget { url });
+        }
+        // Custom forum-tag emoji are overlaid as images on the card's tags row,
+        // so their CDN urls also have to be fetched into the shared cache.
+        for tag in &post.applied_tags {
+            if let Some(url) = tag.custom_emoji_url.clone() {
+                push_emoji_image_target(url, EmojiImageSize::Compact, &mut seen, &mut targets);
             }
         }
     }
 
     for member in state.flattened_members() {
-        for activity in state.user_activities(member.user_id()) {
-            if let Some(url) = activity.emoji.as_ref().and_then(|emoji| emoji.image_url())
-                && seen.insert(url.clone())
-            {
-                targets.push(EmojiImageTarget { url });
-            }
+        push_activity_emoji_targets(
+            state.user_activities(member.user_id()).iter(),
+            &mut seen,
+            &mut targets,
+        );
+    }
+    for row in state.visible_channel_pane_rows() {
+        if let Some(activity) = row.activity() {
+            push_activity_emoji_targets(std::iter::once(activity), &mut seen, &mut targets);
         }
     }
 
     targets
+}
+
+fn push_emoji_image_target(
+    url: String,
+    image_size: EmojiImageSize,
+    seen: &mut HashSet<String>,
+    targets: &mut Vec<EmojiImageTarget>,
+) {
+    if seen.insert(url.clone()) {
+        targets.push(EmojiImageTarget { url, image_size });
+        return;
+    }
+
+    if image_size == EmojiImageSize::Standalone {
+        let target = targets
+            .iter_mut()
+            .find(|target| target.url == url)
+            .expect("seen emoji URL has a render target");
+        target.image_size = EmojiImageSize::Standalone;
+    }
+}
+
+fn push_activity_emoji_targets<'a>(
+    activities: impl IntoIterator<Item = &'a ActivityInfo>,
+    seen: &mut HashSet<String>,
+    targets: &mut Vec<EmojiImageTarget>,
+) {
+    for activity in activities {
+        if let Some(url) = activity.emoji.as_ref().and_then(|emoji| emoji.image_url()) {
+            push_emoji_image_target(url, EmojiImageSize::Compact, seen, targets);
+        }
+    }
 }
 
 pub(in crate::tui) fn image_preview_album_layout(

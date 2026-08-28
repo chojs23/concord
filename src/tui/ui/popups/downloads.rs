@@ -21,14 +21,11 @@ pub(in crate::tui::ui) fn render_downloads_popup(
 
     let lines = downloads_popup_lines(&downloads, popup.width.saturating_sub(2));
 
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines).block(panel_block("Downloads", true)),
-        popup,
-    );
+    let inner = render_modal_frame(frame, popup, "Downloads");
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn downloads_popup_line_count(download_count: usize) -> usize {
+pub(in crate::tui::ui) fn downloads_popup_line_count(download_count: usize) -> usize {
     download_count.min(MAX_VISIBLE_DOWNLOADS) + usize::from(download_count > MAX_VISIBLE_DOWNLOADS)
 }
 
@@ -64,7 +61,7 @@ pub(in crate::tui::ui) fn downloads_popup_lines(
     if hidden_count > 0 {
         lines.push(Line::from(Span::styled(
             format!("+{hidden_count} more"),
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Hint),
         )));
     }
     lines

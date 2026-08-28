@@ -4,17 +4,33 @@ use std::collections::HashSet;
 
 use super::EmojiReactionItem;
 
-const QUICK_UNICODE_EMOJIS: &[&str] = &["👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀"];
+pub(super) const DEFAULT_QUICK_UNICODE_EMOJIS: &[&str] =
+    &["👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀"];
 
-pub(super) fn quick_unicode_emoji_reaction_items() -> Vec<EmojiReactionItem> {
-    QUICK_UNICODE_EMOJIS
+pub(super) fn effective_quick_unicode_emojis(favorites: &[String]) -> Vec<String> {
+    if favorites.is_empty() {
+        DEFAULT_QUICK_UNICODE_EMOJIS
+            .iter()
+            .map(|emoji| (*emoji).to_owned())
+            .collect()
+    } else {
+        favorites.to_vec()
+    }
+}
+
+pub(super) fn quick_unicode_emoji_reaction_items(favorites: &[String]) -> Vec<EmojiReactionItem> {
+    effective_quick_unicode_emojis(favorites)
         .iter()
-        .map(|emoji| unicode_emoji_reaction_item(emoji))
+        .filter_map(|emoji| emojis::get(emoji).map(unicode_emoji_reaction_item_from_emoji))
         .collect()
 }
 
-pub(super) fn remaining_unicode_emoji_reaction_items() -> Vec<EmojiReactionItem> {
-    let quick_emojis: HashSet<&'static str> = QUICK_UNICODE_EMOJIS.iter().copied().collect();
+pub(super) fn remaining_unicode_emoji_reaction_items(
+    favorites: &[String],
+) -> Vec<EmojiReactionItem> {
+    let quick_emojis: HashSet<String> = effective_quick_unicode_emojis(favorites)
+        .into_iter()
+        .collect();
 
     emojis::iter()
         .filter(|emoji| !quick_emojis.contains(emoji.as_str()))
@@ -22,13 +38,12 @@ pub(super) fn remaining_unicode_emoji_reaction_items() -> Vec<EmojiReactionItem>
         .collect()
 }
 
-pub(super) fn is_quick_unicode_emoji(value: &str) -> bool {
-    QUICK_UNICODE_EMOJIS.contains(&value)
-}
-
-fn unicode_emoji_reaction_item(value: &str) -> EmojiReactionItem {
-    let emoji = emojis::get(value).expect("quick emoji must exist");
-    unicode_emoji_reaction_item_from_emoji(emoji)
+pub(super) fn is_quick_unicode_emoji(value: &str, favorites: &[String]) -> bool {
+    if favorites.is_empty() {
+        DEFAULT_QUICK_UNICODE_EMOJIS.contains(&value)
+    } else {
+        favorites.iter().any(|emoji| emoji == value)
+    }
 }
 
 fn unicode_emoji_reaction_item_from_emoji(emoji: &emojis::Emoji) -> EmojiReactionItem {

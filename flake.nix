@@ -17,56 +17,22 @@
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs { inherit system overlays; };
 
-        # Pin the Rust toolchain. Cargo.toml declares rust-version = "1.85",
-        # but several transitive deps (quantette, ratatui, image, instability,
-        # safe_arch, wide, time) require newer rustc, so the effective MSRV
-        # is 1.90.
+        # Keep the Nix toolchain aligned with Cargo.toml's minimum supported
+        # Rust version so source builds behave consistently across installers.
         rustToolchain = pkgs.rust-bin.stable."1.90.0".default;
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
 
-        commonArgs = {
+        concord = pkgs.callPackage ./nix/package.nix {
+          inherit craneLib;
           pname = cargoToml.package.name;
           version = cargoToml.package.version;
-
+          description = cargoToml.package.description;
+          homepage = cargoToml.package.homepage;
           src = craneLib.cleanCargoSource ./.;
-
-          cargoExtraArgs = "--locked --features voice-playback";
-
-          # audiopus_sys and ALSA use pkg-config to find system libraries.
-          # Providing Opus here avoids falling back to bundled Opus CMake
-          # builds, which are sensitive to the host CMake version.
-          nativeBuildInputs = [ pkgs.pkg-config ];
-
-          # Networking uses rustls + webpki-roots, so we do not need openssl
-          # or a system CA bundle here. Darwin stdenv provides the SDK by
-          # default, so avoid legacy darwin.apple_sdk framework stubs.
-          buildInputs = [
-            pkgs.opus
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-            pkgs.alsa-lib
-          ];
-
-          # The unit tests in this repo do not require network or a TTY, but
-          # disable them by default to keep `nix build` fast and reproducible.
-          # Run `cargo test` inside `nix develop` for the full test suite.
-          doCheck = false;
         };
-
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-
-        concord = craneLib.buildPackage (commonArgs // {
-          inherit cargoArtifacts;
-          meta = with pkgs.lib; {
-            description = cargoToml.package.description;
-            homepage = cargoToml.package.homepage;
-            license = licenses.gpl3Only;
-            mainProgram = "concord";
-            platforms = platforms.unix;
-          };
-        });
       in
       {
         packages = {

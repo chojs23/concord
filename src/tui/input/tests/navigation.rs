@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::test_builders::guild_create_event;
 
 #[test]
 fn enter_toggles_selected_folder_and_focuses_channels_after_server_selection() {
@@ -160,21 +161,16 @@ fn number_keys_show_hidden_panes_before_focusing() {
 }
 
 #[test]
-fn bare_m_no_longer_mutes_focused_channel() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-
-    let command = handle_key(&mut state, char_key('m'));
-
-    assert_eq!(command, None);
-}
-
-#[test]
-fn alt_arrows_adjust_focused_side_pane_width() {
+fn alt_arrows_and_alt_h_l_adjust_focused_side_pane_width() {
     let mut state = DashboardState::new();
 
     state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, alt_key(KeyCode::Char('l')));
+    assert_eq!(state.pane_width(FocusPane::Channels), 25);
+    handle_key(&mut state, alt_key(KeyCode::Char('h')));
+    assert_eq!(state.pane_width(FocusPane::Channels), 24);
+    let _ = state.take_ui_state_save_request();
+
     handle_key(&mut state, alt_key(KeyCode::Right));
     assert_eq!(state.pane_width(FocusPane::Channels), 25);
 
@@ -191,18 +187,6 @@ fn alt_arrows_adjust_focused_side_pane_width() {
     assert_eq!(state.pane_width(FocusPane::Channels), 24);
     assert_eq!(state.take_options_save_request(), None);
     assert_eq!(state.take_ui_state_save_request(), None);
-}
-
-#[test]
-fn alt_h_l_adjust_focused_side_pane_width() {
-    let mut state = DashboardState::new();
-
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, alt_key(KeyCode::Char('l')));
-    assert_eq!(state.pane_width(FocusPane::Channels), 25);
-
-    handle_key(&mut state, alt_key(KeyCode::Char('h')));
-    assert_eq!(state.pane_width(FocusPane::Channels), 24);
 }
 
 #[test]
@@ -330,6 +314,8 @@ fn navigation_selection_uses_configured_row_movement_keys() {
         mappings: [
             ("SelectNext".to_owned(), KeymapBinding::one("n")),
             ("SelectPrevious".to_owned(), KeymapBinding::one("p")),
+            ("JumpTop".to_owned(), KeymapBinding::one("z z")),
+            ("JumpBottom".to_owned(), KeymapBinding::one("Z")),
         ]
         .into_iter()
         .collect(),
@@ -350,6 +336,15 @@ fn navigation_selection_uses_configured_row_movement_keys() {
     assert_eq!(state.selected_option_index(), Some(1));
 
     handle_key(&mut state, ctrl_key('p'));
+    assert_eq!(state.selected_option_index(), Some(0));
+
+    let last = state.display_option_items().len().saturating_sub(1);
+    handle_key(&mut state, char_key('Z'));
+    assert_eq!(state.selected_option_index(), Some(last));
+
+    handle_key(&mut state, char_key('z'));
+    assert_eq!(state.selected_option_index(), Some(last));
+    handle_key(&mut state, char_key('z'));
     assert_eq!(state.selected_option_index(), Some(0));
 }
 
@@ -382,17 +377,10 @@ fn uppercase_h_l_scroll_focused_side_panes_horizontally() {
 fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
     let mut guild_state = DashboardState::new();
     for id in 1..=8 {
-        guild_state.push_event(AppEvent::GuildCreate {
-            guild_id: Id::new(id),
+        guild_state.push_event(guild_create_event(GuildCreateFixture {
             name: format!("guild {id}"),
-            member_count: None,
-            owner_id: None,
-            channels: Vec::new(),
-            members: Vec::new(),
-            presences: Vec::new(),
-            roles: Vec::new(),
-            emojis: Vec::new(),
-        });
+            ..GuildCreateFixture::new(Id::new(id))
+        }));
     }
     guild_state.focus_pane(FocusPane::Guilds);
     guild_state.set_guild_view_height(3);
@@ -405,10 +393,7 @@ fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
     assert_eq!(guild_state.guild_scroll(), 0);
 
     let mut channel_state = DashboardState::new();
-    channel_state.push_event(AppEvent::GuildCreate {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
+    channel_state.push_event(guild_create_event(GuildCreateFixture {
         channels: (1..=8)
             .map(|id| ChannelInfo {
                 guild_id: Some(Id::new(1)),
@@ -417,12 +402,8 @@ fn uppercase_j_k_scroll_focused_pane_viewport_without_moving_selection() {
                 ..ChannelInfo::test(Id::new(10 + id), "GuildText")
             })
             .collect(),
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     channel_state.confirm_selected_guild();
     channel_state.focus_pane(FocusPane::Channels);
     channel_state.set_channel_view_height(3);
@@ -453,11 +434,7 @@ fn viewport_scroll_uses_configured_keys_in_side_panes() {
         .collect(),
         ..Default::default()
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: Id::new(1),
-        name: "guild".to_owned(),
-        member_count: None,
-        owner_id: None,
+    state.push_event(guild_create_event(GuildCreateFixture {
         channels: (0..8)
             .map(|index| ChannelInfo {
                 guild_id: Some(Id::new(1)),
@@ -466,11 +443,8 @@ fn viewport_scroll_uses_configured_keys_in_side_panes() {
                 ..ChannelInfo::test(Id::new(10 + index), "GuildText")
             })
             .collect(),
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
     state.confirm_selected_guild();
     state.focus_pane(FocusPane::Channels);
     state.set_channel_view_height(3);
@@ -491,7 +465,7 @@ fn enter_opens_member_actions_from_member_pane() {
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
     assert_eq!(command, None);
-    assert!(state.is_member_leader_action_active());
+    assert!(state.is_member_action_menu_active());
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::UserProfile));
 }
 

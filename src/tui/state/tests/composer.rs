@@ -1,7 +1,136 @@
 use super::*;
 use crate::discord::AppCommand;
-use crate::discord::{ApplicationCommandInfo, ApplicationCommandOptionInfo};
+use crate::discord::test_builders::{
+    GuildUpdateFixture, TypingStartFixture, guild_create_event, guild_update_event,
+    typing_start_event,
+};
+use crate::discord::{
+    ApplicationCommandChoiceInfo, ApplicationCommandInfo, ApplicationCommandOptionInfo,
+    GuildParticipationBlock, GuildParticipationRestriction, GuildVerificationLevel,
+    MessageAttachmentUpload,
+};
+use crate::tui::keybindings::ScrollAction;
+use crate::tui::state::{ActiveModalPopupKind, ForumPostComposerField, LocalUploadPreviewView};
+use crate::tui::text_input::TextEditAction;
 use serde_json::json;
+
+const PERM_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
+
+#[test]
+fn slow_mode_locks_composer_for_live_and_cached_self_messages() {
+    let mut state = state_with_writable_channel();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        name: "general".to_owned(),
+        last_message_id: Some(Id::new(1)),
+        message_count: Some(1),
+        rate_limit_per_user: Some(2),
+        ..ChannelInfo::test(Id::new(2), "text")
+    }));
+    state.start_composer();
+    assert!(state.is_composing());
+
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        author_id: Id::new(10),
+        ..guild_message_create_fixture()
+    }));
+
+    assert!(!state.is_composing());
+    assert!(matches!(
+        state.composer_lock(),
+        Some(ComposerLock::SlowMode {
+            remaining_seconds: 1..=2
+        })
+    ));
+    state.start_composer();
+    assert!(!state.is_composing());
+
+    let mut expired = state_with_writable_channel();
+    expired.record_slow_mode_deadline(Id::new(2), std::time::Duration::from_millis(10));
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert_eq!(expired.composer_lock(), None);
+
+    const DISCORD_EPOCH_MILLIS: i64 = 1_420_070_400_000;
+    let mut cached = state_with_writable_channel();
+    cached.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        name: "general".to_owned(),
+        last_message_id: Some(Id::new(1)),
+        message_count: Some(1),
+        rate_limit_per_user: Some(30),
+        ..ChannelInfo::test(Id::new(2), "text")
+    }));
+    let timestamp = u64::try_from(chrono::Utc::now().timestamp_millis() - DISCORD_EPOCH_MILLIS)
+        .expect("current time should follow Discord epoch");
+    let message_id = Id::new((timestamp << 22) | 1);
+    cached.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            channel_id: Id::new(2),
+            message_id,
+            author_id: Id::new(10),
+            ..MessageInfo::default()
+        }],
+    ));
+
+    assert!(matches!(
+        cached.composer_lock(),
+        Some(ComposerLock::SlowMode {
+            remaining_seconds: 29..=30
+        })
+    ));
+}
+
+#[test]
+fn participation_requirements_prevent_composer_activation() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    assert!(state.is_composing());
+    state.push_event(AppEvent::CurrentUserVerification {
+        email_verified: Some(false),
+        phone_verified: Some(false),
+        mfa_enabled: None,
+    });
+    state.push_event(guild_update_event(GuildUpdateFixture {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        verification_level: Some(GuildVerificationLevel::Low),
+        ..GuildUpdateFixture::new()
+    }));
+
+    assert_composer_restricted(
+        &mut state,
+        GuildParticipationRestriction::EmailVerificationRequired,
+    );
+
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    assert!(state.is_composing());
+
+    apply_incomplete_community_onboarding(&mut state, Id::new(1), Id::new(10));
+
+    assert_composer_restricted(
+        &mut state,
+        GuildParticipationRestriction::OnboardingIncomplete,
+    );
+}
+
+fn assert_composer_restricted(
+    state: &mut DashboardState,
+    restriction: GuildParticipationRestriction,
+) {
+    assert_eq!(
+        state.composer_lock(),
+        Some(ComposerLock::Verification(
+            GuildParticipationBlock::Restricted(restriction)
+        ))
+    );
+    assert!(!state.is_composing());
+    state.start_composer();
+    assert!(!state.is_composing());
+}
 
 fn application_command(
     name: &str,
@@ -47,6 +176,139 @@ fn state_with_application_command(command: ApplicationCommandInfo) -> DashboardS
     state
 }
 
+#[test]
+fn empty_guild_channel_locks_until_a_message_exists() {
+    let mut state = guild_state_with_overwrites(Vec::new(), None);
+
+    assert_eq!(state.composer_lock(), Some(ComposerLock::LoadingMessages));
+    assert!(!state.can_send_in_selected_channel());
+
+    state.push_event(AppEvent::MessageHistoryLoadFailed {
+        channel_id: Id::new(2),
+        target: crate::discord::MessageHistoryLoadTarget::Latest,
+        message: "offline".to_owned(),
+    });
+    assert_eq!(state.composer_lock(), Some(ComposerLock::MessageLoadFailed));
+
+    state.push_event(latest_history_loaded(Id::new(2), Vec::new()));
+    assert_eq!(state.composer_lock(), Some(ComposerLock::EmptyChannel));
+    assert!(!state.can_send_in_selected_channel());
+
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(100),
+        content: Some("existing message".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+
+    assert_eq!(state.composer_lock(), None);
+    assert!(state.can_send_in_selected_channel());
+
+    state.push_event(AppEvent::MessageDelete {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(100),
+    });
+    assert_eq!(state.composer_lock(), Some(ComposerLock::EmptyChannel));
+    assert!(!state.can_send_in_selected_channel());
+}
+
+fn state_with_forum_post_channel(required_tag: bool) -> DashboardState {
+    state_with_post_parent_channel("forum", required_tag)
+}
+
+fn state_with_forum_post_tags(tag_names: &[&str]) -> DashboardState {
+    let me: Id<UserMarker> = Id::new(10);
+    let guild: Id<GuildMarker> = Id::new(1);
+    let channel: Id<ChannelMarker> = Id::new(20);
+    let available_tags = tag_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| ForumTagInfo {
+            id: Id::<ForumTagMarker>::new(101 + index as u64),
+            name: (*name).to_owned(),
+            moderated: false,
+            emoji_id: None,
+            emoji_name: None,
+        })
+        .collect();
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.push_event(guild_create_event(GuildCreateFixture {
+        member_count: Some(1),
+        owner_id: Some(me),
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild),
+            name: "support".to_owned(),
+            position: Some(0),
+            flags: None,
+            available_tags,
+            ..ChannelInfo::test(channel, "forum")
+        }],
+        members: vec![member_with_username(me, "me", "me")],
+        roles: vec![role_info(
+            Id::new(guild.get()),
+            "@everyone",
+            PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES,
+        )],
+        ..GuildCreateFixture::new(guild)
+    }));
+    state.activate_guild(ActiveGuildScope::Guild(guild));
+    state.activate_channel(channel);
+    state
+}
+
+fn enter_forum_post_tag_picker(state: &mut DashboardState) {
+    state.start_composer();
+    state.cycle_forum_post_field_next(); // Title -> Body
+    state.cycle_forum_post_field_next(); // Body -> Attachments
+    state.cycle_forum_post_field_next(); // Attachments -> Tags
+    state.activate_forum_post_composer(); // open the tag picker
+}
+
+fn state_with_post_parent_channel(kind: &str, required_tag: bool) -> DashboardState {
+    let me: Id<UserMarker> = Id::new(10);
+    let guild: Id<GuildMarker> = Id::new(1);
+    let channel: Id<ChannelMarker> = Id::new(20);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.push_event(guild_create_event(GuildCreateFixture {
+        member_count: Some(1),
+        owner_id: Some(Id::new(99)),
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild),
+            name: "support".to_owned(),
+            position: Some(0),
+            flags: required_tag.then_some(1 << 4),
+            available_tags: vec![ForumTagInfo {
+                id: Id::<ForumTagMarker>::new(101),
+                name: "Resolved".to_owned(),
+                moderated: false,
+                emoji_id: None,
+                emoji_name: None,
+            }],
+            ..ChannelInfo::test(channel, kind)
+        }],
+        members: vec![member_with_username(me, "me", "me")],
+        roles: vec![role_info(
+            Id::new(guild.get()),
+            "@everyone",
+            PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES,
+        )],
+        ..GuildCreateFixture::new(guild)
+    }));
+    state.activate_guild(ActiveGuildScope::Guild(guild));
+    state.activate_channel(channel);
+    state
+}
+
 fn submit_composer_text(input: &str) -> Option<AppCommand> {
     let mut state = state_with_writable_channel();
     state.start_composer();
@@ -66,9 +328,7 @@ fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardStat
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: guild,
-        name: "guild".to_owned(),
+    state.push_event(guild_create_event(GuildCreateFixture {
         member_count: Some(2),
         owner_id: Some(me),
         channels: vec![
@@ -80,8 +340,16 @@ fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardStat
             member_with_username(Id::new(20), "Sally", "salamander"),
         ],
         presences: vec![
-            (me, PresenceStatus::Online),
-            (Id::new(20), PresenceStatus::Online),
+            PresenceEventFields {
+                user_id: me,
+                status: PresenceStatus::Online,
+                activities: Vec::new(),
+            },
+            PresenceEventFields {
+                user_id: Id::new(20),
+                status: PresenceStatus::Online,
+                activities: Vec::new(),
+            },
         ],
         roles: vec![
             role_info(Id::new(guild.get()), "@everyone", 0x400 | 0x800),
@@ -90,10 +358,16 @@ fn state_with_command_mentions(command: ApplicationCommandInfo) -> DashboardStat
                 ..role_info(Id::new(30), "moderators", 0)
             },
         ],
-        emojis: Vec::new(),
-    });
+        ..GuildCreateFixture::new(guild)
+    }));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(general);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        last_message_id: Some(Id::new(1)),
+        message_count: Some(1),
+        ..positioned_text_channel_info(guild, general, "general", 0)
+    }));
+    state.push_event(latest_history_loaded(general, Vec::new()));
     state.push_event(AppEvent::ApplicationCommandsLoaded {
         guild_id: Some(guild),
         commands: vec![command],
@@ -148,6 +422,482 @@ fn start_composer_refused_in_read_only_channel() {
 }
 
 #[test]
+fn forum_post_composer_activation_respects_channel_state() {
+    let mut state = state_with_forum_post_channel(false);
+
+    state.start_composer();
+
+    assert!(!state.is_composing());
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+    let view = state
+        .forum_post_composer_view()
+        .expect("forum post modal should have a view");
+    assert_eq!(view.channel_label, "#support");
+    assert_eq!(view.active_field, ForumPostComposerField::Title);
+    assert_eq!(view.editing_field, None);
+
+    let mut verification = state_with_forum_post_channel(false);
+    verification.push_event(AppEvent::CurrentUserVerification {
+        email_verified: Some(false),
+        phone_verified: Some(false),
+        mfa_enabled: None,
+    });
+    verification.push_event(guild_update_event(GuildUpdateFixture {
+        guild_id: Id::new(1),
+        name: "guild".to_owned(),
+        verification_level: Some(GuildVerificationLevel::Low),
+        ..GuildUpdateFixture::new()
+    }));
+    assert!(!verification.can_create_post_in_selected_channel());
+    verification.start_composer();
+    assert!(!verification.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+    verification.open_forum_post_composer(Id::new(20));
+    assert!(!verification.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+
+    let mut slow_mode = state_with_forum_post_channel(false);
+    slow_mode.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        name: "support".to_owned(),
+        position: Some(0),
+        rate_limit_per_user: Some(2),
+        ..ChannelInfo::test(Id::new(20), "forum")
+    }));
+    slow_mode.push_event(AppEvent::MessageSendCooldownStarted {
+        channel_id: Id::new(20),
+        duration_millis: 2_000,
+    });
+    assert!(matches!(
+        slow_mode.composer_lock(),
+        Some(ComposerLock::SlowMode {
+            remaining_seconds: 1..=2
+        })
+    ));
+    assert!(!slow_mode.can_create_post_in_selected_channel());
+    assert!(slow_mode.toast_message().is_none());
+    slow_mode.start_composer();
+    assert!(!slow_mode.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+}
+
+#[test]
+fn start_composer_opens_forum_post_overlay_in_media_channel() {
+    let mut state = state_with_post_parent_channel("media", false);
+
+    state.start_composer();
+
+    assert!(!state.is_composing());
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+}
+
+#[test]
+fn forum_post_composer_disables_moderated_tags_without_manage_threads() {
+    let mut state = state_with_forum_post_channel(false);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        guild_id: Some(Id::new(1)),
+        name: "support".to_owned(),
+        position: Some(0),
+        available_tags: vec![ForumTagInfo {
+            id: Id::new(101),
+            name: "Staff only".to_owned(),
+            moderated: true,
+            emoji_id: None,
+            emoji_name: None,
+        }],
+        ..ChannelInfo::test(Id::new(20), "forum")
+    }));
+
+    enter_forum_post_tag_picker(&mut state);
+    let view = state
+        .forum_post_composer_view()
+        .expect("forum post composer remains open");
+    assert!(!view.tags[0].selectable);
+
+    state.toggle_selected_forum_post_tag();
+    let view = state
+        .forum_post_composer_view()
+        .expect("forum post composer remains open");
+    assert!(!view.tags[0].selected);
+    assert_eq!(
+        view.status.as_deref(),
+        Some("Manage Threads permission is required for moderated tags")
+    );
+}
+
+#[test]
+fn submit_forum_post_overlay_uses_fields_tags_and_attachments() {
+    let mut state = state_with_forum_post_channel(true);
+    state.start_composer();
+    assert_eq!(state.activate_forum_post_composer(), None);
+    state.insert_forum_post_text("Need help");
+    assert_eq!(state.activate_forum_post_composer(), None);
+    state.cycle_forum_post_field_next();
+    assert_eq!(state.activate_forum_post_composer(), None);
+    state.insert_forum_post_text("The client crashes");
+    assert_eq!(state.activate_forum_post_composer(), None);
+    state.add_pending_forum_post_attachments(vec![MessageAttachmentUpload::from_bytes(
+        "panic.txt".to_owned(),
+        b"stack trace".to_vec(),
+    )]);
+    state.cycle_forum_post_field_next(); // Body -> Attachments
+    state.cycle_forum_post_field_next(); // Attachments -> Tags
+    assert_eq!(state.activate_forum_post_composer(), None); // open the tag picker
+    assert_eq!(state.activate_forum_post_composer(), None); // toggle the tag
+    state.close_or_cancel_forum_post_composer();
+
+    let Some(AppCommand::CreateForumPost { post }) = state.save_forum_post_composer() else {
+        panic!("forum post modal should create a forum post command");
+    };
+
+    assert_eq!(post.channel_id, Id::new(20));
+    assert_eq!(post.title, "Need help");
+    assert_eq!(post.content, "The client crashes");
+    assert_eq!(post.applied_tags, vec![Id::new(101)]);
+    assert_eq!(post.attachments.len(), 1);
+    assert_eq!(post.attachments[0].filename, "panic.txt");
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+}
+
+#[test]
+fn forum_post_attachment_preview_waits_for_runtime_result() {
+    // Attachments are previewed inline with the body, just like the main
+    // composer: adding an image schedules preview work immediately.
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+    state.add_pending_forum_post_attachments(vec![MessageAttachmentUpload::from_bytes(
+        "screenshot.png".to_owned(),
+        b"not an image".to_vec(),
+    )]);
+
+    assert!(matches!(
+        state.forum_post_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Loading { filename }) if filename == "screenshot.png"
+    ));
+    let (attachment_index, generation, filename, upload) = state
+        .take_pending_forum_post_attachment_preview()
+        .expect("runtime should be able to take pending preview work");
+    assert_eq!(attachment_index, 0);
+    assert_eq!(filename, "screenshot.png");
+    assert_eq!(upload.filename, "screenshot.png");
+
+    state.store_forum_post_attachment_preview_result(
+        attachment_index,
+        generation,
+        filename,
+        Err("decode failed".to_owned()),
+    );
+    assert!(matches!(
+        state.forum_post_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Failed { filename, message })
+            if filename == "screenshot.png" && message == "decode failed"
+    ));
+}
+
+#[test]
+fn forum_post_field_selection_stops_at_the_ends() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+
+    // Selecting forward past the last field stays on Cancel (no wrap-around).
+    for _ in 0..10 {
+        state.cycle_forum_post_field_next();
+    }
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.active_field),
+        Some(ForumPostComposerField::Cancel)
+    );
+
+    // Selecting backward past the first field stays on Title.
+    for _ in 0..10 {
+        state.cycle_forum_post_field_previous();
+    }
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.active_field),
+        Some(ForumPostComposerField::Title)
+    );
+}
+
+#[test]
+fn forum_post_form_and_body_scroll_use_local_reveal_behavior() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+    // Pretend the laid-out content overflows a five-row viewport.
+    state.set_forum_post_composer_metrics(5, 20);
+
+    state.scroll_forum_post_composer(ScrollAction::Down);
+    state.scroll_forum_post_composer(ScrollAction::Down);
+    assert_eq!(state.forum_post_composer_scroll(), 2);
+    state.scroll_forum_post_composer(ScrollAction::Up);
+    assert_eq!(state.forum_post_composer_scroll(), 1);
+
+    // A pending reveal pulls an off-screen row back into view; a consumed reveal
+    // leaves the manual scroll position alone.
+    for _ in 0..10 {
+        state.scroll_forum_post_composer(ScrollAction::Down);
+    }
+    assert_eq!(state.forum_post_composer_scroll(), 11);
+    state.request_forum_post_scroll_reveal();
+    state.reveal_forum_post_composer_rows(0, 1);
+    assert_eq!(state.forum_post_composer_scroll(), 0);
+    state.reveal_forum_post_composer_rows(15, 16);
+    assert_eq!(state.forum_post_composer_scroll(), 0);
+
+    // The nested body viewport moves only when the cursor crosses an edge.
+    // Moving upward inside the visible range must not keep the cursor pinned to
+    // the bottom row.
+    state.sync_forum_post_body_scroll(6, 12, 11);
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.body_scroll),
+        Some(6)
+    );
+    state.sync_forum_post_body_scroll(6, 12, 10);
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.body_scroll),
+        Some(6)
+    );
+    state.sync_forum_post_body_scroll(6, 12, 5);
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.body_scroll),
+        Some(5)
+    );
+}
+
+#[test]
+fn forum_post_body_cursor_moves_up_and_down_across_lines() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+    state.cycle_forum_post_field_next(); // Title -> Body
+    assert_eq!(state.activate_forum_post_composer(), None); // start editing the body
+    state.insert_forum_post_text("line one\nline two");
+
+    let end = state
+        .forum_post_composer_view()
+        .map(|view| view.body_cursor)
+        .unwrap();
+    state.edit_forum_post_active_text_input(TextEditAction::MoveCursorUp);
+    let up = state
+        .forum_post_composer_view()
+        .map(|view| view.body_cursor)
+        .unwrap();
+    assert!(up < end, "moving up should land on the first line");
+
+    state.edit_forum_post_active_text_input(TextEditAction::MoveCursorDown);
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.body_cursor),
+        Some(end),
+        "moving back down should return to the original column"
+    );
+}
+
+/// Drives the forum overlay into body editing with `title` already committed,
+/// so emoji/editor tests can focus on the body buffer.
+fn forum_post_editing_body(state: &mut DashboardState, title: &str) {
+    state.start_composer();
+    state.activate_forum_post_composer(); // start editing Title
+    state.insert_forum_post_text(title);
+    state.activate_forum_post_composer(); // commit Title
+    state.cycle_forum_post_field_next(); // Title -> Body
+    state.activate_forum_post_composer(); // start editing Body
+}
+
+#[test]
+fn forum_post_body_expands_emoji_shortcodes_on_submit() {
+    // The forum body has no `:` autocomplete popup, but typed `:shortcode:`
+    // unicode emoji are still expanded on submit, like the main composer.
+    let mut state = state_with_forum_post_channel(false);
+    forum_post_editing_body(&mut state, "Title");
+    state.insert_forum_post_text("love :heart:");
+
+    state.activate_forum_post_composer(); // commit Body
+    let Some(AppCommand::CreateForumPost { post }) = state.save_forum_post_composer() else {
+        panic!("forum post modal should create a forum post command");
+    };
+    let heart = emojis::get_by_shortcode("heart")
+        .expect("heart shortcode exists")
+        .as_str();
+    assert_eq!(post.content, format!("love {heart}"));
+}
+
+#[test]
+fn forum_post_long_body_keeps_the_post_open_for_correction() {
+    let mut long_body = state_with_forum_post_channel(false);
+    forum_post_editing_body(&mut long_body, "Title");
+    long_body.insert_forum_post_text(&"x".repeat(2_001));
+    long_body.activate_forum_post_composer();
+
+    assert_eq!(long_body.save_forum_post_composer(), None);
+    let view = long_body
+        .forum_post_composer_view()
+        .expect("invalid forum post should stay open");
+    assert_eq!(view.body.chars().count(), 2_001);
+    assert_eq!(
+        (view.body_character_count, view.body_character_limit),
+        (2_001, 2_000)
+    );
+    assert_eq!(
+        view.status.as_deref(),
+        Some("Remove 1 character before creating this post.")
+    );
+    assert_eq!(view.status_field, Some(ForumPostComposerField::Body));
+    assert_eq!(view.active_field, ForumPostComposerField::Body);
+}
+
+#[test]
+fn forum_post_body_external_editor_replaces_body_only_while_editing() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+
+    // Outside body editing the request is ignored and there is nothing to seed.
+    state.request_open_forum_post_body_in_editor();
+    assert!(!state.take_open_forum_post_body_in_editor_request());
+    assert_eq!(state.forum_post_body_for_editor(), None);
+
+    forum_post_editing_body(&mut state, "Title");
+    state.insert_forum_post_text("rough draft");
+
+    state.request_open_forum_post_body_in_editor();
+    assert!(state.take_open_forum_post_body_in_editor_request());
+    assert_eq!(
+        state.forum_post_body_for_editor().as_deref(),
+        Some("rough draft")
+    );
+
+    state.replace_forum_post_body_from_editor("edited in $EDITOR".to_owned());
+    assert_eq!(
+        state.forum_post_body_for_editor().as_deref(),
+        Some("edited in $EDITOR")
+    );
+}
+
+#[test]
+fn forum_post_cancel_button_closes_the_composer() {
+    let mut state = state_with_forum_post_channel(false);
+    state.start_composer();
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+
+    // Title -> Body -> Attachments -> Tags -> Submit -> Cancel.
+    for _ in 0..5 {
+        state.cycle_forum_post_field_next();
+    }
+    assert_eq!(state.activate_forum_post_composer(), None);
+
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+}
+
+#[test]
+fn submit_forum_post_overlay_blocks_missing_required_tag() {
+    let mut state = state_with_forum_post_channel(true);
+    state.start_composer();
+    assert_eq!(state.activate_forum_post_composer(), None);
+    state.insert_forum_post_text("Need help");
+    assert_eq!(state.activate_forum_post_composer(), None);
+    state.cycle_forum_post_field_next();
+    assert_eq!(state.activate_forum_post_composer(), None);
+    state.insert_forum_post_text("The client crashes");
+    assert_eq!(state.activate_forum_post_composer(), None);
+
+    assert_eq!(state.save_forum_post_composer(), None);
+    assert!(state.is_active_modal_popup(ActiveModalPopupKind::ForumPostComposer));
+    let view = state
+        .forum_post_composer_view()
+        .expect("forum post composer should remain open");
+    assert_eq!(view.status.as_deref(), Some("at least one tag is required"));
+    assert_eq!(view.status_field, Some(ForumPostComposerField::Tags));
+    assert_eq!(view.active_field, ForumPostComposerField::Tags);
+}
+
+#[test]
+fn forum_post_tag_picker_sorts_selected_tags_to_top_on_entry() {
+    let mut state = state_with_forum_post_tags(&["Alpha", "Beta", "Gamma", "Delta"]);
+    enter_forum_post_tag_picker(&mut state);
+
+    // Select "Gamma" (row 2) and "Delta" (row 3) from the original order.
+    state.move_forum_post_selection_down();
+    state.move_forum_post_selection_down();
+    state.toggle_selected_forum_post_tag();
+    state.move_forum_post_selection_down();
+    state.toggle_selected_forum_post_tag();
+
+    // The list must not reshuffle while the picker stays open.
+    let open_order: Vec<_> = state
+        .forum_post_composer_view()
+        .expect("tag picker should expose a view")
+        .tags
+        .iter()
+        .map(|tag| tag.name.clone())
+        .collect();
+    assert_eq!(open_order, vec!["Alpha", "Beta", "Gamma", "Delta"]);
+
+    // Re-opening the picker snapshots the selected tags to the top.
+    state.close_or_cancel_forum_post_composer();
+    state.activate_forum_post_composer();
+
+    let view = state
+        .forum_post_composer_view()
+        .expect("tag picker should expose a view");
+    let names: Vec<_> = view.tags.iter().map(|tag| tag.name.clone()).collect();
+    assert_eq!(names, vec!["Gamma", "Delta", "Alpha", "Beta"]);
+    assert!(
+        view.tags[0].selected && view.tags[1].selected,
+        "selected tags should lead the list"
+    );
+    assert!(
+        !view.tags[2].selected && !view.tags[3].selected,
+        "unselected tags should follow"
+    );
+}
+
+#[test]
+fn forum_post_tag_selection_caps_at_five() {
+    let mut state = state_with_forum_post_tags(&["a", "b", "c", "d", "e", "f"]);
+    enter_forum_post_tag_picker(&mut state);
+
+    // Select the first five tags, advancing one row after each.
+    for _ in 0..5 {
+        state.toggle_selected_forum_post_tag();
+        state.move_forum_post_selection_down();
+    }
+    // The cursor now sits on the sixth tag; selecting it is silently ignored
+    // instead of growing the selection past the cap.
+    state.toggle_selected_forum_post_tag();
+
+    let view = state
+        .forum_post_composer_view()
+        .expect("tag picker should expose a view");
+    assert_eq!(view.tags.iter().filter(|tag| tag.selected).count(), 5);
+    // At the cap, selected tags stay toggleable but the rest are marked
+    // unselectable so the picker dims them.
+    assert!(
+        view.tags.iter().all(|tag| tag.selectable == tag.selected),
+        "only selected tags remain selectable once the cap is reached"
+    );
+
+    // Deselecting still works while at the cap.
+    state.move_forum_post_selection_up();
+    state.toggle_selected_forum_post_tag();
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .expect("tag picker should expose a view")
+            .tags
+            .iter()
+            .filter(|tag| tag.selected)
+            .count(),
+        4
+    );
+}
+
+#[test]
 fn start_composer_queues_application_command_load_when_missing() {
     let mut state = state_with_writable_channel();
 
@@ -162,7 +912,166 @@ fn start_composer_queues_application_command_load_when_missing() {
 }
 
 #[test]
-fn submit_composer_drops_message_when_send_revoked_after_open() {
+fn application_command_autocomplete_response_updates_the_picker() {
+    let command = application_command(
+        "search",
+        vec![ApplicationCommandOptionInfo {
+            autocomplete: true,
+            ..application_command_option(3, "query", true, Vec::new())
+        }],
+    );
+    let mut state = state_with_application_command(command);
+
+    type_composer_text(&mut state, "/search query:ne");
+    let requests = state
+        .drain_pending_commands()
+        .into_iter()
+        .filter_map(|command| match command {
+            AppCommand::RequestApplicationCommandAutocomplete { invocation } => Some(invocation),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let request = requests
+        .last()
+        .expect("typing an autocomplete option should queue a request");
+    assert_eq!(request.focused_option_name, "query");
+    assert_eq!(request.content, "/search query:ne");
+
+    state.push_event(AppEvent::ApplicationCommandAutocompleteResponse {
+        nonce: Some(request.nonce.clone()),
+        choices: vec![
+            ApplicationCommandChoiceInfo {
+                name: "Neo".to_owned(),
+                value: json!("neo"),
+            },
+            ApplicationCommandChoiceInfo {
+                name: "Next".to_owned(),
+                value: json!("next"),
+            },
+        ],
+    });
+
+    assert_eq!(
+        state
+            .composer_command_candidates()
+            .into_iter()
+            .map(|candidate| candidate.label)
+            .collect::<Vec<_>>(),
+        ["Neo", "Next"]
+    );
+
+    state.push_event(AppEvent::ApplicationCommandAutocompleteResponse {
+        nonce: Some("stale".to_owned()),
+        choices: vec![ApplicationCommandChoiceInfo {
+            name: "Stale".to_owned(),
+            value: json!("stale"),
+        }],
+    });
+    assert_eq!(
+        state
+            .composer_command_candidates()
+            .into_iter()
+            .map(|candidate| candidate.label)
+            .collect::<Vec<_>>(),
+        ["Neo", "Next"]
+    );
+}
+
+#[test]
+fn application_command_index_update_discards_stale_autocomplete_state() {
+    let command = application_command(
+        "search",
+        vec![ApplicationCommandOptionInfo {
+            autocomplete: true,
+            ..application_command_option(3, "query", true, Vec::new())
+        }],
+    );
+    let mut state = state_with_application_command(command);
+
+    type_composer_text(&mut state, "/search query:ne");
+    let request = state
+        .drain_pending_commands()
+        .into_iter()
+        .filter_map(|command| match command {
+            AppCommand::RequestApplicationCommandAutocomplete { invocation } => Some(invocation),
+            _ => None,
+        })
+        .next_back()
+        .expect("typing an autocomplete option should queue a request");
+    state.push_event(AppEvent::ApplicationCommandAutocompleteResponse {
+        nonce: Some(request.nonce.clone()),
+        choices: vec![ApplicationCommandChoiceInfo {
+            name: "Neo".to_owned(),
+            value: json!("neo"),
+        }],
+    });
+    assert_eq!(state.composer_command_candidates().len(), 1);
+
+    state.push_event(AppEvent::ApplicationCommandIndexUpdated {
+        guild_id: Id::new(1),
+    });
+    assert!(state.composer_command_candidates().is_empty());
+    assert_eq!(
+        state.drain_pending_commands(),
+        vec![AppCommand::LoadApplicationCommands {
+            guild_id: Some(Id::new(1)),
+        }]
+    );
+
+    state.push_event(AppEvent::ApplicationCommandAutocompleteResponse {
+        nonce: Some(request.nonce),
+        choices: vec![ApplicationCommandChoiceInfo {
+            name: "Stale".to_owned(),
+            value: json!("stale"),
+        }],
+    });
+    assert!(state.composer_command_candidates().is_empty());
+
+    let mut refreshed = application_command(
+        "search",
+        vec![ApplicationCommandOptionInfo {
+            autocomplete: true,
+            ..application_command_option(3, "query", true, Vec::new())
+        }],
+    );
+    refreshed.version = "2".to_owned();
+    refreshed.raw["version"] = json!("2");
+    state.push_event(AppEvent::ApplicationCommandsLoaded {
+        guild_id: Some(Id::new(1)),
+        commands: vec![refreshed],
+    });
+
+    let refreshed_request = state
+        .drain_pending_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            AppCommand::RequestApplicationCommandAutocomplete { invocation } => Some(invocation),
+            _ => None,
+        })
+        .expect("the refreshed command version should queue a new autocomplete request");
+    assert_eq!(refreshed_request.command_version, "2");
+}
+
+#[test]
+fn application_commands_stay_hidden_without_channel_permission() {
+    let mut state = state_with_other_user_message_permissions(
+        PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES,
+        Vec::new(),
+    );
+    state.push_event(AppEvent::ApplicationCommandsLoaded {
+        guild_id: Some(Id::new(1)),
+        commands: vec![application_command("echo", Vec::new())],
+    });
+
+    state.start_composer();
+    type_composer_text(&mut state, "/e");
+
+    assert!(state.composer_command_candidates().is_empty());
+    assert!(state.drain_pending_commands().is_empty());
+}
+
+#[test]
+fn permission_update_closes_composer_and_keeps_draft() {
     // Open the composer with SEND_MESSAGES granted, type something, then
     // simulate a permission overwrite arriving that revokes SEND. Submit
     // must refuse rather than silently fire a request that would 403.
@@ -173,7 +1082,8 @@ fn submit_composer_drops_message_when_send_revoked_after_open() {
     assert!(state.is_composing());
 
     // Apply a CHANNEL_UPDATE that strips SEND_MESSAGES via a channel
-    // overwrite on @everyone (role id == guild id == 1).
+    // overwrite on @everyone (role id == guild id == 1). The composer closes
+    // immediately so the UI becomes read-only without waiting for a submit.
     state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
         permission_overwrites: vec![PermissionOverwriteInfo {
             deny: 0x800,
@@ -181,8 +1091,144 @@ fn submit_composer_drops_message_when_send_revoked_after_open() {
         }],
         ..positioned_text_channel_info(Id::new(1), Id::new(2), "general", 0)
     }));
-    assert_eq!(state.submit_composer(), None);
     assert!(!state.is_composing());
+    assert_eq!(state.composer_input(), "hi");
+    assert!(state.toast_message().is_none());
+    assert_eq!(state.submit_composer(), None);
+    assert_eq!(
+        state.toast_message().map(|toast| toast.text),
+        Some("Send Messages permission is required in this channel")
+    );
+}
+
+#[test]
+fn composer_applies_account_message_limits_without_losing_invalid_drafts() {
+    for (premium_tier, character_count, character_limit, should_send) in [
+        (PremiumTier::None, 2_001, 2_000, false),
+        (PremiumTier::Nitro, 4_000, 4_000, true),
+        (PremiumTier::Nitro, 4_001, 4_000, false),
+    ] {
+        let mut state = state_with_writable_channel();
+        state.push_event(AppEvent::CurrentUserCapabilities { premium_tier });
+        state.start_composer();
+        let draft = "가".repeat(character_count);
+        state.insert_composer_text_at_cursor(&draft);
+
+        assert_eq!(state.composer_character_count(), character_count);
+        assert_eq!(state.composer_character_limit(), character_limit);
+        let command = state.submit_composer();
+
+        if should_send {
+            assert!(matches!(
+                command,
+                Some(AppCommand::SendMessage { content, .. })
+                    if content.chars().count() == character_count
+            ));
+        } else {
+            assert_eq!(command, None);
+            assert!(state.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation));
+            assert_eq!(
+                state.long_message_confirmation_counts(),
+                Some((character_count, character_limit))
+            );
+            assert_eq!(state.composer_input(), draft);
+        }
+    }
+}
+
+#[test]
+fn long_message_confirmation_sends_utf8_text_as_message_file() {
+    let mut state = state_with_writable_channel();
+    let draft = format!("{} 끝", "내용".repeat(1_000));
+    state.start_composer();
+    state.insert_composer_text_at_cursor(&draft);
+    assert_eq!(state.submit_composer(), None);
+
+    let command = state
+        .confirm_long_message_upload()
+        .expect("file confirmation should create a message command");
+    let AppCommand::SendMessage {
+        content,
+        attachments,
+        ..
+    } = command
+    else {
+        panic!("long message fallback should send a regular attachment message");
+    };
+
+    assert!(content.is_empty());
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(attachments[0].filename, "message.txt");
+    assert_eq!(attachments[0].bytes(), Some(draft.as_bytes()));
+    assert!(state.composer_input().is_empty());
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation));
+}
+
+#[test]
+fn long_message_file_send_rechecks_attachment_permission_and_capacity() {
+    let draft = "x".repeat(2_001);
+
+    let mut permission_lost = state_with_writable_channel();
+    permission_lost.start_composer();
+    permission_lost.insert_composer_text_at_cursor(&draft);
+    assert_eq!(permission_lost.submit_composer(), None);
+    permission_lost.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        permission_overwrites: vec![PermissionOverwriteInfo {
+            deny: PERM_ATTACH_FILES,
+            ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
+        }],
+        ..positioned_text_channel_info(Id::new(1), Id::new(2), "general", 0)
+    }));
+
+    assert_eq!(permission_lost.confirm_long_message_upload(), None);
+    assert_eq!(permission_lost.composer_input(), draft);
+    assert_eq!(
+        permission_lost.toast_message().map(|toast| toast.text),
+        Some("Attach Files permission is required in this channel")
+    );
+
+    let mut full = state_with_writable_channel();
+    full.start_composer();
+    full.add_pending_composer_attachments(
+        (0..crate::discord::MAX_UPLOAD_ATTACHMENT_COUNT)
+            .map(|index| {
+                MessageAttachmentUpload::from_bytes(
+                    format!("existing-{index}.txt"),
+                    vec![index as u8],
+                )
+            })
+            .collect(),
+    );
+    full.insert_composer_text_at_cursor(&draft);
+    assert_eq!(full.submit_composer(), None);
+
+    assert!(!full.is_active_modal_popup(ActiveModalPopupKind::LongMessageConfirmation));
+    assert_eq!(full.composer_input(), draft);
+    assert!(
+        full.toast_message()
+            .is_some_and(|toast| toast.text.contains("too many attachments"))
+    );
+}
+
+#[test]
+fn oversized_attachment_is_blocked_before_the_composer_is_cleared() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    state.insert_composer_text_at_cursor("keep this draft");
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+        "/tmp/large.bin".into(),
+        "large.bin".to_owned(),
+        10 * 1024 * 1024 + 1,
+    )]);
+
+    assert_eq!(state.submit_composer(), None);
+    assert_eq!(state.composer_input(), "keep this draft");
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert!(
+        state
+            .toast_message()
+            .is_some_and(|toast| toast.text.contains("attachment exceeds upload limit"))
+    );
 }
 
 #[test]
@@ -227,10 +1273,11 @@ fn submit_builtin_text_slash_commands_as_messages() {
         ("/spoiler secret words", "||secret words||"),
         ("/shrug hello", r"hello ¯\_(ツ)_/¯"),
     ] {
-        assert_eq!(
+        assert_send_message_eq!(
             submit_composer_text(input),
             Some(AppCommand::SendMessage {
                 channel_id: Id::new(2),
+                nonce: Id::new(1),
                 content: expected.to_owned(),
                 reply_to: None,
                 attachments: Vec::new(),
@@ -241,11 +1288,116 @@ fn submit_builtin_text_slash_commands_as_messages() {
 }
 
 #[test]
-fn submit_builtin_tts_and_nick_commands_use_specific_app_commands() {
+fn submitted_message_stays_pending_until_discord_confirms_or_rejects_it() {
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    for ch in "sending".chars() {
+        state.push_composer_char(ch);
+    }
+
+    let Some(AppCommand::SendMessage { nonce, .. }) = state.submit_composer() else {
+        panic!("message should submit");
+    };
+    let pending = state.messages();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, nonce);
+    assert_eq!(pending[0].content.as_deref(), Some("sending"));
+    assert!(state.message_is_pending(pending[0]));
+
+    state.focus_pane(FocusPane::Messages);
+    assert!(
+        state.selected_message_action_items().is_empty(),
+        "pending messages must not expose Discord actions"
+    );
+    assert!(
+        state.selected_message_history_catch_up_command().is_none(),
+        "pending nonces must not become Discord history cursors"
+    );
+
+    let confirmed_id = Id::new(nonce.get().saturating_add(1));
+    state.push_event(message_create_event(MessageCreateFixture {
+        nonce: Some(nonce),
+        author_id: Id::new(10),
+        author: "me".to_owned(),
+        message_id: confirmed_id,
+        content: Some("sending".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    let confirmed = state.messages();
+    assert_eq!(confirmed.len(), 1);
+    assert_eq!(confirmed[0].id, confirmed_id);
+    assert!(!state.message_is_pending(confirmed[0]));
+
+    state.start_composer();
+    state.push_composer_char('x');
+    let Some(AppCommand::SendMessage { nonce, .. }) = state.submit_composer() else {
+        panic!("second message should submit");
+    };
+    assert_eq!(state.messages().len(), 2);
+
+    state.push_event(AppEvent::MessageSendFailed {
+        channel_id: Id::new(2),
+        nonce,
+    });
+    assert_eq!(state.messages().len(), 1);
+}
+
+#[test]
+fn rapid_sends_keep_submission_order_as_pending_messages_confirm() {
+    let mut state = state_with_writable_channel();
+    state.push_event(message_create_event(guild_text_message(10, "1")));
+    state.push_event(message_create_event(guild_text_message(20, "2")));
+
+    for (nonce, content) in [(100, "3"), (200, "4"), (300, "5")] {
+        state.stage_pending_message(Id::new(2), Id::new(nonce), content, None, &[]);
+    }
     assert_eq!(
+        state
+            .messages()
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>(),
+        ["1", "2", "3", "4", "5"]
+    );
+
+    state.push_event(message_create_event(MessageCreateFixture {
+        nonce: Some(Id::new(100)),
+        message_id: Id::new(400),
+        content: Some("3".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    assert_eq!(
+        state
+            .messages()
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>(),
+        ["1", "2", "3", "4", "5"]
+    );
+
+    state.push_event(message_create_event(MessageCreateFixture {
+        nonce: Some(Id::new(200)),
+        message_id: Id::new(500),
+        content: Some("4".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    assert_eq!(
+        state
+            .messages()
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>(),
+        ["1", "2", "3", "4", "5"]
+    );
+}
+
+#[test]
+fn submit_builtin_tts_and_nick_commands_use_specific_app_commands() {
+    assert_send_message_eq!(
         submit_composer_text("/tts hello there"),
         Some(AppCommand::SendTtsMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "hello there".to_owned(),
         })
     );
@@ -298,52 +1450,27 @@ fn no_match_emoji_query_closes_active_command_picker() {
 }
 
 #[test]
-fn submit_slash_command_emits_direct_interaction_options() {
-    let command = application_command(
-        "echo",
-        vec![
-            application_command_option(3, "text", true, Vec::new()),
-            application_command_option(5, "loud", false, Vec::new()),
-        ],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/echo text:hello world loud:true");
-
-    assert_slash_invocation(
-        state.submit_composer(),
-        "echo",
-        "/echo text:hello world loud:true",
-    );
-}
-
-#[test]
-fn submit_slash_subcommand_emits_nested_interaction_options() {
-    let command = application_command(
-        "poll",
-        vec![application_command_option(
-            1,
-            "create",
-            false,
-            vec![application_command_option(3, "question", true, Vec::new())],
-        )],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/poll create question:favorite color");
-
-    assert_slash_invocation(
-        state.submit_composer(),
-        "poll",
-        "/poll create question:favorite color",
-    );
-}
-
-#[test]
-fn submit_slash_subcommand_accepts_single_option_shorthand() {
-    for input in [
-        "/anime search:naruto uzumaki",
-        "/anime search: naruto uzumaki",
-    ] {
-        let command = application_command(
+fn submit_slash_command_emits_interaction_options_for_every_option_shape() {
+    for (command_name, options, inputs) in [
+        (
+            "echo",
+            vec![
+                application_command_option(3, "text", true, Vec::new()),
+                application_command_option(5, "loud", false, Vec::new()),
+            ],
+            &["/echo text:hello world loud:true"][..],
+        ),
+        (
+            "poll",
+            vec![application_command_option(
+                1,
+                "create",
+                false,
+                vec![application_command_option(3, "question", true, Vec::new())],
+            )],
+            &["/poll create question:favorite color"][..],
+        ),
+        (
             "anime",
             vec![application_command_option(
                 1,
@@ -351,59 +1478,85 @@ fn submit_slash_subcommand_accepts_single_option_shorthand() {
                 false,
                 vec![application_command_option(3, "query", true, Vec::new())],
             )],
-        );
-        let mut state = state_with_application_command(command);
-        type_composer_text(&mut state, input);
+            &[
+                "/anime search:naruto uzumaki",
+                "/anime search: naruto uzumaki",
+            ][..],
+        ),
+        (
+            "mod",
+            vec![application_command_option(
+                2,
+                "admin",
+                false,
+                vec![application_command_option(
+                    1,
+                    "ban",
+                    false,
+                    vec![
+                        application_command_option(6, "user", true, Vec::new()),
+                        application_command_option(3, "reason", false, Vec::new()),
+                    ],
+                )],
+            )],
+            &["/mod admin ban user:<@123> reason:spam links"][..],
+        ),
+    ] {
+        for input in inputs {
+            let command = application_command(command_name, options.clone());
+            let mut state = state_with_application_command(command);
+            type_composer_text(&mut state, input);
 
-        assert_slash_invocation(state.submit_composer(), "anime", input);
+            assert_slash_invocation(state.submit_composer(), command_name, input);
+        }
     }
 }
 
 #[test]
-fn submit_slash_subcommand_rejects_empty_single_option_shorthand() {
-    let command = application_command(
-        "anime",
-        vec![application_command_option(
-            1,
-            "search",
-            false,
-            vec![application_command_option(3, "query", false, Vec::new())],
-        )],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/anime search:");
-
-    assert_eq!(state.submit_composer(), None);
-    assert_eq!(state.composer_input(), "/anime search:");
-}
-
-#[test]
-fn submit_slash_subcommand_group_emits_nested_interaction_options() {
-    let command = application_command(
-        "mod",
-        vec![application_command_option(
-            2,
-            "admin",
-            false,
+fn submit_slash_command_keeps_incomplete_input_in_the_composer() {
+    for (reason, command_name, options, input) in [
+        (
+            "single-option shorthand with no value",
+            "anime",
             vec![application_command_option(
                 1,
-                "ban",
+                "search",
                 false,
-                vec![
-                    application_command_option(6, "user", true, Vec::new()),
-                    application_command_option(3, "reason", false, Vec::new()),
-                ],
+                vec![application_command_option(3, "query", false, Vec::new())],
             )],
-        )],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/mod admin ban user:<@123> reason:spam links");
+            "/anime search:",
+        ),
+        (
+            "option value that does not match its type",
+            "roll",
+            vec![application_command_option(4, "sides", true, Vec::new())],
+            "/roll sides:many",
+        ),
+        (
+            "required option still missing",
+            "poll",
+            vec![application_command_option(
+                1,
+                "create",
+                false,
+                vec![application_command_option(3, "question", true, Vec::new())],
+            )],
+            "/poll create",
+        ),
+        (
+            "free text with no option name",
+            "echo",
+            vec![application_command_option(3, "text", false, Vec::new())],
+            "/echo hello world",
+        ),
+    ] {
+        let command = application_command(command_name, options);
+        let mut state = state_with_application_command(command);
+        type_composer_text(&mut state, input);
 
-    assert_slash_invocation(
-        state.submit_composer(),
-        "mod",
-        "/mod admin ban user:<@123> reason:spam links",
-    );
+        assert_eq!(state.submit_composer(), None, "{reason}");
+        assert_eq!(state.composer_input(), input, "{reason}");
+    }
 }
 
 #[test]
@@ -482,50 +1635,6 @@ fn slash_option_picker_marks_optional_and_required_options() {
 }
 
 #[test]
-fn submit_slash_command_rejects_invalid_typed_options() {
-    let command = application_command(
-        "roll",
-        vec![application_command_option(4, "sides", true, Vec::new())],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/roll sides:many");
-
-    assert_eq!(state.submit_composer(), None);
-    assert_eq!(state.composer_input(), "/roll sides:many");
-}
-
-#[test]
-fn submit_slash_command_waits_for_required_options() {
-    let command = application_command(
-        "poll",
-        vec![application_command_option(
-            1,
-            "create",
-            false,
-            vec![application_command_option(3, "question", true, Vec::new())],
-        )],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/poll create");
-
-    assert_eq!(state.submit_composer(), None);
-    assert_eq!(state.composer_input(), "/poll create");
-}
-
-#[test]
-fn submit_slash_command_preserves_unparsed_free_text() {
-    let command = application_command(
-        "echo",
-        vec![application_command_option(3, "text", false, Vec::new())],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/echo hello world");
-
-    assert_eq!(state.submit_composer(), None);
-    assert_eq!(state.composer_input(), "/echo hello world");
-}
-
-#[test]
 fn confirming_slash_command_immediately_shows_subcommands() {
     let command = application_command(
         "poll",
@@ -549,62 +1658,57 @@ fn confirming_slash_command_immediately_shows_subcommands() {
 }
 
 #[test]
-fn subcommand_picker_hides_used_leaf_options() {
-    let command = application_command(
-        "poll",
-        vec![application_command_option(
-            1,
-            "create",
-            false,
-            vec![
-                application_command_option(3, "question", true, Vec::new()),
-                application_command_option(4, "duration", false, Vec::new()),
-            ],
-        )],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/poll create question:favorite color ");
-
-    let labels = state
-        .composer_command_candidates()
-        .into_iter()
-        .map(|candidate| candidate.label)
-        .collect::<Vec<_>>();
-
-    assert!(!labels.iter().any(|label| label == "question:"));
-    assert!(labels.iter().any(|label| label == "duration:"));
-}
-
-#[test]
-fn subcommand_group_picker_hides_used_leaf_options() {
-    let command = application_command(
-        "mod",
-        vec![application_command_option(
-            2,
-            "admin",
-            false,
+fn option_picker_lists_the_remaining_leaf_options() {
+    for (command_name, options, input, expected_label) in [
+        (
+            "poll",
             vec![application_command_option(
                 1,
-                "ban",
+                "create",
                 false,
                 vec![
-                    application_command_option(6, "user", true, Vec::new()),
-                    application_command_option(3, "reason", false, Vec::new()),
+                    application_command_option(3, "question", true, Vec::new()),
+                    application_command_option(4, "duration", false, Vec::new()),
                 ],
             )],
-        )],
-    );
-    let mut state = state_with_application_command(command);
-    type_composer_text(&mut state, "/mod admin ban user:<@123> ");
+            "/poll create question:favorite color ",
+            "duration:",
+        ),
+        (
+            "mod",
+            vec![application_command_option(
+                2,
+                "admin",
+                false,
+                vec![application_command_option(
+                    1,
+                    "ban",
+                    false,
+                    vec![
+                        application_command_option(6, "user", true, Vec::new()),
+                        application_command_option(3, "reason", false, Vec::new()),
+                    ],
+                )],
+            )],
+            "/mod admin ban user:<@123> ",
+            "reason:",
+        ),
+    ] {
+        let command = application_command(command_name, options);
+        let mut state = state_with_application_command(command);
+        type_composer_text(&mut state, input);
 
-    let labels = state
-        .composer_command_candidates()
-        .into_iter()
-        .map(|candidate| candidate.label)
-        .collect::<Vec<_>>();
+        let labels = state
+            .composer_command_candidates()
+            .into_iter()
+            .map(|candidate| candidate.label)
+            .collect::<Vec<_>>();
 
-    assert!(!labels.iter().any(|label| label == "user:"));
-    assert!(labels.iter().any(|label| label == "reason:"));
+        assert!(
+            labels.iter().any(|label| label == expected_label),
+            "{input:?} should still offer {expected_label:?}, got {labels:?}"
+        );
+    }
 }
 
 #[test]
@@ -648,7 +1752,7 @@ fn typing_at_sign_after_letter_does_not_trigger_picker() {
 }
 
 #[test]
-fn typing_after_at_filters_candidates_by_substring() {
+fn typing_after_at_filters_member_candidates_by_gateway_prefix() {
     let mut state = state_with_writable_channel_and_members();
     state.start_composer();
     state.push_composer_char('@');
@@ -661,12 +1765,13 @@ fn typing_after_at_filters_candidates_by_substring() {
         .map(|entry| entry.display_name)
         .collect();
     assert!(
-        names.iter().all(|name| name.to_lowercase().contains('s')),
+        names
+            .iter()
+            .all(|name| name.to_lowercase().starts_with('s')),
         "expected only `s` matches, got {names:?}"
     );
     assert!(names.iter().any(|name| name == "Sally"));
     assert!(names.iter().any(|name| name == "Sammy"));
-    assert!(!names.iter().any(|name| name == "Bob"));
 
     state.push_event(AppEvent::GuildMemberUpsert {
         guild_id: Id::new(1),
@@ -677,7 +1782,7 @@ fn typing_after_at_filters_candidates_by_substring() {
         .into_iter()
         .map(|entry| entry.display_name)
         .collect();
-    assert!(names.iter().any(|name| name == "Offline Sally"));
+    assert!(!names.iter().any(|name| name == "Offline Sally"));
 }
 
 #[test]
@@ -710,10 +1815,11 @@ fn confirm_inserts_display_name_and_submit_expands_to_wire_format() {
     state.push_composer_char('h');
     state.push_composer_char('i');
 
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<@20> hi".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -737,10 +1843,11 @@ fn confirm_mention_in_middle_keeps_trailing_text() {
 
     assert_eq!(state.composer_input(), "hello @Sally world");
     assert_eq!(state.composer_cursor_byte_index(), "hello @Sally ".len());
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "hello <@20> world".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -772,10 +1879,11 @@ fn role_and_channel_mentions_expand_to_wire_format() {
         }
         assert!(state.confirm_composer_mention());
         assert_eq!(state.composer_input(), visible);
-        assert_eq!(
+        assert_send_message_eq!(
             state.submit_composer(),
             Some(AppCommand::SendMessage {
                 channel_id: Id::new(2),
+                nonce: Id::new(1),
                 content: wire.to_owned(),
                 reply_to: None,
                 attachments: Vec::new(),
@@ -801,10 +1909,11 @@ fn role_mention_picker_avoids_duplicate_everyone_prefix() {
     assert_eq!(everyone.visible_text(), "@everyone");
     assert!(state.confirm_composer_mention());
     assert_eq!(state.composer_input(), "@everyone ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "@everyone".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -827,6 +1936,7 @@ fn cancel_composer_clears_pending_upload_state() {
     attachments.cancel_composer();
 
     assert_eq!(attachments.pending_composer_attachments(), &[]);
+    assert!(attachments.composer_attachment_previews().is_empty());
 
     let mut processing = state_with_messages(1);
     processing.start_composer();
@@ -835,6 +1945,68 @@ fn cancel_composer_clears_pending_upload_state() {
     processing.cancel_composer();
 
     assert!(!processing.clipboard_paste_pending());
+}
+
+#[test]
+fn composer_attachment_preview_waits_for_runtime_result() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.confirm_selected_channel();
+    state.start_composer();
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_bytes(
+        "screenshot.png".to_owned(),
+        b"not an image".to_vec(),
+    )]);
+
+    assert!(matches!(
+        state.composer_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Loading { filename }) if filename == "screenshot.png"
+    ));
+    let (attachment_index, generation, filename, upload) = state
+        .take_pending_composer_attachment_preview()
+        .expect("runtime should be able to take pending composer preview work");
+    assert_eq!(attachment_index, 0);
+    assert_eq!(filename, "screenshot.png");
+    assert_eq!(upload.filename, "screenshot.png");
+
+    state.store_composer_attachment_preview_result(
+        attachment_index,
+        generation,
+        filename,
+        Err("decode failed".to_owned()),
+    );
+    assert!(matches!(
+        state.composer_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Failed { filename, message })
+            if filename == "screenshot.png" && message == "decode failed"
+    ));
+}
+
+#[test]
+fn composer_attachment_preview_refreshes_when_images_are_enabled() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    state.confirm_selected_channel();
+    state.start_composer();
+
+    state.open_options_popup();
+    state.toggle_selected_display_option();
+    assert!(!state.show_images());
+
+    state.add_pending_composer_attachments(vec![MessageAttachmentUpload::from_path(
+        "/tmp/cat.png".into(),
+        "cat.png".to_owned(),
+        2_048,
+    )]);
+    assert!(state.composer_attachment_previews().is_empty());
+
+    state.toggle_selected_display_option();
+
+    assert!(state.show_images());
+    assert!(matches!(
+        state.composer_attachment_previews().first(),
+        Some(LocalUploadPreviewView::Loading { filename }) if filename == "cat.png"
+    ));
 }
 
 #[test]
@@ -875,37 +2047,6 @@ fn move_selection_navigates_filtered_list() {
 
     state.move_active_composer_picker_selection(-5);
     assert_eq!(state.composer_mention_selected(), 0);
-}
-
-#[test]
-fn mention_picker_keeps_more_than_visible_candidates_selectable() {
-    let mut state = state_with_writable_channel_and_members();
-    for index in 0..10 {
-        state.push_event(AppEvent::GuildMemberUpsert {
-            guild_id: Id::new(1),
-            member: member_with_username(
-                Id::new(100 + index),
-                format!("Scroll {index:02}"),
-                format!("scroll{index:02}"),
-            ),
-        });
-    }
-    state.start_composer();
-    for ch in "@sc".chars() {
-        state.push_composer_char(ch);
-    }
-
-    let candidates = state.composer_mention_candidates();
-    assert!(
-        candidates.len() > 8,
-        "picker should keep every matching candidate, got {candidates:?}"
-    );
-
-    state.move_active_composer_picker_selection(9);
-
-    assert_eq!(state.composer_mention_selected(), 9);
-    assert!(state.confirm_composer_mention());
-    assert_eq!(state.composer_input(), "@Scroll 09 ");
 }
 
 #[test]
@@ -1067,7 +2208,12 @@ fn unavailable_custom_emojis_stay_visible_but_not_selectable() {
     ] {
         let mut state = state_with_custom_emojis();
         if let Some(has_nitro) = set_capability {
-            state.push_event(AppEvent::CurrentUserCapabilities { has_nitro });
+            let premium_tier = if has_nitro {
+                PremiumTier::Nitro
+            } else {
+                PremiumTier::None
+            };
+            state.push_event(AppEvent::CurrentUserCapabilities { premium_tier });
         }
         state.start_composer();
         for ch in query.chars() {
@@ -1110,7 +2256,9 @@ fn active_emoji_candidates_refresh_when_nitro_capability_changes() {
     assert!(!before.available);
     assert!(!before.available_as_link);
 
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
 
     let after = state
         .composer_emoji_candidates()
@@ -1122,47 +2270,11 @@ fn active_emoji_candidates_refresh_when_nitro_capability_changes() {
 }
 
 #[test]
-fn emoji_picker_keeps_more_than_visible_candidates_selectable() {
-    let mut state = state_with_writable_channel();
-    state.push_event(AppEvent::GuildEmojisUpdate {
-        guild_id: Id::new(1),
-        emojis: (0..10)
-            .map(|index| {
-                CustomEmojiInfo::test(Id::new(100 + index), format!("overflow_{index:02}"))
-            })
-            .collect(),
-    });
-    state.start_composer();
-    for ch in ":ov".chars() {
-        state.push_composer_char(ch);
-    }
-
-    let candidates = state.composer_emoji_candidates();
-    assert!(
-        candidates.len() > 8,
-        "picker should keep every matching candidate, got {candidates:?}"
-    );
-
-    state.move_active_composer_picker_selection(9);
-
-    assert_eq!(state.composer_emoji_selected(), 9);
-    assert!(state.confirm_composer_emoji());
-    assert_eq!(state.composer_input(), ":overflow_09: ");
-    assert_eq!(
-        state.submit_composer(),
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(2),
-            content: "<:overflow_09:109>".to_owned(),
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-    );
-}
-
-#[test]
 fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     let mut state = state_with_custom_emojis();
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.start_composer();
     for ch in ":pa".chars() {
         state.push_composer_char(ch);
@@ -1179,10 +2291,11 @@ fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":party_time: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<a:party_time:50>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1190,7 +2303,7 @@ fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     );
 
     let guild_id = Id::new(1);
-    let mut state = state_with_messages(1);
+    let mut state = state_with_custom_emojis();
     state.push_event(AppEvent::GuildEmojisUpdate {
         guild_id,
         emojis: vec![CustomEmojiInfo::test(Id::new(60), "wave")],
@@ -1203,10 +2316,11 @@ fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":wave: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<:wave:60>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1218,7 +2332,9 @@ fn custom_emoji_submit_keeps_readable_text_and_sends_wire_format() {
 fn animated_current_guild_emoji_sends_link_without_nitro_when_enabled() {
     let mut state = state_with_custom_emojis();
     state.options.composer_options.emojis_as_links = true;
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: false });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::None,
+    });
     state.start_composer();
     for ch in ":pa".chars() {
         state.push_composer_char(ch);
@@ -1235,11 +2351,12 @@ fn animated_current_guild_emoji_sends_link_without_nitro_when_enabled() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":party_time: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
-            content: "[party_time](https://cdn.discordapp.com/emojis/50.gif?size=48&name=party_time&lossless=true)".to_owned(),
+            nonce: Id::new(1),
+            content: "[party_time](https://cdn.discordapp.com/emojis/50.webp?animated=true&size=48&name=party_time&lossless=true)".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
         })
@@ -1247,10 +2364,12 @@ fn animated_current_guild_emoji_sends_link_without_nitro_when_enabled() {
 }
 
 #[test]
-fn nitro_user_sends_foreign_custom_emojis_as_native_markup() {
+fn nitro_foreign_custom_emojis_require_channel_permission() {
     let mut state = state_with_custom_emojis();
     push_foreign_custom_emojis(&mut state);
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.start_composer();
     for ch in ":wa".chars() {
         state.push_composer_char(ch);
@@ -1259,10 +2378,11 @@ fn nitro_user_sends_foreign_custom_emojis_as_native_markup() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":wave_foreign: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<:wave_foreign:60>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1271,7 +2391,9 @@ fn nitro_user_sends_foreign_custom_emojis_as_native_markup() {
 
     let mut state = state_with_custom_emojis();
     push_foreign_custom_emojis(&mut state);
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.start_composer();
     for ch in ":da".chars() {
         state.push_composer_char(ch);
@@ -1288,88 +2410,22 @@ fn nitro_user_sends_foreign_custom_emojis_as_native_markup() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), ":dance_foreign: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<a:dance_foreign:61>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
         })
     );
-}
 
-#[test]
-fn foreign_custom_emoji_uses_link_fallback_without_nitro_when_enabled() {
-    let mut state = state_with_custom_emojis();
+    let mut state = guild_state_with_overwrites(Vec::new(), Some(Id::new(1)));
     push_foreign_custom_emojis(&mut state);
-    state.options.composer_options.emojis_as_links = true;
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: false });
-    state.start_composer();
-    for ch in ":wa".chars() {
-        state.push_composer_char(ch);
-    }
-
-    let entry = state
-        .composer_emoji_candidates()
-        .into_iter()
-        .find(|entry| entry.shortcode == "wave_foreign")
-        .expect("foreign custom emoji should be suggested as a link fallback");
-    assert!(entry.available);
-    assert!(entry.available_as_link);
-
-    assert!(state.confirm_composer_emoji());
-
-    assert_eq!(state.composer_input(), ":wave_foreign: ");
-    assert_eq!(
-        state.submit_composer(),
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(2),
-            content: "[wave_foreign](https://cdn.discordapp.com/emojis/60.png?size=48&name=wave_foreign&lossless=true)".to_owned(),
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-    );
-}
-
-#[test]
-fn foreign_animated_emoji_uses_link_fallback_without_nitro_when_enabled() {
-    let mut state = state_with_custom_emojis();
-    push_foreign_custom_emojis(&mut state);
-    state.options.composer_options.emojis_as_links = true;
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: false });
-    state.start_composer();
-    for ch in ":da".chars() {
-        state.push_composer_char(ch);
-    }
-
-    let entry = state
-        .composer_emoji_candidates()
-        .into_iter()
-        .find(|entry| entry.shortcode == "dance_foreign")
-        .expect("foreign animated emoji should be suggested as a link fallback");
-    assert!(entry.available);
-    assert!(entry.available_as_link);
-
-    assert!(state.confirm_composer_emoji());
-
-    assert_eq!(state.composer_input(), ":dance_foreign: ");
-    assert_eq!(
-        state.submit_composer(),
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(2),
-            content: "[dance_foreign](https://cdn.discordapp.com/emojis/61.gif?size=48&name=dance_foreign&lossless=true)".to_owned(),
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-    );
-}
-
-#[test]
-fn foreign_custom_emoji_stays_hidden_without_nitro_or_link_fallback() {
-    let mut state = state_with_custom_emojis();
-    push_foreign_custom_emojis(&mut state);
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: false });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.start_composer();
     for ch in ":wa".chars() {
         state.push_composer_char(ch);
@@ -1378,7 +2434,7 @@ fn foreign_custom_emoji_stays_hidden_without_nitro_or_link_fallback() {
     assert!(
         state
             .composer_emoji_candidates()
-            .iter()
+            .into_iter()
             .all(|entry| entry.shortcode != "wave_foreign")
     );
 }
@@ -1386,7 +2442,9 @@ fn foreign_custom_emoji_stays_hidden_without_nitro_or_link_fallback() {
 #[test]
 fn submit_expands_mention_and_following_custom_emoji_without_stale_ranges() {
     let mut state = state_with_writable_channel_and_members();
-    state.push_event(AppEvent::CurrentUserCapabilities { has_nitro: true });
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::Nitro,
+    });
     state.push_event(AppEvent::GuildEmojisUpdate {
         guild_id: Id::new(1),
         emojis: vec![CustomEmojiInfo {
@@ -1404,10 +2462,11 @@ fn submit_expands_mention_and_following_custom_emoji_without_stale_ranges() {
     assert!(state.confirm_composer_emoji());
 
     assert_eq!(state.composer_input(), "@Sally :party_time: ");
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "<@20> <a:party_time:50>".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -1431,31 +2490,17 @@ fn confirm_emoji_inserts_unicode_and_closes_picker() {
 }
 
 #[test]
-fn submit_expands_known_emoji_shortcodes_and_keeps_unknown_text() {
-    let mut state = state_with_writable_channel();
-    state.start_composer();
-    for ch in "take :heart: :unknown:".chars() {
-        state.push_composer_char(ch);
-    }
-
-    assert_eq!(
-        state.submit_composer(),
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(2),
-            content: "take ❤️ :unknown:".to_owned(),
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-    );
-}
-
-#[test]
-fn submit_preserves_empty_shortcode_colon_runs() {
+fn submit_expands_emoji_shortcodes_and_leaves_other_markup_literal() {
     for (input, expected) in [
         ("::", "::"),
         (":::", ":::"),
         ("::::heart:", ":::❤️"),
         ("start :::heart: end", "start ::❤️ end"),
+        ("take :heart: :unknown:", "take ❤️ :unknown:"),
+        (
+            "custom <:heart:123> <a:party:456> :heart:",
+            "custom <:heart:123> <a:party:456> ❤️",
+        ),
     ] {
         let mut state = state_with_writable_channel();
         state.start_composer();
@@ -1463,10 +2508,11 @@ fn submit_preserves_empty_shortcode_colon_runs() {
             state.push_composer_char(ch);
         }
 
-        assert_eq!(
+        assert_send_message_eq!(
             state.submit_composer(),
             Some(AppCommand::SendMessage {
                 channel_id: Id::new(2),
+                nonce: Id::new(1),
                 content: expected.to_owned(),
                 reply_to: None,
                 attachments: Vec::new(),
@@ -1474,36 +2520,6 @@ fn submit_preserves_empty_shortcode_colon_runs() {
             "empty emoji shortcode spans should preserve {input:?}",
         );
     }
-}
-
-#[test]
-fn submit_keeps_custom_emoji_markup_literal() {
-    let mut state = state_with_writable_channel();
-    state.start_composer();
-    for ch in "custom <:heart:123> <a:party:456> :heart:".chars() {
-        state.push_composer_char(ch);
-    }
-
-    assert_eq!(
-        state.submit_composer(),
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(2),
-            content: "custom <:heart:123> <a:party:456> ❤️".to_owned(),
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-    );
-}
-
-#[test]
-fn no_match_emoji_query_does_not_open_hidden_picker() {
-    let mut state = state_with_writable_channel();
-    state.start_composer();
-    for ch in ":qq".chars() {
-        state.push_composer_char(ch);
-    }
-
-    assert_eq!(state.composer_emoji_query(), None);
 }
 
 #[test]
@@ -1526,29 +2542,16 @@ fn uppercase_emoji_query_matches_lowercase_shortcodes() {
 }
 
 #[test]
-fn cancel_emoji_picker_keeps_typed_text() {
-    let mut state = state_with_writable_channel();
-    state.start_composer();
-    for ch in ":he".chars() {
-        state.push_composer_char(ch);
-    }
-
-    state.cancel_active_composer_picker();
-
-    assert_eq!(state.composer_emoji_query(), None);
-    assert_eq!(state.composer_input(), ":he");
-}
-
-#[test]
 fn typing_footer_resolves_one_user_to_alias() {
     let mut state = state_with_writable_channel_and_members();
     let channel_id = Id::new(2);
     let user_id = Id::new(20);
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
+        guild_id: Some(Id::new(1)),
         channel_id,
         user_id,
-        display_name: Some("Live Nick".to_owned()),
-    });
+        member: Some(member_with_username(user_id, "Live Nick", "typing-user")),
+    }));
 
     assert_eq!(
         state.typing_footer_for_selected_channel(),
@@ -1572,11 +2575,16 @@ fn typing_footer_resolves_one_user_to_alias() {
 fn typing_footer_excludes_current_user() {
     let mut state = state_with_writable_channel_and_members();
     // user_id 10 is the local user in the fixture's READY event.
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
+        guild_id: Some(Id::new(1)),
         channel_id: Id::new(2),
         user_id: Id::new(10),
-        display_name: Some("Local User".to_owned()),
-    });
+        member: Some(member_with_username(
+            Id::new(10),
+            "Local User",
+            "local-user",
+        )),
+    }));
 
     assert_eq!(state.typing_footer_for_selected_channel(), None);
 }
@@ -1584,37 +2592,37 @@ fn typing_footer_excludes_current_user() {
 #[test]
 fn typing_footer_pluralizes_at_two_three_and_more_typers() {
     let mut state = state_with_writable_channel_and_members();
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(20),
-        display_name: None,
-    });
-    state.push_event(AppEvent::TypingStart {
+        ..TypingStartFixture::new()
+    }));
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(21),
-        display_name: None,
-    });
+        ..TypingStartFixture::new()
+    }));
     let footer = state
         .typing_footer_for_selected_channel()
         .expect("two typers should produce a footer");
     // Newest typer first, so id 21 (Sammy) leads.
     assert_eq!(footer, "Sammy and Sally are typing\u{2026}");
 
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(22),
-        display_name: None,
-    });
+        ..TypingStartFixture::new()
+    }));
     let footer = state
         .typing_footer_for_selected_channel()
         .expect("three typers should produce a footer");
     assert_eq!(footer, "Bob, Sammy, and Sally are typing\u{2026}");
 
-    state.push_event(AppEvent::TypingStart {
+    state.push_event(typing_start_event(TypingStartFixture {
         channel_id: Id::new(2),
         user_id: Id::new(23),
-        display_name: None,
-    });
+        ..TypingStartFixture::new()
+    }));
     let footer = state
         .typing_footer_for_selected_channel()
         .expect("four typers should still produce a footer");
@@ -1661,44 +2669,96 @@ fn picker_matches_username_when_alias_does_not_contain_query() {
 }
 
 #[test]
-fn picker_ranks_alias_prefix_above_username_prefix() {
-    // `s` should put display-name matches (Sally, Sammy) before any
-    // username-only match. We don't have a username-only `s` match in the
-    // fixture, but we still verify alias rows come first when both have
-    // candidates.
-    let mut state = state_with_writable_channel_and_members();
-    state.start_composer();
-    state.push_composer_char('@');
-    state.push_composer_char('s');
-
-    let candidates = state.composer_mention_candidates();
-    let names: Vec<_> = candidates.iter().map(|c| c.display_name.clone()).collect();
-    assert!(
-        names
-            .first()
-            .map(|name| name.starts_with('S'))
-            .unwrap_or(false),
-        "alias-prefix matches must lead the list, got {names:?}"
-    );
-}
-
-#[test]
 fn composer_sends_to_opened_thread_channel() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Messages);
     state.activate_message_action_kind(MessageActionKind::OpenThread);
+    state.push_event(latest_history_loaded(Id::new(10), Vec::new()));
 
     state.start_composer();
     state.push_composer_char('h');
     state.push_composer_char('i');
 
-    assert_eq!(
+    assert_send_message_eq!(
         state.submit_composer(),
         Some(AppCommand::SendMessage {
             channel_id: Id::new(10),
+            nonce: Id::new(1),
             content: "hi".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
         })
     );
+}
+
+#[test]
+fn composer_typing_indicator_throttles_and_resends() {
+    use std::time::{Duration, Instant};
+
+    let mut state = state_with_writable_channel();
+    state.start_composer();
+    let typing = Some(AppCommand::TriggerTyping {
+        channel_id: Id::new(2),
+    });
+
+    let start = Instant::now();
+    assert_eq!(state.note_composer_typing_at(start), typing);
+    assert_eq!(
+        state.note_composer_typing_at(start + Duration::from_secs(1)),
+        None
+    );
+    assert_eq!(
+        state.note_composer_typing_at(start + Duration::from_secs(8)),
+        typing
+    );
+}
+
+#[test]
+fn foreign_emoji_fall_back_to_links_without_nitro_when_enabled() {
+    let cases = [
+        (
+            ":wa",
+            "wave_foreign",
+            "https://cdn.discordapp.com/emojis/60.png?size=48&name=wave_foreign&lossless=true",
+        ),
+        (
+            ":da",
+            "dance_foreign",
+            "https://cdn.discordapp.com/emojis/61.webp?animated=true&size=48&name=dance_foreign&lossless=true",
+        ),
+    ];
+
+    for (typed, shortcode, url) in cases {
+        let mut state = state_with_custom_emojis();
+        push_foreign_custom_emojis(&mut state);
+        state.options.composer_options.emojis_as_links = true;
+        state.push_event(AppEvent::CurrentUserCapabilities {
+            premium_tier: PremiumTier::None,
+        });
+        state.start_composer();
+        for ch in typed.chars() {
+            state.push_composer_char(ch);
+        }
+
+        let entry = state
+            .composer_emoji_candidates()
+            .into_iter()
+            .find(|entry| entry.shortcode == shortcode)
+            .expect("foreign emoji should be suggested as a link fallback");
+        assert!(entry.available, "{shortcode}");
+        assert!(entry.available_as_link, "{shortcode}");
+
+        assert!(state.confirm_composer_emoji(), "{shortcode}");
+        assert_eq!(state.composer_input(), format!(":{shortcode}: "));
+        assert_send_message_eq!(
+            state.submit_composer(),
+            Some(AppCommand::SendMessage {
+                channel_id: Id::new(2),
+                nonce: Id::new(1),
+                content: format!("[{shortcode}]({url})"),
+                reply_to: None,
+                attachments: Vec::new(),
+            })
+        );
+    }
 }

@@ -25,8 +25,17 @@ impl DashboardState {
         std::mem::take(&mut self.runtime.paste_clipboard_requested)
     }
 
+    pub(in crate::tui) fn request_terminal_refresh(&mut self) {
+        self.runtime.terminal_refresh_requested = true;
+    }
+
+    pub(in crate::tui) fn take_terminal_refresh_request(&mut self) -> bool {
+        std::mem::take(&mut self.runtime.terminal_refresh_requested)
+    }
+
     pub fn accepts_clipboard_paste(&self) -> bool {
         self.is_composing()
+            || self.is_forum_post_composer_active()
             || self.is_user_profile_popup_editing()
             || self.accepts_user_profile_avatar_paste()
     }

@@ -1,8 +1,12 @@
 use image::{DynamicImage, ImageBuffer, Rgba, imageops::FilterType};
-use ratatui::layout::Rect;
-use ratatui_image::{Resize, picker::Picker};
+use ratatui::layout::Size;
+use ratatui_image::{
+    Resize,
+    picker::{Picker, ProtocolType},
+};
 
-use crate::logging;
+use crate::tui::text::EmojiImageSize;
+use crate::{config::ImageProtocolPreference, logging};
 
 pub(super) const AVATAR_PREVIEW_WIDTH: u16 = 4;
 pub(super) const AVATAR_PREVIEW_HEIGHT: u16 = 2;
@@ -11,19 +15,60 @@ pub(in crate::tui) const PROFILE_POPUP_AVATAR_HEIGHT: u16 = 4;
 const AVATAR_SOURCE_PIXELS_PER_COLUMN: u64 = 10;
 const AVATAR_SOURCE_PIXELS_PER_ROW: u64 = AVATAR_SOURCE_PIXELS_PER_COLUMN * 3;
 const DISCORD_AVATAR_CDN_PREFIX: &str = "https://cdn.discordapp.com/avatars/";
+const DISCORD_GUILD_CDN_PREFIX: &str = "https://cdn.discordapp.com/guilds/";
 const DISCORD_AVATAR_MIN_SIZE: u64 = 16;
 const DISCORD_AVATAR_MAX_SIZE: u64 = 1024;
-pub(super) const EMOJI_REACTION_THUMB_WIDTH: u16 = 2;
-pub(super) const EMOJI_REACTION_THUMB_HEIGHT: u16 = 1;
-
-pub(super) fn query_image_picker(target: &str, unavailable_message: &str) -> Option<Picker> {
+pub(in crate::tui) fn query_image_picker(
+    protocol_preference: ImageProtocolPreference,
+) -> Option<Picker> {
     match Picker::from_query_stdio() {
-        Ok(picker) => Some(picker),
+        Ok(mut picker) => {
+            apply_protocol_preference(&mut picker, protocol_preference);
+            Some(picker)
+        }
         Err(error) => {
-            logging::error(target, format!("{unavailable_message}: {error}"));
+            logging::error("media", format!("image picker unavailable: {error}"));
             None
         }
     }
+}
+
+fn apply_protocol_preference(picker: &mut Picker, protocol_preference: ImageProtocolPreference) {
+    if let Some(protocol_type) =
+        protocol_type_for_preference(protocol_preference, is_iterm_terminal())
+    {
+        picker.set_protocol_type(protocol_type);
+    }
+}
+
+fn protocol_type_for_preference(
+    protocol_preference: ImageProtocolPreference,
+    iterm_terminal: bool,
+) -> Option<ProtocolType> {
+    match protocol_preference {
+        // iTerm2 answers ratatui-image's Kitty capability query, but its Kitty
+        // implementation does not support the unicode-placeholder mode used by
+        // ratatui-image. Prefer the native iTerm2 protocol when auto-detecting
+        // inside iTerm so images render instead of selecting a broken Kitty path.
+        ImageProtocolPreference::Auto if iterm_terminal => Some(ProtocolType::Iterm2),
+        ImageProtocolPreference::Auto => None,
+        ImageProtocolPreference::Iterm2 => Some(ProtocolType::Iterm2),
+        ImageProtocolPreference::Kitty => Some(ProtocolType::Kitty),
+        ImageProtocolPreference::Sixel => Some(ProtocolType::Sixel),
+        ImageProtocolPreference::Halfblocks => Some(ProtocolType::Halfblocks),
+    }
+}
+
+fn is_iterm_terminal() -> bool {
+    is_iterm_terminal_values(
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+        std::env::var("LC_TERMINAL").ok().as_deref(),
+    )
+}
+
+fn is_iterm_terminal_values(term_program: Option<&str>, lc_terminal: Option<&str>) -> bool {
+    term_program.is_some_and(|value| value.contains("iTerm"))
+        || lc_terminal.is_some_and(|value| value.contains("iTerm"))
 }
 
 pub(super) fn avatar_preview_url(url: &str, width_columns: u16, height_rows: u16) -> String {
@@ -48,7 +93,30 @@ pub(super) fn avatar_preview_url(url: &str, width_columns: u16, height_rows: u16
 }
 
 fn is_discord_avatar_url(url: &str) -> bool {
-    url.starts_with(DISCORD_AVATAR_CDN_PREFIX)
+    url.starts_with(DISCORD_AVATAR_CDN_PREFIX) || is_discord_guild_member_avatar_url(url)
+}
+
+fn is_discord_guild_member_avatar_url(url: &str) -> bool {
+    let Some(path) = url
+        .split_once('?')
+        .map_or(url, |(path, _)| path)
+        .strip_prefix(DISCORD_GUILD_CDN_PREFIX)
+    else {
+        return false;
+    };
+    let mut segments = path.split('/');
+    matches!(
+        (
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next(),
+        ),
+        (Some(guild_id), Some("users"), Some(user_id), Some("avatars"), Some(avatar), None)
+            if !guild_id.is_empty() && !user_id.is_empty() && !avatar.is_empty()
+    )
 }
 
 fn avatar_preview_size(width_columns: u16, height_rows: u16) -> u64 {
@@ -61,39 +129,51 @@ fn avatar_preview_size(width_columns: u16, height_rows: u16) -> u64 {
         .min(DISCORD_AVATAR_MAX_SIZE)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct ImagePreviewRenderInfo {
-    pub(super) viewer: bool,
-    pub(super) message_index: usize,
-    pub(super) preview_x_offset_columns: u16,
-    pub(super) preview_y_offset_rows: usize,
-    pub(super) preview_width: u16,
-    pub(super) preview_height: u16,
-    pub(super) preview_overflow_count: usize,
-    pub(super) visible_preview_height: u16,
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(in crate::tui) struct MediaProtocolRenderSpec {
+    pub(super) width: u16,
+    pub(super) height: u16,
+    pub(super) visible_height: u16,
     pub(super) top_clip_rows: u16,
-    pub(super) accent_color: Option<u32>,
     pub(super) show_play_marker: bool,
     pub(super) mask_circular: bool,
 }
 
-pub(super) fn clipped_preview_image(
+pub(in crate::tui) fn fixed_media_protocol_render_spec(
+    width: u16,
+    height: u16,
+) -> MediaProtocolRenderSpec {
+    MediaProtocolRenderSpec {
+        width,
+        height,
+        visible_height: height,
+        top_clip_rows: 0,
+        show_play_marker: false,
+        mask_circular: false,
+    }
+}
+
+/// `Picker::font_size` returns a `FontSize` struct as of ratatui-image 11; the
+/// rest of our pixel math works in `(width, height)` tuples, so convert here.
+pub(in crate::tui) fn picker_font_size(picker: &Picker) -> (u16, u16) {
+    let font_size = picker.font_size();
+    (font_size.width, font_size.height)
+}
+
+pub(super) fn clipped_media_image(
     image: &DynamicImage,
     font_size: (u16, u16),
-    render_info: ImagePreviewRenderInfo,
+    spec: MediaProtocolRenderSpec,
 ) -> Option<DynamicImage> {
-    if render_info.preview_width == 0
-        || render_info.preview_height == 0
-        || render_info.visible_preview_height == 0
-    {
+    if spec.width == 0 || spec.height == 0 || spec.visible_height == 0 {
         return None;
     }
 
     let (font_width, font_height) = font_size;
-    let full_width = u32::from(render_info.preview_width).checked_mul(u32::from(font_width))?;
-    let full_height = u32::from(render_info.preview_height).checked_mul(u32::from(font_height))?;
-    let crop_top = u32::from(render_info.top_clip_rows).checked_mul(u32::from(font_height))?;
-    let crop_height = u32::from(render_info.visible_preview_height)
+    let full_width = u32::from(spec.width).checked_mul(u32::from(font_width))?;
+    let full_height = u32::from(spec.height).checked_mul(u32::from(font_height))?;
+    let crop_top = u32::from(spec.top_clip_rows).checked_mul(u32::from(font_height))?;
+    let crop_height = u32::from(spec.visible_height)
         .checked_mul(u32::from(font_height))?
         .min(full_height.saturating_sub(crop_top));
     if full_width == 0 || crop_height == 0 {
@@ -101,11 +181,11 @@ pub(super) fn clipped_preview_image(
     }
 
     let mut fitted = fit_image_to_canvas(image, full_width, full_height);
-    if render_info.show_play_marker {
+    if spec.show_play_marker {
         apply_video_play_marker(&mut fitted);
     }
     let mut cropped = fitted.crop_imm(0, crop_top, full_width, crop_height);
-    if render_info.mask_circular {
+    if spec.mask_circular {
         apply_circular_alpha_mask(&mut cropped, full_width, full_height, crop_top);
     }
     Some(cropped)
@@ -199,21 +279,16 @@ fn apply_circular_alpha_mask(
     *image = DynamicImage::ImageRgba8(rgba);
 }
 
-pub(super) fn clipped_preview_protocol(
+pub(in crate::tui) fn clipped_media_protocol(
     picker: &Picker,
     image: &DynamicImage,
-    render_info: ImagePreviewRenderInfo,
+    spec: MediaProtocolRenderSpec,
 ) -> Option<ratatui_image::protocol::Protocol> {
-    let image = clipped_preview_image(image, picker.font_size(), render_info)?;
+    let image = clipped_media_image(image, picker_font_size(picker), spec)?;
     picker
         .new_protocol(
             image,
-            Rect::new(
-                0,
-                0,
-                render_info.preview_width,
-                render_info.visible_preview_height,
-            ),
+            Size::new(spec.width, spec.visible_height),
             Resize::Fit(None),
         )
         .ok()
@@ -240,14 +315,14 @@ fn fit_image_to_canvas(image: &DynamicImage, width: u32, height: u32) -> Dynamic
 
 pub(super) fn emoji_protocol(
     picker: &Picker,
-    img: DynamicImage,
+    img: &DynamicImage,
+    image_size: EmojiImageSize,
 ) -> Option<ratatui_image::protocol::Protocol> {
-    let (font_width, font_height) = picker.font_size();
-    let canvas_w = u32::from(EMOJI_REACTION_THUMB_WIDTH) * u32::from(font_width);
-    let canvas_h = u32::from(font_height);
+    let (font_width, font_height) = picker_font_size(picker);
+    let canvas_w = u32::from(image_size.width()) * u32::from(font_width);
+    let canvas_h = u32::from(image_size.height()) * u32::from(font_height);
 
-    let max_h = (canvas_h * 3 / 4).max(1);
-    let scaled = img.resize(canvas_w, max_h, FilterType::Lanczos3);
+    let scaled = img.resize(canvas_w, canvas_h, FilterType::Lanczos3);
     let scaled_rgba = scaled.to_rgba8();
 
     let x_off = ((canvas_w.saturating_sub(scaled_rgba.width())) / 2) as i64;
@@ -259,13 +334,58 @@ pub(super) fn emoji_protocol(
     picker
         .new_protocol(
             DynamicImage::ImageRgba8(canvas),
-            Rect::new(
-                0,
-                0,
-                EMOJI_REACTION_THUMB_WIDTH,
-                EMOJI_REACTION_THUMB_HEIGHT,
-            ),
+            Size::new(image_size.width(), image_size.height()),
             Resize::Fit(None),
         )
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_iterm_terminal_values, protocol_type_for_preference};
+    use crate::config::ImageProtocolPreference;
+    use ratatui_image::picker::ProtocolType;
+
+    #[test]
+    fn auto_protocol_forces_iterm2_inside_iterm() {
+        assert_eq!(
+            protocol_type_for_preference(ImageProtocolPreference::Auto, true),
+            Some(ProtocolType::Iterm2)
+        );
+        assert_eq!(
+            protocol_type_for_preference(ImageProtocolPreference::Auto, false),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_protocol_preference_overrides_terminal_detection() {
+        let cases = [
+            (ImageProtocolPreference::Iterm2, ProtocolType::Iterm2),
+            (ImageProtocolPreference::Kitty, ProtocolType::Kitty),
+            (ImageProtocolPreference::Sixel, ProtocolType::Sixel),
+            (
+                ImageProtocolPreference::Halfblocks,
+                ProtocolType::Halfblocks,
+            ),
+        ];
+
+        for (preference, expected) in cases {
+            assert_eq!(
+                protocol_type_for_preference(preference, true),
+                Some(expected)
+            );
+            assert_eq!(
+                protocol_type_for_preference(preference, false),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn iterm_detection_accepts_term_program_or_lc_terminal() {
+        assert!(is_iterm_terminal_values(Some("iTerm.app"), None));
+        assert!(is_iterm_terminal_values(None, Some("iTerm2")));
+        assert!(!is_iterm_terminal_values(Some("WezTerm"), None));
+    }
 }

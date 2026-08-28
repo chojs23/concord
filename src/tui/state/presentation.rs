@@ -1,14 +1,17 @@
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 
 use crate::discord::{
-    ChannelRecipientState, ChannelState, GuildMemberState, PresenceStatus, RoleState,
+    ActivityInfo, ActivityKind, ChannelRecipientState, ChannelState, PresenceStatus,
 };
+use crate::tui::theme;
 
-/// Convert a Discord folder color (24-bit RGB integer) to a ratatui color.
-/// Falls back to a neutral cyan when the color is missing or zero so
-/// uncolored folders still read as folder headers.
-pub fn folder_color(color: Option<u32>) -> Color {
-    discord_color(color, Color::Cyan)
+/// Keep the configured folder style while allowing Discord to supply its
+/// foreground when a folder has a nonzero source color.
+pub fn folder_style(color: Option<u32>) -> Style {
+    apply_discord_foreground(
+        theme::current().style(theme::HighlightGroup::FolderFallback),
+        color,
+    )
 }
 
 pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
@@ -23,43 +26,97 @@ pub fn discord_color(color: Option<u32>, fallback: Color) -> Color {
     }
 }
 
-pub fn presence_color(status: PresenceStatus) -> Color {
-    match status {
-        PresenceStatus::Online => Color::Green,
-        PresenceStatus::Idle => Color::Rgb(180, 140, 0),
-        PresenceStatus::DoNotDisturb => Color::Red,
-        PresenceStatus::Offline => Color::DarkGray,
-        PresenceStatus::Unknown => Color::DarkGray,
+pub fn apply_discord_foreground(style: Style, color: Option<u32>) -> Style {
+    match color {
+        Some(value) if value != 0 => style.fg(discord_color(Some(value), Color::Reset)),
+        _ => style,
     }
 }
 
-pub(super) fn is_online_status(status: PresenceStatus) -> bool {
-    matches!(
-        status,
-        PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb
+pub fn normal_text_style() -> Style {
+    let mut style = theme::current().style(theme::HighlightGroup::Normal);
+    style.bg = None;
+    style
+}
+
+pub fn discord_role_mention_background(color: u32) -> Color {
+    const ROLE_PERCENT: u32 = 40;
+    const BACKGROUND_PERCENT: u32 = 100 - ROLE_PERCENT;
+    let (background_red, background_green, background_blue) = match theme::current()
+        .style(theme::HighlightGroup::Normal)
+        .bg
+    {
+        Some(Color::Rgb(red, green, blue)) => (u32::from(red), u32::from(green), u32::from(blue)),
+        _ => (0, 0, 0),
+    };
+    let blend = |role: u32, background: u32| {
+        ((role * ROLE_PERCENT + background * BACKGROUND_PERCENT) / 100) as u8
+    };
+    Color::Rgb(
+        blend((color >> 16) & 0xFF, background_red),
+        blend((color >> 8) & 0xFF, background_green),
+        blend(color & 0xFF, background_blue),
     )
 }
 
-pub(super) fn sorted_hoisted_roles<'a>(roles: &'a [&'a RoleState]) -> Vec<&'a RoleState> {
-    let mut roles: Vec<&RoleState> = roles.iter().copied().filter(|role| role.hoist).collect();
-    roles.sort_by(|left, right| role_display_order(left, right));
-    roles
+pub fn presence_style(status: PresenceStatus) -> Style {
+    let theme = theme::current();
+    match status {
+        PresenceStatus::Online => theme.style(theme::HighlightGroup::PresenceOnline),
+        PresenceStatus::Idle => theme.style(theme::HighlightGroup::PresenceIdle),
+        PresenceStatus::DoNotDisturb => theme.style(theme::HighlightGroup::PresenceDnd),
+        PresenceStatus::Offline | PresenceStatus::Unknown => {
+            theme.style(theme::HighlightGroup::PresenceOffline)
+        }
+    }
 }
 
-fn role_display_order(left: &RoleState, right: &RoleState) -> std::cmp::Ordering {
-    right
-        .position
-        .cmp(&left.position)
-        .then(left.id.get().cmp(&right.id.get()))
+/// Selects the single activity used by compact member and DM sidebar rows.
+///
+/// The predicate is media-independent so loading an emoji image can change the
+/// leading glyph without adding or removing a visual row.
+pub(in crate::tui) fn primary_compact_activity(
+    activities: &[ActivityInfo],
+) -> Option<&ActivityInfo> {
+    activities
+        .iter()
+        .filter(|activity| compact_activity_has_visible_content(activity))
+        .min_by_key(|activity| compact_activity_priority(activity.kind))
 }
 
-pub(super) fn sort_member_entries(entries: &mut [&GuildMemberState]) {
-    entries.sort_by_cached_key(|member| {
-        (
-            member_status_rank(member.status),
-            member.display_name.to_lowercase(),
-        )
-    });
+fn compact_activity_has_visible_content(activity: &ActivityInfo) -> bool {
+    let has_text = |value: Option<&str>| value.is_some_and(|value| !value.trim().is_empty());
+
+    match activity.kind {
+        ActivityKind::Custom => {
+            has_text(activity.state.as_deref())
+                || activity
+                    .emoji
+                    .as_ref()
+                    .is_some_and(|emoji| emoji.id.is_some() || !emoji.name.trim().is_empty())
+        }
+        ActivityKind::Listening => {
+            !activity.name.trim().is_empty() || has_text(activity.details.as_deref())
+        }
+        ActivityKind::Competing | ActivityKind::Hang => true,
+        ActivityKind::Playing
+        | ActivityKind::Streaming
+        | ActivityKind::Watching
+        | ActivityKind::Unknown(_) => !activity.name.trim().is_empty(),
+    }
+}
+
+fn compact_activity_priority(kind: ActivityKind) -> u8 {
+    match kind {
+        ActivityKind::Streaming => 0,
+        ActivityKind::Playing => 1,
+        ActivityKind::Listening => 2,
+        ActivityKind::Watching => 3,
+        ActivityKind::Competing => 4,
+        ActivityKind::Custom => 5,
+        ActivityKind::Hang => 6,
+        ActivityKind::Unknown(_) => 7,
+    }
 }
 
 pub(super) fn sort_recipient_entries(entries: &mut [&ChannelRecipientState]) {
@@ -78,7 +135,7 @@ pub(super) fn is_direct_message_channel(channel: &ChannelState) -> bool {
     )
 }
 
-fn member_status_rank(status: PresenceStatus) -> u8 {
+pub(super) fn member_status_rank(status: PresenceStatus) -> u8 {
     match status {
         PresenceStatus::Online => 0,
         PresenceStatus::Idle => 1,
@@ -113,19 +170,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn presence_marker_shows_empty_circle_for_offline_like_statuses() {
-        assert_eq!(presence_marker(PresenceStatus::Offline), '○');
-        assert_eq!(presence_marker(PresenceStatus::Unknown), '○');
-    }
-
-    #[test]
-    fn presence_marker_shows_filled_circle_for_online_like_statuses() {
-        for status in [
-            PresenceStatus::Online,
-            PresenceStatus::Idle,
-            PresenceStatus::DoNotDisturb,
+    fn presence_marker_fills_the_circle_only_for_online_like_statuses() {
+        for (status, marker) in [
+            (PresenceStatus::Offline, '○'),
+            (PresenceStatus::Unknown, '○'),
+            (PresenceStatus::Online, '●'),
+            (PresenceStatus::Idle, '●'),
+            (PresenceStatus::DoNotDisturb, '●'),
         ] {
-            assert_eq!(presence_marker(status), '●');
+            assert_eq!(presence_marker(status), marker, "{status:?}");
         }
     }
 }

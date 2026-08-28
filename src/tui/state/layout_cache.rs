@@ -1,7 +1,5 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use crate::discord::AppEvent;
-
 use super::DashboardState;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -32,26 +30,6 @@ impl DashboardState {
             .message_row_content_metrics_cache
             .get_mut()
             .clear();
-    }
-
-    pub(super) fn event_affects_message_row_content_metrics(event: &AppEvent) -> bool {
-        !matches!(
-            event,
-            AppEvent::TypingStart { .. }
-                | AppEvent::PresenceUpdate { .. }
-                | AppEvent::GuildMemberListCounts { .. }
-                | AppEvent::GuildFoldersUpdate { .. }
-                | AppEvent::UserNoteLoaded { .. }
-                | AppEvent::UserGuildNotificationSettingsInit { .. }
-                | AppEvent::UserGuildNotificationSettingsUpdate { .. }
-                | AppEvent::RelationshipsLoaded { .. }
-                | AppEvent::RelationshipUpsert { .. }
-                | AppEvent::RelationshipRemove { .. }
-                | AppEvent::ReadStateInit { .. }
-                | AppEvent::MessageAck { .. }
-                | AppEvent::VoiceServerUpdate { .. }
-                | AppEvent::VoiceConnectionStatusChanged { .. }
-        )
     }
 
     #[cfg(test)]

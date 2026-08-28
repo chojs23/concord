@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker},
@@ -5,22 +7,64 @@ use crate::discord::ids::{
 
 use super::super::{ActiveGuildScope, DashboardState};
 pub(super) use crate::discord::test_builders::{
-    MessageCreateFixture, guild_message_create_fixture, message_create_event,
+    GuildCreateFixture, GuildUpdateFixture, MessageCreateFixture, MessageHistoryLoadedFixture,
+    guild_message_create_fixture, guild_update_event, message_create_event,
+    message_history_loaded_event,
 };
 use crate::discord::{
-    AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder, MemberInfo,
-    MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState,
-    PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo, PresenceStatus,
-    ReactionEmoji, ReactionInfo, ReadStateInfo, RoleInfo, ThreadMetadataInfo, VoiceStateInfo,
+    AppEvent, AttachmentInfo, ChannelInfo, CustomEmojiInfo, EmbedInfo, GuildFolder,
+    GuildMemberListItem, GuildMemberListOperation, GuildMemberListUpdateInfo, GuildOnboardingInfo,
+    MemberInfo, MessageInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, MessageState,
+    PermissionOverwriteInfo, PermissionOverwriteKind, PollAnswerInfo, PollInfo,
+    PresenceEventFields, PresenceStatus, ReactionEmoji, ReactionInfo, ReadStateInfo, RoleInfo,
+    ThreadMetadataInfo, VoiceStateInfo,
 };
 
 pub(super) const PERM_ADD_REACTIONS: u64 = 0x0000_0000_0000_0040;
+pub(super) const PERM_MANAGE_CHANNELS: u64 = 0x0000_0000_0000_0010;
+pub(super) const PERM_STREAM: u64 = 0x0000_0000_0000_0200;
 pub(super) const PERM_VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
 pub(super) const PERM_SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 pub(super) const PERM_SEND_TTS_MESSAGES: u64 = 0x0000_0000_0000_1000;
 pub(super) const PERM_MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
+pub(super) const PERM_ATTACH_FILES: u64 = 0x0000_0000_0000_8000;
 pub(super) const PERM_READ_MESSAGE_HISTORY: u64 = 0x0000_0000_0001_0000;
+pub(super) const PERM_USE_EXTERNAL_EMOJIS: u64 = 0x0000_0000_0004_0000;
+pub(super) const PERM_USE_APPLICATION_COMMANDS: u64 = 0x0000_0000_8000_0000;
+pub(super) const PERM_SEND_MESSAGES_IN_THREADS: u64 = 0x0000_0040_0000_0000;
 pub(super) const PERM_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
+pub(super) const PERM_CONNECT: u64 = 0x0000_0000_0010_0000;
+
+pub(super) fn apply_incomplete_community_onboarding(
+    state: &mut DashboardState,
+    guild_id: Id<GuildMarker>,
+    user_id: Id<UserMarker>,
+) {
+    const MEMBER_FLAG_STARTED_ONBOARDING: u64 = 1 << 3;
+
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(user_id),
+    });
+    let mut member = member_with_username(user_id, "me", "me");
+    member.flags = Some(MEMBER_FLAG_STARTED_ONBOARDING);
+    member.pending = Some(false);
+    state.push_event(AppEvent::GuildMemberUpsert { guild_id, member });
+    state.push_event(guild_update_event(GuildUpdateFixture {
+        guild_id,
+        name: "guild".to_owned(),
+        owner_id: Some(Id::new(u64::MAX - 1)),
+        features: Some(vec!["COMMUNITY".to_owned()]),
+        onboarding: Some(GuildOnboardingInfo {
+            guild_id,
+            enabled: Some(true),
+            mode: None,
+            default_channel_ids: Vec::new(),
+            raw: std::sync::Arc::new(serde_json::Value::Null),
+        }),
+        ..GuildUpdateFixture::new()
+    }));
+}
 
 pub(super) fn channel_info(
     channel_id: Id<ChannelMarker>,
@@ -150,6 +194,26 @@ pub(super) fn member_with_roles(
     }
 }
 
+pub(super) fn guild_member_list_event(
+    guild_id: Id<GuildMarker>,
+    items: Vec<GuildMemberListItem>,
+) -> AppEvent {
+    AppEvent::GuildMemberListUpdate {
+        update: GuildMemberListUpdateInfo {
+            guild_id,
+            list_id: Some("everyone".to_owned()),
+            member_count: None,
+            online_count: None,
+            groups: Vec::new(),
+            ops: vec![GuildMemberListOperation::Sync {
+                range: (0, 99),
+                items,
+            }],
+            extra_fields: BTreeMap::new(),
+        },
+    }
+}
+
 pub(super) fn role_info(
     role_id: Id<RoleMarker>,
     name: impl Into<String>,
@@ -186,52 +250,52 @@ pub(super) fn guild_create_event(
     name: impl Into<String>,
     channels: Vec<ChannelInfo>,
 ) -> AppEvent {
-    AppEvent::GuildCreate {
-        guild_id,
+    crate::discord::test_builders::guild_create_event(GuildCreateFixture {
         name: name.into(),
-        member_count: None,
-        owner_id: None,
         channels,
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-    }
+        ..GuildCreateFixture::new(guild_id)
+    })
 }
 
 pub(super) fn latest_history_loaded(
     channel_id: Id<ChannelMarker>,
     messages: Vec<MessageInfo>,
 ) -> AppEvent {
-    AppEvent::MessageHistoryLoaded {
+    message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
-        before: None,
         messages,
-    }
+        ..MessageHistoryLoadedFixture::new()
+    })
 }
 
 /// Build a guild with a single channel where @everyone keeps
 /// VIEW_CHANNEL but loses SEND_MESSAGES. This is an announcement-style
 /// read-only channel that the user can read but not post in.
 pub(super) fn state_with_read_only_channel() -> DashboardState {
-    guild_state_with_overwrites(vec![PermissionOverwriteInfo {
-        deny: 0x800,
-        ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
-    }])
+    guild_state_with_overwrites(
+        vec![PermissionOverwriteInfo {
+            deny: 0x800,
+            ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
+        }],
+        Some(Id::new(1)),
+    )
 }
 
 /// Build a guild with a single hidden channel to verify visibility stats.
 pub(super) fn state_with_view_denied_channel() -> DashboardState {
-    guild_state_with_overwrites(vec![PermissionOverwriteInfo {
-        deny: 0x400,
-        ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
-    }])
+    guild_state_with_overwrites(
+        vec![PermissionOverwriteInfo {
+            deny: 0x400,
+            ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
+        }],
+        Some(Id::new(1)),
+    )
 }
 
-/// Build a guild with a single channel where @everyone has VIEW + SEND + TTS
-/// (no overwrites), so the composer should open and submit normally.
+/// Build a guild with a single channel where @everyone has the standard
+/// message and attachment permissions used by composer tests.
 pub(super) fn state_with_writable_channel() -> DashboardState {
-    guild_state_with_overwrites(Vec::new())
+    guild_state_with_overwrites(Vec::new(), Some(Id::new(1)))
 }
 
 pub(super) fn state_with_other_user_message_permissions(
@@ -262,20 +326,19 @@ fn state_with_other_user_message_permissions_and_member(
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: guild,
-        name: "guild".to_owned(),
-        member_count: Some(1),
-        owner_id: Some(owner),
-        channels: vec![positioned_text_channel_info(guild, channel, "general", 0)],
-        members: include_current_member
-            .then_some(member_with_username(me, "me", "me"))
-            .into_iter()
-            .collect(),
-        presences: Vec::new(),
-        roles: vec![role_info(Id::new(guild.get()), "@everyone", permissions)],
-        emojis: Vec::new(),
-    });
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            member_count: Some(1),
+            owner_id: Some(owner),
+            channels: vec![positioned_text_channel_info(guild, channel, "general", 0)],
+            members: include_current_member
+                .then_some(member_with_username(me, "me", "me"))
+                .into_iter()
+                .collect(),
+            roles: vec![role_info(Id::new(guild.get()), "@everyone", permissions)],
+            ..GuildCreateFixture::new(guild)
+        },
+    ));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(channel);
     state.push_event(latest_history_loaded(
@@ -300,36 +363,36 @@ pub(super) fn state_with_hidden_and_visible_channels() -> DashboardState {
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: guild,
-        name: "guild".to_owned(),
-        member_count: Some(1),
-        owner_id: Some(owner),
-        channels: vec![
-            ChannelInfo {
-                permission_overwrites: vec![PermissionOverwriteInfo {
-                    deny: 0x400,
-                    ..PermissionOverwriteInfo::test(guild.get(), PermissionOverwriteKind::Role)
-                }],
-                ..positioned_text_channel_info(guild, hidden, "secret", 0)
-            },
-            positioned_text_channel_info(guild, visible, "general", 1),
-            ChannelInfo {
-                position: Some(2),
-                ..voice_channel_info(guild, voice, "voice")
-            },
-        ],
-        members: vec![member_info(me, "me")],
-        presences: Vec::new(),
-        roles: vec![role_info(Id::new(guild.get()), "@everyone", 0x400)],
-        emojis: Vec::new(),
-    });
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            member_count: Some(1),
+            owner_id: Some(owner),
+            channels: vec![
+                ChannelInfo {
+                    permission_overwrites: vec![PermissionOverwriteInfo {
+                        deny: 0x400,
+                        ..PermissionOverwriteInfo::test(guild.get(), PermissionOverwriteKind::Role)
+                    }],
+                    ..positioned_text_channel_info(guild, hidden, "secret", 0)
+                },
+                positioned_text_channel_info(guild, visible, "general", 1),
+                ChannelInfo {
+                    position: Some(2),
+                    ..voice_channel_info(guild, voice, "voice")
+                },
+            ],
+            members: vec![member_info(me, "me")],
+            roles: vec![role_info(Id::new(guild.get()), "@everyone", 0x400)],
+            ..GuildCreateFixture::new(guild)
+        },
+    ));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state
 }
 
 pub(super) fn guild_state_with_overwrites(
     overwrites: Vec<PermissionOverwriteInfo>,
+    last_message_id: Option<Id<MessageMarker>>,
 ) -> DashboardState {
     let me: Id<UserMarker> = Id::new(10);
     let owner: Id<UserMarker> = Id::new(11);
@@ -340,26 +403,39 @@ pub(super) fn guild_state_with_overwrites(
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: guild,
-        name: "guild".to_owned(),
-        member_count: Some(1),
-        owner_id: Some(owner),
-        channels: vec![ChannelInfo {
-            permission_overwrites: overwrites,
-            ..positioned_text_channel_info(guild, channel, "general", 0)
-        }],
-        members: vec![member_info(me, "me")],
-        presences: Vec::new(),
-        roles: vec![role_info(
-            Id::new(guild.get()),
-            "@everyone",
-            PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_SEND_TTS_MESSAGES,
-        )],
-        emojis: Vec::new(),
-    });
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            member_count: Some(1),
+            owner_id: Some(owner),
+            channels: vec![ChannelInfo {
+                permission_overwrites: overwrites.clone(),
+                ..positioned_text_channel_info(guild, channel, "general", 0)
+            }],
+            members: vec![member_info(me, "me")],
+            roles: vec![role_info(
+                Id::new(guild.get()),
+                "@everyone",
+                PERM_VIEW_CHANNEL
+                    | PERM_SEND_MESSAGES
+                    | PERM_SEND_TTS_MESSAGES
+                    | PERM_ATTACH_FILES
+                    | PERM_READ_MESSAGE_HISTORY
+                    | PERM_USE_APPLICATION_COMMANDS,
+            )],
+            ..GuildCreateFixture::new(guild)
+        },
+    ));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(channel);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        permission_overwrites: overwrites,
+        last_message_id,
+        message_count: last_message_id.map(|_| 1),
+        ..positioned_text_channel_info(guild, channel, "general", 0)
+    }));
+    if last_message_id.is_some() {
+        state.push_event(latest_history_loaded(channel, Vec::new()));
+    }
     state
 }
 
@@ -373,35 +449,61 @@ pub(super) fn state_with_writable_channel_and_members() -> DashboardState {
         user: "me".to_owned(),
         user_id: Some(me),
     });
-    state.push_event(AppEvent::GuildCreate {
-        guild_id: guild,
-        name: "guild".to_owned(),
-        member_count: Some(3),
-        owner_id: Some(owner),
-        channels: vec![positioned_text_channel_info(guild, channel, "general", 0)],
-        members: vec![
-            member_with_username(me, "me", "me"),
-            member_with_username(Id::new(20), "Sally", "salamander"),
-            member_with_username(Id::new(21), "Sammy", "sammy42"),
-            member_with_username(Id::new(22), "Bob", "bobtheb"),
-            member_with_username(Id::new(23), "Alias", "Alias123"),
-        ],
-        presences: vec![
-            (me, PresenceStatus::Online),
-            (Id::new(20), PresenceStatus::Online),
-            (Id::new(21), PresenceStatus::Online),
-            (Id::new(22), PresenceStatus::Online),
-            (Id::new(23), PresenceStatus::Online),
-        ],
-        roles: vec![role_info(
-            Id::new(guild.get()),
-            "@everyone",
-            PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_SEND_TTS_MESSAGES,
-        )],
-        emojis: Vec::new(),
-    });
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            member_count: Some(3),
+            owner_id: Some(owner),
+            channels: vec![positioned_text_channel_info(guild, channel, "general", 0)],
+            members: vec![
+                member_with_username(me, "me", "me"),
+                member_with_username(Id::new(20), "Sally", "salamander"),
+                member_with_username(Id::new(21), "Sammy", "sammy42"),
+                member_with_username(Id::new(22), "Bob", "bobtheb"),
+                member_with_username(Id::new(23), "Alias", "Alias123"),
+            ],
+            presences: vec![
+                PresenceEventFields {
+                    user_id: me,
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+                PresenceEventFields {
+                    user_id: Id::new(20),
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+                PresenceEventFields {
+                    user_id: Id::new(21),
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+                PresenceEventFields {
+                    user_id: Id::new(22),
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+                PresenceEventFields {
+                    user_id: Id::new(23),
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+            ],
+            roles: vec![role_info(
+                Id::new(guild.get()),
+                "@everyone",
+                PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_SEND_TTS_MESSAGES | PERM_ATTACH_FILES,
+            )],
+            ..GuildCreateFixture::new(guild)
+        },
+    ));
     state.activate_guild(ActiveGuildScope::Guild(guild));
     state.activate_channel(channel);
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        last_message_id: Some(Id::new(1)),
+        message_count: Some(1),
+        ..positioned_text_channel_info(guild, channel, "general", 0)
+    }));
+    state.push_event(latest_history_loaded(channel, Vec::new()));
     state
 }
 
@@ -413,14 +515,12 @@ pub(super) fn state_with_folder(folder_id: Option<u64>) -> DashboardState {
     for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
         state.push_event(guild_create_event(guild_id, name, Vec::new()));
     }
-    state.push_event(AppEvent::GuildFoldersUpdate {
-        folders: vec![GuildFolder {
-            id: folder_id,
-            name: Some("folder".to_owned()),
-            color: None,
-            guild_ids: vec![first_guild, second_guild],
-        }],
-    });
+    state.push_event(super::user_settings_update(vec![GuildFolder {
+        id: folder_id,
+        name: Some("folder".to_owned()),
+        color: None,
+        guild_ids: vec![first_guild, second_guild],
+    }]));
     state
 }
 
@@ -458,20 +558,33 @@ pub(super) fn state_with_members(count: u64) -> DashboardState {
         .map(|id| member_info(Id::new(id), format!("member {id}")))
         .collect();
     let presences = (1..=count)
-        .map(|id| (Id::new(id), PresenceStatus::Online))
+        .map(|id| PresenceEventFields {
+            user_id: Id::new(id),
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        })
         .collect();
 
-    state.push_event(AppEvent::GuildCreate {
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            channels: vec![text_channel_info(guild_id, channel_id, "general")],
+            members,
+            presences,
+            ..GuildCreateFixture::new(guild_id)
+        },
+    ));
+    state.push_event(guild_member_list_event(
         guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: vec![text_channel_info(guild_id, channel_id, "general")],
-        members,
-        presences,
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+        std::iter::once(GuildMemberListItem::Group {
+            id: "online".to_owned(),
+            count,
+        })
+        .chain((1..=count).map(|id| GuildMemberListItem::Member {
+            member: member_info(Id::new(id), format!("member {id}")),
+            presence: None,
+        }))
+        .collect(),
+    ));
     state.confirm_selected_guild();
     state
 }
@@ -491,26 +604,69 @@ pub(super) fn state_with_grouped_members() -> DashboardState {
         })
         .collect();
 
-    state.push_event(AppEvent::GuildCreate {
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            channels: vec![text_channel_info(guild_id, channel_id, "general")],
+            members,
+            presences: vec![
+                PresenceEventFields {
+                    user_id: Id::new(1),
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+                PresenceEventFields {
+                    user_id: Id::new(2),
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+                PresenceEventFields {
+                    user_id: Id::new(3),
+                    status: PresenceStatus::Offline,
+                    activities: Vec::new(),
+                },
+                PresenceEventFields {
+                    user_id: Id::new(4),
+                    status: PresenceStatus::Offline,
+                    activities: Vec::new(),
+                },
+            ],
+            roles: vec![RoleInfo {
+                position: 1,
+                hoist: true,
+                ..RoleInfo::test(role_id, "Role")
+            }],
+            ..GuildCreateFixture::new(guild_id)
+        },
+    ));
+    state.push_event(guild_member_list_event(
         guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: vec![text_channel_info(guild_id, channel_id, "general")],
-        members,
-        presences: vec![
-            (Id::new(1), PresenceStatus::Online),
-            (Id::new(2), PresenceStatus::Online),
-            (Id::new(3), PresenceStatus::Offline),
-            (Id::new(4), PresenceStatus::Offline),
+        vec![
+            GuildMemberListItem::Group {
+                id: role_id.get().to_string(),
+                count: 2,
+            },
+            GuildMemberListItem::Member {
+                member: member_with_roles(Id::new(1), "member 1", vec![role_id]),
+                presence: None,
+            },
+            GuildMemberListItem::Member {
+                member: member_with_roles(Id::new(2), "member 2", vec![role_id]),
+                presence: None,
+            },
+            GuildMemberListItem::Group {
+                id: "offline".to_owned(),
+                count: 2,
+            },
+            GuildMemberListItem::Member {
+                member: member_info(Id::new(3), "member 3"),
+                presence: None,
+            },
+            GuildMemberListItem::Member {
+                member: member_info(Id::new(4), "member 4"),
+                presence: None,
+            },
         ],
-        roles: vec![RoleInfo {
-            position: 1,
-            hoist: true,
-            ..RoleInfo::test(role_id, "Role")
-        }],
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+    ));
     state.confirm_selected_guild();
     state
 }
@@ -522,21 +678,17 @@ pub(super) fn state_with_channel_tree() -> DashboardState {
     let random_id = Id::new(12);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: vec![
-            category_channel_info(guild_id, category_id, "Text Channels", 0),
-            child_text_channel_info(guild_id, general_id, category_id, "general", 0),
-            child_text_channel_info(guild_id, random_id, category_id, "random", 1),
-        ],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            channels: vec![
+                category_channel_info(guild_id, category_id, "Text Channels", 0),
+                child_text_channel_info(guild_id, general_id, category_id, "general", 0),
+                child_text_channel_info(guild_id, random_id, category_id, "random", 1),
+            ],
+            roles: vec![role_info(Id::new(guild_id.get()), "@everyone", 0)],
+            ..GuildCreateFixture::new(guild_id)
+        },
+    ));
     state.confirm_selected_guild();
     state
 }
@@ -586,31 +738,45 @@ pub(super) fn state_with_reaction_message() -> DashboardState {
 pub(super) fn state_with_custom_emojis() -> DashboardState {
     let guild_id = Id::new(1);
     let channel_id: Id<ChannelMarker> = Id::new(2);
+    let me: Id<UserMarker> = Id::new(10);
     let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: vec![text_channel_info(guild_id, channel_id, "general")],
-        members: Vec::new(),
-        presences: Vec::new(),
-        roles: Vec::new(),
-        emojis: vec![
-            CustomEmojiInfo {
-                animated: true,
-                ..CustomEmojiInfo::test(Id::new(50), "party_time")
-            },
-            CustomEmojiInfo {
-                available: false,
-                ..CustomEmojiInfo::test(Id::new(51), "gone")
-            },
-        ],
-        owner_id: None,
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
     });
-    state.confirm_selected_guild();
-    state.confirm_selected_channel();
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            member_count: Some(1),
+            owner_id: Some(Id::new(11)),
+            channels: vec![text_channel_info(guild_id, channel_id, "general")],
+            members: vec![member_info(me, "me")],
+            roles: vec![role_info(
+                Id::new(guild_id.get()),
+                "@everyone",
+                PERM_VIEW_CHANNEL
+                    | PERM_SEND_MESSAGES
+                    | PERM_READ_MESSAGE_HISTORY
+                    | PERM_ADD_REACTIONS
+                    | PERM_USE_EXTERNAL_EMOJIS,
+            )],
+            emojis: vec![
+                CustomEmojiInfo {
+                    animated: true,
+                    ..CustomEmojiInfo::test(Id::new(50), "party_time")
+                },
+                CustomEmojiInfo {
+                    available: false,
+                    ..CustomEmojiInfo::test(Id::new(51), "gone")
+                },
+            ],
+            ..GuildCreateFixture::new(guild_id)
+        },
+    ));
+    state.activate_guild(ActiveGuildScope::Guild(guild_id));
+    state.activate_channel(channel_id);
     state.push_event(message_create_event(guild_text_message(1, "hello")));
+    state.push_event(latest_history_loaded(channel_id, Vec::new()));
     state
 }
 
@@ -624,8 +790,8 @@ pub(super) fn state_with_single_message_content(content: &str) -> DashboardState
         "guild",
         vec![text_channel_info(guild_id, channel_id, "general")],
     ));
-    state.confirm_selected_guild();
-    state.confirm_selected_channel();
+    state.activate_guild(ActiveGuildScope::Guild(guild_id));
+    state.activate_channel(channel_id);
     state.push_event(message_create_event(guild_text_message(1, content)));
     state
 }
@@ -634,23 +800,41 @@ pub(super) fn state_with_thread_created_message() -> DashboardState {
     let guild_id = Id::new(1);
     let parent_id: Id<ChannelMarker> = Id::new(2);
     let thread_id: Id<ChannelMarker> = Id::new(10);
+    let me: Id<UserMarker> = Id::new(10);
     let mut state = DashboardState::new();
 
-    state.push_event(guild_create_event(
-        guild_id,
-        "guild",
-        vec![
-            text_channel_info(guild_id, parent_id, "general"),
-            ChannelInfo {
-                message_count: Some(12),
-                member_count: None,
-                total_message_sent: Some(14),
-                ..thread_channel_info(guild_id, parent_id, thread_id, "release notes")
-            },
-        ],
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            name: "guild".to_owned(),
+            member_count: Some(1),
+            owner_id: Some(Id::new(11)),
+            members: vec![member_info(me, "me")],
+            roles: vec![role_info(
+                Id::new(guild_id.get()),
+                "@everyone",
+                PERM_VIEW_CHANNEL
+                    | PERM_SEND_MESSAGES
+                    | PERM_SEND_MESSAGES_IN_THREADS
+                    | PERM_READ_MESSAGE_HISTORY,
+            )],
+            channels: vec![
+                text_channel_info(guild_id, parent_id, "general"),
+                ChannelInfo {
+                    message_count: Some(12),
+                    member_count: None,
+                    total_message_sent: Some(14),
+                    ..thread_channel_info(guild_id, parent_id, thread_id, "release notes")
+                },
+            ],
+            ..GuildCreateFixture::new(guild_id)
+        },
     ));
-    state.confirm_selected_guild();
-    state.confirm_selected_channel();
+    state.activate_guild(ActiveGuildScope::Guild(guild_id));
+    state.activate_channel(parent_id);
     state.push_event(message_create_event(
         MessageCreateFixture::guild_message(guild_id, parent_id, Id::new(1))
             .with_message_kind(MessageKind::new(18))
@@ -721,6 +905,7 @@ pub(super) fn state_with_messages_matching(
             guild_text_message(id, format!("msg {id}")).with_attachments(attachments),
         ));
     }
+    state.push_event(latest_history_loaded(channel_id, Vec::new()));
     state
 }
 
@@ -821,21 +1006,19 @@ pub(super) fn state_with_two_guilds() -> DashboardState {
     for (guild_id, name) in [(first_guild, "first"), (second_guild, "second")] {
         state.push_event(guild_create_event(guild_id, name, Vec::new()));
     }
-    state.push_event(AppEvent::GuildFoldersUpdate {
-        folders: vec![
-            GuildFolder {
-                id: None,
-                name: None,
-                color: None,
-                guild_ids: vec![first_guild],
-            },
-            GuildFolder {
-                id: None,
-                name: None,
-                color: None,
-                guild_ids: vec![second_guild],
-            },
-        ],
-    });
+    state.push_event(super::user_settings_update(vec![
+        GuildFolder {
+            id: None,
+            name: None,
+            color: None,
+            guild_ids: vec![first_guild],
+        },
+        GuildFolder {
+            id: None,
+            name: None,
+            color: None,
+            guild_ids: vec![second_guild],
+        },
+    ]));
     state
 }

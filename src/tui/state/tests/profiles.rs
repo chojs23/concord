@@ -1,9 +1,13 @@
 use super::*;
+use crate::discord::test_builders::{
+    UserProfileLoadFailedFixture, guild_create_event, user_profile_load_failed_event,
+};
 use crate::discord::{
     ActivityInfo, AppCommand, GlobalUserProfileUpdate, GuildUserProfileUpdate,
     MessageAttachmentUpload, ProfileAvatarUpload, UserProfileUpdate,
 };
 use crate::tui::state::UserProfileSettingsField;
+use crate::tui::text_input::TextEditAction;
 
 #[test]
 fn opening_profile_uses_cache_for_same_guild() {
@@ -60,11 +64,13 @@ fn user_profile_load_failure_marks_open_popup_failed() {
     let mut state = DashboardState::new();
 
     state.open_user_profile_popup(user_id, Some(guild_id));
-    state.push_event(AppEvent::UserProfileLoadFailed {
-        user_id,
-        guild_id: Some(guild_id),
-        message: "network failed".to_owned(),
-    });
+    state.push_event(user_profile_load_failed_event(
+        UserProfileLoadFailedFixture {
+            user_id,
+            guild_id: Some(guild_id),
+            message: "network failed".to_owned(),
+        },
+    ));
 
     assert_eq!(
         state.user_profile_popup_load_error(),
@@ -80,98 +86,85 @@ fn user_profile_load_failure_ignores_stale_popup() {
     let mut state = DashboardState::new();
 
     state.open_user_profile_popup(user_id, Some(open_guild));
-    state.push_event(AppEvent::UserProfileLoadFailed {
-        user_id,
-        guild_id: Some(stale_guild),
-        message: "stale failure".to_owned(),
-    });
+    state.push_event(user_profile_load_failed_event(
+        UserProfileLoadFailedFixture {
+            user_id,
+            guild_id: Some(stale_guild),
+            message: "stale failure".to_owned(),
+        },
+    ));
 
     assert_eq!(state.user_profile_popup_load_error(), None);
 }
 
 #[test]
-fn user_profile_popup_status_uses_cached_guild_member_status() {
+fn user_profile_popup_status_resolves_from_the_best_available_source() {
     let user_id: Id<UserMarker> = Id::new(10);
     let guild_id: Id<GuildMarker> = Id::new(1);
-    let mut state = DashboardState::new();
 
-    state.push_event(AppEvent::GuildCreate {
-        guild_id,
-        name: "guild".to_owned(),
-        member_count: None,
-        channels: Vec::new(),
+    let cached_presence = |state: &mut DashboardState| {
+        state.push_event(AppEvent::PresenceUpdate {
+            guild_id: None,
+            presence: crate::discord::PresenceEventFields {
+                user_id,
+                status: PresenceStatus::Idle,
+                activities: Vec::new(),
+            },
+        });
+    };
+    let dm_recipient = |state: &mut DashboardState, status: PresenceStatus| {
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            recipients: Some(vec![ChannelRecipientInfo {
+                status: Some(status),
+                ..ChannelRecipientInfo::test(user_id, "neo")
+            }]),
+            ..dm_channel_info(Id::new(20), "neo")
+        }));
+    };
+
+    // Guild member presence, DM recipient status, and the standalone presence
+    // cache each answer on their own. When a recipient only reports `Unknown`,
+    // the cached presence has to win instead of showing an offline dot.
+    let mut guild_member = DashboardState::new();
+    guild_member.push_event(guild_create_event(GuildCreateFixture {
         members: vec![member_info(user_id, "neo")],
-        presences: vec![(user_id, PresenceStatus::DoNotDisturb)],
-        roles: Vec::new(),
-        emojis: Vec::new(),
-        owner_id: None,
-    });
-    state.open_user_profile_popup(user_id, Some(guild_id));
-
+        presences: vec![PresenceEventFields {
+            user_id,
+            status: PresenceStatus::DoNotDisturb,
+            activities: Vec::new(),
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    guild_member.open_user_profile_popup(user_id, Some(guild_id));
     assert_eq!(
-        state.user_profile_popup_status(),
+        guild_member.user_profile_popup_status(),
         PresenceStatus::DoNotDisturb
     );
-}
 
-#[test]
-fn user_profile_popup_status_uses_dm_recipient_status_without_guild() {
-    let user_id: Id<UserMarker> = Id::new(10);
-    let mut state = DashboardState::new();
+    let mut recipient_only = DashboardState::new();
+    dm_recipient(&mut recipient_only, PresenceStatus::Idle);
+    recipient_only.open_user_profile_popup(user_id, None);
+    assert_eq!(
+        recipient_only.user_profile_popup_status(),
+        PresenceStatus::Idle
+    );
 
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        recipients: Some(vec![ChannelRecipientInfo {
-            status: Some(PresenceStatus::Idle),
-            ..ChannelRecipientInfo::test(user_id, "neo")
-        }]),
-        ..dm_channel_info(Id::new(20), "neo")
-    }));
-    state.open_user_profile_popup(user_id, None);
+    let mut presence_only = DashboardState::new();
+    cached_presence(&mut presence_only);
+    presence_only.open_user_profile_popup(user_id, None);
+    assert_eq!(
+        presence_only.user_profile_popup_status(),
+        PresenceStatus::Idle
+    );
 
-    assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
-}
-
-#[test]
-fn user_profile_popup_status_uses_cached_presence_without_guild() {
-    let user_id: Id<UserMarker> = Id::new(10);
-    let mut state = DashboardState::new();
-
-    state.push_event(AppEvent::PresenceUpdate {
-        guild_id: None,
-        presence: crate::discord::PresenceEventFields {
-            user_id,
-            status: PresenceStatus::Idle,
-            activities: Vec::new(),
-        },
-    });
-    state.open_user_profile_popup(user_id, None);
-
-    assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
-}
-
-#[test]
-fn user_profile_popup_status_prefers_cached_presence_over_unknown_recipient() {
-    let user_id: Id<UserMarker> = Id::new(10);
-    let mut state = DashboardState::new();
-
-    state.push_event(AppEvent::PresenceUpdate {
-        guild_id: None,
-        presence: crate::discord::PresenceEventFields {
-            user_id,
-            status: PresenceStatus::Idle,
-            activities: Vec::new(),
-        },
-    });
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        recipients: Some(vec![ChannelRecipientInfo {
-            status: Some(PresenceStatus::Unknown),
-            ..ChannelRecipientInfo::test(user_id, "test-user")
-        }]),
-        ..dm_channel_info(Id::new(20), "test-user")
-    }));
-    state.open_user_profile_popup(user_id, None);
-
-    assert_eq!(state.user_profile_popup_status(), PresenceStatus::Idle);
+    let mut unknown_recipient = DashboardState::new();
+    cached_presence(&mut unknown_recipient);
+    dm_recipient(&mut unknown_recipient, PresenceStatus::Unknown);
+    unknown_recipient.open_user_profile_popup(user_id, None);
+    assert_eq!(
+        unknown_recipient.user_profile_popup_status(),
+        PresenceStatus::Idle
+    );
 }
 
 #[test]
@@ -221,6 +214,40 @@ fn profile_settings_save_dispatches_dirty_global_fields() {
             },
         })
     );
+    state.record_user_profile_update_succeeded(Id::new(10), None);
+    assert_eq!(
+        state.user_profile_settings_status(),
+        Some("Saved profile changes")
+    );
+}
+
+#[test]
+fn profile_settings_sign_out_dispatches_command_and_status() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+
+    let _ = state.start_or_commit_user_profile_edit();
+    state.push_user_profile_edit_char('x');
+
+    assert_eq!(state.sign_out_command(), Some(AppCommand::SignOut));
+    assert!(!state.is_user_profile_popup_editing());
+    assert_eq!(state.user_profile_settings_status(), Some("Signing out..."));
+}
+
+#[test]
+fn profile_settings_sign_out_ignores_other_profiles() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_user_profile_popup(Id::new(20), None);
+
+    assert_eq!(state.sign_out_command(), None);
 }
 
 #[test]
@@ -234,7 +261,7 @@ fn profile_settings_text_editing_uses_cursor() {
 
     let _ = state.start_or_commit_user_profile_edit();
     state.insert_user_profile_edit_text("hello world");
-    state.move_user_profile_edit_cursor_word_left();
+    state.edit_user_profile_text_input(TextEditAction::MoveCursorWordLeft);
     state.insert_user_profile_edit_text("brave ");
 
     assert_eq!(
@@ -242,16 +269,16 @@ fn profile_settings_text_editing_uses_cursor() {
         "hello brave world"
     );
 
-    state.delete_previous_user_profile_edit_word();
+    state.edit_user_profile_text_input(TextEditAction::DeletePreviousWord);
     assert_eq!(
         state.user_profile_settings_field_value(UserProfileSettingsField::GlobalDisplayName),
         "hello world"
     );
 
-    state.move_user_profile_edit_cursor_home();
+    state.edit_user_profile_text_input(TextEditAction::MoveCursorHome);
     state.insert_user_profile_edit_text("Neo ");
-    state.move_user_profile_edit_cursor_end();
-    state.pop_user_profile_edit_char();
+    state.edit_user_profile_text_input(TextEditAction::MoveCursorEnd);
+    state.edit_user_profile_text_input(TextEditAction::DeletePreviousChar);
 
     assert_eq!(
         state.user_profile_settings_field_value(UserProfileSettingsField::GlobalDisplayName),
@@ -270,8 +297,8 @@ fn profile_settings_text_cursor_handles_graphemes() {
 
     let _ = state.start_or_commit_user_profile_edit();
     state.insert_user_profile_edit_text("가🇰🇷나");
-    state.move_user_profile_edit_cursor_left();
-    state.pop_user_profile_edit_char();
+    state.edit_user_profile_text_input(TextEditAction::MoveCursorLeft);
+    state.edit_user_profile_text_input(TextEditAction::DeletePreviousChar);
 
     assert_eq!(
         state.user_profile_settings_field_value(UserProfileSettingsField::GlobalDisplayName),
@@ -325,7 +352,6 @@ fn profile_settings_save_dispatches_pasted_avatar_upload() {
             vec![1, 2, 3]
         ),)
     );
-
     assert_eq!(
         state.save_user_profile_settings_command(),
         Some(AppCommand::UpdateUserProfile {
@@ -392,7 +418,7 @@ fn profile_settings_status_picker_dispatches_presence_update() {
 }
 
 #[test]
-fn profile_settings_activity_edit_dispatches_presence_update() {
+fn profile_settings_activity_manual_entry_dispatches_presence_update() {
     let user_id = Id::new(10);
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
@@ -408,12 +434,19 @@ fn profile_settings_activity_edit_dispatches_presence_update() {
         },
     });
     state.open_current_user_profile_popup();
-    state.next_user_profile_settings_field();
-    state.next_user_profile_settings_field();
-    state.next_user_profile_settings_field();
-    state.next_user_profile_settings_field();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
 
-    let _ = state.start_or_commit_user_profile_edit();
+    assert_eq!(state.start_or_commit_user_profile_edit(), None);
+    assert!(state.is_user_profile_activity_picker_open());
+    assert_eq!(state.activate_user_profile_activity_picker(), None);
+    assert!(!state.is_user_profile_activity_picker_open());
+    assert_eq!(
+        state.user_profile_settings_editing_field(),
+        Some(UserProfileSettingsField::ManualActivity),
+        "manual entry should switch to the text editor"
+    );
     for value in "Concord".chars() {
         state.push_user_profile_edit_char(value);
     }
@@ -423,8 +456,52 @@ fn profile_settings_activity_edit_dispatches_presence_update() {
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![ActivityInfo::playing("Concord")],
+            track_client_id: None,
         })
     );
+}
+
+#[test]
+fn profile_settings_activity_picker_selects_detected_app() {
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
+    });
+    let detected = ActivityInfo {
+        application_id: Some("client-123".to_owned()),
+        ..ActivityInfo::playing("Visual Studio Code")
+    };
+    state.set_detected_rich_presence(vec![detected.clone()]);
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
+
+    assert_eq!(state.start_or_commit_user_profile_edit(), None);
+    let rows = state.user_profile_activity_picker_rows();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, "Visual Studio Code");
+    assert!(rows[0].1, "detected app is selected first");
+
+    assert_eq!(
+        state.activate_user_profile_activity_picker(),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![detected],
+            track_client_id: Some("client-123".to_owned()),
+        })
+    );
+    assert!(!state.is_user_profile_activity_picker_open());
 }
 
 #[test]
@@ -519,11 +596,13 @@ fn profile_reload_failure_after_save_clears_saving_state() {
     assert!(state.save_user_profile_settings_command().is_some());
     assert!(state.user_profile_settings_saving());
 
-    state.push_event(AppEvent::UserProfileLoadFailed {
-        user_id,
-        guild_id: None,
-        message: "reload failed".to_owned(),
-    });
+    state.push_event(user_profile_load_failed_event(
+        UserProfileLoadFailedFixture {
+            user_id,
+            message: "reload failed".to_owned(),
+            ..UserProfileLoadFailedFixture::new()
+        },
+    ));
 
     assert!(!state.user_profile_settings_saving());
     assert_eq!(

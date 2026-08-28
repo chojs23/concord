@@ -1,8 +1,7 @@
 use super::{
-    DISCORD_OPUS_SILENCE_FRAME, DISCORD_OPUS_TIMESTAMP_INCREMENT, DISCORD_TRAILING_SILENCE_FRAMES,
-    RTP_AEAD_NONCE_SUFFIX_BYTES,
+    DISCORD_OPUS_SILENCE_FRAME, DISCORD_OPUS_TIMESTAMP_INCREMENT, RTP_AEAD_NONCE_SUFFIX_BYTES,
     dave::{VoiceDaveOutboundPayload, VoiceDaveState},
-    rtp::{VoiceOutboundRtpState, VoiceRtpEncryptor, build_voice_rtp_packet},
+    rtp::{VoiceOutboundRtpState, VoiceRtpEncryptor, build_voice_rtp_packet_with_marker},
 };
 
 #[allow(dead_code)]
@@ -138,8 +137,9 @@ impl VoiceOutboundSendState {
             }
         };
 
-        let encrypted = self.encrypt_current_packet(&opus_payload)?;
-        if !self.speaking {
+        let starts_talkspurt = !self.speaking;
+        let encrypted = self.encrypt_current_packet(&opus_payload, starts_talkspurt)?;
+        if starts_talkspurt {
             self.events.push(VoiceOutboundSendEvent::Speaking {
                 speaking: true,
                 ssrc: self.rtp.ssrc,
@@ -154,54 +154,62 @@ impl VoiceOutboundSendState {
 
     #[allow(dead_code)]
     pub(super) fn stop_speaking(&mut self) -> Result<VoiceOutboundSendOutcome, String> {
-        self.stop_speaking_with_dave_payload(|| {
-            VoiceDaveOutboundPayload::Plain(DISCORD_OPUS_SILENCE_FRAME.to_vec())
-        })
+        Ok(self.stop_speaking_immediately())
     }
 
     pub(super) fn stop_speaking_with_dave(
         &mut self,
-        dave: &mut VoiceDaveState,
+        _dave: &mut VoiceDaveState,
     ) -> Result<VoiceOutboundSendOutcome, String> {
-        self.stop_speaking_with_dave_payload(|| {
-            dave.prepare_outbound_opus(&DISCORD_OPUS_SILENCE_FRAME)
-        })
+        Ok(self.stop_speaking_immediately())
     }
 
-    pub(super) fn stop_speaking_with_dave_payload(
+    pub(super) fn send_trailing_silence_frame_with_dave(
         &mut self,
-        mut next_silence: impl FnMut() -> VoiceDaveOutboundPayload,
+        dave: &mut VoiceDaveState,
+        finish_talkspurt: bool,
+    ) -> Result<VoiceOutboundSendOutcome, String> {
+        let dave_payload = dave.prepare_outbound_opus(&DISCORD_OPUS_SILENCE_FRAME);
+        self.send_trailing_silence_frame_with_dave_payload(dave_payload, finish_talkspurt)
+    }
+
+    pub(super) fn send_trailing_silence_frame_with_dave_payload(
+        &mut self,
+        dave_payload: VoiceDaveOutboundPayload,
+        finish_talkspurt: bool,
     ) -> Result<VoiceOutboundSendOutcome, String> {
         if !self.speaking {
             return Ok(VoiceOutboundSendOutcome::Noop);
         }
-        if !self.capture_gate_enabled() {
-            return Ok(self.queue_speaking_off());
-        }
         if self.dave_active {
             return Ok(self.queue_speaking_off());
         }
-        if self
-            .ensure_nonce_capacity(DISCORD_TRAILING_SILENCE_FRAMES)
-            .is_err()
-        {
+        if self.ensure_nonce_capacity(1).is_err() {
             return Ok(self.queue_speaking_off());
         }
 
-        for _ in 0..DISCORD_TRAILING_SILENCE_FRAMES {
-            let opus_payload = match next_silence() {
-                VoiceDaveOutboundPayload::Plain(opus)
-                | VoiceDaveOutboundPayload::Encrypted(opus) => opus,
-                VoiceDaveOutboundPayload::Blocked(_) => {
-                    return Ok(self.queue_speaking_off());
-                }
-            };
-            let encrypted = self.encrypt_current_packet(&opus_payload)?;
-            self.events
-                .push(VoiceOutboundSendEvent::Packet { bytes: encrypted });
-            self.advance_packet_state();
+        let opus_payload = match dave_payload {
+            VoiceDaveOutboundPayload::Plain(opus) | VoiceDaveOutboundPayload::Encrypted(opus) => {
+                opus
+            }
+            VoiceDaveOutboundPayload::Blocked(_) => return Ok(self.queue_speaking_off()),
+        };
+        let encrypted = self.encrypt_current_packet(&opus_payload, false)?;
+        self.events
+            .push(VoiceOutboundSendEvent::Packet { bytes: encrypted });
+        self.advance_packet_state();
+
+        if finish_talkspurt {
+            return Ok(self.queue_speaking_off());
         }
-        Ok(self.queue_speaking_off())
+        Ok(VoiceOutboundSendOutcome::Sent)
+    }
+
+    pub(super) fn stop_speaking_immediately(&mut self) -> VoiceOutboundSendOutcome {
+        if !self.speaking {
+            return VoiceOutboundSendOutcome::Noop;
+        }
+        self.queue_speaking_off()
     }
 
     pub(super) fn queue_speaking_off(&mut self) -> VoiceOutboundSendOutcome {
@@ -217,12 +225,17 @@ impl VoiceOutboundSendState {
         self.allow_microphone_transmit && !self.self_mute
     }
 
-    pub(super) fn encrypt_current_packet(&self, opus_payload: &[u8]) -> Result<Vec<u8>, String> {
+    pub(super) fn encrypt_current_packet(
+        &self,
+        opus_payload: &[u8],
+        marker: bool,
+    ) -> Result<Vec<u8>, String> {
         let nonce_suffix = self.current_nonce_suffix()?;
-        let packet = build_voice_rtp_packet(
+        let packet = build_voice_rtp_packet_with_marker(
             self.rtp.sequence,
             self.rtp.timestamp,
             self.rtp.ssrc,
+            marker,
             opus_payload,
         )?;
         self.encryptor.encrypt_packet(&packet, nonce_suffix)
@@ -245,10 +258,13 @@ impl VoiceOutboundSendState {
 
     pub(super) fn advance_packet_state(&mut self) {
         self.rtp.sequence = self.rtp.sequence.wrapping_add(1);
+        self.nonce_suffix = self.nonce_suffix.saturating_add(1);
+    }
+
+    pub(super) fn advance_media_clock_frames(&mut self, frames: u32) {
         self.rtp.timestamp = self
             .rtp
             .timestamp
-            .wrapping_add(DISCORD_OPUS_TIMESTAMP_INCREMENT);
-        self.nonce_suffix = self.nonce_suffix.saturating_add(1);
+            .wrapping_add(DISCORD_OPUS_TIMESTAMP_INCREMENT.wrapping_mul(frames));
     }
 }

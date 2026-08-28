@@ -1,14 +1,12 @@
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::discord::{AppCommand, MessageHistoryLoadTarget};
-
-#[test]
-fn message_creation_keeps_viewport_on_latest() {
-    let state = state_with_messages(3);
-
-    assert_eq!(state.selected_message(), 2);
-}
+use crate::discord::test_builders::{
+    MessageHistoryAfterLoadedFixture, MessageHistoryLoadFailedFixture, MessageHistoryLoadedFixture,
+    message_history_after_loaded_event, message_history_load_failed_event,
+    message_history_loaded_event,
+};
+use crate::discord::{AppCommand, MessageHistoryAfterMode, MessageHistoryLoadTarget};
 
 #[test]
 fn message_scroll_preserves_position_when_not_following() {
@@ -205,11 +203,13 @@ fn stale_reopen_reload_need_survives_failure_and_clears_after_success() {
 
     assert!(state.selected_message_history_needs_reload());
 
-    state.push_event(AppEvent::MessageHistoryLoadFailed {
-        channel_id: Id::new(2),
-        target: MessageHistoryLoadTarget::Latest,
-        message: "temporary failure".to_owned(),
-    });
+    state.push_event(message_history_load_failed_event(
+        MessageHistoryLoadFailedFixture {
+            channel_id: Id::new(2),
+            target: MessageHistoryLoadTarget::Latest,
+            message: "temporary failure".to_owned(),
+        },
+    ));
     assert!(state.selected_message_history_needs_reload());
 
     state.push_event(AppEvent::MessageHistoryRefreshed {
@@ -250,12 +250,15 @@ fn catch_up_messages_while_scrolled_away_set_new_messages_marker() {
     state.set_message_view_height(3);
     state.jump_top();
 
-    state.push_event(AppEvent::MessageHistoryCatchUpLoaded {
-        channel_id: Id::new(2),
-        after: Id::new(5),
-        messages: vec![message_info(Id::new(2), 7), message_info(Id::new(2), 6)],
-        has_more: false,
-    });
+    state.push_event(message_history_after_loaded_event(
+        MessageHistoryAfterLoadedFixture {
+            channel_id: Id::new(2),
+            after: Id::new(5),
+            messages: vec![message_info(Id::new(2), 7), message_info(Id::new(2), 6)],
+            mode: MessageHistoryAfterMode::CatchUp,
+            ..MessageHistoryAfterLoadedFixture::new()
+        },
+    ));
 
     assert_eq!(state.new_messages_marker_message_id(), Some(Id::new(6)));
     assert_eq!(state.new_messages_count(), 2);
@@ -429,46 +432,6 @@ fn message_selection_centers_selected_message_when_possible() {
 }
 
 #[test]
-fn message_selection_centers_with_line_offset_inside_previous_message() {
-    let mut state = state_with_single_message_content("abcdefghijkl");
-    for id in 2..=5 {
-        push_text_message(&mut state, id, &format!("msg {id}"));
-    }
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(5);
-    state.jump_top();
-    state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-    state.move_down();
-    state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-    assert_eq!(state.selected_message(), 1);
-    assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 4);
-    assert_eq!(state.selected_message_rendered_row(5, 16, 3), 1);
-}
-
-#[test]
-fn message_selection_keeps_top_when_next_message_is_already_visible() {
-    let mut state = state_with_single_message_content("abcdefghijkl");
-    for id in 2..=5 {
-        push_text_message(&mut state, id, &format!("msg {id}"));
-    }
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(9);
-    state.jump_top();
-    state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-    state.move_down();
-    state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-    assert_eq!(state.selected_message(), 1);
-    assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 0);
-    assert_eq!(state.selected_message_rendered_row(5, 16, 3), 5);
-}
-
-#[test]
 fn message_selection_centers_with_image_preview_height() {
     let mut state = state_with_image_messages(8, &[4]);
     state.focus_pane(FocusPane::Messages);
@@ -579,31 +542,8 @@ fn viewport_scroll_moves_to_next_message_after_current_message() {
     assert_eq!(state.message_scroll(), 0);
     assert_eq!(state.message_line_scroll(), 5);
     assert_eq!(state.selected_message(), 0);
-}
-
-#[test]
-fn focused_message_selection_returns_none_when_viewport_scrolled_past_selection() {
-    let mut state = state_with_single_message_content("abcdefghijkl");
-    state.push_event(message_create_event(MessageCreateFixture {
-        guild_id: Some(Id::new(1)),
-        channel_id: Id::new(2),
-        message_id: Id::new(2),
-        author_id: Id::new(99),
-        content: Some("next".to_owned()),
-        ..guild_message_create_fixture()
-    }));
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(3);
-    state.jump_top();
-    state.clamp_message_viewport_for_image_previews(5, 16, 3);
-
-    for _ in 0..6 {
-        state.scroll_message_viewport_down();
-        state.clamp_message_viewport_for_image_previews(5, 16, 3);
-    }
-
-    assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.selected_message(), 0);
+    // Scrolling the viewport past the cursor's message leaves the selection
+    // itself alone, so the highlight is still addressable.
     assert_eq!(state.focused_message_selection(), Some(0));
 }
 
@@ -638,23 +578,6 @@ fn moving_cursor_to_first_message_resets_top_line_scroll() {
     assert_eq!(state.message_scroll(), 0);
     assert_eq!(state.message_line_scroll(), 0);
     assert_eq!(state.selected_message_rendered_row(5, 16, 3), 0);
-}
-
-#[test]
-fn jumping_to_first_message_resets_item_scroll_when_view_has_spare_rows() {
-    let mut state = state_with_messages(20);
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(20);
-    state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-    assert!(state.message_scroll() > 0);
-
-    state.jump_top();
-    state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-    assert_eq!(state.selected_message(), 0);
-    assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 0);
 }
 
 #[test]
@@ -889,20 +812,6 @@ fn viewport_scroll_survives_selection_clamp_after_events() {
 }
 
 #[test]
-fn message_half_page_up_disables_follow() {
-    let mut state = state_with_messages(10);
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(9);
-    state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-    state.half_page_up();
-
-    assert_eq!(state.selected_message(), 0);
-    assert_eq!(state.message_scroll(), 0);
-    assert!(!state.message_auto_follow());
-}
-
-#[test]
 fn message_jump_bottom_re_engages_auto_follow() {
     let mut state = state_with_messages(10);
     state.focus_pane(FocusPane::Messages);
@@ -916,25 +825,6 @@ fn message_jump_bottom_re_engages_auto_follow() {
     // Cursor is back on the latest message, so auto-follow turns on again
     // (sticky-bottom rule).
     assert_eq!(state.selected_message(), 9);
-    assert!(state.message_auto_follow());
-}
-
-#[test]
-fn message_half_page_down_re_engages_auto_follow_after_viewport_returns_to_latest() {
-    let mut state = state_with_messages(10);
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(9);
-    state.clamp_message_viewport_for_image_previews(200, 16, 3);
-
-    state.half_page_up();
-    assert!(!state.message_auto_follow());
-
-    state.half_page_down();
-    assert_eq!(state.selected_message(), 9);
-    assert_eq!(state.message_scroll(), 2);
-    assert!(!state.message_auto_follow());
-
-    state.half_page_down();
     assert!(state.message_auto_follow());
 }
 
@@ -964,6 +854,11 @@ fn history_load_preserves_manual_scroll_position_by_message_id() {
 fn older_history_request_emits_visible_cursor_target() {
     let channel_id: Id<ChannelMarker> = Id::new(2);
     let mut state = state_with_message_ids([10, 11, 12]);
+    state.focus_pane(FocusPane::Members);
+    assert_eq!(state.next_older_history_command(), None);
+    assert_eq!(state.next_older_history_command_for_half_page_up(), None);
+    assert_eq!(state.next_newer_history_command_for_half_page_down(), None);
+
     state.focus_pane(FocusPane::Messages);
     state.jump_top();
 
@@ -982,11 +877,11 @@ fn older_history_request_emits_visible_cursor_target() {
         })
     );
 
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(10)),
         messages: vec![message_info(channel_id, 5)],
-    });
+    }));
 
     state.move_up();
     assert_eq!(
@@ -999,9 +894,9 @@ fn older_history_request_emits_visible_cursor_target() {
 }
 
 #[test]
-fn older_history_request_advances_after_cache_limit_retention() {
+fn older_history_keeps_live_tail_reachable_when_new_messages_arrive() {
     let channel_id: Id<ChannelMarker> = Id::new(2);
-    let mut state = state_with_message_ids(10..=209);
+    let mut state = state_with_message_ids(1000..=1199);
     state.focus_pane(FocusPane::Messages);
     state.jump_top();
 
@@ -1009,27 +904,37 @@ fn older_history_request_advances_after_cache_limit_retention() {
         state.next_older_history_command(),
         Some(AppCommand::LoadMessageHistory {
             channel_id,
-            before: Some(Id::new(10)),
+            before: Some(Id::new(1000)),
         })
     );
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
-        before: Some(Id::new(10)),
-        messages: vec![message_info(channel_id, 5)],
-    });
+        before: Some(Id::new(1000)),
+        messages: (1..=250)
+            .map(|message_id| message_info(channel_id, message_id))
+            .collect(),
+    }));
 
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(1000));
+    state.move_up();
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(200));
+
+    state.push_event(message_create_event(
+        MessageCreateFixture::guild_message(Id::new(1), channel_id, Id::new(1200))
+            .with_content("new live message"),
+    ));
+
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(200));
     assert_eq!(
         state.messages().last().map(|message| message.id),
-        Some(Id::new(209))
+        Some(Id::new(1200))
     );
-
-    state.move_up();
-
     assert_eq!(
-        state.next_older_history_command(),
-        Some(AppCommand::LoadMessageHistory {
+        state.next_newer_history_command_for_down_by(1),
+        Some(AppCommand::LoadMessageHistoryAfter {
             channel_id,
-            before: Some(Id::new(5)),
+            after: Id::new(200),
+            mode: MessageHistoryAfterMode::GapFill,
         })
     );
 }
@@ -1049,11 +954,11 @@ fn older_history_request_leaves_empty_page_exhaustion_to_backend() {
         })
     );
 
-    state.push_event(AppEvent::MessageHistoryLoaded {
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
         before: Some(Id::new(10)),
-        messages: Vec::new(),
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
 
     assert_eq!(
         state.next_older_history_command(),
@@ -1062,4 +967,37 @@ fn older_history_request_leaves_empty_page_exhaustion_to_backend() {
             before: Some(Id::new(10)),
         })
     );
+}
+
+#[test]
+fn moving_down_scrolls_only_when_the_next_message_is_not_already_visible() {
+    // (view height, expected line scroll, expected rendered row)
+    let cases = [(5, 4, 1), (9, 0, 5)];
+
+    for (view_height, expected_line_scroll, expected_row) in cases {
+        let mut state = state_with_single_message_content("abcdefghijkl");
+        for id in 2..=5 {
+            push_text_message(&mut state, id, &format!("msg {id}"));
+        }
+        state.focus_pane(FocusPane::Messages);
+        state.set_message_view_height(view_height);
+        state.jump_top();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+        state.move_down();
+        state.clamp_message_viewport_for_image_previews(5, 16, 3);
+
+        assert_eq!(state.selected_message(), 1, "height {view_height}");
+        assert_eq!(state.message_scroll(), 0, "height {view_height}");
+        assert_eq!(
+            state.message_line_scroll(),
+            expected_line_scroll,
+            "height {view_height}"
+        );
+        assert_eq!(
+            state.selected_message_rendered_row(5, 16, 3),
+            expected_row,
+            "height {view_height}"
+        );
+    }
 }

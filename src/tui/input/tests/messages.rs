@@ -1,5 +1,7 @@
 use super::*;
-use crate::discord::{MediaPlaybackSource, MediaPlaybackTarget};
+use crate::discord::{
+    AttachmentInfo, MediaPlaybackSource, MediaPlaybackTarget, MessageHistoryAfterMode,
+};
 
 #[test]
 fn enter_on_direct_message_kinds_subscribes_channel() {
@@ -113,13 +115,30 @@ fn message_viewport_scroll_uses_configured_keys() {
 }
 
 #[test]
-fn backtick_toggles_debug_log_popup() {
+fn debug_log_uses_the_configured_open_action() {
     let mut state = DashboardState::new();
 
     handle_key(&mut state, char_key('`'));
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
 
+    handle_key(&mut state, char_key('q'));
+    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
+
+    let mut state = state_with_keymap(KeymapOptions {
+        mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("z d"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    });
+
     handle_key(&mut state, char_key('`'));
+    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
+
+    handle_key(&mut state, char_key('z'));
+    handle_key(&mut state, char_key('d'));
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
+
+    handle_key(&mut state, char_key('q'));
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
 }
 
@@ -127,7 +146,7 @@ fn backtick_toggles_debug_log_popup() {
 fn esc_closes_debug_log_popup_modally() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
-    state.toggle_debug_log_popup();
+    state.open_debug_log_popup();
 
     handle_key(&mut state, key(KeyCode::Esc));
 
@@ -166,7 +185,7 @@ fn message_action_menu_navigation_is_modal() {
 
     handle_key(&mut state, key(KeyCode::Esc));
 
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
@@ -215,11 +234,11 @@ fn esc_returns_from_pinned_message_view() {
     handle_key(&mut state, key(KeyCode::Up));
     let expected_selected = state.selected_message();
 
-    state.push_event(AppEvent::MessagePinnedUpdate {
+    state.push_event(message_pinned_update_event(MessagePinnedUpdateFixture {
         channel_id: Id::new(2),
         message_id: Id::new(2),
         pinned: true,
-    });
+    }));
     state.enter_pinned_message_view(Id::new(2));
     assert!(state.is_pinned_message_view());
 
@@ -229,46 +248,6 @@ fn esc_returns_from_pinned_message_view() {
     assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
     assert_eq!(state.selected_message(), expected_selected);
     assert_eq!(state.focus(), FocusPane::Messages);
-}
-
-#[test]
-fn message_action_shortcuts_edit_and_delete_own_message() {
-    let mut edit_state = state_with_own_message();
-    edit_state.focus_pane(FocusPane::Messages);
-
-    let command = handle_key(&mut edit_state, char_key('e'));
-
-    assert_eq!(command, None);
-    assert!(!edit_state.is_message_action_context_active());
-    assert!(edit_state.is_composing());
-
-    let mut delete_state = state_with_own_message();
-    delete_state.focus_pane(FocusPane::Messages);
-
-    let command = handle_key(&mut delete_state, char_key('d'));
-
-    assert_eq!(command, None);
-    assert!(!delete_state.is_message_action_context_active());
-    assert!(
-        delete_state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
-    );
-
-    let command = handle_key(&mut delete_state, key(KeyCode::Enter));
-
-    assert_eq!(
-        command,
-        Some(AppCommand::DeleteMessage {
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-        })
-    );
-    assert!(
-        !delete_state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
-    );
 }
 
 #[test]
@@ -287,12 +266,16 @@ fn message_pane_shortcuts_reuse_message_actions() {
     assert!(reply_state.is_composing());
     handle_key(&mut reply_state, char_key('o'));
     let command = handle_key(&mut reply_state, key(KeyCode::Enter));
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "o".to_owned(),
-            reply_to: Some(Id::new(1)),
+            reply_to: Some(crate::discord::ReplyReference {
+                message_id: Id::new(1),
+                mention_author: true,
+            }),
             attachments: Vec::new(),
         })
     );
@@ -305,28 +288,39 @@ fn message_pane_shortcuts_reuse_message_actions() {
 }
 
 #[test]
-fn message_pane_default_shortcuts_work_from_message_pane() {
-    let mut reaction_state = state_with_messages(1);
-    reaction_state.focus_pane(FocusPane::Messages);
-    handle_key(&mut reaction_state, char_key('r'));
-    assert!(
-        reaction_state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker)
-    );
+fn message_action_menu_d_shortcut_removes_embeds() {
+    let mut state = state_with_own_message();
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
+        channel_id: Id::new(2),
+        messages: vec![MessageInfo {
+            author_id: Id::new(99),
+            embeds: vec![EmbedInfo::test()],
+            ..MessageInfo::test(Id::new(2), Id::new(1))
+        }],
+        ..MessageHistoryLoadedFixture::new()
+    }));
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, key(KeyCode::Enter));
 
-    let mut reply_state = state_with_messages(1);
-    reply_state.focus_pane(FocusPane::Messages);
-    handle_key(&mut reply_state, char_key('R'));
-    assert!(reply_state.is_composing());
+    let command = handle_key(&mut state, char_key('D'));
 
-    let mut pin_state = state_with_messages(1);
-    pin_state.focus_pane(FocusPane::Messages);
-    handle_key(&mut pin_state, key(KeyCode::Enter));
-    let command = handle_key(&mut pin_state, char_key('P'));
     assert_eq!(command, None);
     assert!(
-        pin_state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
+    );
+
+    let command = handle_key(&mut state, key(KeyCode::Enter));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::RemoveMessageEmbeds {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+        })
+    );
+    assert!(!state.is_message_action_menu_active());
+    assert!(
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -344,7 +338,7 @@ fn open_url_shortcut_opens_url_or_url_picker() {
 
     assert_eq!(command, None);
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker));
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 
     let command = handle_key(&mut state, char_key('2'));
 
@@ -357,12 +351,18 @@ fn open_url_shortcut_opens_url_or_url_picker() {
     assert!(
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageUrlPicker)
     );
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
 }
 
 #[test]
 fn play_media_shortcut_returns_media_command() {
-    let mut state = state_with_messages(0);
+    let mut state = state_with_messages_from_state(
+        DashboardState::new_with_display_options(DisplayOptions {
+            media_playback: true,
+            ..Default::default()
+        }),
+        0,
+    );
     state.push_event(message_create_event(MessageCreateFixture {
         message_id: Id::new(1),
         content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
@@ -386,6 +386,27 @@ fn play_media_shortcut_returns_media_command() {
 }
 
 #[test]
+fn disabled_media_playback_display_option_removes_message_shortcut() {
+    let mut state = state_with_messages_from_state(
+        DashboardState::new_with_display_options(DisplayOptions {
+            media_playback: false,
+            ..Default::default()
+        }),
+        0,
+    );
+    state.push_event(message_create_event(MessageCreateFixture {
+        message_id: Id::new(1),
+        content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
+        ..guild_message_create_fixture()
+    }));
+    state.focus_pane(FocusPane::Messages);
+
+    let command = handle_key(&mut state, char_key('x'));
+
+    assert_eq!(command, None);
+}
+
+#[test]
 fn message_pane_copy_shortcut_requests_selected_message_content() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
@@ -393,61 +414,94 @@ fn message_pane_copy_shortcut_requests_selected_message_content() {
     handle_key(&mut state, char_key('y'));
 
     assert_eq!(
-        state.take_copy_message_content_request(),
-        Some("msg 1".to_owned())
+        state.take_copy_text_request(),
+        Some(("msg 1".to_owned(), "Message copied"))
     );
 }
 
 #[test]
-fn message_action_popup_q_runs_configured_action_before_close_popup() {
-    let mut state = state_with_keymap(KeymapOptions {
-        leader: None,
-        groups: std::collections::BTreeMap::new(),
-        message_actions: [("CopyMessage".to_owned(), KeymapBinding::one("q"))]
+fn message_action_popup_shortcuts_precede_global_popup_actions() {
+    for shortcut in ['q', '`'] {
+        let mut state = state_with_keymap(KeymapOptions {
+            leader: None,
+            groups: std::collections::BTreeMap::new(),
+            message_actions: [(
+                "CopyMessage".to_owned(),
+                KeymapBinding::one(shortcut.to_string()),
+            )]
             .into_iter()
             .collect(),
-        ..Default::default()
-    });
-    state = state_with_messages_from_state(state, 1);
-    state.focus_pane(FocusPane::Messages);
+            ..Default::default()
+        });
+        state = state_with_messages_from_state(state, 1);
+        state.focus_pane(FocusPane::Messages);
 
-    handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_context_active());
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.is_message_action_menu_active());
 
-    handle_key(&mut state, char_key('q'));
+        handle_key(&mut state, char_key(shortcut));
 
-    assert_eq!(
-        state.take_copy_message_content_request(),
-        Some("msg 1".to_owned())
-    );
-    assert!(!state.is_message_action_context_active());
+        assert_eq!(
+            state.take_copy_text_request(),
+            Some(("msg 1".to_owned(), "Message copied")),
+            "{shortcut}"
+        );
+        assert!(!state.is_message_action_menu_active(), "{shortcut}");
+        assert!(
+            !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog),
+            "{shortcut}"
+        );
+    }
 }
 
 #[test]
-fn message_action_popup_configured_navigation_key_closes_popup() {
-    let mut state = state_with_keymap(KeymapOptions {
-        leader: None,
-        groups: std::collections::BTreeMap::new(),
-        mappings: [("ClosePopup".to_owned(), KeymapBinding::one("j"))]
-            .into_iter()
-            .collect(),
-        ..Default::default()
-    });
-    state = state_with_messages_from_state(state, 1);
-    state.focus_pane(FocusPane::Messages);
+fn close_popup_bindings_remain_scoped_from_dashboard_sequences() {
+    {
+        let mut state = state_with_keymap(KeymapOptions {
+            mappings: [("ClosePopup".to_owned(), KeymapBinding::one("g"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        state = state_with_messages_from_state(state, 3);
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Down));
+        assert_eq!(state.selected_message(), 2);
 
-    handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_context_active());
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.is_message_action_menu_active());
+        handle_key(&mut state, char_key('g'));
+        assert!(!state.is_message_action_menu_active());
 
-    handle_key(&mut state, key(KeyCode::Esc));
-    assert!(!state.is_message_action_context_active());
+        handle_key(&mut state, char_key('g'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, char_key('g'));
 
-    handle_key(&mut state, key(KeyCode::Enter));
-    assert!(state.is_message_action_context_active());
+        assert!(!state.is_key_sequence_active());
+        assert_eq!(state.selected_message(), 0);
+    }
 
-    handle_key(&mut state, char_key('j'));
+    {
+        let mut state = state_with_keymap(KeymapOptions {
+            mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("q d"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        state = state_with_messages_from_state(state, 1);
+        state.focus_pane(FocusPane::Messages);
 
-    assert!(!state.is_message_action_context_active());
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.is_message_action_menu_active());
+        handle_key(&mut state, char_key('q'));
+        assert!(!state.is_message_action_menu_active());
+
+        handle_key(&mut state, char_key('q'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, char_key('d'));
+        assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
+    }
 }
 
 #[test]
@@ -459,16 +513,12 @@ fn message_pane_delete_shortcut_requires_confirmation() {
 
     assert_eq!(command, None);
     assert!(
-        state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, key(KeyCode::Esc));
     assert!(
-        !state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, char_key('d'));
@@ -482,25 +532,7 @@ fn message_pane_delete_shortcut_requires_confirmation() {
         })
     );
     assert!(
-        !state.is_active_modal_popup(
-            crate::tui::state::ActiveModalPopupKind::MessageDeleteConfirmation
-        )
-    );
-}
-
-#[test]
-fn message_pane_view_attachment_shortcut_opens_viewer() {
-    let mut state = state_with_image_message();
-    state.focus_pane(FocusPane::Messages);
-
-    handle_key(&mut state, char_key('v'));
-
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::AttachmentViewer));
-    assert_eq!(
-        state
-            .selected_attachment_viewer_item()
-            .map(|item| item.index),
-        Some(1)
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
@@ -549,15 +581,17 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
         })
     );
 
-    state.push_event(AppEvent::MessageHistoryAroundLoaded {
-        channel_id: Id::new(2),
-        message_id: Id::new(5),
-        messages: vec![
-            MessageInfo::test(Id::new(2), Id::new(4)),
-            MessageInfo::test(Id::new(2), Id::new(5)),
-            MessageInfo::test(Id::new(2), Id::new(6)),
-        ],
-    });
+    state.push_event(message_history_around_loaded_event(
+        MessageHistoryAroundLoadedFixture {
+            channel_id: Id::new(2),
+            message_id: Id::new(5),
+            messages: vec![
+                MessageInfo::test(Id::new(2), Id::new(4)),
+                MessageInfo::test(Id::new(2), Id::new(5)),
+                MessageInfo::test(Id::new(2), Id::new(6)),
+            ],
+        },
+    ));
 
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(5));
     assert_eq!(
@@ -577,6 +611,7 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
         Some(AppCommand::LoadMessageHistoryAfter {
             channel_id: Id::new(2),
             after: Id::new(6),
+            mode: MessageHistoryAfterMode::GapFill,
         })
     );
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(6));
@@ -586,16 +621,19 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
     state.move_up();
     assert_eq!(state.messages()[state.selected_message()].id, Id::new(6));
 
-    state.push_event(AppEvent::MessageHistoryAfterLoaded {
-        channel_id: Id::new(2),
-        after: Id::new(6),
-        messages: vec![
-            MessageInfo::test(Id::new(2), Id::new(7)),
-            MessageInfo::test(Id::new(2), Id::new(8)),
-            MessageInfo::test(Id::new(2), Id::new(9)),
-        ],
-        has_more: false,
-    });
+    state.push_event(message_history_after_loaded_event(
+        MessageHistoryAfterLoadedFixture {
+            channel_id: Id::new(2),
+            after: Id::new(6),
+            messages: vec![
+                MessageInfo::test(Id::new(2), Id::new(7)),
+                MessageInfo::test(Id::new(2), Id::new(8)),
+                MessageInfo::test(Id::new(2), Id::new(9)),
+            ],
+            mode: MessageHistoryAfterMode::GapFill,
+            ..MessageHistoryAfterLoadedFixture::new()
+        },
+    ));
 
     state.push_event(message_create_event(MessageCreateFixture {
         guild_id: Some(Id::new(1)),
@@ -617,22 +655,61 @@ fn goto_referenced_message_shortcut_merges_target_window_into_normal_messages() 
 }
 
 #[test]
+fn goto_referenced_message_in_active_channel_keeps_reply_visible_while_loading() {
+    let mut state = state_with_messages(0);
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(10),
+        reference: Some(MessageReferenceInfo {
+            guild_id: Some(Id::new(1)),
+            channel_id: Some(Id::new(2)),
+            message_id: Some(Id::new(5)),
+        }),
+        ..guild_message_create_fixture()
+    }));
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(Id::new(1)),
+        channel_id: Id::new(2),
+        message_id: Id::new(11),
+        ..guild_message_create_fixture()
+    }));
+    state.focus_pane(FocusPane::Messages);
+    state.move_up();
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(10));
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    let command = handle_key(&mut state, char_key('g'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::LoadMessageHistoryAround {
+            channel_id: Id::new(2),
+            message_id: Id::new(5),
+        })
+    );
+    assert_eq!(state.messages()[state.selected_message()].id, Id::new(10));
+}
+
+#[test]
 fn pinned_and_forum_down_keys_do_not_request_newer_history() {
     let mut pinned_state = state_with_messages(0);
-    pinned_state.push_event(AppEvent::MessageHistoryLoaded {
+    pinned_state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id: Id::new(2),
-        before: None,
         messages: vec![MessageInfo::test(Id::new(2), Id::new(10))],
-    });
-    pinned_state.push_event(AppEvent::MessageHistoryAroundLoaded {
-        channel_id: Id::new(2),
-        message_id: Id::new(5),
-        messages: vec![
-            MessageInfo::test(Id::new(2), Id::new(4)),
-            MessageInfo::test(Id::new(2), Id::new(5)),
-            MessageInfo::test(Id::new(2), Id::new(6)),
-        ],
-    });
+        ..MessageHistoryLoadedFixture::new()
+    }));
+    pinned_state.push_event(message_history_around_loaded_event(
+        MessageHistoryAroundLoadedFixture {
+            channel_id: Id::new(2),
+            message_id: Id::new(5),
+            messages: vec![
+                MessageInfo::test(Id::new(2), Id::new(4)),
+                MessageInfo::test(Id::new(2), Id::new(5)),
+                MessageInfo::test(Id::new(2), Id::new(6)),
+            ],
+        },
+    ));
     pinned_state.push_event(AppEvent::PinnedMessagesLoaded {
         channel_id: Id::new(2),
         messages: vec![MessageInfo::test(Id::new(2), Id::new(6))],
@@ -684,20 +761,17 @@ fn message_pane_pin_shortcut_requires_confirmation() {
 
     assert_eq!(command, None);
     assert!(
-        state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, key(KeyCode::Esc));
     assert!(
-        !state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 
     handle_key(&mut state, key(KeyCode::Enter));
     handle_key(&mut state, char_key('P'));
     let command = handle_key(&mut state, key(KeyCode::Enter));
-
     assert_eq!(
         command,
         Some(AppCommand::SetMessagePinned {
@@ -707,26 +781,99 @@ fn message_pane_pin_shortcut_requires_confirmation() {
         })
     );
     assert!(
-        !state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessagePinConfirmation)
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::MessageConfirmation)
     );
 }
 
 #[test]
-fn message_action_menu_control_page_keys_move_selection() {
-    let mut state = state_with_own_message();
-    state.focus_pane(FocusPane::Messages);
-    handle_key(&mut state, key(KeyCode::Enter));
+fn message_action_menu_pages_and_routes_active_sequences_before_fixed_shortcuts() {
+    {
+        let mut state = state_with_own_message();
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
 
-    let command = handle_key(&mut state, ctrl_key('d'));
+        let command = handle_key(&mut state, ctrl_key('d'));
 
-    assert_eq!(command, None);
-    assert!(state.is_message_action_context_active());
-    assert_eq!(state.selected_message_action_index(), Some(10));
+        assert_eq!(command, None);
+        assert!(state.is_message_action_menu_active());
+        assert!(
+            state
+                .selected_message_action_index()
+                .is_some_and(|index| index > 0)
+        );
 
-    handle_key(&mut state, ctrl_key('u'));
+        handle_key(&mut state, ctrl_key('u'));
 
-    assert_eq!(state.selected_message_action_index(), Some(0));
+        assert_eq!(state.selected_message_action_index(), Some(0));
+    }
+
+    {
+        let mut state = state_with_messages_from_state(
+            state_with_keymap(KeymapOptions {
+                mappings: [("HalfPageDown".to_owned(), KeymapBinding::one("z d"))]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }),
+            1,
+        );
+        state.push_event(AppEvent::Ready {
+            user: "neo".to_owned(),
+            user_id: Some(Id::new(99)),
+        });
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+        crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
+
+        handle_key(&mut state, char_key('z'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, char_key('d'));
+
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+        assert!(
+            state
+                .selected_message_action_index()
+                .is_some_and(|index| index > 0)
+        );
+
+        handle_key(&mut state, char_key('z'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+
+        handle_key(&mut state, char_key('z'));
+        handle_key(&mut state, char_key('q'));
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+
+        handle_key(&mut state, char_key('q'));
+        assert!(!state.is_message_action_menu_active());
+    }
+
+    {
+        let mut state = state_with_messages_from_state(
+            state_with_keymap(KeymapOptions {
+                mappings: [("SelectNext".to_owned(), KeymapBinding::one("z <A-left>"))]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }),
+            1,
+        );
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, key(KeyCode::Enter));
+
+        handle_key(&mut state, char_key('z'));
+        assert!(state.is_key_sequence_active());
+        handle_key(&mut state, alt_key(KeyCode::Left));
+
+        assert!(!state.is_key_sequence_active());
+        assert!(state.is_message_action_menu_active());
+        assert_eq!(state.selected_message_action_index(), Some(1));
+    }
 }
 
 #[test]
@@ -737,7 +884,7 @@ fn direct_view_attachment_shortcut_opens_viewer_and_esc_closes_viewer() {
     let command = handle_key(&mut state, char_key('v'));
 
     assert_eq!(command, None);
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::AttachmentViewer));
     assert_eq!(
         state
@@ -821,8 +968,48 @@ fn attachment_viewer_d_shortcut_downloads_attachment() {
 }
 
 #[test]
+fn attachment_viewer_o_shortcut_opens_selected_attachment_url() {
+    let mut state = state_with_image_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('v'));
+
+    let command = handle_key(&mut state, char_key('o'));
+
+    assert_eq!(
+        command,
+        Some(AppCommand::OpenUrl {
+            url: "https://cdn.discordapp.com/cat.png".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn attachment_viewer_y_shortcut_requests_selected_attachment_url_copy() {
+    let mut state = state_with_image_message();
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('v'));
+
+    let command = handle_key(&mut state, char_key('y'));
+
+    assert_eq!(command, None);
+    assert_eq!(
+        state.take_copy_text_request(),
+        Some((
+            "https://cdn.discordapp.com/cat.png".to_owned(),
+            "Attachment URL copied",
+        ))
+    );
+}
+
+#[test]
 fn attachment_viewer_x_shortcut_plays_video_attachment() {
-    let mut state = state_with_messages(0);
+    let mut state = state_with_messages_from_state(
+        DashboardState::new_with_display_options(DisplayOptions {
+            media_playback: true,
+            ..Default::default()
+        }),
+        0,
+    );
     state.push_event(message_create_event(MessageCreateFixture {
         message_id: Id::new(1),
         content: Some(String::new()),
@@ -836,6 +1023,7 @@ fn attachment_viewer_x_shortcut_plays_video_attachment() {
             width: Some(640),
             height: Some(480),
             description: None,
+            flags: 0,
         }],
         ..guild_message_create_fixture()
     }));
@@ -858,30 +1046,79 @@ fn attachment_viewer_x_shortcut_plays_video_attachment() {
 }
 
 #[test]
+fn disabled_media_playback_display_option_blocks_attachment_viewer_playback() {
+    let mut state = state_with_messages_from_state(
+        DashboardState::new_with_display_options(DisplayOptions {
+            media_playback: false,
+            ..Default::default()
+        }),
+        0,
+    );
+    state.push_event(message_create_event(MessageCreateFixture {
+        message_id: Id::new(1),
+        content: Some(String::new()),
+        attachments: vec![AttachmentInfo {
+            id: Id::new(3),
+            filename: "clip.mp4".to_owned(),
+            url: "https://cdn.discordapp.com/clip.mp4".to_owned(),
+            proxy_url: "https://media.discordapp.net/clip.mp4".to_owned(),
+            content_type: Some("video/mp4".to_owned()),
+            size: 2048,
+            width: Some(640),
+            height: Some(480),
+            description: None,
+            flags: 0,
+        }],
+        ..guild_message_create_fixture()
+    }));
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('v'));
+
+    let command = handle_key(&mut state, char_key('x'));
+
+    assert_eq!(command, None);
+}
+
+#[test]
 fn reaction_users_popup_is_modal_and_escape_closes_it() {
     let mut state = state_with_messages(2);
     state.focus_pane(FocusPane::Messages);
-    state.push_event(AppEvent::ReactionUsersLoaded {
+    let emoji = ReactionEmoji::Unicode("👍".to_owned());
+    state.open_reaction_users_popup(Id::new(2), Id::new(1), vec![(emoji.clone(), 3)]);
+    // Drill into the reaction so the user list (view B) is showing.
+    state.activate_reaction_users_popup();
+    state.push_event(reaction_users_loaded_event(ReactionUsersLoadedFixture {
         channel_id: Id::new(2),
         message_id: Id::new(1),
-        reactions: vec![ReactionUsersInfo {
-            users: vec![ReactionUserInfo::test(Id::new(10), "neo")],
-            ..ReactionUsersInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-        }],
-    });
+        emoji,
+        users: (1..=3)
+            .map(|id| ReactionUserInfo::test(Id::new(id), format!("user-{id}")))
+            .collect(),
+        next_after: None,
+        after: None,
+    }));
 
+    // Down scrolls the user list rather than the message list beneath the modal.
     handle_key(&mut state, key(KeyCode::Down));
 
     assert_eq!(state.selected_message(), 1);
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
     assert_eq!(
-        state.reaction_users_popup().map(|popup| popup.scroll()),
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.user_scroll()),
         Some(1)
     );
 
+    // Esc steps back to the reaction list first. A second Esc closes the popup.
     let command = handle_key(&mut state, key(KeyCode::Esc));
-
     assert_eq!(command, None);
+    assert_eq!(
+        state
+            .reaction_users_popup()
+            .map(|popup| popup.is_viewing_users()),
+        Some(false)
+    );
+    handle_key(&mut state, key(KeyCode::Esc));
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
 }
 

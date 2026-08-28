@@ -2,13 +2,29 @@ use std::ops::Range;
 
 use super::text_cursor::{
     clamp_cursor_index, next_char_boundary, next_word_boundary, previous_char_boundary,
-    previous_word_boundary,
+    previous_word_boundary, vertical_cursor_target,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::tui) struct TextInputState {
     value: String,
     cursor_byte_index: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) enum TextEditAction {
+    DeletePreviousChar,
+    DeletePreviousWord,
+    DeleteToLineStart,
+    DeleteToLineEnd,
+    MoveCursorUp,
+    MoveCursorDown,
+    MoveCursorWordLeft,
+    MoveCursorLeft,
+    MoveCursorWordRight,
+    MoveCursorRight,
+    MoveCursorHome,
+    MoveCursorEnd,
 }
 
 impl TextInputState {
@@ -76,6 +92,67 @@ impl TextInputState {
         self.replace_range(start..end, "")
     }
 
+    pub(in crate::tui) fn delete_to_line_start(&mut self) -> bool {
+        let end = self.cursor_byte_index();
+        let start = self.value[..end].rfind('\n').map_or(0, |index| index + 1);
+        if start == end {
+            return false;
+        }
+        self.replace_range(start..end, "")
+    }
+
+    pub(in crate::tui) fn delete_to_line_end(&mut self) -> bool {
+        let start = self.cursor_byte_index();
+        let end = self.value[start..]
+            .find('\n')
+            .map_or(self.value.len(), |offset| start + offset);
+        if start == end {
+            return false;
+        }
+        self.replace_range(start..end, "")
+    }
+
+    pub(in crate::tui) fn apply_edit_action(&mut self, action: TextEditAction) -> bool {
+        match action {
+            TextEditAction::DeletePreviousChar => self.delete_previous_grapheme(),
+            TextEditAction::DeletePreviousWord => self.delete_previous_word(),
+            TextEditAction::DeleteToLineStart => self.delete_to_line_start(),
+            TextEditAction::DeleteToLineEnd => self.delete_to_line_end(),
+            TextEditAction::MoveCursorUp => {
+                self.move_up();
+                false
+            }
+            TextEditAction::MoveCursorDown => {
+                self.move_down();
+                false
+            }
+            TextEditAction::MoveCursorWordLeft => {
+                self.move_word_left();
+                false
+            }
+            TextEditAction::MoveCursorLeft => {
+                self.move_left();
+                false
+            }
+            TextEditAction::MoveCursorWordRight => {
+                self.move_word_right();
+                false
+            }
+            TextEditAction::MoveCursorRight => {
+                self.move_right();
+                false
+            }
+            TextEditAction::MoveCursorHome => {
+                self.move_home();
+                false
+            }
+            TextEditAction::MoveCursorEnd => {
+                self.move_end();
+                false
+            }
+        }
+    }
+
     pub(in crate::tui) fn move_left(&mut self) {
         let cursor = self.cursor_byte_index();
         self.cursor_byte_index = previous_char_boundary(&self.value, cursor);
@@ -94,6 +171,18 @@ impl TextInputState {
     pub(in crate::tui) fn move_word_right(&mut self) {
         let cursor = self.cursor_byte_index();
         self.cursor_byte_index = next_word_boundary(&self.value, cursor);
+    }
+
+    pub(in crate::tui) fn move_up(&mut self) {
+        if let Some(target) = vertical_cursor_target(&self.value, self.cursor_byte_index(), -1) {
+            self.cursor_byte_index = target;
+        }
+    }
+
+    pub(in crate::tui) fn move_down(&mut self) {
+        if let Some(target) = vertical_cursor_target(&self.value, self.cursor_byte_index(), 1) {
+            self.cursor_byte_index = target;
+        }
     }
 
     pub(in crate::tui) fn move_home(&mut self) {
@@ -118,6 +207,23 @@ mod tests {
 
         assert_eq!(input.value(), "가나");
         assert_eq!(input.cursor_byte_index(), "가".len());
+    }
+
+    #[test]
+    fn vertical_movement_moves_across_lines() {
+        let mut input = TextInputState::default();
+        input.set_value("hello\nworld".to_owned());
+
+        // Cursor starts at the end of "world" (column 5).
+        input.move_up();
+        assert_eq!(input.cursor_byte_index(), "hello".len());
+        input.move_down();
+        assert_eq!(input.cursor_byte_index(), "hello\nworld".len());
+
+        // No line above the first one, so up is a no-op there.
+        input.move_up();
+        input.move_up();
+        assert_eq!(input.cursor_byte_index(), "hello".len());
     }
 
     #[test]

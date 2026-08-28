@@ -1,28 +1,41 @@
 use serde_json::Value;
 
-use crate::discord::events::AppEvent;
+use crate::discord::events::{AppEvent, GatewayDispatchInfo};
 
 mod channels;
 mod guilds;
+mod interactions;
 mod members;
 mod messages;
+mod notifications;
 mod presence;
+mod read_state;
 mod ready;
 mod relationships;
 mod shared;
+mod streams;
+mod user_settings;
 mod voice;
 
-pub(crate) use channels::parse_channel_info;
 use channels::{
-    parse_channel_delete, parse_channel_upsert, parse_thread_list_sync, parse_thread_members_update,
+    parse_channel_delete, parse_channel_recipient_add, parse_channel_recipient_remove,
+    parse_channel_upsert, parse_thread_list_sync, parse_thread_member_list_update,
+    parse_thread_member_update, parse_thread_members_update, parse_thread_upsert,
 };
+pub(crate) use channels::{parse_channel_info, parse_thread_member_info};
 use guilds::{
-    parse_guild_create, parse_guild_delete, parse_guild_emojis_update, parse_guild_role_delete,
-    parse_guild_role_upsert, parse_guild_update, parse_user_guild_settings_update,
+    parse_guild_create, parse_guild_delete, parse_guild_emojis_update,
+    parse_guild_onboarding_update, parse_guild_role_delete, parse_guild_role_upsert,
+    parse_guild_update, parse_user_guild_settings_update,
 };
+use interactions::{
+    parse_application_command_autocomplete_response, parse_application_command_index_update,
+    parse_interaction_failure, parse_interaction_success,
+};
+pub(crate) use members::parse_member_info;
 use members::{
-    parse_member_add, parse_member_chunk, parse_member_list_update, parse_member_remove,
-    parse_member_upsert, parse_user_update,
+    parse_current_user_verification, parse_member_add, parse_member_chunk,
+    parse_member_list_update, parse_member_remove, parse_member_upsert, parse_user_update,
 };
 pub(crate) use messages::parse_message_info;
 use messages::{
@@ -30,48 +43,94 @@ use messages::{
     parse_message_delete_bulk, parse_message_reaction_add, parse_message_reaction_remove,
     parse_message_reaction_remove_all, parse_message_reaction_remove_emoji, parse_message_update,
 };
+use notifications::parse_recent_mention_delete;
+pub(in crate::discord) use presence::parse_activity;
 use presence::{parse_presence_update, parse_typing_start};
+use read_state::{
+    parse_channel_pins_ack, parse_channel_unread_update, parse_feature_read_state_ack,
+};
 use ready::{parse_ready, parse_ready_supplemental};
 use relationships::{parse_relationship_add, parse_relationship_remove, parse_relationship_update};
-use voice::{parse_guild_voice_states, parse_voice_server_update, parse_voice_state_update};
+use streams::{
+    parse_stream_create, parse_stream_delete, parse_stream_server_update, parse_stream_update,
+};
+use user_settings::{parse_user_notification_settings_update, parse_user_settings_update};
+use voice::{
+    parse_call, parse_call_delete, parse_guild_voice_states, parse_voice_server_update,
+    parse_voice_state_update,
+};
 
-/// Best-effort fallback that rebuilds the dashboard's domain events directly
-/// from the raw gateway payload. We only extract the fields the UI consumes,
-/// and skip anything we can't model. Returns an iterable so a single payload
-/// (e.g. `GUILD_CREATE`) can produce multiple downstream events.
+#[derive(Clone, Debug)]
+pub(super) struct ParsedGatewayDispatch {
+    pub dispatch: GatewayDispatchInfo,
+    pub events: Vec<AppEvent>,
+}
+
+/// Takes the already-parsed gateway frame so the hot read loop never parses
+/// the same JSON twice, and moves `d` out instead of cloning it.
+pub(super) fn parse_user_account_dispatch(mut value: Value) -> Option<ParsedGatewayDispatch> {
+    let event_type = value.get("t").and_then(Value::as_str)?.to_owned();
+    let data = value.get_mut("d").map(Value::take)?;
+    let events = parse_user_account_event_data(&event_type, &data);
+    Some(ParsedGatewayDispatch {
+        dispatch: GatewayDispatchInfo {
+            event_type,
+            payload: data,
+        },
+        events,
+    })
+}
+
+#[cfg(test)]
 pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
-    let Ok(value) = serde_json::from_str::<Value>(raw) else {
-        return Vec::new();
-    };
-    let Some(event_type) = value.get("t").and_then(Value::as_str) else {
-        return Vec::new();
-    };
-    let Some(data) = value.get("d") else {
-        return Vec::new();
-    };
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(parse_user_account_dispatch)
+        .map(|dispatch| dispatch.events)
+        .unwrap_or_default()
+}
 
+fn parse_user_account_event_data(event_type: &str, data: &Value) -> Vec<AppEvent> {
     match event_type {
         "READY" => parse_ready(data),
         "READY_SUPPLEMENTAL" => parse_ready_supplemental(data),
-        "USER_UPDATE" => parse_user_update(data).into_iter().collect(),
+        "USER_UPDATE" => parse_user_update(data)
+            .into_iter()
+            .chain(parse_current_user_verification(data))
+            .collect(),
         "GUILD_CREATE" => {
             let mut result: Vec<AppEvent> = parse_guild_create(data).into_iter().collect();
             result.extend(parse_guild_voice_states(data));
             result
         }
         "GUILD_UPDATE" => parse_guild_update(data).into_iter().collect(),
+        "GUILD_ONBOARDING_UPDATE" => parse_guild_onboarding_update(data).into_iter().collect(),
         "GUILD_EMOJIS_UPDATE" => parse_guild_emojis_update(data).into_iter().collect(),
         "GUILD_ROLE_CREATE" | "GUILD_ROLE_UPDATE" => {
             parse_guild_role_upsert(data).into_iter().collect()
         }
         "GUILD_ROLE_DELETE" => parse_guild_role_delete(data).into_iter().collect(),
         "GUILD_DELETE" => parse_guild_delete(data).into_iter().collect(),
-        "CHANNEL_CREATE" | "CHANNEL_UPDATE" | "THREAD_CREATE" | "THREAD_UPDATE" => {
-            parse_channel_upsert(data).into_iter().collect()
+        "GUILD_APPLICATION_COMMAND_INDEX_UPDATE" => parse_application_command_index_update(data)
+            .into_iter()
+            .collect(),
+        "INTERACTION_SUCCESS" => parse_interaction_success(data).into_iter().collect(),
+        "INTERACTION_FAILURE" => parse_interaction_failure(data).into_iter().collect(),
+        "APPLICATION_COMMAND_AUTOCOMPLETE_RESPONSE" => {
+            parse_application_command_autocomplete_response(data)
+                .into_iter()
+                .collect()
         }
+        "CHANNEL_CREATE" | "CHANNEL_UPDATE" => parse_channel_upsert(data).into_iter().collect(),
+        "THREAD_CREATE" => parse_thread_upsert(data, true).into_iter().collect(),
+        "THREAD_UPDATE" => parse_thread_upsert(data, false).into_iter().collect(),
         "CHANNEL_DELETE" | "THREAD_DELETE" => parse_channel_delete(data).into_iter().collect(),
+        "CHANNEL_RECIPIENT_ADD" => parse_channel_recipient_add(data).into_iter().collect(),
+        "CHANNEL_RECIPIENT_REMOVE" => parse_channel_recipient_remove(data).into_iter().collect(),
         "THREAD_LIST_SYNC" => parse_thread_list_sync(data),
         "THREAD_MEMBERS_UPDATE" => parse_thread_members_update(data),
+        "THREAD_MEMBER_LIST_UPDATE" => parse_thread_member_list_update(data),
+        "THREAD_MEMBER_UPDATE" => parse_thread_member_update(data),
         "MESSAGE_CREATE" => parse_message_create(data).into_iter().collect(),
         "MESSAGE_UPDATE" => parse_message_update(data).into_iter().collect(),
         "MESSAGE_DELETE" => parse_message_delete(data).into_iter().collect(),
@@ -85,10 +144,20 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
             .into_iter()
             .collect(),
         "CHANNEL_PINS_UPDATE" => parse_channel_pins_update(data).into_iter().collect(),
+        "CHANNEL_PINS_ACK" => parse_channel_pins_ack(data).into_iter().collect(),
+        "CHANNEL_UNREAD_UPDATE" => parse_channel_unread_update(data).into_iter().collect(),
         "MESSAGE_ACK" => parse_message_ack(data).into_iter().collect(),
+        "GUILD_FEATURE_ACK" | "USER_NON_CHANNEL_ACK" => {
+            parse_feature_read_state_ack(data).into_iter().collect()
+        }
+        "RECENT_MENTION_DELETE" => parse_recent_mention_delete(data).into_iter().collect(),
         "USER_GUILD_SETTINGS_UPDATE" => {
             parse_user_guild_settings_update(data).into_iter().collect()
         }
+        "NOTIFICATION_SETTINGS_UPDATE" => parse_user_notification_settings_update(data)
+            .into_iter()
+            .collect(),
+        "USER_SETTINGS_UPDATE" => parse_user_settings_update(data).into_iter().collect(),
         "GUILD_MEMBER_ADD" => parse_member_add(data).into_iter().collect(),
         "GUILD_MEMBER_UPDATE" => parse_member_upsert(data).into_iter().collect(),
         "GUILD_MEMBER_LIST_UPDATE" => parse_member_list_update(data),
@@ -100,6 +169,12 @@ pub(super) fn parse_user_account_event(raw: &str) -> Vec<AppEvent> {
         "PRESENCE_UPDATE" => parse_presence_update(data),
         "VOICE_STATE_UPDATE" => parse_voice_state_update(data).into_iter().collect(),
         "VOICE_SERVER_UPDATE" => parse_voice_server_update(data).into_iter().collect(),
+        "STREAM_CREATE" => parse_stream_create(data).into_iter().collect(),
+        "STREAM_UPDATE" => parse_stream_update(data).into_iter().collect(),
+        "STREAM_SERVER_UPDATE" => parse_stream_server_update(data).into_iter().collect(),
+        "STREAM_DELETE" => parse_stream_delete(data).into_iter().collect(),
+        "CALL_CREATE" | "CALL_UPDATE" => parse_call(data),
+        "CALL_DELETE" => parse_call_delete(data).into_iter().collect(),
         "TYPING_START" => parse_typing_start(data).into_iter().collect(),
         _ => Vec::new(),
     }

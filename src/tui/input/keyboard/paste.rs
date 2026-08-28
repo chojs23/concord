@@ -17,7 +17,37 @@ pub fn handle_paste(state: &mut DashboardState, text: &str) -> bool {
         return true;
     }
 
+    if state.is_forum_post_composer_active() {
+        if state.is_forum_post_composer_editing() {
+            if handle_pasted_file_attachments(state, text) {
+                return true;
+            }
+            return state.insert_forum_post_text(text);
+        }
+        return false;
+    }
+
+    if state.is_thread_edit_title_editing() {
+        return state.insert_thread_edit_text(text);
+    }
+
     if !state.is_composing() {
+        if let Some(attachments) = pasted_file_attachments(text) {
+            state.start_composer();
+            if state.is_forum_post_composer_active() {
+                state.add_pending_forum_post_attachments(attachments);
+                return true;
+            }
+            if state.is_composing() {
+                state.add_pending_composer_attachments(attachments);
+                return true;
+            }
+            state.show_error_toast(
+                "Send Messages permission is required in this channel",
+                std::time::Instant::now(),
+            );
+            return true;
+        }
         return false;
     }
 
@@ -48,7 +78,15 @@ pub fn handle_pasted_user_profile_avatar(state: &mut DashboardState, text: &str)
 }
 
 pub fn handle_pasted_file_attachments(state: &mut DashboardState, text: &str) -> bool {
-    if !state.is_composing() || !state.composer_accepts_attachments() {
+    if state.forum_post_composer_is_editing_body() {
+        let Some(attachments) = pasted_file_attachments(text) else {
+            return false;
+        };
+        state.add_pending_forum_post_attachments(attachments);
+        return true;
+    }
+
+    if !state.is_composing() || state.composer_is_editing_message() {
         return false;
     }
     let Some(attachments) = pasted_file_attachments(text) else {

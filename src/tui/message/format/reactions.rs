@@ -2,8 +2,10 @@ use ratatui::{style::Style, text::Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::discord::{ReactionEmoji, ReactionInfo};
+use crate::tui::text::EmojiImageSize;
+use crate::tui::theme;
 
-use super::{EMOJI_REACTION_IMAGE_WIDTH, MessageContentLine, SELF_REACTION};
+use super::MessageContentLine;
 
 pub(in crate::tui) fn format_message_reaction_lines(
     reactions: &[ReactionInfo],
@@ -19,12 +21,20 @@ pub(in crate::tui) fn format_message_reaction_lines(
         .into_iter()
         .enumerate()
         .map(|(line_index, text)| {
-            let mut line = MessageContentLine::accent(text);
+            let mut line = MessageContentLine::styled_text(
+                text,
+                theme::current().style(theme::HighlightGroup::Reaction),
+                Vec::new(),
+            );
             for range in self_ranges
                 .iter()
                 .filter(|range| range.line as usize == line_index)
             {
-                line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+                line.styled_range(
+                    range.start,
+                    range.len,
+                    theme::current().style(theme::HighlightGroup::SelfReaction),
+                );
             }
             line
         })
@@ -42,7 +52,11 @@ pub(crate) fn reaction_line_spans(
         .iter()
         .filter(|range| range.line as usize == line_index)
     {
-        line.styled_range(range.start, range.len, Style::default().fg(SELF_REACTION));
+        line.styled_range(
+            range.start,
+            range.len,
+            theme::current().style(theme::HighlightGroup::SelfReaction),
+        );
     }
     line.spans()
 }
@@ -53,7 +67,12 @@ pub(crate) fn reaction_line_test_spans(
     ranges: &[ReactionStyleRange],
     line_index: usize,
 ) -> Vec<Span<'static>> {
-    reaction_line_spans(text, ranges, line_index, Style::default().fg(super::ACCENT))
+    reaction_line_spans(
+        text,
+        ranges,
+        line_index,
+        theme::current().style(theme::HighlightGroup::Reaction),
+    )
 }
 
 /// Position of a custom-emoji image overlay relative to the start of a
@@ -81,7 +100,7 @@ pub(crate) struct ReactionLayout {
 
 /// Builds a single chip's text plus the chip-internal column offset where its
 /// image overlay should land (if any). Custom-emoji chips reserve a fixed
-/// `EMOJI_REACTION_IMAGE_WIDTH` of spaces in place of the textual `:name:`
+/// compact image width of spaces in place of the textual `:name:`
 /// label so that loading the image later does not reflow the row.
 fn build_reaction_chip(
     reaction: &ReactionInfo,
@@ -99,7 +118,7 @@ fn build_reaction_chip(
         }
         ReactionEmoji::Custom { .. } => {
             let url = reaction.emoji.custom_image_url();
-            let placeholder = " ".repeat(EMOJI_REACTION_IMAGE_WIDTH as usize);
+            let placeholder = " ".repeat(usize::from(EmojiImageSize::Compact.width()));
             let prefix = "[";
             let chip = format!("{prefix}{placeholder} {count}]");
             let image_offset = prefix.width();

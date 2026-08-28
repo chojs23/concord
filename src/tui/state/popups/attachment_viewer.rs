@@ -1,6 +1,6 @@
 use crate::discord::{
-    AppCommand, AttachmentInfo, DownloadAttachmentSource, InlinePreviewInfo, MediaPlaybackSource,
-    MediaPlaybackTarget,
+    AppCommand, AttachmentInfo, AttachmentMediaType, DownloadAttachmentSource, InlinePreviewInfo,
+    MediaPlaybackSource, MediaPlaybackTarget,
     ids::{Id, marker::MessageMarker},
 };
 
@@ -25,11 +25,12 @@ impl DashboardState {
             return false;
         }
 
-        self.popups.modal = Some(ModalPopup::AttachmentViewer(AttachmentViewerState {
-            message_id: message.id,
-            selection: Default::default(),
-            zoom: AttachmentViewerZoom::default(),
-        }));
+        self.popups
+            .set_modal(ModalPopup::AttachmentViewer(AttachmentViewerState {
+                message_id: message.id,
+                selection: Default::default(),
+                zoom: AttachmentViewerZoom::default(),
+            }));
         true
     }
 
@@ -100,8 +101,7 @@ impl DashboardState {
             filename: selected.attachment.filename.clone(),
             url: selected.attachment.preferred_url().map(str::to_owned),
             size_bytes: selected.attachment.size,
-            is_image: selected.attachment.is_image(),
-            is_video: selected.attachment.is_video(),
+            media_type: selected.attachment.media_type(),
         })
     }
 
@@ -111,6 +111,21 @@ impl DashboardState {
         let selected = self.selected_attachment_viewer_attachment()?;
         let preview = selected.attachment.inline_preview_info()?;
         Some((selected.message_id, selected.index, preview))
+    }
+
+    pub fn open_selected_attachment_viewer_attachment(&self) -> Option<AppCommand> {
+        let url = self.selected_attachment_viewer_item()?.url?;
+        Some(AppCommand::OpenUrl { url })
+    }
+
+    pub fn copy_selected_attachment_viewer_url(&mut self) {
+        let Some(url) = self
+            .selected_attachment_viewer_item()
+            .and_then(|item| item.url)
+        else {
+            return;
+        };
+        self.runtime.copy_text_requested = Some((url, "Attachment URL copied"));
     }
 
     pub fn download_selected_attachment_viewer_attachment(&mut self) -> Option<AppCommand> {
@@ -126,8 +141,15 @@ impl DashboardState {
     }
 
     pub fn play_selected_attachment_viewer_attachment(&mut self) -> Option<AppCommand> {
+        if !self.media_playback_enabled() {
+            self.show_media_playback_disabled_toast(std::time::Instant::now());
+            return None;
+        }
         let item = self.selected_attachment_viewer_item()?;
-        if !item.is_video {
+        if !matches!(
+            item.media_type,
+            Some(AttachmentMediaType::Video | AttachmentMediaType::Audio)
+        ) {
             return None;
         }
         Some(AppCommand::PlayMedia {

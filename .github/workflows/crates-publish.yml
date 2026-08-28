@@ -8,7 +8,7 @@ on:
 jobs:
   publish:
     name: cargo publish
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     # Only run when Release succeeded and was triggered by a tag push.
     # `head_branch` on workflow_run carries the tag name for tag pushes.
     if: >-
@@ -43,10 +43,17 @@ jobs:
             exit 1
           fi
 
-      - name: install native audio dependencies
+      - name: install native media dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libopus-dev libasound2-dev
+          sudo apt-get install -y \
+            cmake \
+            libasound2-dev \
+            libclang-dev \
+            libpipewire-0.3-dev \
+            libva-dev \
+            nasm \
+            pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
 

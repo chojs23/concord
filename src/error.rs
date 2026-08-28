@@ -2,6 +2,8 @@ use std::error::Error as StdError;
 
 use thiserror::Error;
 
+use crate::discord::{ActionBlockReason, DiscordAction};
+
 pub type Result<T> = std::result::Result<T, AppError>;
 
 #[derive(Debug, Error)]
@@ -15,18 +17,46 @@ pub enum AppError {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
     },
+    #[error("Discord rejected the token")]
+    DiscordTokenRejected,
     #[error("message content must not be empty")]
     EmptyMessageContent,
-    #[error("message content exceeds Discord's 2000 character limit: {len}")]
-    MessageTooLong { len: usize },
-    #[error("attachment exceeds Discord's 10 MiB default upload limit: {filename} ({size} bytes)")]
-    AttachmentTooLarge { filename: String, size: u64 },
-    #[error("attachments exceed Discord's 25 MiB request limit: {size} bytes")]
-    AttachmentsTooLarge { size: u64 },
+    #[error("message content exceeds the {limit} character limit: {len}")]
+    MessageTooLong { len: usize, limit: usize },
+    #[error("attachment exceeds upload limit: {filename} ({size} bytes, limit {limit} bytes)")]
+    AttachmentTooLarge {
+        filename: String,
+        size: u64,
+        limit: u64,
+    },
     #[error("message has too many attachments: {count}")]
     TooManyAttachments { count: usize },
     #[error("Discord request failed: {0}")]
     DiscordRequest(String),
+    #[error("Discord action blocked: cannot {action}: {reason}")]
+    DiscordActionBlocked {
+        action: DiscordAction,
+        reason: ActionBlockReason,
+    },
+    #[error("Discord stopped authenticated requests after rejecting the session")]
+    DiscordAuthenticationStopped,
+    #[error("Discord rate limited {action}; try again in {retry_after_millis} ms")]
+    DiscordRateLimited {
+        action: String,
+        retry_after_millis: u64,
+    },
+    #[error("message slowmode is active; try again in {retry_after_millis} ms")]
+    MessageSlowModeActive { retry_after_millis: u64 },
+    #[error(
+        "Discord request circuit is open for {method} {path}; try again in {retry_after_millis} ms"
+    )]
+    DiscordRequestCircuitOpen {
+        method: String,
+        path: String,
+        retry_after_millis: u64,
+    },
+    #[error("Discord requires a CAPTCHA to {action}")]
+    CaptchaRequired { action: String },
     #[error("terminal I/O failed")]
     Io(#[from] std::io::Error),
     #[error("config file is not valid TOML")]

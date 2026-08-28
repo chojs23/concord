@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::discord::ids::{Id, marker::GuildMarker};
-use crate::discord::{GuildFolder, GuildState, MuteDuration};
+use crate::discord::{GuildBoostTier, GuildFolder, GuildState, MuteDuration};
 
-use super::{ActiveGuildScope, DashboardState, FolderKey};
+use super::navigation::FolderSettingsField;
+use super::{ActiveGuildScope, DashboardState, FolderKey, FolderSettingsState};
 use super::{
     model::{FocusPane, GuildBranch, GuildPaneEntry},
     scroll::{clamp_selected_index, toggle_collapsed_key},
@@ -19,11 +20,20 @@ impl DashboardState {
             .map(|state| state.name.as_str())
     }
 
+    /// Server boost level and active-boost count for the currently selected
+    /// guild, or `None` when viewing DMs or the guild is unknown. The channel
+    /// pane header uses this to show a boost line under the guild name.
+    pub fn selected_guild_boost(&self) -> Option<(GuildBoostTier, u32)> {
+        let guild = self.discord.cache.guild(self.selected_guild_id()?)?;
+        Some((guild.boost_tier, guild.boost_count))
+    }
+
     /// Builds the guild pane in display order: a virtual "Direct Messages"
-    /// row, then each `guild_folders` entry expanded into either a single
+    /// row, then any guild the user is in that the folder list omits (newly
+    /// joined servers Discord has not yet synced into `guild_folders`, newest
+    /// first), then each `guild_folders` entry expanded into either a single
     /// guild row (`id == None`, one member) or a folder header followed by
-    /// indented children. Collapsed folders hide their children. Guilds that
-    /// the user is in but the folder list omits get appended at the bottom.
+    /// indented children. Collapsed folders hide their children.
     pub fn guild_pane_entries(&self) -> Vec<GuildPaneEntry<'_>> {
         let mut entries: Vec<GuildPaneEntry<'_>> = vec![GuildPaneEntry::DirectMessages];
         let by_id: HashMap<Id<GuildMarker>, &GuildState> = self
@@ -32,14 +42,9 @@ impl DashboardState {
             .into_iter()
             .map(|guild| (guild.id, guild))
             .collect();
-        let mut placed: HashSet<Id<GuildMarker>> = HashSet::new();
         let folders = self.discord.cache.guild_folders();
 
         if folders.is_empty() {
-            // Iterating `by_id.values()` here is non-deterministic because
-            // it's a HashMap, which makes the sidebar shuffle on every render.
-            // Fall back to the discord state's own (insertion-ordered) guild
-            // list so the order stays stable until folder data arrives.
             for guild in self.discord.cache.guilds() {
                 entries.push(GuildPaneEntry::Guild {
                     state: guild,
@@ -47,6 +52,20 @@ impl DashboardState {
                 });
             }
             return entries;
+        }
+
+        let placed: HashSet<Id<GuildMarker>> = folders
+            .iter()
+            .flat_map(|folder| folder.guild_ids.iter().copied())
+            .collect();
+
+        for guild in self.discord.cache.guilds().into_iter().rev() {
+            if !placed.contains(&guild.id) {
+                entries.push(GuildPaneEntry::Guild {
+                    state: guild,
+                    branch: GuildBranch::None,
+                });
+            }
         }
 
         for folder in folders {
@@ -57,7 +76,6 @@ impl DashboardState {
                         state: guild,
                         branch: GuildBranch::None,
                     });
-                    placed.insert(folder.guild_ids[0]);
                 }
                 continue;
             }
@@ -65,14 +83,8 @@ impl DashboardState {
             let folder_key = Self::folder_key(folder);
             let collapsed = folder_key
                 .as_ref()
-                .is_some_and(|key| self.navigation.collapsed_folders.contains(key));
+                .is_some_and(|key| self.navigation.guilds.collapsed_folders.contains(key));
             entries.push(GuildPaneEntry::FolderHeader { folder, collapsed });
-
-            // Always mark children as placed even when collapsed so we don't
-            // duplicate them in the trailing "ungrouped" loop.
-            for guild_id in &folder.guild_ids {
-                placed.insert(*guild_id);
-            }
 
             let mut child_guilds: Vec<&GuildState> = folder
                 .guild_ids
@@ -81,7 +93,7 @@ impl DashboardState {
                 .collect();
             if collapsed {
                 child_guilds.retain(|guild| {
-                    self.navigation.active_guild == ActiveGuildScope::Guild(guild.id)
+                    self.navigation.guilds.active == ActiveGuildScope::Guild(guild.id)
                 });
             }
             let last_child_index = child_guilds.len().saturating_sub(1);
@@ -98,18 +110,6 @@ impl DashboardState {
             }
         }
 
-        // Same reasoning as the folder-empty branch above: walk the discord
-        // state's BTreeMap-backed list so the trailing "ungrouped" guilds
-        // appear in a stable, deterministic order.
-        for guild in self.discord.cache.guilds() {
-            if !placed.contains(&guild.id) {
-                entries.push(GuildPaneEntry::Guild {
-                    state: guild,
-                    branch: GuildBranch::None,
-                });
-            }
-        }
-
         entries
     }
 
@@ -119,15 +119,16 @@ impl DashboardState {
     pub fn guild_pane_filtered_entries(&self) -> Vec<GuildPaneEntry<'_>> {
         let query = self
             .navigation
-            .guild_pane_filter
+            .guilds
+            .filter
             .as_ref()
             .map(|f| f.query().trim().to_owned())
             .filter(|q| !q.is_empty());
         let Some(query) = query else {
             return self.guild_pane_entries();
         };
-        // Search directly over discord.guilds() so servers inside collapsed
-        // folders appear in results even when they're not normally visible.
+        // Search the full display order so servers inside collapsed folders
+        // remain discoverable without falling back to guild ID order.
         let mut scored: Vec<(FuzzyMatchQuality, FuzzyScore, usize, GuildPaneEntry<'_>)> =
             Vec::new();
         if let Some((quality, score)) =
@@ -135,7 +136,7 @@ impl DashboardState {
         {
             scored.push((quality, score, 0, GuildPaneEntry::DirectMessages));
         }
-        for (index, guild) in self.guild_pane_search_guilds().into_iter().enumerate() {
+        for (index, guild) in self.guilds_in_display_order().into_iter().enumerate() {
             if let Some((quality, score)) = best_fuzzy_name_match_score(&[&guild.name], &query) {
                 scored.push((
                     quality,
@@ -153,32 +154,38 @@ impl DashboardState {
         scored.into_iter().map(|(_, _, _, entry)| entry).collect()
     }
 
-    fn guild_pane_search_guilds(&self) -> Vec<&GuildState> {
+    /// Returns every guild in Discord's sidebar order without folder headers
+    /// or collapse state. Popups use this when they need the same ordering as
+    /// the guild pane but must still include guilds inside collapsed folders.
+    pub(super) fn guilds_in_display_order(&self) -> Vec<&GuildState> {
         let by_id: HashMap<Id<GuildMarker>, &GuildState> = self
             .discord
             .guilds()
             .into_iter()
             .map(|guild| (guild.id, guild))
             .collect();
-        let mut placed: HashSet<Id<GuildMarker>> = HashSet::new();
         let folders = self.discord.cache.guild_folders();
 
         if folders.is_empty() {
             return self.discord.cache.guilds();
         }
 
+        let placed: HashSet<Id<GuildMarker>> = folders
+            .iter()
+            .flat_map(|folder| folder.guild_ids.iter().copied())
+            .collect();
+
         let mut guilds = Vec::new();
+        for guild in self.discord.cache.guilds().into_iter().rev() {
+            if !placed.contains(&guild.id) {
+                guilds.push(guild);
+            }
+        }
         for folder in folders {
             for guild_id in &folder.guild_ids {
-                placed.insert(*guild_id);
                 if let Some(guild) = by_id.get(guild_id) {
                     guilds.push(*guild);
                 }
-            }
-        }
-        for guild in self.discord.cache.guilds() {
-            if !placed.contains(&guild.id) {
-                guilds.push(guild);
             }
         }
         guilds
@@ -196,7 +203,7 @@ impl DashboardState {
         };
         if let Some(scope) = action {
             self.activate_guild(scope);
-            self.navigation.guilds.keep_selection_visible();
+            self.navigation.guilds.list.keep_selection_visible();
             return true;
         }
         false
@@ -204,20 +211,20 @@ impl DashboardState {
 
     pub fn selected_guild(&self) -> usize {
         clamp_selected_index(
-            self.navigation.guilds.selected,
+            self.navigation.guilds.list.selected,
             self.guild_pane_filtered_entries().len(),
         )
     }
 
     pub fn guild_scroll(&self) -> usize {
-        self.navigation.guilds.scroll
+        self.navigation.guilds.list.scroll
     }
 
     pub fn visible_guild_pane_entries(&self) -> Vec<GuildPaneEntry<'_>> {
         self.guild_pane_filtered_entries()
             .into_iter()
-            .skip(self.navigation.guilds.scroll)
-            .take(self.navigation.guilds.content_height())
+            .skip(self.navigation.guilds.list.scroll)
+            .take(self.navigation.guilds.list.content_height())
             .collect()
     }
 
@@ -227,10 +234,10 @@ impl DashboardState {
         {
             let selected = self.selected_guild();
             let visible_len = self.visible_guild_pane_entries().len();
-            if selected >= self.navigation.guilds.scroll
-                && selected < self.navigation.guilds.scroll + visible_len
+            if selected >= self.navigation.guilds.list.scroll
+                && selected < self.navigation.guilds.list.scroll + visible_len
             {
-                Some(selected - self.navigation.guilds.scroll)
+                Some(selected - self.navigation.guilds.list.scroll)
             } else {
                 None
             }
@@ -241,14 +248,15 @@ impl DashboardState {
 
     pub fn set_guild_view_height(&mut self, height: usize) {
         let len = self.guild_pane_filtered_entries().len();
-        let selected = self.navigation.guilds.selected;
+        let selected = self.navigation.guilds.list.selected;
         self.navigation
             .guilds
+            .list
             .set_view_height_and_clamp(height, selected, len);
     }
 
     pub fn selected_guild_id(&self) -> Option<Id<GuildMarker>> {
-        match self.navigation.active_guild {
+        match self.navigation.guilds.active {
             ActiveGuildScope::Guild(guild_id) => Some(guild_id),
             ActiveGuildScope::Unset | ActiveGuildScope::DirectMessages => None,
         }
@@ -261,7 +269,7 @@ impl DashboardState {
     }
 
     pub fn is_active_guild_entry(&self, entry: &GuildPaneEntry<'_>) -> bool {
-        match (self.navigation.active_guild, entry) {
+        match (self.navigation.guilds.active, entry) {
             (ActiveGuildScope::DirectMessages, GuildPaneEntry::DirectMessages) => true,
             (ActiveGuildScope::Guild(active_id), GuildPaneEntry::Guild { state, .. }) => {
                 state.id == active_id
@@ -277,7 +285,7 @@ impl DashboardState {
     pub fn toggle_selected_folder(&mut self) {
         let folder_key = self.selected_folder_key();
         if let Some(key) = folder_key {
-            toggle_collapsed_key(&mut self.navigation.collapsed_folders, key);
+            toggle_collapsed_key(&mut self.navigation.guilds.collapsed_folders, key);
             self.options.ui_state_save_pending = true;
         }
     }
@@ -300,10 +308,257 @@ impl DashboardState {
         }
     }
 
+    pub fn open_selected_folder_settings(&mut self) -> bool {
+        let Some((folder_id, name, color)) = self.selected_configurable_folder() else {
+            return false;
+        };
+        let mut name_input = crate::tui::text_input::TextInputState::default();
+        name_input.set_value(name.unwrap_or_default());
+        let mut color_input = crate::tui::text_input::TextInputState::default();
+        color_input.set_value(format_folder_color_code(color));
+        self.navigation.guilds.folder_settings = Some(FolderSettingsState {
+            folder_id,
+            active_field: Default::default(),
+            editing_field: None,
+            edit_input: Default::default(),
+            name_input,
+            color_input,
+            color_error: None,
+        });
+        true
+    }
+
+    pub fn close_folder_settings(&mut self) {
+        self.navigation.guilds.folder_settings = None;
+    }
+
+    pub fn is_folder_settings_open(&self) -> bool {
+        self.navigation.guilds.folder_settings.is_some()
+    }
+
+    pub(in crate::tui) fn folder_settings_name_value(&self) -> Option<&str> {
+        let settings = self.navigation.guilds.folder_settings.as_ref()?;
+        Some(
+            if settings.editing_field == Some(FolderSettingsField::Name) {
+                settings.edit_input.value()
+            } else {
+                settings.name_input.value()
+            },
+        )
+    }
+
+    pub(in crate::tui) fn folder_settings_color_value(&self) -> Option<&str> {
+        let settings = self.navigation.guilds.folder_settings.as_ref()?;
+        Some(
+            if settings.editing_field == Some(FolderSettingsField::Color) {
+                settings.edit_input.value()
+            } else {
+                settings.color_input.value()
+            },
+        )
+    }
+
+    pub(in crate::tui) fn folder_settings_name_active(&self) -> bool {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Name))
+    }
+
+    pub(in crate::tui) fn folder_settings_color_active(&self) -> bool {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Color))
+    }
+
+    pub(in crate::tui) fn folder_settings_submit_active(&self) -> bool {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Submit))
+    }
+
+    pub(in crate::tui) fn folder_settings_cancel_active(&self) -> bool {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .is_some_and(|settings| matches!(settings.active_field, FolderSettingsField::Cancel))
+    }
+
+    pub(in crate::tui) fn is_folder_settings_editing(&self) -> bool {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .is_some_and(|settings| settings.editing_field.is_some())
+    }
+
+    pub(in crate::tui) fn folder_settings_color_error(&self) -> Option<&str> {
+        self.navigation
+            .guilds
+            .folder_settings
+            .as_ref()
+            .and_then(|settings| settings.color_error.as_deref())
+    }
+
+    pub(in crate::tui) fn folder_settings_cursor_byte_index(&self) -> Option<usize> {
+        let settings = self.navigation.guilds.folder_settings.as_ref()?;
+        settings.editing_field?;
+        Some(settings.edit_input.cursor_byte_index())
+    }
+
+    pub fn next_folder_settings_field(&mut self) {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+            if settings.editing_field.is_some() {
+                return;
+            }
+            settings.active_field = match settings.active_field {
+                FolderSettingsField::Name => FolderSettingsField::Color,
+                FolderSettingsField::Color => FolderSettingsField::Submit,
+                FolderSettingsField::Submit => FolderSettingsField::Cancel,
+                FolderSettingsField::Cancel => FolderSettingsField::Name,
+            };
+        }
+    }
+
+    pub fn previous_folder_settings_field(&mut self) {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+            if settings.editing_field.is_some() {
+                return;
+            }
+            settings.active_field = match settings.active_field {
+                FolderSettingsField::Name => FolderSettingsField::Cancel,
+                FolderSettingsField::Color => FolderSettingsField::Name,
+                FolderSettingsField::Submit => FolderSettingsField::Color,
+                FolderSettingsField::Cancel => FolderSettingsField::Submit,
+            };
+        }
+    }
+
+    pub fn start_or_commit_folder_settings_edit(&mut self) {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+            if settings.editing_field == Some(settings.active_field) {
+                let value = settings.edit_input.value().to_owned();
+                match settings.active_field {
+                    FolderSettingsField::Name => settings.name_input.set_value(value),
+                    FolderSettingsField::Color => settings.color_input.set_value(value),
+                    FolderSettingsField::Submit | FolderSettingsField::Cancel => {}
+                }
+                settings.editing_field = None;
+                settings.edit_input.clear();
+            } else {
+                let value = match settings.active_field {
+                    FolderSettingsField::Name => settings.name_input.value().to_owned(),
+                    FolderSettingsField::Color => settings.color_input.value().to_owned(),
+                    FolderSettingsField::Submit | FolderSettingsField::Cancel => return,
+                };
+                settings.editing_field = Some(settings.active_field);
+                settings.edit_input.set_value(value);
+            }
+        }
+    }
+
+    pub fn cancel_folder_settings_edit(&mut self) -> bool {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut()
+            && settings.editing_field.take().is_some()
+        {
+            settings.edit_input.clear();
+            return true;
+        }
+        false
+    }
+
+    pub fn push_folder_settings_char(&mut self, value: char) {
+        self.update_active_folder_settings_input(|input| input.insert_char(value));
+        self.clear_folder_settings_color_error_if_editing_color();
+    }
+
+    pub fn pop_folder_settings_char(&mut self) {
+        self.update_active_folder_settings_input(|input| {
+            input.delete_previous_grapheme();
+        });
+        self.clear_folder_settings_color_error_if_editing_color();
+    }
+
+    pub fn delete_previous_folder_settings_word(&mut self) {
+        self.update_active_folder_settings_input(|input| {
+            input.delete_previous_word();
+        });
+        self.clear_folder_settings_color_error_if_editing_color();
+    }
+
+    fn clear_folder_settings_color_error_if_editing_color(&mut self) {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut()
+            && matches!(settings.active_field, FolderSettingsField::Color)
+        {
+            settings.color_error = None;
+        }
+    }
+
+    pub fn move_folder_settings_cursor_left(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_left());
+    }
+
+    pub fn move_folder_settings_cursor_right(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_right());
+    }
+
+    pub fn move_folder_settings_cursor_word_left(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_word_left());
+    }
+
+    pub fn move_folder_settings_cursor_word_right(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_word_right());
+    }
+
+    pub fn move_folder_settings_cursor_home(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_home());
+    }
+
+    pub fn move_folder_settings_cursor_end(&mut self) {
+        self.update_active_folder_settings_input(|input| input.move_end());
+    }
+
+    fn update_active_folder_settings_input(
+        &mut self,
+        update: impl FnOnce(&mut crate::tui::text_input::TextInputState),
+    ) {
+        if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+            if settings.editing_field != Some(settings.active_field) {
+                return;
+            }
+            update(&mut settings.edit_input);
+        }
+    }
+
+    pub fn commit_folder_settings_command(&mut self) -> Option<AppCommand> {
+        let settings = self.navigation.guilds.folder_settings.as_ref()?;
+        let Some(color) = parse_folder_color_code(settings.color_input.value()) else {
+            if let Some(settings) = self.navigation.guilds.folder_settings.as_mut() {
+                settings.color_error = Some("Use #RRGGBB or leave blank".to_owned());
+            }
+            return None;
+        };
+        let folder_id = settings.folder_id;
+        let name = settings.name_input.value().trim().to_owned();
+        let name = (!name.is_empty()).then_some(name);
+        self.navigation.guilds.folder_settings = None;
+        Some(AppCommand::UpdateGuildFolderSettings {
+            folder_id,
+            name,
+            color,
+        })
+    }
+
     pub(super) fn activate_guild(&mut self, scope: ActiveGuildScope) {
-        self.navigation.active_guild = scope;
-        self.navigation.channels.reset_selection_and_scroll();
-        self.navigation.active_channel_id = None;
+        self.navigation.guilds.active = scope;
+        self.navigation.channels.list.reset_selection_and_scroll();
+        self.navigation.channels.active_channel_id = None;
         self.messages.pinned_message_view_channel_id = None;
         self.messages.pinned_message_view_return_target = None;
         self.messages.selected_message = 0;
@@ -312,7 +567,7 @@ impl DashboardState {
         self.messages.message_keep_selection_visible = true;
         self.messages.message_auto_follow = true;
         self.clear_new_messages_marker();
-        self.navigation.members.reset_selection_and_scroll();
+        self.navigation.members.list.reset_selection_and_scroll();
 
         self.refresh_composer_emoji_candidates_for_current_query();
     }
@@ -334,6 +589,15 @@ impl DashboardState {
         }
     }
 
+    fn selected_configurable_folder(&self) -> Option<(u64, Option<String>, Option<u32>)> {
+        match self.guild_pane_entries().get(self.selected_guild()) {
+            Some(GuildPaneEntry::FolderHeader { folder, .. }) => {
+                folder.id.map(|id| (id, folder.name.clone(), folder.color))
+            }
+            _ => None,
+        }
+    }
+
     fn folder_key(folder: &GuildFolder) -> Option<FolderKey> {
         if let Some(id) = folder.id {
             Some(FolderKey::Id(id))
@@ -343,6 +607,24 @@ impl DashboardState {
             None
         }
     }
+}
+
+fn format_folder_color_code(color: Option<u32>) -> String {
+    color
+        .map(|color| format!("#{:06X}", color & 0x00ff_ffff))
+        .unwrap_or_default()
+}
+
+fn parse_folder_color_code(value: &str) -> Option<Option<u32>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Some(None);
+    }
+    let value = value.strip_prefix('#').unwrap_or(value);
+    if value.len() != 6 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(value, 16).ok().map(Some)
 }
 
 impl DashboardState {

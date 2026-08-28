@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::discord::{
-    ChannelInfo, ChannelRecipientInfo, GuildFolder, PresenceStatus, ReadStateInfo,
-    RelationshipInfo, RoleInfo,
-    events::{AppEvent, PresenceEventFields},
+    ChannelInfo, ChannelRecipientInfo, PresenceStatus, ReadStateInfo, RelationshipInfo, RoleInfo,
+    ThreadMemberInfo,
+    events::{AppEvent, PresenceEventFields, ReadySnapshotInfo},
     ids::{
         Id,
         marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
@@ -15,13 +15,14 @@ use crate::discord::{
 use super::{
     channels::{parse_channel_info, parse_channel_recipient_info},
     guilds::{
-        parse_guild_create, parse_role_info, parse_user_guild_settings_entries,
-        parse_user_has_nitro,
+        parse_guild_create, parse_guild_onboarding_from_guild, parse_role_info,
+        parse_user_guild_settings_entries, parse_user_premium_tier,
     },
-    members::parse_member_info,
-    presence::parse_presence_entry,
+    members::{parse_current_user_verification, parse_member_info},
+    presence::{parse_activities, parse_presence_entry},
     relationships::parse_relationship_entry,
     shared::{display_name_from_parts_or_unknown, parse_id, parse_status},
+    user_settings::parse_user_settings_info,
     voice::parse_guild_voice_states,
 };
 
@@ -33,7 +34,7 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     let mut events = Vec::new();
     let mut current_user = None;
     let mut current_user_id = None;
-    let mut current_user_status = None;
+    let mut current_user_presence = None;
 
     if let Some(user) = data.get("user") {
         let user_id = user.get("id").and_then(parse_id::<UserMarker>);
@@ -46,19 +47,30 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
             user: name,
             user_id,
         });
-        if let Some(has_nitro) = parse_user_has_nitro(user) {
-            events.push(AppEvent::CurrentUserCapabilities { has_nitro });
+        if let Some(premium_tier) = parse_user_premium_tier(user) {
+            events.push(AppEvent::CurrentUserCapabilities { premium_tier });
+        }
+        if let Some(event) = parse_current_user_verification(user) {
+            events.push(event);
         }
         current_user_id = user_id;
         current_user = parse_channel_recipient_info(user);
-        current_user_status = parse_current_user_session_status(data);
-        if let (Some(user), Some(status)) = (current_user.as_mut(), current_user_status) {
-            user.status = Some(status);
+        current_user_presence = parse_current_user_session_presence(data);
+        if let (Some(user), Some((status, _))) =
+            (current_user.as_mut(), current_user_presence.as_ref())
+        {
+            user.status = Some(*status);
         }
     }
 
     if let Some(guilds) = data.get("guilds").and_then(Value::as_array) {
         for guild in guilds {
+            if guild.get("unavailable").and_then(Value::as_bool) == Some(true) {
+                if let Some(guild_id) = guild.get("id").and_then(parse_id::<GuildMarker>) {
+                    events.push(AppEvent::GuildUnavailable { guild_id });
+                }
+                continue;
+            }
             if let Some(event) = parse_guild_create(guild) {
                 events.push(event);
             }
@@ -95,6 +107,20 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
                 .collect()
         })
         .unwrap_or_default();
+    let mut ready_users = users_by_id
+        .values()
+        .filter_map(|user| parse_channel_recipient_info(user))
+        .collect::<Vec<_>>();
+    if let Some(current_user) = current_user.clone()
+        && !ready_users
+            .iter()
+            .any(|user| user.user_id == current_user.user_id)
+    {
+        ready_users.push(current_user);
+    }
+    if !ready_users.is_empty() {
+        events.push(AppEvent::ReadyUserDirectory { users: ready_users });
+    }
 
     // User-account READY also lists DM and group-DM channels under
     // `private_channels`. They have no `guild_id` and never come through
@@ -110,13 +136,13 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
         }
     }
 
-    if let (Some(user_id), Some(status)) = (current_user_id, current_user_status) {
+    if let (Some(user_id), Some((status, activities))) = (current_user_id, current_user_presence) {
         events.push(AppEvent::PresenceUpdate {
             guild_id: None,
             presence: PresenceEventFields {
                 user_id,
                 status,
-                activities: Vec::new(),
+                activities,
             },
         });
     }
@@ -129,11 +155,11 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
             .iter()
             .filter_map(parse_relationship_entry)
             .collect();
-        if !parsed.is_empty() {
-            events.push(AppEvent::RelationshipsLoaded {
-                relationships: parsed,
-            });
-        }
+        // The READY list is authoritative. Emit an empty list too so a new
+        // session can clear relationships that disappeared while offline.
+        events.push(AppEvent::RelationshipsLoaded {
+            relationships: parsed,
+        });
     }
 
     // VERSIONED_READ_STATES wraps the array as `{ entries, version, partial }`.
@@ -145,31 +171,59 @@ pub(super) fn parse_ready(data: &Value) -> Vec<AppEvent> {
     {
         let parsed: Vec<ReadStateInfo> =
             entries.iter().filter_map(parse_read_state_entry).collect();
-        if !parsed.is_empty() {
-            events.push(AppEvent::ReadStateInit { entries: parsed });
-        }
+        let (partial, version) = versioned_array_metadata(data.get("read_state"));
+        events.push(AppEvent::ReadStateSync {
+            entries: parsed,
+            partial,
+            version,
+        });
     }
 
     if let Some(settings) = parse_user_guild_settings_entries(data.get("user_guild_settings")) {
-        events.push(AppEvent::UserGuildNotificationSettingsInit { settings });
+        let (partial, version) = versioned_array_metadata(data.get("user_guild_settings"));
+        events.push(AppEvent::UserGuildSettingsSync {
+            settings,
+            partial,
+            version,
+        });
+    }
+    if let Some(flags) = data
+        .get("notification_settings")
+        .and_then(|settings| settings.get("flags"))
+        .and_then(Value::as_u64)
+    {
+        events.push(AppEvent::UserNotificationSettingsUpdate { flags });
     }
 
     // Guild folder ordering and grouping live in the legacy `user_settings`
     // payload. The modern `user_settings_proto` blob is base64+protobuf and is
     // skipped for now. When present, every guild appears in some folder, either
     // an explicit one or a single-guild "container" with `id == null`.
-    if let Some(folders) = data
-        .get("user_settings")
-        .and_then(|settings| settings.get("guild_folders"))
-        .and_then(Value::as_array)
-    {
-        let folders: Vec<GuildFolder> = folders.iter().filter_map(parse_guild_folder).collect();
-        if !folders.is_empty() {
-            events.push(AppEvent::GuildFoldersUpdate { folders });
-        }
+    if let Some(settings) = data.get("user_settings").and_then(parse_user_settings_info) {
+        events.push(AppEvent::UserSettingsUpdate { settings });
+    }
+
+    if let Some(snapshot) = parse_ready_snapshot(data) {
+        events.push(AppEvent::ReadySnapshotComplete { snapshot });
     }
 
     events
+}
+
+fn versioned_array_metadata(value: Option<&Value>) -> (bool, Option<i64>) {
+    let Some(value) = value.filter(|value| value.is_object()) else {
+        return (false, None);
+    };
+    let partial = value
+        .get("partial")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let version = value.get("version").and_then(|version| {
+        version
+            .as_i64()
+            .or_else(|| version.as_u64().and_then(|value| i64::try_from(value).ok()))
+    });
+    (partial, version)
 }
 
 pub(super) fn parse_ready_supplemental(data: &Value) -> Vec<AppEvent> {
@@ -181,7 +235,87 @@ pub(super) fn parse_ready_supplemental(data: &Value) -> Vec<AppEvent> {
             presence,
         }
     }));
+    if let Some(channels) = data.get("lazy_private_channels").and_then(Value::as_array) {
+        for raw_channel in channels {
+            let Some(channel) = parse_channel_info(raw_channel, None) else {
+                continue;
+            };
+            let recipient_ids = raw_channel
+                .get("recipient_ids")
+                .and_then(Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(parse_id::<UserMarker>)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if recipient_ids.is_empty() {
+                events.push(AppEvent::ChannelUpsert(channel));
+            } else {
+                events.push(AppEvent::LazyPrivateChannelUpsert {
+                    channel,
+                    recipient_ids,
+                });
+            }
+        }
+        events.push(AppEvent::ReadySupplementalComplete {
+            private_channel_ids: channels
+                .iter()
+                .filter_map(|channel| channel.get("id").and_then(parse_id::<ChannelMarker>))
+                .collect(),
+        });
+    }
     events
+}
+
+fn parse_ready_snapshot(data: &Value) -> Option<ReadySnapshotInfo> {
+    let guilds = data.get("guilds").and_then(Value::as_array);
+    let guild_ids = guilds.map(|guilds| {
+        guilds
+            .iter()
+            .filter_map(|guild| guild.get("id").and_then(parse_id::<GuildMarker>))
+            .collect()
+    });
+    let mut guild_channel_ids = BTreeMap::new();
+    if let Some(guilds) = guilds {
+        for guild in guilds {
+            let Some(guild_id) = guild.get("id").and_then(parse_id::<GuildMarker>) else {
+                continue;
+            };
+            // An unavailable guild omits `channels`. Its old channel state is
+            // retained until Discord sends an available snapshot.
+            let Some(channels) = guild.get("channels").and_then(Value::as_array) else {
+                continue;
+            };
+            let mut channel_ids = channels
+                .iter()
+                .filter_map(|channel| channel.get("id").and_then(parse_id::<ChannelMarker>))
+                .collect::<Vec<_>>();
+            if let Some(threads) = guild.get("threads").and_then(Value::as_array) {
+                channel_ids.extend(
+                    threads
+                        .iter()
+                        .filter_map(|thread| thread.get("id").and_then(parse_id::<ChannelMarker>)),
+                );
+            }
+            guild_channel_ids.insert(guild_id, channel_ids);
+        }
+    }
+    let private_channel_ids =
+        data.get("private_channels")
+            .and_then(Value::as_array)
+            .map(|channels| {
+                channels
+                    .iter()
+                    .filter_map(|channel| channel.get("id").and_then(parse_id::<ChannelMarker>))
+                    .collect()
+            });
+
+    (guild_ids.is_some() || private_channel_ids.is_some()).then_some(ReadySnapshotInfo {
+        guild_ids,
+        guild_channel_ids,
+        private_channel_ids,
+    })
 }
 
 fn parse_merged_member_events(data: &Value) -> Vec<AppEvent> {
@@ -217,6 +351,12 @@ fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
         let Some(guild_id) = guild.get("id").and_then(parse_id::<GuildMarker>) else {
             continue;
         };
+        if let Some(onboarding) = parse_guild_onboarding_from_guild(guild, guild_id) {
+            events.push(AppEvent::GuildOnboardingUpdate {
+                guild_id,
+                onboarding,
+            });
+        }
         if let Some(roles) = guild.get("roles").and_then(Value::as_array) {
             let roles: Vec<RoleInfo> = roles.iter().filter_map(parse_role_info).collect();
             if !roles.is_empty() {
@@ -232,12 +372,18 @@ fn parse_supplemental_guild_events(data: &Value) -> Vec<AppEvent> {
             );
         }
         if let Some(threads) = guild.get("threads").and_then(Value::as_array) {
-            events.extend(
-                threads
-                    .iter()
-                    .filter_map(|channel| parse_channel_info(channel, Some(guild_id)))
-                    .map(AppEvent::ChannelUpsert),
-            );
+            events.extend(threads.iter().filter_map(|thread| {
+                let mut thread =
+                    super::channels::parse_thread_gateway_info(thread, Some(guild_id))?;
+                if thread.current_user_member.is_none() {
+                    thread.current_user_member =
+                        Some(ThreadMemberInfo::joined_snapshot(thread.channel.channel_id));
+                }
+                Some(AppEvent::ThreadUpsert {
+                    thread,
+                    created: false,
+                })
+            }));
         }
         if let Some(members) = guild.get("members").and_then(Value::as_array) {
             events.extend(guild_member_upsert_events(guild_id, members));
@@ -272,33 +418,6 @@ fn guild_member_upsert_events(guild_id: Id<GuildMarker>, members: &[Value]) -> V
         .collect()
 }
 
-fn parse_guild_folder(value: &Value) -> Option<GuildFolder> {
-    let guild_ids: Vec<Id<GuildMarker>> = value
-        .get("guild_ids")?
-        .as_array()?
-        .iter()
-        .filter_map(parse_id::<GuildMarker>)
-        .collect();
-    if guild_ids.is_empty() {
-        return None;
-    }
-
-    let id = value.get("id").and_then(Value::as_u64);
-    let name = value
-        .get("name")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    let color = value.get("color").and_then(Value::as_u64).map(|c| c as u32);
-
-    Some(GuildFolder {
-        id,
-        name,
-        color,
-        guild_ids,
-    })
-}
-
 type MergedPresences = BTreeMap<Id<UserMarker>, PresenceEventFields>;
 
 fn parse_merged_presences(data: &Value) -> MergedPresences {
@@ -309,18 +428,23 @@ fn parse_merged_presences(data: &Value) -> MergedPresences {
     presences
 }
 
-fn parse_current_user_session_status(data: &Value) -> Option<PresenceStatus> {
-    data.get("sessions")
-        .and_then(Value::as_array)
-        .and_then(|sessions| {
-            sessions.iter().find_map(|session| {
-                let status = session
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .map(parse_status)?;
-                (status != PresenceStatus::Unknown).then_some(status)
-            })
-        })
+fn parse_current_user_session_presence(
+    data: &Value,
+) -> Option<(PresenceStatus, Vec<crate::discord::ActivityInfo>)> {
+    let sessions = data.get("sessions").and_then(Value::as_array)?;
+    let parse = |session: &Value| {
+        let status = session
+            .get("status")
+            .and_then(Value::as_str)
+            .map(parse_status)?;
+        Some((status, parse_activities(session)))
+    };
+
+    sessions
+        .iter()
+        .find(|session| session.get("session_id").and_then(Value::as_str) == Some("all"))
+        .and_then(parse)
+        .or_else(|| sessions.iter().find_map(parse))
 }
 
 fn collect_presence_entries(value: &Value, presences: &mut MergedPresences) {
@@ -425,13 +549,29 @@ fn add_current_user_to_group_dm(
 fn parse_read_state_entry(value: &Value) -> Option<ReadStateInfo> {
     let channel_id = parse_id::<ChannelMarker>(value.get("id")?)?;
     Some(ReadStateInfo {
+        read_state_type: value
+            .get("read_state_type")
+            .and_then(Value::as_u64)
+            .and_then(|value| u8::try_from(value).ok())
+            .unwrap_or(0),
         channel_id,
         last_acked_message_id: value
             .get("last_message_id")
+            .or_else(|| value.get("last_acked_id"))
             .and_then(parse_id::<MessageMarker>),
         mention_count: value
             .get("mention_count")
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32,
+        badge_count: value
+            .get("badge_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+        last_pin_timestamp: value
+            .get("last_pin_timestamp")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        flags: value.get("flags").and_then(Value::as_u64).unwrap_or(0),
+        last_viewed: value.get("last_viewed").and_then(Value::as_u64),
     })
 }

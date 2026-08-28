@@ -1,5 +1,43 @@
 use super::*;
 
+const NOTIFICATION_INBOX_ACTION_KINDS: [NotificationInboxActionKind; 2] = [
+    NotificationInboxActionKind::MarkRead,
+    NotificationInboxActionKind::MarkAllRead,
+];
+
+/// The lookup trio every action-menu scope exposes: shortcut resolution,
+/// item label, and (where the menu shows one) the shortcut gutter label.
+/// Adding a scope is one invocation plus its default key table.
+macro_rules! define_action_menu_scope {
+    (
+        $field:ident, $item:ty,
+        $shortcuts:ident, $label:ident, $default:ident $(, $shortcut_label:ident)?
+    ) => {
+        pub fn $shortcuts(&self, actions: &[$item], index: usize) -> Vec<KeyChord> {
+            scoped_action_shortcuts(
+                index,
+                actions.iter().map(|item| item.kind),
+                &self.action_shortcuts.$field,
+                |kind| self.$default(kind),
+            )
+        }
+
+        pub fn $label(&self, action: &$item) -> String {
+            action_label(&self.action_shortcuts.$field, action.kind, &action.label)
+        }
+
+        $(
+            pub fn $shortcut_label(&self, actions: &[$item], index: usize) -> String {
+                let activation_shortcuts = self.$shortcuts(actions, index);
+                if !activation_shortcuts.is_empty() {
+                    return key_chord_list_label(&activation_shortcuts);
+                }
+                String::new()
+            }
+        )?
+    };
+}
+
 impl KeyBindings {
     pub(in crate::tui) fn binding_summaries(&self) -> Vec<KeymapBindingSummary> {
         let mut summaries = self
@@ -64,6 +102,17 @@ impl KeyBindings {
         self.keymap.lookup(&sequence)
     }
 
+    pub(in crate::tui) fn popup_keymap_lookup_with_key(
+        &self,
+        prefix: &[KeyChord],
+        key: KeyEvent,
+        scope: PopupKeymapScope,
+    ) -> Option<PopupKeyMapLookup> {
+        let mut sequence = prefix.to_vec();
+        sequence.push(self.keymap_chord_for_event(key));
+        self.keymap.lookup_popup_actions(&sequence, scope)
+    }
+
     pub(in crate::tui) fn keymap_chord_for_event(&self, key: KeyEvent) -> KeyChord {
         KeyChord {
             code: key.code,
@@ -94,6 +143,14 @@ impl KeyBindings {
         self.keymap.children(prefix)
     }
 
+    pub(in crate::tui) fn popup_keymap_children(
+        &self,
+        prefix: &[KeyChord],
+        scope: PopupKeymapScope,
+    ) -> Vec<LeaderShortcutItem> {
+        self.keymap.popup_children(prefix, scope)
+    }
+
     pub(in crate::tui) fn dashboard_action_for_ui_action(
         &self,
         action: UiAction,
@@ -105,30 +162,7 @@ impl KeyBindings {
             return Some(DashboardAction::MessageShortcut(message_action));
         }
 
-        match action {
-            UiAction::StartComposer => Some(DashboardAction::StartComposer),
-            UiAction::OpenPaneFilter => Some(DashboardAction::OpenFocusedPaneFilter),
-            UiAction::FocusGuildPane => Some(DashboardAction::FocusPane(FocusPane::Guilds)),
-            UiAction::FocusChannelPane => Some(DashboardAction::FocusPane(FocusPane::Channels)),
-            UiAction::FocusMessagePane => Some(DashboardAction::FocusPane(FocusPane::Messages)),
-            UiAction::FocusMemberPane => Some(DashboardAction::FocusPane(FocusPane::Members)),
-            UiAction::SelectNext => Some(DashboardAction::Select(SelectionAction::Next)),
-            UiAction::SelectPrevious => Some(DashboardAction::Select(SelectionAction::Previous)),
-            UiAction::CycleFocusNext => Some(DashboardAction::CycleFocusForward),
-            UiAction::CycleFocusPrevious => Some(DashboardAction::CycleFocusBackward),
-            UiAction::HalfPageDown => Some(DashboardAction::HalfPageDown),
-            UiAction::HalfPageUp => Some(DashboardAction::HalfPageUp),
-            UiAction::ScrollViewportDown => Some(DashboardAction::ScrollViewportDown),
-            UiAction::ScrollViewportUp => Some(DashboardAction::ScrollViewportUp),
-            UiAction::JumpTop => Some(DashboardAction::JumpTop),
-            UiAction::JumpBottom => Some(DashboardAction::JumpBottom),
-            UiAction::ScrollHorizontalLeft => Some(DashboardAction::ScrollHorizontalLeft),
-            UiAction::ScrollHorizontalRight => Some(DashboardAction::ScrollHorizontalRight),
-            UiAction::ResizePaneLeft => Some(DashboardAction::ResizePaneLeft),
-            UiAction::ResizePaneRight => Some(DashboardAction::ResizePaneRight),
-            UiAction::Quit => Some(DashboardAction::Quit),
-            _ => None,
-        }
+        action.global_dashboard_action()
     }
 
     pub(in crate::tui) fn dashboard_action(&self, key: KeyEvent) -> Option<DashboardAction> {
@@ -143,20 +177,10 @@ impl KeyBindings {
         }
     }
 
-    pub(in crate::tui) fn global_action(&self, key: KeyEvent) -> Option<GlobalAction> {
-        match key.code {
-            KeyCode::Char('`') => Some(GlobalAction::ToggleDebugLog),
-            _ => None,
-        }
-    }
-
     pub(in crate::tui) fn channel_switcher_action(
         &self,
         key: KeyEvent,
     ) -> Option<ChannelSwitcherAction> {
-        if self.is_text_entry_popup_close_key(key) {
-            return Some(ChannelSwitcherAction::Close);
-        }
         if let Some(action) = self.selection_action(key, SelectionKeySet::TextSafe) {
             return Some(ChannelSwitcherAction::Select(action));
         }
@@ -176,14 +200,151 @@ impl KeyBindings {
         }
     }
 
-    pub(in crate::tui) fn search_popup_action(&self, key: KeyEvent) -> Option<SearchPopupAction> {
-        if self.is_text_entry_popup_close_key(key) {
-            return Some(SearchPopupAction::Close);
+    pub(in crate::tui) fn notification_inbox_action(
+        &self,
+        key: KeyEvent,
+        tab: NotificationInboxTab,
+    ) -> Option<NotificationInboxAction> {
+        if self
+            .notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkRead)
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+        {
+            return Some(NotificationInboxAction::MarkSelectedRead);
         }
+        if tab == NotificationInboxTab::Unreads
+            && self
+                .notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkAllRead)
+                .iter()
+                .any(|shortcut| shortcut.matches(key))
+        {
+            return Some(NotificationInboxAction::MarkAllRead);
+        }
+        if let Some(action) = self.notification_inbox_tab_action(key) {
+            return Some(NotificationInboxAction::SwitchTab(action));
+        }
+        if self
+            .notification_inbox_activate_shortcuts()
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+        {
+            return Some(NotificationInboxAction::ActivateSelected);
+        }
+        if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
+            return Some(NotificationInboxAction::Select(action));
+        }
+
+        None
+    }
+
+    fn notification_inbox_tab_action(&self, key: KeyEvent) -> Option<SelectionAction> {
+        if self
+            .keymap_single_key_shortcuts(UiAction::CycleFocusPrevious)
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+        {
+            return Some(SelectionAction::Previous);
+        }
+        self.keymap_single_key_shortcuts(UiAction::CycleFocusNext)
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+            .then_some(SelectionAction::Next)
+    }
+
+    fn notification_inbox_action_shortcuts(
+        &self,
+        kind: NotificationInboxActionKind,
+    ) -> Vec<KeyChord> {
+        let index = NOTIFICATION_INBOX_ACTION_KINDS
+            .iter()
+            .position(|candidate| *candidate == kind)
+            .expect("notification inbox action kind is listed");
+        scoped_action_shortcuts(
+            index,
+            NOTIFICATION_INBOX_ACTION_KINDS,
+            &self.action_shortcuts.notification_inbox,
+            |kind| self.default_notification_inbox_action_shortcuts(kind),
+        )
+    }
+
+    fn default_notification_inbox_action_shortcuts(
+        &self,
+        kind: NotificationInboxActionKind,
+    ) -> Vec<KeyChord> {
+        vec![char_chord(match kind {
+            NotificationInboxActionKind::MarkRead => 'r',
+            NotificationInboxActionKind::MarkAllRead => 'a',
+        })]
+    }
+
+    pub(in crate::tui) fn notification_inbox_mark_read_label(&self) -> String {
+        key_chord_list_label(
+            &self.notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkRead),
+        )
+    }
+
+    pub(in crate::tui) fn notification_inbox_mark_all_read_label(&self) -> String {
+        key_chord_list_label(
+            &self.notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkAllRead),
+        )
+    }
+
+    pub(in crate::tui) fn notification_inbox_activate_label(&self) -> String {
+        key_chord_list_label(&self.notification_inbox_activate_shortcuts())
+    }
+
+    pub(in crate::tui) fn notification_inbox_tab_switch_label(
+        &self,
+        tab: NotificationInboxTab,
+    ) -> String {
+        let mut action_shortcuts =
+            self.notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkRead);
+        if tab == NotificationInboxTab::Unreads {
+            action_shortcuts.extend(
+                self.notification_inbox_action_shortcuts(NotificationInboxActionKind::MarkAllRead),
+            );
+        }
+        let shortcuts = self
+            .notification_inbox_tab_shortcuts()
+            .into_iter()
+            .filter(|shortcut| {
+                !action_shortcuts
+                    .iter()
+                    .any(|action| action.matches_chord(*shortcut))
+            })
+            .collect::<Vec<_>>();
+        key_chord_list_label(&shortcuts)
+    }
+
+    fn notification_inbox_activate_shortcuts(&self) -> [KeyChord; 1] {
+        [KeyChord {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::empty(),
+        }]
+    }
+
+    fn notification_inbox_tab_shortcuts(&self) -> Vec<KeyChord> {
+        let mut shortcuts = Vec::new();
+        for action in [UiAction::CycleFocusPrevious, UiAction::CycleFocusNext] {
+            let Some(shortcut) = self.keymap_single_key_shortcuts(action).into_iter().next() else {
+                continue;
+            };
+            if shortcuts
+                .iter()
+                .any(|existing: &KeyChord| existing.matches_chord(shortcut))
+            {
+                continue;
+            }
+            shortcuts.push(shortcut);
+        }
+        shortcuts
+    }
+
+    pub(in crate::tui) fn search_popup_action(&self, key: KeyEvent) -> Option<SearchPopupAction> {
         if let Some(action) = self.selection_action(key, SelectionKeySet::TextSafe) {
             return Some(SearchPopupAction::Select(action));
         }
-        if let Some(action) = self.popup_page_action(key) {
+        if let Some(action) = self.text_safe_popup_page_action(key) {
             return Some(SearchPopupAction::Page(action));
         }
 
@@ -204,35 +365,8 @@ impl KeyBindings {
         }
     }
 
-    pub(in crate::tui) fn leader_action_menu_action(
-        &self,
-        key: KeyEvent,
-    ) -> LeaderActionMenuAction {
-        match key.code {
-            KeyCode::Esc => LeaderActionMenuAction::BackOrClose,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                LeaderActionMenuAction::Close
-            }
-            KeyCode::Char(_) => {
-                LeaderActionMenuAction::ActivateShortcut(self.keymap_chord_for_event(key))
-            }
-            code if is_left_key(code) => LeaderActionMenuAction::BackOrClose,
-            _ => LeaderActionMenuAction::UnknownClose,
-        }
-    }
-
     pub(in crate::tui) fn popup_list_action(&self, key: KeyEvent) -> Option<PopupListAction> {
         if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
-            if self.is_popup_close_key(key) {
-                // Character keys may also be popup action shortcuts, so let the
-                // handler try the shortcut first and fall back to close there.
-                return match key.code {
-                    KeyCode::Char(_) => Some(PopupListAction::ActivateShortcut(
-                        self.keymap_chord_for_event(key),
-                    )),
-                    _ => Some(PopupListAction::Close),
-                };
-            }
             return Some(PopupListAction::Select(action));
         }
 
@@ -241,23 +375,6 @@ impl KeyBindings {
             KeyCode::Char(_) => Some(PopupListAction::ActivateShortcut(
                 self.keymap_chord_for_event(key),
             )),
-            _ if self.is_popup_close_key(key) => Some(PopupListAction::Close),
-            _ => None,
-        }
-    }
-
-    pub(in crate::tui) fn message_confirmation_action(
-        &self,
-        key: KeyEvent,
-    ) -> Option<MessageConfirmationAction> {
-        if self.is_popup_close_key(key) {
-            return Some(MessageConfirmationAction::Cancel);
-        }
-        match key.code {
-            KeyCode::Enter | KeyCode::Char('y') if is_shortcut_key(key) => {
-                Some(MessageConfirmationAction::Confirm)
-            }
-            KeyCode::Char('n') if is_shortcut_key(key) => Some(MessageConfirmationAction::Cancel),
             _ => None,
         }
     }
@@ -266,12 +383,13 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<AttachmentViewerAction> {
-        if self.is_popup_close_key(key) {
-            return Some(AttachmentViewerAction::Close);
-        }
         match key.code {
             code if is_left_key(code) => Some(AttachmentViewerAction::Previous),
             code if is_right_key(code) => Some(AttachmentViewerAction::Next),
+            KeyCode::Char('o') if is_shortcut_key(key) => {
+                Some(AttachmentViewerAction::OpenSelected)
+            }
+            KeyCode::Char('y') if is_shortcut_key(key) => Some(AttachmentViewerAction::CopyUrl),
             KeyCode::Char('x') if is_shortcut_key(key) => {
                 Some(AttachmentViewerAction::PlaySelected)
             }
@@ -298,9 +416,6 @@ impl KeyBindings {
             return Self::profile_edit_action_from_composer_action(self.composer_action(key));
         }
 
-        if self.is_popup_close_key(key) {
-            return Some(ProfilePopupAction::Close);
-        }
         match key.code {
             KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(ProfilePopupAction::PasteClipboard)
@@ -313,6 +428,7 @@ impl KeyBindings {
                 Some(ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Guild))
             }
             KeyCode::Char('s') if is_shortcut_key(key) => Some(ProfilePopupAction::Save),
+            KeyCode::Char('o') if is_shortcut_key(key) => Some(ProfilePopupAction::SignOut),
             _ => self
                 .selection_action(key, SelectionKeySet::Navigation)
                 .map(|action| match action {
@@ -330,21 +446,13 @@ impl KeyBindings {
             ComposerAction::PasteClipboard => Some(ProfilePopupAction::PasteClipboard),
             ComposerAction::Submit => Some(ProfilePopupAction::StartOrCommitEdit),
             ComposerAction::Close => Some(ProfilePopupAction::Close),
-            ComposerAction::DeletePreviousChar => Some(ProfilePopupAction::DeleteChar),
-            ComposerAction::DeletePreviousWord => Some(ProfilePopupAction::DeletePreviousWord),
-            ComposerAction::MoveCursorWordLeft => Some(ProfilePopupAction::MoveCursorWordLeft),
-            ComposerAction::MoveCursorLeft => Some(ProfilePopupAction::MoveCursorLeft),
-            ComposerAction::MoveCursorWordRight => Some(ProfilePopupAction::MoveCursorWordRight),
-            ComposerAction::MoveCursorRight => Some(ProfilePopupAction::MoveCursorRight),
-            ComposerAction::MoveCursorHome => Some(ProfilePopupAction::MoveCursorHome),
-            ComposerAction::MoveCursorEnd => Some(ProfilePopupAction::MoveCursorEnd),
             ComposerAction::InsertChar(value) => Some(ProfilePopupAction::InsertChar(value)),
+            ComposerAction::EditText(action) => Some(ProfilePopupAction::EditText(action)),
             ComposerAction::OpenInEditor
             | ComposerAction::InsertNewline
             | ComposerAction::ClearInput
             | ComposerAction::RemoveLastAttachment
-            | ComposerAction::MoveCursorUp
-            | ComposerAction::MoveCursorDown
+            | ComposerAction::ToggleReplyPing
             | ComposerAction::Ignore => None,
         }
     }
@@ -380,19 +488,6 @@ impl KeyBindings {
         } else {
             SelectionKeySet::Navigation
         };
-        if let Some(action) = self.selection_action(key, key_set) {
-            return Some(EmojiReactionPickerAction::Select(action));
-        }
-
-        let close_key = if filter_editing {
-            self.is_text_entry_popup_close_key(key)
-        } else {
-            self.is_popup_close_key(key)
-        };
-        if close_key {
-            return Some(EmojiReactionPickerAction::Close);
-        }
-
         match key.code {
             KeyCode::Enter if filter_editing => Some(EmojiReactionPickerAction::CommitFilter),
             KeyCode::Backspace if filter_editing => {
@@ -408,7 +503,9 @@ impl KeyBindings {
             KeyCode::Char(shortcut) if is_shortcut_key(key) => {
                 Some(EmojiReactionPickerAction::ActivateShortcut(shortcut))
             }
-            _ => None,
+            _ => self
+                .selection_action(key, key_set)
+                .map(EmojiReactionPickerAction::Select),
         }
     }
 
@@ -416,20 +513,15 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<PollVotePickerAction> {
-        if self.is_popup_close_key(key) {
-            return Some(PollVotePickerAction::Close);
-        }
-        if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
-            return Some(PollVotePickerAction::Select(action));
-        }
-
         match key.code {
             KeyCode::Char(' ') => Some(PollVotePickerAction::ToggleSelected),
             KeyCode::Enter => Some(PollVotePickerAction::Submit),
             KeyCode::Char(shortcut) if is_shortcut_key(key) => {
                 Some(PollVotePickerAction::ToggleShortcut(shortcut))
             }
-            _ => None,
+            _ => self
+                .selection_action(key, SelectionKeySet::Navigation)
+                .map(PollVotePickerAction::Select),
         }
     }
 
@@ -437,25 +529,28 @@ impl KeyBindings {
         &self,
         key: KeyEvent,
     ) -> Option<ReactionUsersPopupAction> {
-        if self.is_popup_close_key(key) {
-            return Some(ReactionUsersPopupAction::Close);
+        if is_confirm_key(key.code) {
+            return Some(ReactionUsersPopupAction::Activate);
         }
-        if let Some(action) = self.scroll_action(key) {
-            return Some(ReactionUsersPopupAction::Scroll(action));
+        if let Some(action) = self.horizontal_selection_action(key) {
+            return Some(match action {
+                SelectionAction::Next => ReactionUsersPopupAction::Activate,
+                SelectionAction::Previous => ReactionUsersPopupAction::Back,
+            });
+        }
+        if let Some(action) = self
+            .selection_action(key, SelectionKeySet::Navigation)
+            .or_else(|| {
+                self.scroll_action(key).map(|scroll| match scroll {
+                    ScrollAction::Down => SelectionAction::Next,
+                    ScrollAction::Up => SelectionAction::Previous,
+                })
+            })
+        {
+            return Some(ReactionUsersPopupAction::Navigate(action));
         }
 
         None
-    }
-
-    pub(in crate::tui) fn debug_log_popup_action(
-        &self,
-        key: KeyEvent,
-    ) -> Option<DebugLogPopupAction> {
-        if self.is_popup_close_key(key) || key.code == KeyCode::Char('`') {
-            Some(DebugLogPopupAction::Close)
-        } else {
-            None
-        }
     }
 
     pub(in crate::tui) fn options_popup_action(
@@ -463,36 +558,38 @@ impl KeyBindings {
         key: KeyEvent,
         category_picker_open: bool,
     ) -> Option<OptionsPopupAction> {
-        if self.is_popup_close_key(key) || key.code == KeyCode::Char('o') {
+        if category_picker_open
+            && let KeyCode::Char(shortcut) = key.code
+            && is_shortcut_key(key)
+        {
+            return OptionsCategoryShortcut::from_key(shortcut)
+                .map(OptionsPopupAction::OpenCategory);
+        }
+        if key.code == KeyCode::Char('o') {
             return Some(OptionsPopupAction::Close);
         }
-        if let Some(action) = self.selection_action(key, SelectionKeySet::Navigation) {
-            return Some(OptionsPopupAction::Select(action));
+        if is_confirm_key(key.code) {
+            return Some(OptionsPopupAction::ToggleSelected);
         }
-        match key.code {
-            KeyCode::Char(shortcut @ ('d' | 'D' | 'c' | 'C' | 'n' | 'N' | 'v' | 'V'))
-                if is_shortcut_key(key) && category_picker_open =>
-            {
-                self.options_category_shortcut(shortcut)
-                    .map(OptionsPopupAction::OpenCategory)
-            }
-            KeyCode::Char('h') | KeyCode::Char('H') if is_shortcut_key(key) => Some(
-                OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('H') {
-                    -10
-                } else {
-                    -1
-                }),
-            ),
-            KeyCode::Char('l') | KeyCode::Char('L') if is_shortcut_key(key) => Some(
-                OptionsPopupAction::AdjustSelected(if key.code == KeyCode::Char('L') {
-                    10
-                } else {
-                    1
-                }),
-            ),
-            code if is_confirm_key(code) => Some(OptionsPopupAction::ToggleSelected),
-            _ => None,
+        if let Some(delta) = self.horizontal_adjustment_delta(key) {
+            return Some(OptionsPopupAction::AdjustSelected(delta));
         }
+        self.selection_action(key, SelectionKeySet::Navigation)
+            .map(OptionsPopupAction::Select)
+    }
+
+    pub(in crate::tui) fn voice_participant_audio_popup_action(
+        &self,
+        key: KeyEvent,
+    ) -> Option<VoiceParticipantAudioPopupAction> {
+        if let Some(delta) = self.horizontal_adjustment_delta(key) {
+            return Some(VoiceParticipantAudioPopupAction::AdjustVolume(delta));
+        }
+        if is_confirm_key(key.code) {
+            return Some(VoiceParticipantAudioPopupAction::ToggleMuted);
+        }
+        self.selection_action(key, SelectionKeySet::Navigation)
+            .map(VoiceParticipantAudioPopupAction::Select)
     }
 
     pub(in crate::tui) fn composer_action(&self, key: KeyEvent) -> ComposerAction {
@@ -620,18 +717,33 @@ impl KeyBindings {
             .any(|shortcut| shortcut.matches(key))
     }
 
-    fn is_text_entry_popup_close_key(&self, key: KeyEvent) -> bool {
-        self.is_popup_close_key(key)
-            && !matches!(key.code, KeyCode::Char(_) if is_shortcut_key(key))
+    pub(in crate::tui) fn is_text_entry_popup_close_key(&self, key: KeyEvent) -> bool {
+        self.is_popup_close_key(key) && !is_text_entry_character(key)
     }
 
-    pub(in crate::tui) fn popup_page_action(&self, key: KeyEvent) -> Option<SelectionAction> {
+    pub(in crate::tui) fn physical_popup_page_action(
+        &self,
+        key: KeyEvent,
+    ) -> Option<SelectionAction> {
         match key.code {
-            KeyCode::PageDown => return Some(SelectionAction::Next),
-            KeyCode::PageUp => return Some(SelectionAction::Previous),
-            _ => {}
+            KeyCode::PageDown => Some(SelectionAction::Next),
+            KeyCode::PageUp => Some(SelectionAction::Previous),
+            _ => None,
         }
+    }
 
+    pub(in crate::tui) fn text_safe_popup_page_action(
+        &self,
+        key: KeyEvent,
+    ) -> Option<SelectionAction> {
+        self.physical_popup_page_action(key).or_else(|| {
+            (!is_text_entry_character(key))
+                .then(|| self.configured_popup_page_action(key))
+                .flatten()
+        })
+    }
+
+    fn configured_popup_page_action(&self, key: KeyEvent) -> Option<SelectionAction> {
         self.keymap_single_key_shortcuts(UiAction::HalfPageDown)
             .iter()
             .any(|shortcut| shortcut.matches(key))
@@ -657,6 +769,49 @@ impl KeyBindings {
             })
     }
 
+    pub(in crate::tui) fn horizontal_adjustment_delta(&self, key: KeyEvent) -> Option<i8> {
+        match key.code {
+            KeyCode::Right => Some(1),
+            KeyCode::Left => Some(-1),
+            _ => self
+                .keymap_single_key_shortcuts(UiAction::ScrollHorizontalRight)
+                .iter()
+                .any(|shortcut| shortcut.matches(key))
+                .then_some(10)
+                .or_else(|| {
+                    self.keymap_single_key_shortcuts(UiAction::ScrollHorizontalLeft)
+                        .iter()
+                        .any(|shortcut| shortcut.matches(key))
+                        .then_some(-10)
+                })
+                .or_else(|| {
+                    matches!(key.code, KeyCode::Char('l'))
+                        .then_some(1)
+                        .filter(|_| key.modifiers.is_empty())
+                })
+                .or_else(|| {
+                    matches!(key.code, KeyCode::Char('h'))
+                        .then_some(-1)
+                        .filter(|_| key.modifiers.is_empty())
+                }),
+        }
+    }
+
+    /// `Next` is right and `Previous` is left, using the same horizontal keys
+    /// as numeric popup adjustments.
+    pub(in crate::tui) fn horizontal_selection_action(
+        &self,
+        key: KeyEvent,
+    ) -> Option<SelectionAction> {
+        self.horizontal_adjustment_delta(key).map(|delta| {
+            if delta.is_positive() {
+                SelectionAction::Next
+            } else {
+                SelectionAction::Previous
+            }
+        })
+    }
+
     pub(in crate::tui) fn scroll_action(&self, key: KeyEvent) -> Option<ScrollAction> {
         match key.code {
             KeyCode::Down => Some(ScrollAction::Down),
@@ -675,24 +830,17 @@ impl KeyBindings {
         }
     }
 
-    pub fn message_confirmation_confirm_label(&self) -> &'static str {
-        "Enter/y"
-    }
-
-    pub fn message_confirmation_cancel_label(&self) -> &'static str {
-        "Esc/n"
-    }
-
-    pub fn attachment_viewer_download_hint(&self) -> &'static str {
-        "[x] play  [d] download  [z] zoom  [+/-] zoom in/out"
-    }
-
-    pub fn unread_mark_as_read_hint(&self) -> &'static str {
-        "channel action (a) to mark as read "
-    }
-
     pub fn start_composer_key_label(&self) -> String {
         self.binding_label(UiAction::StartComposer)
+    }
+
+    pub fn popup_close_key_label(&self) -> String {
+        let configured = self.binding_label(UiAction::ClosePopup);
+        if configured.is_empty() {
+            "Esc".to_owned()
+        } else {
+            configured
+        }
     }
 
     pub fn emoji_reaction_filter_prefix(&self) -> &'static str {
@@ -739,37 +887,6 @@ impl KeyBindings {
         "Enter verify | Esc choose method | Ctrl-C quit"
     }
 
-    pub fn options_category_shortcut(&self, shortcut: char) -> Option<OptionsCategoryShortcut> {
-        match shortcut {
-            'd' | 'D' => Some(OptionsCategoryShortcut::Display),
-            'c' | 'C' => Some(OptionsCategoryShortcut::Composer),
-            'n' | 'N' => Some(OptionsCategoryShortcut::Notifications),
-            'v' | 'V' => Some(OptionsCategoryShortcut::Voice),
-            _ => None,
-        }
-    }
-
-    pub fn options_category_shortcut_label(&self, category: OptionsCategoryShortcut) -> String {
-        let action = match category {
-            OptionsCategoryShortcut::Display => UiAction::OpenDisplayOptions,
-            OptionsCategoryShortcut::Composer => UiAction::OpenComposerOptions,
-            OptionsCategoryShortcut::Notifications => UiAction::OpenNotificationOptions,
-            OptionsCategoryShortcut::Voice => UiAction::OpenVoiceOptions,
-        };
-        let label = self.binding_label(action);
-        if label.is_empty() {
-            match category {
-                OptionsCategoryShortcut::Display => "d",
-                OptionsCategoryShortcut::Composer => "c",
-                OptionsCategoryShortcut::Notifications => "n",
-                OptionsCategoryShortcut::Voice => "v",
-            }
-            .to_owned()
-        } else {
-            label
-        }
-    }
-
     pub fn channel_action_shortcuts(
         &self,
         actions: &[ChannelActionItem],
@@ -787,59 +904,55 @@ impl KeyBindings {
         action_label(&self.action_shortcuts.channel, action.kind, &action.label)
     }
 
-    fn default_channel_action_shortcut(&self, kind: ChannelActionKind) -> Vec<KeyChord> {
-        vec![char_chord(match kind {
-            ChannelActionKind::JoinVoice => 'j',
-            ChannelActionKind::LeaveVoice => 'l',
-            ChannelActionKind::LoadPinnedMessages => 'p',
-            ChannelActionKind::ShowThreads => 't',
-            ChannelActionKind::MarkAsRead => 'm',
-            ChannelActionKind::ToggleMute => 'u',
-        })]
-    }
-
-    pub fn guild_action_shortcuts(
+    pub fn channel_action_shortcut_label(
         &self,
-        actions: &[GuildActionItem],
+        actions: &[ChannelActionItem],
         index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.guild,
-            |kind| self.default_guild_action_shortcut(kind),
-        )
+    ) -> String {
+        key_chord_list_label(&self.channel_action_shortcuts(actions, index))
     }
 
-    pub fn guild_action_label(&self, action: &GuildActionItem) -> String {
-        action_label(&self.action_shortcuts.guild, action.kind, &action.label)
+    fn default_channel_action_shortcut(&self, kind: ChannelActionKind) -> Vec<KeyChord> {
+        match kind {
+            ChannelActionKind::JoinVoice => vec![char_chord('e')],
+            ChannelActionKind::LeaveVoice => vec![char_chord('l')],
+            ChannelActionKind::ToggleStream => vec![char_chord('s')],
+            ChannelActionKind::ShowPinnedMessages => vec![char_chord('p')],
+            ChannelActionKind::ShowThreads => vec![char_chord('t')],
+            ChannelActionKind::MarkAsRead => vec![char_chord('m')],
+            ChannelActionKind::ToggleMute => vec![char_chord('u')],
+            ChannelActionKind::WatchStream => vec![char_chord('w')],
+            ChannelActionKind::ParticipantAudioSettings => vec![char_chord('a')],
+        }
     }
+
+    define_action_menu_scope!(
+        guild,
+        GuildActionItem,
+        guild_action_shortcuts,
+        guild_action_label,
+        default_guild_action_shortcut,
+        guild_action_shortcut_label
+    );
 
     fn default_guild_action_shortcut(&self, kind: GuildActionKind) -> Vec<KeyChord> {
         match kind {
             GuildActionKind::MarkAsRead => vec![char_chord('m')],
             GuildActionKind::ToggleMute => vec![char_chord('u')],
             GuildActionKind::LeaveServer => vec![char_chord('l')],
+            GuildActionKind::FolderSettings => vec![char_chord('r')],
             GuildActionKind::NoActionsYet => Vec::new(),
         }
     }
 
-    pub fn member_action_shortcuts(
-        &self,
-        actions: &[MemberActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.member,
-            |kind| self.default_member_action_shortcut(kind),
-        )
-    }
-
-    pub fn member_action_label(&self, action: &MemberActionItem) -> String {
-        action_label(&self.action_shortcuts.member, action.kind, &action.label)
-    }
+    define_action_menu_scope!(
+        member,
+        MemberActionItem,
+        member_action_shortcuts,
+        member_action_label,
+        default_member_action_shortcut,
+        member_action_shortcut_label
+    );
 
     fn default_member_action_shortcut(&self, kind: MemberActionKind) -> Vec<KeyChord> {
         vec![char_chord(match kind {
@@ -847,22 +960,39 @@ impl KeyBindings {
         })]
     }
 
-    pub fn message_action_shortcuts(
-        &self,
-        actions: &[MessageActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.message,
-            |kind| self.default_message_action_shortcut(kind),
-        )
+    define_action_menu_scope!(
+        thread,
+        ThreadActionItem,
+        thread_action_shortcuts,
+        thread_action_label,
+        default_thread_action_shortcut,
+        thread_action_shortcut_label
+    );
+
+    fn default_thread_action_shortcut(&self, kind: ThreadActionKind) -> Vec<KeyChord> {
+        vec![char_chord(match kind {
+            ThreadActionKind::MarkAsRead => 'm',
+            ThreadActionKind::ToggleFollow => 'f',
+            ThreadActionKind::Close => 'c',
+            ThreadActionKind::Lock => 'l',
+            ThreadActionKind::Edit => 'e',
+            ThreadActionKind::CopyLink => 'y',
+            ThreadActionKind::ToggleMute => 'u',
+            ThreadActionKind::NotificationSettings => 'n',
+            ThreadActionKind::Pin => 'P',
+            ThreadActionKind::Delete => 'd',
+            ThreadActionKind::CopyId => 'i',
+        })]
     }
 
-    pub fn message_action_label(&self, action: &MessageActionItem) -> String {
-        action_label(&self.action_shortcuts.message, action.kind, &action.label)
-    }
+    define_action_menu_scope!(
+        message,
+        MessageActionItem,
+        message_action_shortcuts,
+        message_action_label,
+        default_message_action_shortcut,
+        message_action_shortcut_label
+    );
 
     fn default_message_action_shortcut(&self, kind: MessageActionKind) -> Vec<KeyChord> {
         vec![char_chord(match kind {
@@ -872,6 +1002,7 @@ impl KeyBindings {
             MessageActionKind::OpenDeleteConfirmation => 'd',
             MessageActionKind::Edit => 'e',
             MessageActionKind::OpenUrl => 'o',
+            MessageActionKind::RemoveEmbeds => 'D',
             MessageActionKind::PlayMedia => 'x',
             MessageActionKind::ViewAttachment => 'v',
             MessageActionKind::GoToReferencedMessage => 'g',
@@ -881,18 +1012,6 @@ impl KeyBindings {
             MessageActionKind::ShowReactionUsers => 'u',
             MessageActionKind::OpenPollVotePicker => 'c',
         })]
-    }
-
-    pub fn message_action_shortcut_label(
-        &self,
-        actions: &[MessageActionItem],
-        index: usize,
-    ) -> String {
-        let activation_shortcuts = self.message_action_shortcuts(actions, index);
-        if !activation_shortcuts.is_empty() {
-            return key_chord_list_label(&activation_shortcuts);
-        }
-        String::new()
     }
 
     fn keymap_single_key_shortcuts(&self, action: UiAction) -> Vec<KeyChord> {
@@ -926,8 +1045,15 @@ impl KeyBindings {
         })
     }
 
-    pub fn indexed_shortcut(&self, index: usize) -> Option<char> {
-        indexed_shortcut(index)
+    /// Picker shortcut for the row at `index`: `1`-`9` then `0`. Self-independent
+    /// (digits never vary by config), so it is an associated function. Also passed
+    /// by name to `filter_map` in `first_unused_indexed_shortcut`.
+    pub fn indexed_shortcut(index: usize) -> Option<char> {
+        match index {
+            0..=8 => char::from_digit(u32::try_from(index + 1).ok()?, 10),
+            9 => Some('0'),
+            _ => None,
+        }
     }
 
     pub(in crate::tui) fn indexed_shortcut_matches(
@@ -935,8 +1061,7 @@ impl KeyBindings {
         shortcut: KeyChord,
         index: usize,
     ) -> bool {
-        self.indexed_shortcut(index)
-            .is_some_and(|candidate| shortcut.matches_char(candidate))
+        Self::indexed_shortcut(index).is_some_and(|candidate| shortcut.matches_char(candidate))
     }
 
     pub(in crate::tui) fn matching_indexed_shortcut_index(
@@ -947,38 +1072,18 @@ impl KeyBindings {
         (0..len).find(|index| self.indexed_shortcut_matches(shortcut, *index))
     }
 
+    /// Every picker row, existing or new, takes a `1`-`9`/`0` shortcut by its
+    /// display position. Existing reactions sort to the top, so they get the
+    /// leading digits.
     pub fn emoji_reaction_shortcut(
         &self,
         reactions: &[EmojiReactionItem],
-        existing_reactions: &[ReactionEmoji],
         index: usize,
     ) -> Option<char> {
-        let reaction = reactions.get(index)?;
-        if let Some(existing_index) = existing_reactions
-            .iter()
-            .position(|existing| existing == &reaction.emoji)
-        {
-            return self.qwerty_shortcut(existing_index);
+        if index >= reactions.len() {
+            return None;
         }
-
-        let regular_index = reactions[..index]
-            .iter()
-            .filter(|item| !existing_reactions.contains(&item.emoji))
-            .count();
-        self.indexed_shortcut(regular_index)
-    }
-
-    fn qwerty_shortcut(&self, index: usize) -> Option<char> {
-        const SHORTCUTS: &[u8] = b"qwertyuiop";
-        SHORTCUTS.get(index).map(|shortcut| char::from(*shortcut))
-    }
-}
-
-fn indexed_shortcut(index: usize) -> Option<char> {
-    match index {
-        0..=8 => char::from_digit(u32::try_from(index + 1).ok()?, 10),
-        9 => Some('0'),
-        _ => None,
+        Self::indexed_shortcut(index)
     }
 }
 
@@ -1009,22 +1114,32 @@ where
     if index >= shortcut_sets.len() {
         return Vec::new();
     }
-    action_shortcuts(index, shortcut_sets)
+    action_shortcuts(index, &shortcut_sets)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ActionShortcutCandidates {
+    Enabled(Vec<KeyChord>),
+    Disabled,
 }
 
 fn action_shortcut_candidates<K>(
     bindings: &[ActionShortcutBinding<K>],
     kind: K,
     default_shortcuts: &impl Fn(K) -> Vec<KeyChord>,
-) -> Vec<KeyChord>
+) -> ActionShortcutCandidates
 where
     K: Copy + Eq,
 {
-    bindings
-        .iter()
-        .find(|binding| binding.kind == kind)
-        .map(|binding| binding.shortcuts.clone())
-        .unwrap_or_else(|| default_shortcuts(kind))
+    if let Some(binding) = bindings.iter().find(|binding| binding.kind == kind) {
+        if binding.shortcuts.is_empty() {
+            ActionShortcutCandidates::Disabled
+        } else {
+            ActionShortcutCandidates::Enabled(binding.shortcuts.clone())
+        }
+    } else {
+        ActionShortcutCandidates::Enabled(default_shortcuts(kind))
+    }
 }
 
 fn is_left_key(code: KeyCode) -> bool {
@@ -1043,6 +1158,10 @@ fn is_shortcut_key(key: KeyEvent) -> bool {
     key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT
 }
 
+fn is_text_entry_character(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char(_) if is_shortcut_key(key))
+}
+
 fn is_composer_newline_key(key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Enter => key
@@ -1052,25 +1171,33 @@ fn is_composer_newline_key(key: KeyEvent) -> bool {
     }
 }
 
-fn action_shortcuts(
-    index: usize,
-    shortcut_sets: impl IntoIterator<Item = Vec<KeyChord>>,
-) -> Vec<KeyChord> {
-    let shortcut_sets = shortcut_sets.into_iter().collect::<Vec<_>>();
-    let Some(preferred) = shortcut_sets.get(index) else {
+fn action_shortcuts(index: usize, shortcut_sets: &[ActionShortcutCandidates]) -> Vec<KeyChord> {
+    let Some(ActionShortcutCandidates::Enabled(preferred)) = shortcut_sets.get(index) else {
         return Vec::new();
     };
-    let shortcuts = unique_action_shortcuts(preferred, shortcut_sets.clone());
+    let enabled_shortcut_sets = shortcut_sets
+        .iter()
+        .filter_map(|set| match set {
+            ActionShortcutCandidates::Enabled(shortcuts) => Some(shortcuts.clone()),
+            ActionShortcutCandidates::Disabled => None,
+        })
+        .collect::<Vec<_>>();
+    let shortcuts = unique_action_shortcuts(preferred, enabled_shortcut_sets.clone());
     if !shortcuts.is_empty() {
         return shortcuts;
     }
 
-    let mut used = shortcut_sets.iter().flatten().copied().collect::<Vec<_>>();
+    let mut used = enabled_shortcut_sets
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
     for fallback_index in 0..=index {
-        let Some(preferred) = shortcut_sets.get(fallback_index) else {
-            return Vec::new();
+        let Some(ActionShortcutCandidates::Enabled(preferred)) = shortcut_sets.get(fallback_index)
+        else {
+            continue;
         };
-        if !unique_action_shortcuts(preferred, shortcut_sets.clone()).is_empty() {
+        if !unique_action_shortcuts(preferred, enabled_shortcut_sets.clone()).is_empty() {
             continue;
         }
         let Some(fallback) = first_unused_indexed_shortcut(&used) else {
@@ -1086,7 +1213,7 @@ fn action_shortcuts(
 
 fn first_unused_indexed_shortcut(used: &[KeyChord]) -> Option<KeyChord> {
     (0..10)
-        .filter_map(indexed_shortcut)
+        .filter_map(KeyBindings::indexed_shortcut)
         .map(char_chord)
         .find(|shortcut| {
             !used

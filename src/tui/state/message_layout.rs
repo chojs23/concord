@@ -11,7 +11,7 @@ use crate::tui::{
     },
 };
 
-const AUTHOR_GROUP_MAX_GAP: Duration = Duration::from_secs(5 * 60);
+const AUTHOR_GROUP_MAX_GAP: Duration = Duration::from_secs(7 * 60);
 
 impl DashboardState {
     pub(crate) fn message_scroll_row_position(
@@ -20,13 +20,8 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        if self.message_pane_uses_forum_posts() {
-            return self
-                .selected_forum_post_items()
-                .into_iter()
-                .take(self.messages.message_scroll)
-                .map(|post| post.rendered_height())
-                .sum();
+        if self.message_pane_uses_thread_cards() {
+            return self.thread_card_rendered_rows_before(self.messages.message_scroll);
         }
         (0..self.messages.message_scroll)
             .map(|index| {
@@ -47,12 +42,8 @@ impl DashboardState {
         preview_width: u16,
         max_preview_height: u16,
     ) -> usize {
-        if self.message_pane_uses_forum_posts() {
-            return self
-                .selected_forum_post_items()
-                .into_iter()
-                .map(|post| post.rendered_height())
-                .sum();
+        if self.message_pane_uses_thread_cards() {
+            return self.thread_card_total_rendered_rows();
         }
         (0..self.messages().len())
             .map(|index| {
@@ -102,7 +93,13 @@ impl DashboardState {
             return true;
         }
         messages.get(index - 1).is_none_or(|previous| {
+            // Discord webhooks can override their username per message.
+            // Discord starts a new group when that username changes, but
+            // keeps avatar-only changes in the existing group.
+            let webhook_username_changed =
+                current.webhook_id.is_some() && previous.author != current.author;
             previous.author_id != current.author_id
+                || webhook_username_changed
                 || messages_exceed_author_group_gap(previous, current)
         })
     }

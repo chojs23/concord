@@ -9,21 +9,23 @@ use rand::rngs::OsRng;
 use rsa::{Oaep, RsaPrivateKey, RsaPublicKey, pkcs8::EncodePublicKey};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
+    tungstenite::{Message, client::IntoClientRequest, handshake::client::Request},
 };
 
 use super::{
-    auth_http::{DISCORD_LOGIN_REFERER, DISCORD_ORIGIN, discord_web_client},
-    fingerprint::discord_web_user_agent,
+    DiscordAuthSession,
+    auth_http::discord_login_headers,
+    fingerprint::{ClientFingerprint, discord_gateway_headers},
 };
 
 const REMOTE_AUTH_URL: &str = "wss://remote-auth-gateway.discord.gg/?v=2";
 const TICKET_EXCHANGE_URL: &str = "https://discord.com/api/v10/users/@me/remote-auth/login";
 const QR_QUIET_ZONE_MODULES: usize = 4;
+const MAX_REMOTE_AUTH_RECONNECT_ATTEMPTS: u8 = 3;
 
 #[derive(Clone, Debug)]
 pub enum QrEvent {
@@ -39,8 +41,15 @@ pub enum QrEvent {
 }
 
 pub fn spawn(events_tx: mpsc::Sender<QrEvent>) -> JoinHandle<()> {
+    spawn_with_auth_session(DiscordAuthSession::fallback(), events_tx)
+}
+
+pub(crate) fn spawn_with_auth_session(
+    auth_session: DiscordAuthSession,
+    events_tx: mpsc::Sender<QrEvent>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        match run(&events_tx).await {
+        match run(&events_tx, &auth_session).await {
             Ok(Some(token)) => {
                 let _ = events_tx.send(QrEvent::Token(token)).await;
             }
@@ -58,22 +67,53 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
-async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
+enum RemoteAuthConnectionOutcome {
+    Finished(Option<String>),
+    Reconnect(&'static str),
+}
+
+async fn run(
+    tx: &mpsc::Sender<QrEvent>,
+    auth_session: &DiscordAuthSession,
+) -> Result<Option<String>, String> {
+    let mut reconnect_attempts = 0;
+    loop {
+        match run_connection(tx, auth_session).await? {
+            RemoteAuthConnectionOutcome::Finished(token) => return Ok(token),
+            RemoteAuthConnectionOutcome::Reconnect(reason) => {
+                record_remote_auth_reconnect(&mut reconnect_attempts, reason)?;
+                let _ = tx
+                    .send(QrEvent::Status(format!(
+                        "{reason}. Reconnecting ({reconnect_attempts}/{MAX_REMOTE_AUTH_RECONNECT_ATTEMPTS})..."
+                    )))
+                    .await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
+fn record_remote_auth_reconnect(attempts: &mut u8, reason: &str) -> Result<(), String> {
+    if *attempts >= MAX_REMOTE_AUTH_RECONNECT_ATTEMPTS {
+        return Err(format!(
+            "{reason}; remote auth reconnect limit reached after {MAX_REMOTE_AUTH_RECONNECT_ATTEMPTS} attempts"
+        ));
+    }
+    *attempts += 1;
+    Ok(())
+}
+
+async fn run_connection(
+    tx: &mpsc::Sender<QrEvent>,
+    auth_session: &DiscordAuthSession,
+) -> Result<RemoteAuthConnectionOutcome, String> {
     let _ = tx
         .send(QrEvent::Status(
             "Connecting to Discord remote auth gateway...".into(),
         ))
         .await;
 
-    let mut request = REMOTE_AUTH_URL.into_client_request().map_err(err)?;
-    {
-        let headers = request.headers_mut();
-        headers.insert("Origin", HeaderValue::from_static(DISCORD_ORIGIN));
-        headers.insert(
-            "User-Agent",
-            HeaderValue::from_str(&discord_web_user_agent()).expect("web user agent is valid"),
-        );
-    }
+    let request = remote_auth_request(auth_session.fingerprint())?;
 
     let (ws, _) = connect_async(request).await.map_err(err)?;
     let (mut writer, mut reader) = ws.split();
@@ -98,6 +138,7 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
     let public_key = RsaPublicKey::from(&private_key);
     let spki = public_key.to_public_key_der().map_err(err)?;
     let encoded_public = STANDARD.encode(spki.as_bytes());
+    let expected_fingerprint = URL_SAFE_NO_PAD.encode(Sha256::digest(spki.as_bytes()));
 
     send_op(
         &mut writer,
@@ -115,18 +156,34 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
     let mut heartbeat_timer = tokio::time::interval(heartbeat_interval);
     heartbeat_timer.tick().await;
 
-    let mut fingerprint: Option<String> = None;
+    let mut remote_fingerprint: Option<String> = None;
+    let mut heartbeat_pending = false;
 
     loop {
         tokio::select! {
             _ = heartbeat_timer.tick() => {
+                if heartbeat_pending {
+                    let _ = writer.close().await;
+                    return Ok(RemoteAuthConnectionOutcome::Reconnect(
+                        "Remote auth heartbeat ACK timed out",
+                    ));
+                }
                 send_op(&mut writer, &json!({"op": "heartbeat"})).await?;
+                heartbeat_pending = true;
             }
             msg = reader.next() => {
                 let text = match msg {
                     Some(Ok(Message::Text(t))) => t.to_string(),
                     Some(Ok(Message::Binary(b))) => String::from_utf8(b.to_vec()).map_err(err)?,
-                    Some(Ok(Message::Close(_))) | None => return Err("connection closed".into()),
+                    Some(Ok(Message::Close(Some(frame)))) => {
+                        return remote_auth_close_outcome(
+                            u16::from(frame.code),
+                            frame.reason.as_ref(),
+                        );
+                    }
+                    Some(Ok(Message::Close(None))) | None => {
+                        return Err("connection closed without a close code".into());
+                    }
                     Some(Ok(_)) => continue,
                     Some(Err(e)) => return Err(err(e)),
                 };
@@ -153,8 +210,11 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
                         let fp = value
                             .get("fingerprint")
                             .and_then(Value::as_str)
-                            .ok_or("missing fingerprint")?
-                            .to_string();
+                            .ok_or("missing fingerprint")?;
+                        if verify_remote_fingerprint(fp, &expected_fingerprint).is_err() {
+                            let _ = writer.close().await;
+                            return Err("Remote auth fingerprint validation failed".to_owned());
+                        }
                         let bitmap = build_qr_bitmap(&format!("https://discord.com/ra/{fp}"))?;
                         let _ = tx.send(QrEvent::QrBitmap(bitmap)).await;
                         let _ = tx
@@ -162,7 +222,7 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
                                 "Scan this QR code in the Discord mobile app to log in.".into(),
                             ))
                             .await;
-                        fingerprint = Some(fp);
+                        remote_fingerprint = Some(fp.to_owned());
                     }
                     "pending_ticket" => {
                         let payload_b64 = value
@@ -199,18 +259,54 @@ async fn run(tx: &mpsc::Sender<QrEvent>) -> Result<Option<String>, String> {
                             .send(QrEvent::Status("Authenticating with Discord...".into()))
                             .await;
                         let _ = writer.close().await;
-                        let token = exchange_ticket(&ticket, &private_key, fingerprint.as_deref()).await?;
-                        return Ok(Some(token));
+                        let token = exchange_ticket(
+                            &ticket,
+                            &private_key,
+                            remote_fingerprint.as_deref(),
+                            auth_session,
+                        )
+                        .await?;
+                        return Ok(RemoteAuthConnectionOutcome::Finished(Some(token)));
                     }
                     "cancel" => {
-                        return Ok(None);
+                        return Ok(RemoteAuthConnectionOutcome::Finished(None));
                     }
-                    "heartbeat_ack" => {}
+                    "heartbeat_ack" => heartbeat_pending = false,
                     _ => {}
                 }
             }
         }
     }
+}
+
+fn remote_auth_close_outcome(
+    code: u16,
+    reason: &str,
+) -> Result<RemoteAuthConnectionOutcome, String> {
+    if code == 4003 {
+        return Ok(RemoteAuthConnectionOutcome::Reconnect(
+            "Remote auth session expired",
+        ));
+    }
+    Err(format!(
+        "remote auth connection closed: code={code} reason={reason:?}"
+    ))
+}
+
+fn verify_remote_fingerprint(received: &str, expected: &str) -> Result<(), String> {
+    if received == expected {
+        Ok(())
+    } else {
+        Err("remote auth fingerprint did not match the generated public key".into())
+    }
+}
+
+fn remote_auth_request(fingerprint: &ClientFingerprint) -> Result<Request, String> {
+    let mut request = REMOTE_AUTH_URL.into_client_request().map_err(err)?;
+    request
+        .headers_mut()
+        .extend(discord_gateway_headers(fingerprint));
+    Ok(request)
 }
 
 async fn read_text<S>(reader: &mut S) -> Result<String, String>
@@ -258,16 +354,15 @@ fn build_qr_bitmap(content: &str) -> Result<Vec<Vec<bool>>, String> {
 async fn exchange_ticket(
     ticket: &str,
     private_key: &RsaPrivateKey,
-    fingerprint: Option<&str>,
+    remote_fingerprint: Option<&str>,
+    auth_session: &DiscordAuthSession,
 ) -> Result<String, String> {
     #[derive(Deserialize)]
     struct ExchangeResponse {
         encrypted_token: String,
     }
 
-    let client = discord_web_client().map_err(err)?;
-
-    let response = send_ticket_exchange(&client, ticket, fingerprint)
+    let response = send_ticket_exchange(auth_session, ticket, remote_fingerprint)
         .await
         .map_err(err)?;
     let response = checked_ticket_exchange_response(response).await?;
@@ -282,16 +377,16 @@ async fn exchange_ticket(
 }
 
 async fn send_ticket_exchange(
-    client: &reqwest::Client,
+    auth_session: &DiscordAuthSession,
     ticket: &str,
-    fingerprint: Option<&str>,
+    remote_fingerprint: Option<&str>,
 ) -> Result<reqwest::Response, reqwest::Error> {
-    let mut request = client
+    let mut request = auth_session
+        .http()
         .post(TICKET_EXCHANGE_URL)
-        .header("Origin", DISCORD_ORIGIN)
-        .header("Referer", DISCORD_LOGIN_REFERER)
+        .headers(discord_login_headers(auth_session.fingerprint()))
         .json(&json!({ "ticket": ticket }));
-    if let Some(fp) = fingerprint {
+    if let Some(fp) = remote_fingerprint {
         request = request.header("X-Fingerprint", fp);
     }
 
@@ -311,38 +406,10 @@ async fn checked_ticket_exchange_response(
 }
 
 fn format_ticket_exchange_error(status: reqwest::StatusCode, body: &str) -> String {
-    if parse_captcha_challenge(status, body).is_some() {
+    if super::captcha::parse_captcha_challenge(status, body).is_some() {
         "Discord requires captcha verification, so QR login cannot continue in this terminal. Log in with a token instead.".into()
     } else {
         format_discord_error_response(status, body)
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct CaptchaChallenge {
-    captcha_key: Vec<String>,
-    captcha_service: Option<String>,
-}
-
-fn parse_captcha_challenge(status: reqwest::StatusCode, body: &str) -> Option<CaptchaChallenge> {
-    if status != reqwest::StatusCode::BAD_REQUEST {
-        return None;
-    }
-
-    let challenge = serde_json::from_str::<CaptchaChallenge>(body).ok()?;
-    let is_hcaptcha = challenge
-        .captcha_service
-        .as_deref()
-        .is_none_or(|service| service.eq_ignore_ascii_case("hcaptcha"));
-    let requires_captcha = challenge
-        .captcha_key
-        .iter()
-        .any(|key| key == "captcha-required");
-
-    if is_hcaptcha && requires_captcha {
-        Some(challenge)
-    } else {
-        None
     }
 }
 
@@ -417,9 +484,61 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        QR_QUIET_ZONE_MODULES, build_qr_bitmap, format_ticket_exchange_error,
-        parse_captcha_challenge, sanitize_response_body,
+        MAX_REMOTE_AUTH_RECONNECT_ATTEMPTS, QR_QUIET_ZONE_MODULES, build_qr_bitmap,
+        format_ticket_exchange_error, record_remote_auth_reconnect, remote_auth_close_outcome,
+        remote_auth_request, sanitize_response_body, verify_remote_fingerprint,
     };
+    use crate::discord::fingerprint::{CLIENT_BUILD_NUMBER, ClientFingerprint, accept_language};
+    use tokio_tungstenite::tungstenite::http::header::{ACCEPT_LANGUAGE, ORIGIN, USER_AGENT};
+
+    #[test]
+    fn remote_auth_headers_match_shared_fingerprint() {
+        let fingerprint = ClientFingerprint::new(CLIENT_BUILD_NUMBER);
+        let request = remote_auth_request(&fingerprint).expect("remote auth request should build");
+        let headers = request.headers();
+
+        assert_eq!(
+            headers
+                .get(USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some(fingerprint.user_agent.as_str())
+        );
+        assert_eq!(
+            headers
+                .get(ACCEPT_LANGUAGE)
+                .and_then(|value| value.to_str().ok()),
+            Some(accept_language(&fingerprint.system_locale).as_str())
+        );
+        assert_eq!(
+            headers.get(ORIGIN).and_then(|value| value.to_str().ok()),
+            Some("https://discord.com")
+        );
+        assert!(verify_remote_fingerprint("expected", "expected").is_ok());
+        assert!(verify_remote_fingerprint("substituted", "expected").is_err());
+    }
+
+    #[test]
+    fn remote_auth_timeout_close_starts_a_new_session() {
+        assert!(matches!(
+            remote_auth_close_outcome(4003, "timeout"),
+            Ok(super::RemoteAuthConnectionOutcome::Reconnect(_))
+        ));
+        assert!(remote_auth_close_outcome(4001, "invalid command").is_err());
+    }
+
+    #[test]
+    fn remote_auth_stops_after_the_reconnect_limit() {
+        let mut attempts = 0;
+        for _ in 0..MAX_REMOTE_AUTH_RECONNECT_ATTEMPTS {
+            record_remote_auth_reconnect(&mut attempts, "session expired")
+                .expect("retry within the limit should continue");
+        }
+
+        let error = record_remote_auth_reconnect(&mut attempts, "session expired")
+            .expect_err("retry after the limit should stop");
+        assert!(error.contains("session expired"));
+        assert!(error.contains("reconnect limit reached"));
+    }
 
     #[test]
     fn qr_bitmap_includes_four_module_quiet_zone() {
@@ -473,13 +592,6 @@ mod tests {
         assert!(!sanitized.contains("blob"));
         assert!(!sanitized.contains("\":\"session\""));
         assert!(sanitized.contains("[redacted]"));
-    }
-
-    #[test]
-    fn parse_captcha_challenge_accepts_hcaptcha_required_response() {
-        let body = r#"{"captcha_key":["captcha-required"],"captcha_service":"hcaptcha","captcha_sitekey":"site","captcha_rqdata":"data","captcha_rqtoken":"rqtoken","captcha_session_id":"session"}"#;
-
-        assert!(parse_captcha_challenge(reqwest::StatusCode::BAD_REQUEST, body).is_some());
     }
 
     #[test]

@@ -23,7 +23,9 @@ pub(super) fn handle_dashboard_action(
         }
         DashboardAction::MessageShortcut(kind) => state.activate_message_action_kind(kind),
         DashboardAction::Back => {
-            if !state.return_from_pinned_message_view() {
+            if !state.return_from_pinned_message_view()
+                && !state.return_from_channel_thread_list_view()
+            {
                 state.return_from_opened_thread();
             }
             None
@@ -134,10 +136,13 @@ pub(super) fn execute_ui_action(
         UiAction::ToggleGuildPane => state.toggle_pane_visibility(FocusPane::Guilds),
         UiAction::ToggleChannelPane => state.toggle_pane_visibility(FocusPane::Channels),
         UiAction::ToggleMemberPane => state.toggle_pane_visibility(FocusPane::Members),
-        UiAction::OpenFocusedPaneAction => state.open_leader_actions_for_focused_target(),
+        UiAction::OpenFocusedPaneAction => state.open_focused_pane_actions(),
         UiAction::OpenCurrentUserProfile => return state.open_current_user_profile_popup(),
         UiAction::OpenOptions => state.open_options_category_picker(),
         UiAction::ChannelSwitcher => state.open_channel_switcher(),
+        UiAction::OpenNotificationInbox => state.open_notification_inbox(),
+        UiAction::OpenDebugLog => state.open_debug_log_popup(),
+        UiAction::RefreshScreen => state.request_terminal_refresh(),
         UiAction::OpenDisplayOptions => {
             state.open_options_category_from_shortcut(OptionsCategoryShortcut::Display)
         }
@@ -152,6 +157,7 @@ pub(super) fn execute_ui_action(
         }
         UiAction::VoiceDeafen => state.toggle_voice_deafen(),
         UiAction::VoiceMute => state.toggle_voice_mute(),
+        UiAction::ToggleStream => return state.toggle_current_voice_stream_command(),
         UiAction::VoiceLeave => return state.leave_current_voice_channel_command(),
         _ => {}
     }

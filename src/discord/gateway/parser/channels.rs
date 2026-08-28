@@ -1,18 +1,24 @@
 use serde_json::Value;
 
 use crate::discord::{
-    ChannelInfo, ChannelRecipientInfo, PermissionOverwriteInfo, PermissionOverwriteKind,
-    ThreadMetadataInfo,
+    ChannelInfo, ChannelRecipientInfo, ForumTagInfo, PermissionOverwriteInfo,
+    PermissionOverwriteKind, ThreadGatewayInfo, ThreadListSyncInfo, ThreadMemberInfo,
+    ThreadMemberListUpdateInfo, ThreadMembersUpdateInfo, ThreadMetadataInfo,
+    avatar::user_avatar_url,
     events::AppEvent,
     ids::{
         Id,
-        marker::{ChannelMarker, GuildMarker, MessageMarker, UserMarker},
+        marker::{
+            ChannelMarker, EmojiMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker,
+        },
     },
 };
 
+use super::members::parse_member_info;
+use super::presence::parse_activities;
 use super::shared::{
-    display_name_from_parts, display_name_from_parts_or_unknown, parse_id, parse_status,
-    raw_user_avatar_url,
+    display_name_from_parts, display_name_from_parts_or_unknown, extra_fields, parse_id,
+    parse_status,
 };
 
 pub(crate) fn parse_channel_info(
@@ -49,6 +55,7 @@ pub(crate) fn parse_channel_info(
         Some(12) => "GuildPrivateThread".to_owned(),
         Some(13) => "stage".to_owned(),
         Some(15) => "forum".to_owned(),
+        Some(16) => "media".to_owned(),
         Some(other) => format!("type-{other}"),
         None => "channel".to_owned(),
     };
@@ -89,8 +96,6 @@ pub(crate) fn parse_channel_info(
                 .collect()
         })
         .unwrap_or_default();
-    let current_user_joined_thread = parse_current_user_thread_membership(value, &kind);
-
     Some(ChannelInfo {
         guild_id,
         channel_id,
@@ -105,24 +110,70 @@ pub(crate) fn parse_channel_info(
         total_message_sent: value.get("total_message_sent").and_then(Value::as_u64),
         thread_metadata: value.get("thread_metadata").and_then(parse_thread_metadata),
         flags: value.get("flags").and_then(Value::as_u64),
-        current_user_joined_thread,
+        rate_limit_per_user: value.get("rate_limit_per_user").and_then(Value::as_u64),
+        available_tags: parse_forum_tags(value.get("available_tags")),
+        applied_tags: parse_id_array(value.get("applied_tags")),
         recipients,
         permission_overwrites,
+        is_message_request: value.get("is_message_request").and_then(Value::as_bool),
+        is_spam: value.get("is_spam").and_then(Value::as_bool),
     })
 }
 
-fn parse_current_user_thread_membership(value: &Value, kind: &str) -> Option<bool> {
+fn parse_forum_tags(value: Option<&Value>) -> Vec<ForumTagInfo> {
+    value
+        .and_then(Value::as_array)
+        .map(|tags| tags.iter().filter_map(parse_forum_tag).collect())
+        .unwrap_or_default()
+}
+
+fn parse_forum_tag(value: &Value) -> Option<ForumTagInfo> {
+    Some(ForumTagInfo {
+        id: parse_id::<ForumTagMarker>(value.get("id")?)?,
+        name: value.get("name")?.as_str()?.to_owned(),
+        moderated: value
+            .get("moderated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        emoji_id: value.get("emoji_id").and_then(parse_id::<EmojiMarker>),
+        emoji_name: value
+            .get("emoji_name")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
+}
+
+fn current_user_thread_member_payload<'a>(value: &'a Value, kind: &str) -> Option<&'a Value> {
     if !matches!(
         kind,
         "GuildNewsThread" | "GuildPublicThread" | "GuildPrivateThread"
     ) {
         return None;
     }
-    if value.get("member").is_some() || value.get("thread_member").is_some() {
-        Some(true)
-    } else {
-        None
-    }
+    value
+        .get("member")
+        .filter(|member| member.is_object())
+        .or_else(|| {
+            value
+                .get("thread_member")
+                .filter(|member| member.is_object())
+        })
+}
+
+fn parse_thread_member_mute_end_time(value: &Value) -> Option<String> {
+    value
+        .get("mute_config")
+        .and_then(|config| config.get("end_time"))
+        .and_then(Value::as_str)
+        .filter(|end_time| !end_time.is_empty())
+        .map(str::to_owned)
+}
+
+fn parse_thread_member_selected_time_window(value: &Value) -> Option<i64> {
+    value
+        .get("mute_config")
+        .and_then(|config| config.get("selected_time_window"))
+        .and_then(Value::as_i64)
 }
 
 fn parse_thread_metadata(value: &Value) -> Option<ThreadMetadataInfo> {
@@ -215,7 +266,7 @@ pub(super) fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecip
         display_name,
         username: username.map(str::to_owned),
         is_bot,
-        avatar_url: raw_user_avatar_url(user_id, value),
+        avatar_url: user_avatar_url(user_id, value),
         status,
     })
 }
@@ -223,6 +274,28 @@ pub(super) fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecip
 pub(super) fn parse_channel_upsert(data: &Value) -> Option<AppEvent> {
     let info = parse_channel_info(data, None)?;
     Some(AppEvent::ChannelUpsert(info))
+}
+
+pub(super) fn parse_thread_gateway_info(
+    data: &Value,
+    default_guild: Option<Id<GuildMarker>>,
+) -> Option<ThreadGatewayInfo> {
+    let channel = parse_channel_info(data, default_guild)?;
+    let current_user_member =
+        current_user_thread_member_payload(data, &channel.kind).and_then(|member| {
+            parse_thread_member_info(member, channel.guild_id, Some(channel.channel_id))
+        });
+    Some(ThreadGatewayInfo {
+        channel,
+        current_user_member,
+    })
+}
+
+pub(super) fn parse_thread_upsert(data: &Value, created: bool) -> Option<AppEvent> {
+    Some(AppEvent::ThreadUpsert {
+        thread: parse_thread_gateway_info(data, None)?,
+        created,
+    })
 }
 
 pub(super) fn parse_channel_delete(data: &Value) -> Option<AppEvent> {
@@ -234,18 +307,98 @@ pub(super) fn parse_channel_delete(data: &Value) -> Option<AppEvent> {
     })
 }
 
+pub(super) fn parse_channel_recipient_add(data: &Value) -> Option<AppEvent> {
+    let channel_id = data.get("channel_id").and_then(parse_id::<ChannelMarker>)?;
+    let recipient = parse_channel_recipient_info(data.get("user").unwrap_or(data))?;
+    Some(AppEvent::ChannelRecipientAdd {
+        channel_id,
+        recipient,
+    })
+}
+
+pub(super) fn parse_channel_recipient_remove(data: &Value) -> Option<AppEvent> {
+    let channel_id = data.get("channel_id").and_then(parse_id::<ChannelMarker>)?;
+    let user_id = data
+        .get("user_id")
+        .and_then(parse_id::<UserMarker>)
+        .or_else(|| {
+            data.get("user")
+                .and_then(|user| user.get("id"))
+                .and_then(parse_id::<UserMarker>)
+        })?;
+    Some(AppEvent::ChannelRecipientRemove {
+        channel_id,
+        user_id,
+    })
+}
+
 pub(super) fn parse_thread_list_sync(data: &Value) -> Vec<AppEvent> {
+    let Some(guild_id) = data.get("guild_id").and_then(parse_id::<GuildMarker>) else {
+        return Vec::new();
+    };
+    let channel_ids = match data.get("channel_ids") {
+        Some(value) => {
+            let Some(values) = value.as_array() else {
+                return Vec::new();
+            };
+            Some(
+                values
+                    .iter()
+                    .filter_map(parse_id::<ChannelMarker>)
+                    .collect(),
+            )
+        }
+        None => None,
+    };
+    let Some(raw_threads) = data.get("threads").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let current_user_members = match data.get("members") {
+        Some(value) => {
+            let Some(members) = value.as_array() else {
+                return Vec::new();
+            };
+            Some(
+                members
+                    .iter()
+                    .filter_map(|member| parse_thread_member_info(member, Some(guild_id), None))
+                    .collect(),
+            )
+        }
+        None => None,
+    };
+    let threads: Vec<ChannelInfo> = raw_threads
+        .iter()
+        .filter_map(|thread| parse_channel_info(thread, Some(guild_id)))
+        .collect();
+    vec![AppEvent::ThreadListSync {
+        sync: ThreadListSyncInfo {
+            guild_id,
+            channel_ids,
+            threads,
+            current_user_members,
+            extra_fields: extra_fields(data, &["guild_id", "channel_ids", "threads", "members"]),
+        },
+    }]
+}
+
+pub(super) fn parse_thread_member_update(data: &Value) -> Vec<AppEvent> {
+    let channel_id = data
+        .get("id")
+        .and_then(parse_id::<ChannelMarker>)
+        .or_else(|| data.get("channel_id").and_then(parse_id::<ChannelMarker>));
+    let Some(channel_id) = channel_id else {
+        return Vec::new();
+    };
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
-    data.get("threads")
-        .and_then(Value::as_array)
-        .map(|threads| {
-            threads
-                .iter()
-                .filter_map(|thread| parse_channel_info(thread, guild_id))
-                .map(AppEvent::ChannelUpsert)
-                .collect()
-        })
-        .unwrap_or_default()
+    let Some(member) = parse_thread_member_info(data, guild_id, Some(channel_id)) else {
+        return Vec::new();
+    };
+    vec![AppEvent::ThreadMemberUpdate {
+        guild_id,
+        channel_id,
+        member,
+    }]
 }
 
 pub(super) fn parse_thread_members_update(data: &Value) -> Vec<AppEvent> {
@@ -253,12 +406,18 @@ pub(super) fn parse_thread_members_update(data: &Value) -> Vec<AppEvent> {
         return Vec::new();
     };
 
-    let added_user_ids: Vec<_> = data
+    let added_members: Vec<_> = data
         .get("added_members")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|member| member.get("user_id").and_then(parse_id::<UserMarker>))
+        .filter_map(|member| {
+            parse_thread_member_info(
+                member,
+                data.get("guild_id").and_then(parse_id::<GuildMarker>),
+                Some(channel_id),
+            )
+        })
         .collect();
     let removed_user_ids: Vec<_> = data
         .get("removed_member_ids")
@@ -268,13 +427,124 @@ pub(super) fn parse_thread_members_update(data: &Value) -> Vec<AppEvent> {
         .filter_map(parse_id::<UserMarker>)
         .collect();
 
-    if added_user_ids.is_empty() && removed_user_ids.is_empty() {
-        Vec::new()
-    } else {
-        vec![AppEvent::ThreadMembersUpdate {
+    vec![AppEvent::ThreadMembersUpdateDispatch {
+        update: ThreadMembersUpdateInfo {
+            guild_id: data.get("guild_id").and_then(parse_id::<GuildMarker>),
             channel_id,
-            added_user_ids,
+            member_count: data.get("member_count").and_then(Value::as_u64),
+            added_members,
             removed_user_ids,
-        }]
+            extra_fields: extra_fields(
+                data,
+                &[
+                    "id",
+                    "guild_id",
+                    "member_count",
+                    "added_members",
+                    "removed_member_ids",
+                ],
+            ),
+        },
+    }]
+}
+
+pub(super) fn parse_thread_member_list_update(data: &Value) -> Vec<AppEvent> {
+    let Some(guild_id) = data.get("guild_id").and_then(parse_id::<GuildMarker>) else {
+        return Vec::new();
+    };
+    let Some(channel_id) = data
+        .get("thread_id")
+        .and_then(parse_id::<ChannelMarker>)
+        .or_else(|| data.get("id").and_then(parse_id::<ChannelMarker>))
+    else {
+        return Vec::new();
+    };
+    let Some(raw_members) = data.get("members").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let members = raw_members
+        .iter()
+        .filter_map(|member| parse_thread_member_info(member, Some(guild_id), Some(channel_id)))
+        .collect();
+
+    vec![AppEvent::ThreadMemberListUpdate {
+        update: ThreadMemberListUpdateInfo {
+            guild_id,
+            channel_id,
+            members,
+            extra_fields: extra_fields(data, &["guild_id", "thread_id", "id", "members"]),
+        },
+    }]
+}
+
+pub(crate) fn parse_thread_member_info(
+    value: &Value,
+    guild_id: Option<Id<GuildMarker>>,
+    default_thread_id: Option<Id<ChannelMarker>>,
+) -> Option<ThreadMemberInfo> {
+    let thread_id = value
+        .get("id")
+        .and_then(parse_id::<ChannelMarker>)
+        .or_else(|| value.get("thread_id").and_then(parse_id::<ChannelMarker>))
+        .or(default_thread_id);
+    let member = guild_id.and_then(|guild_id| {
+        value
+            .get("member")
+            .and_then(|member| parse_member_info(member, Some(guild_id)))
+    });
+    let user_id = value
+        .get("user_id")
+        .and_then(parse_id::<UserMarker>)
+        .or_else(|| member.as_ref().map(|member| member.user_id));
+    if thread_id.is_none() && user_id.is_none() {
+        return None;
     }
+    let presence = value.get("presence").and_then(|presence| {
+        let user_id = user_id?;
+        let status = presence
+            .get("status")
+            .and_then(Value::as_str)
+            .map(parse_status)?;
+        Some(crate::discord::PresenceEventFields {
+            user_id,
+            status,
+            activities: parse_activities(presence),
+        })
+    });
+
+    Some(ThreadMemberInfo {
+        thread_id,
+        user_id,
+        join_timestamp: value
+            .get("join_timestamp")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        flags: value.get("flags").and_then(Value::as_u64),
+        muted: value.get("muted").and_then(Value::as_bool),
+        mute_end_time: parse_thread_member_mute_end_time(value),
+        selected_time_window: parse_thread_member_selected_time_window(value),
+        member,
+        presence,
+        extra_fields: extra_fields(
+            value,
+            &[
+                "id",
+                "thread_id",
+                "user_id",
+                "join_timestamp",
+                "flags",
+                "muted",
+                "mute_config",
+                "member",
+                "presence",
+            ],
+        ),
+    })
+}
+
+fn parse_id_array<T>(value: Option<&Value>) -> Vec<Id<T>> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| values.iter().filter_map(parse_id::<T>).collect())
+        .unwrap_or_default()
 }

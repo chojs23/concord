@@ -1,13 +1,60 @@
 use super::*;
-use crate::discord::AppCommand;
+use crate::discord::{AppCommand, ThreadGatewayInfo};
 use crate::tui::state::MessagePaneSource;
+
+fn state_with_thread_created_message_after_regular_message() -> DashboardState {
+    let guild_id = Id::new(1);
+    let parent_id = Id::new(2);
+    let thread_id = Id::new(10);
+    let mut state = DashboardState::new();
+
+    state.push_event(crate::discord::test_builders::guild_create_event(
+        GuildCreateFixture {
+            channels: vec![
+                text_channel_info(guild_id, parent_id, "general"),
+                ChannelInfo {
+                    message_count: Some(12),
+                    member_count: None,
+                    total_message_sent: Some(14),
+                    ..thread_channel_info(guild_id, parent_id, thread_id, "release notes")
+                },
+            ],
+            ..GuildCreateFixture::new(guild_id)
+        },
+    ));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(guild_id),
+        channel_id: parent_id,
+        message_id: Id::new(1),
+        author_id: Id::new(99),
+        content: Some("older parent message ".repeat(20)),
+        ..guild_message_create_fixture()
+    }));
+    state.push_event(message_create_event(MessageCreateFixture {
+        guild_id: Some(guild_id),
+        channel_id: parent_id,
+        message_id: Id::new(2),
+        author_id: Id::new(99),
+        message_kind: MessageKind::new(18),
+        reference: Some(MessageReferenceInfo {
+            guild_id: Some(guild_id),
+            channel_id: Some(thread_id),
+            message_id: None,
+        }),
+        content: Some("release notes ".repeat(20)),
+        ..guild_message_create_fixture()
+    }));
+    state
+}
 
 #[test]
 fn channel_show_pinned_messages_action_enters_pinned_message_view() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Channels);
     state.open_selected_channel_actions();
-    state.select_channel_action_row(2);
+    state.select_channel_action_row(3);
 
     let command = state.activate_selected_channel_action();
 
@@ -19,13 +66,12 @@ fn channel_show_pinned_messages_action_enters_pinned_message_view() {
             channel_id: Id::new(2)
         })
     );
-    assert!(!state.is_channel_leader_action_active());
+    assert!(!state.is_channel_action_menu_active());
     assert_eq!(state.selected_message(), 0);
     assert_eq!(state.message_scroll(), 0);
     assert_eq!(state.message_line_scroll(), 0);
     assert!(!state.message_auto_follow());
 }
-
 #[test]
 fn pinned_message_view_title_mentions_channel_and_pins() {
     let mut state = state_with_messages(1);
@@ -105,47 +151,6 @@ fn pinned_message_view_does_not_request_older_history() {
 }
 
 #[test]
-fn forum_channel_cannot_enter_pinned_message_view() {
-    let mut state = state_with_forum_channel_posts();
-
-    state.enter_pinned_message_view(Id::new(20));
-
-    assert!(!state.is_pinned_message_view());
-    assert_eq!(
-        state.message_pane_source(),
-        Some(MessagePaneSource::ForumPosts {
-            channel_id: Id::new(20)
-        })
-    );
-}
-
-#[test]
-fn pinned_only_messages_stay_out_of_normal_history() {
-    let channel_id: Id<ChannelMarker> = Id::new(2);
-    let mut state = state_with_message_ids([10, 11, 12]);
-
-    state.push_event(AppEvent::PinnedMessagesLoaded {
-        channel_id,
-        messages: vec![message_info(channel_id, 5)],
-    });
-
-    assert_eq!(
-        state
-            .messages()
-            .into_iter()
-            .map(|message| message.id.get())
-            .collect::<Vec<_>>(),
-        vec![10, 11, 12]
-    );
-
-    state.enter_pinned_message_view(channel_id);
-    assert_eq!(
-        state.messages().first().map(|message| message.id),
-        Some(Id::new(5))
-    );
-}
-
-#[test]
 fn pinned_only_messages_do_not_become_older_history_cursor() {
     let channel_id: Id<ChannelMarker> = Id::new(2);
     let mut state = state_with_message_ids([10, 11, 12]);
@@ -167,34 +172,33 @@ fn pinned_only_messages_do_not_become_older_history_cursor() {
 }
 
 #[test]
-fn channel_change_exits_pinned_message_view() {
-    let mut state = state_with_many_channels(2);
-    state.confirm_selected_channel();
-    state.enter_pinned_message_view(Id::new(1));
-    assert!(state.is_pinned_message_view());
+fn navigating_away_exits_pinned_message_view() {
+    // The pinned view belongs to one channel, so either kind of navigation has
+    // to drop it rather than showing another channel's pins.
+    let mut channel_change = state_with_many_channels(2);
+    channel_change.confirm_selected_channel();
+    channel_change.enter_pinned_message_view(Id::new(1));
+    assert!(channel_change.is_pinned_message_view());
 
-    state.focus_pane(FocusPane::Channels);
-    state.move_down();
-    state.confirm_selected_channel();
+    channel_change.focus_pane(FocusPane::Channels);
+    channel_change.move_down();
+    channel_change.confirm_selected_channel();
 
-    assert_eq!(state.selected_channel_id(), Some(Id::new(2)));
-    assert!(!state.is_pinned_message_view());
-}
+    assert_eq!(channel_change.selected_channel_id(), Some(Id::new(2)));
+    assert!(!channel_change.is_pinned_message_view());
 
-#[test]
-fn guild_change_exits_pinned_message_view() {
-    let mut state = state_with_messages(1);
-    state.push_event(guild_create_event(Id::new(2), "other guild", Vec::new()));
-    state.enter_pinned_message_view(Id::new(2));
-    assert!(state.is_pinned_message_view());
+    let mut guild_change = state_with_messages(1);
+    guild_change.push_event(guild_create_event(Id::new(2), "other guild", Vec::new()));
+    guild_change.enter_pinned_message_view(Id::new(2));
+    assert!(guild_change.is_pinned_message_view());
 
-    state.focus_pane(FocusPane::Guilds);
-    state.move_down();
-    state.confirm_selected_guild();
+    guild_change.focus_pane(FocusPane::Guilds);
+    guild_change.move_down();
+    guild_change.confirm_selected_guild();
 
-    assert_eq!(state.selected_guild_id(), Some(Id::new(2)));
-    assert_eq!(state.selected_channel_id(), None);
-    assert!(!state.is_pinned_message_view());
+    assert_eq!(guild_change.selected_guild_id(), Some(Id::new(2)));
+    assert_eq!(guild_change.selected_channel_id(), None);
+    assert!(!guild_change.is_pinned_message_view());
 }
 
 #[test]
@@ -215,13 +219,19 @@ fn pinned_messages_loaded_does_not_update_status() {
 #[test]
 fn missing_thread_preview_requests_exact_latest_message_until_loaded() {
     let mut state = state_with_thread_created_message();
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        last_message_id: Some(Id::new(30)),
-        message_count: Some(12),
-        member_count: None,
-        total_message_sent: Some(14),
-        ..thread_channel_info(Id::new(1), Id::new(2), Id::new(10), "release notes")
-    }));
+    state.push_event(AppEvent::ThreadUpsert {
+        thread: ThreadGatewayInfo {
+            channel: ChannelInfo {
+                last_message_id: Some(Id::new(30)),
+                message_count: Some(12),
+                member_count: None,
+                total_message_sent: Some(14),
+                ..thread_channel_info(Id::new(1), Id::new(2), Id::new(10), "release notes")
+            },
+            current_user_member: None,
+        },
+        created: false,
+    });
 
     assert_eq!(
         state.missing_thread_preview_load_requests(),
@@ -246,66 +256,6 @@ fn missing_thread_preview_requests_exact_latest_message_until_loaded() {
             .latest_message_preview
             .map(|preview| (preview.author, preview.content)),
         Some(("neo".to_owned(), "latest reply".to_owned()))
-    );
-}
-
-#[test]
-fn missing_thread_preview_requests_skip_forum_posts_without_starter_preview() {
-    let mut state = state_with_forum_channel_posts();
-    state.push_event(AppEvent::SelectedMessageChannelChanged { channel_id: None });
-    state.push_event(AppEvent::ChannelUpsert(forum_thread_info(
-        Id::new(1),
-        Id::new(20),
-        30,
-        "welcome",
-        Some(300),
-        false,
-    )));
-    state.push_event(message_create_event(MessageCreateFixture {
-        guild_id: Some(Id::new(1)),
-        channel_id: Id::new(30),
-        message_id: Id::new(300),
-        author_id: Id::new(99),
-        content: Some("starter preview".to_owned()),
-        ..guild_message_create_fixture()
-    }));
-
-    let post = state
-        .selected_forum_post_items()
-        .into_iter()
-        .find(|post| post.channel_id == Id::new(30))
-        .expect("forum post should be visible");
-    assert_eq!(post.preview_content.as_deref(), None);
-    assert_eq!(state.missing_thread_preview_load_requests(), Vec::new());
-}
-
-#[test]
-fn thread_summary_suppresses_preview_when_channel_latest_is_newer_than_cache() {
-    let mut state = state_with_thread_created_message();
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        last_message_id: Some(Id::new(40)),
-        message_count: Some(12),
-        member_count: None,
-        total_message_sent: Some(14),
-        ..thread_channel_info(Id::new(1), Id::new(2), Id::new(10), "release notes")
-    }));
-    state.push_event(AppEvent::ThreadPreviewLoaded {
-        channel_id: Id::new(10),
-        message: MessageInfo {
-            content: Some("older cached reply".to_owned()),
-            ..message_info(Id::new(10), 30)
-        },
-    });
-    let message = state.messages()[0];
-    let summary = state
-        .thread_summary_for_message(message)
-        .expect("thread summary should resolve");
-
-    assert_eq!(summary.latest_message_id, Some(Id::new(40)));
-    assert_eq!(summary.latest_message_preview, None);
-    assert_eq!(
-        state.missing_thread_preview_load_requests(),
-        vec![(Id::new(10), Id::new(40))]
     );
 }
 

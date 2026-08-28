@@ -198,7 +198,7 @@ fn is_camel_boundary(chars: &[char], index: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{FuzzyScore, fuzzy_text_score};
+    use super::{FuzzyMatchQuality, FuzzyScore, fuzzy_name_match_score, fuzzy_text_score};
 
     fn score(value: &str, query: &str) -> i32 {
         fuzzy_text_score(value, query)
@@ -227,70 +227,93 @@ mod tests {
     }
 
     #[test]
-    fn contiguous_matches_rank_higher_than_fragmented_matches() {
-        let contiguous = score("foobar", "oba");
-        let fragmented = score("foo_bar_baz", "oba");
-
-        assert!(contiguous > fragmented);
+    fn ranking_prefers_tighter_earlier_and_boundary_aligned_matches() {
+        for (name, better, worse, query) in [
+            ("contiguous over fragmented", "foobar", "foo_bar_baz", "oba"),
+            ("tight run over spaced", "abc", "a_b_c", "abc"),
+            ("spaced run over wide", "a_b_c", "a___b___c", "abc"),
+            (
+                "word boundary over interior",
+                "foo_bar_test",
+                "foobartest",
+                "bt",
+            ),
+            (
+                "camel case boundary over flat",
+                "FooBarTest",
+                "foobartest",
+                "bt",
+            ),
+            (
+                "earlier match over later",
+                "testingDocument",
+                "veryLongTestingDocument",
+                "doc",
+            ),
+            (
+                "shorter candidate when similarity ties",
+                "foo_bar",
+                "foo_bar_baz_qux",
+                "fb",
+            ),
+        ] {
+            assert!(
+                score(better, query) > score(worse, query),
+                "{name}: {better:?} should outrank {worse:?} for {query:?}"
+            );
+        }
     }
 
     #[test]
-    fn consecutive_runs_are_strongly_preferred() {
-        let tight = score("abc", "abc");
-        let spaced = score("a_b_c", "abc");
-        let wide = score("a___b___c", "abc");
+    fn degenerate_queries_return_a_defined_score() {
+        for (candidate, query, expected) in [
+            ("anything", "", Some(FuzzyScore(0))),
+            ("abc", "xyz", None),
+            ("short", "muchlonger", None),
+        ] {
+            assert_eq!(
+                fuzzy_text_score(candidate, query),
+                expected,
+                "{candidate:?} {query:?}"
+            );
+        }
+    }
 
-        assert!(tight > spaced);
-        assert!(spaced > wide);
+    /// The ranking tests above only compare candidates against each other, so a
+    /// changed weight or operator survives as long as the order holds. These
+    /// pin the arithmetic itself: each row exercises one scoring term.
+    #[test]
+    fn scoring_weights_produce_exact_scores() {
+        let cases = [
+            ("abc", "abc", 10_000),
+            ("foobar", "foo", 8_994),
+            ("FooBar", "b", 35),
+            ("FooBar", "B", 40),
+            ("xab", "ab", 86),
+            ("axxxb", "ab", 54),
+        ];
+
+        for (value, query, expected) in cases {
+            assert_eq!(
+                fuzzy_text_score(value, query),
+                Some(FuzzyScore(expected)),
+                "{value} / {query}"
+            );
+        }
     }
 
     #[test]
-    fn prefers_word_boundaries() {
-        let boundary = score("foo_bar_test", "bt");
-        let interior = score("foobartest", "bt");
+    fn name_match_quality_separates_exact_prefix_and_fuzzy() {
+        let cases = [
+            ("abc", "abc", FuzzyMatchQuality::Exact),
+            ("abcdef", "abc", FuzzyMatchQuality::Prefix),
+            ("axbxc", "abc", FuzzyMatchQuality::Fuzzy),
+        ];
 
-        assert!(boundary > interior);
-    }
-
-    #[test]
-    fn prefers_camel_case_boundaries() {
-        let camel = score("FooBarTest", "bt");
-        let flat = score("foobartest", "bt");
-
-        assert!(camel > flat);
-    }
-
-    #[test]
-    fn prefers_earlier_matches() {
-        let early = score("testingDocument", "doc");
-        let late = score("veryLongTestingDocument", "doc");
-
-        assert!(early > late);
-    }
-
-    #[test]
-    fn prefers_shorter_candidates_when_similarity_is_equal() {
-        let short = score("foo_bar", "fb");
-        let long = score("foo_bar_baz_qux", "fb");
-
-        assert!(short > long);
-    }
-
-    #[test]
-    fn supports_acronym_style_matching() {
-        assert!(fuzzy_text_score("GitDiffFile", "gdf").is_some());
-        assert!(fuzzy_text_score("VeryImportantClass", "vic").is_some());
-        assert!(fuzzy_text_score("foo_bar_baz", "fbb").is_some());
-    }
-
-    #[test]
-    fn empty_query_scores_zero() {
-        assert_eq!(fuzzy_text_score("anything", ""), Some(FuzzyScore(0)));
-    }
-
-    #[test]
-    fn non_matching_queries_return_none() {
-        assert_eq!(fuzzy_text_score("abc", "xyz"), None);
-        assert_eq!(fuzzy_text_score("short", "muchlonger"), None);
+        for (value, query, expected) in cases {
+            let (quality, _) =
+                fuzzy_name_match_score(value, query).expect("value should match query");
+            assert_eq!(quality, expected, "{value} / {query}");
+        }
     }
 }

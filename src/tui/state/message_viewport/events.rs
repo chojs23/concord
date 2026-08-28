@@ -12,24 +12,28 @@ impl DashboardState {
         event: &AppEvent,
     ) -> Option<(Id<ChannelMarker>, Id<MessageMarker>)> {
         let AppEvent::MessageCreate { message } = event else {
-            let AppEvent::MessageHistoryCatchUpLoaded {
+            let AppEvent::MessageHistoryAfterLoaded {
                 channel_id,
                 after,
                 messages,
+                mode,
                 ..
             } = event
             else {
                 return None;
             };
+            if !mode.is_catch_up() {
+                return None;
+            }
             let first_newer_message_id = messages
                 .iter()
                 .filter(|message| message.channel_id == *channel_id && message.message_id > *after)
                 .map(|message| message.message_id)
                 .min()?;
-            return (Some(*channel_id) == self.navigation.active_channel_id)
+            return (Some(*channel_id) == self.navigation.channels.active_channel_id)
                 .then_some((*channel_id, first_newer_message_id));
         };
-        (Some(message.channel_id) == self.navigation.active_channel_id)
+        (Some(message.channel_id) == self.navigation.channels.active_channel_id)
             .then_some((message.channel_id, message.message_id))
     }
 
@@ -41,6 +45,6 @@ impl DashboardState {
             return false;
         };
         Some(message.author_id) == self.discord.current_user_id
-            && Some(message.channel_id) == self.navigation.active_channel_id
+            && Some(message.channel_id) == self.navigation.channels.active_channel_id
     }
 }

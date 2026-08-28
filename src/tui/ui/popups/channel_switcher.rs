@@ -19,7 +19,14 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
     let selected = state.selected_channel_switcher_index().unwrap_or(0);
     let popup = channel_switcher_popup_area(area);
     let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
-    frame.render_widget(Clear, popup);
+    let scroll = state
+        .popup_list_scroll(SelectablePopupTarget::ChannelSwitcher)
+        .expect("channel switcher has selection state");
+    let inner = render_modal_frame(frame, popup, "Channel Switcher");
+    let content = Rect {
+        width: inner.width.saturating_sub(1).max(1),
+        ..inner
+    };
     frame.render_widget(
         Paragraph::new(channel_switcher_lines(
             &items,
@@ -27,11 +34,25 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
             query,
             query_cursor,
             max_result_lines,
-            popup.width.saturating_sub(2) as usize,
-        ))
-        .block(panel_block("Channel Switcher", true))
-        .wrap(Wrap { trim: false }),
-        popup,
+            scroll,
+            usize::from(content.width),
+        )),
+        content,
+    );
+    render_vertical_scrollbar(
+        frame,
+        Rect {
+            y: inner.y.saturating_add(2),
+            height: max_result_lines.min(u16::MAX as usize) as u16,
+            ..inner
+        },
+        scroll,
+        channel_switcher_visible_result_rows(&items, scroll, max_result_lines)
+            .iter()
+            .filter(|row| matches!(row, ChannelSwitcherResultRow::Item(_)))
+            .count()
+            .max(1),
+        items.len(),
     );
     if let Some(position) = channel_switcher_cursor_position(area, state) {
         frame.set_cursor_position(position);
@@ -43,35 +64,29 @@ pub(in crate::tui::ui) fn channel_switcher_popup_area(area: Rect) -> Rect {
     centered_rect(area, CHANNEL_SWITCHER_POPUP_WIDTH, height)
 }
 
-pub(in crate::tui::ui) fn channel_switcher_item_index_at(
+pub(in crate::tui::ui) fn channel_switcher_list_layout(
     area: Rect,
     state: &DashboardState,
-    column: u16,
-    row: u16,
-) -> Option<usize> {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::ChannelSwitcher) {
-        return None;
-    }
+    snapshot: SelectablePopupSnapshot,
+) -> SelectablePopupLayout {
     let popup = channel_switcher_popup_area(area);
     let inner = panel_block("", false).inner(popup);
-    if column < inner.x
-        || column >= inner.x.saturating_add(inner.width)
-        || row < inner.y
-        || row >= inner.y.saturating_add(inner.height)
-    {
-        return None;
-    }
-    let line = row.saturating_sub(inner.y) as usize;
-    let result_line = line.checked_sub(2)?;
+    let list = Rect {
+        y: inner.y.saturating_add(2),
+        width: inner.width.saturating_sub(1).max(1),
+        height: inner.height.saturating_sub(2),
+        ..inner
+    };
     let items = state.channel_switcher_items();
-    let selected = state.selected_channel_switcher_index().unwrap_or(0);
-    let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
-    channel_switcher_visible_result_rows(&items, selected, max_result_lines)
-        .get(result_line)
-        .and_then(|row| match row {
-            ChannelSwitcherResultRow::Item(index) => Some(*index),
-            ChannelSwitcherResultRow::Group(_) => None,
-        })
+    SelectablePopupLayout::new(snapshot.target, popup, list, snapshot, |start, max_rows| {
+        channel_switcher_visible_result_rows(&items, start, max_rows)
+            .into_iter()
+            .map(|row| match row {
+                ChannelSwitcherResultRow::Item(index) => Some(index),
+                ChannelSwitcherResultRow::Group(_) => None,
+            })
+            .collect()
+    })
 }
 
 pub(in crate::tui::ui) fn channel_switcher_cursor_position(
@@ -86,7 +101,7 @@ pub(in crate::tui::ui) fn channel_switcher_cursor_position(
         .channel_switcher_query_cursor_byte_index()?
         .min(query.len());
     let popup = channel_switcher_popup_area(area);
-    let inner_width = usize::from(popup.width.saturating_sub(2)).max(1);
+    let inner_width = usize::from(popup.width.saturating_sub(3)).max(1);
     let (_, cursor_offset) = visible_channel_switcher_query(query, cursor, inner_width);
     Some(Position::new(
         popup
@@ -103,26 +118,28 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
     query: &str,
     query_cursor: usize,
     max_result_lines: usize,
+    scroll: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
         channel_switcher_search_line(query, query_cursor, width),
         Line::from(Span::styled(
             "─".repeat(width.max(1)),
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Decoration),
         )),
     ];
 
     if items.is_empty() {
         lines.push(Line::from(Span::styled(
             "No channels found",
-            Style::default().fg(DIM),
+            theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     } else {
         lines.extend(channel_switcher_result_lines(
             items,
             selected,
             max_result_lines,
+            scroll,
         ));
     }
 
@@ -131,12 +148,21 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
 
 fn channel_switcher_search_line(query: &str, query_cursor: usize, width: usize) -> Line<'static> {
     let shown_query = if query.is_empty() {
-        Span::styled("search channels", Style::default().fg(DIM))
+        Span::styled(
+            "search channels",
+            theme::current().style(theme::HighlightGroup::Placeholder),
+        )
     } else {
-        Span::raw(visible_channel_switcher_query(query, query_cursor, width).0)
+        Span::styled(
+            visible_channel_switcher_query(query, query_cursor, width).0,
+            theme::current().style(theme::HighlightGroup::ActiveField),
+        )
     };
     Line::from(vec![
-        Span::styled("🔎 ", Style::default().fg(ACCENT)),
+        Span::styled(
+            "🔎 ",
+            theme::current().style(theme::HighlightGroup::ActiveField),
+        ),
         shown_query,
     ])
 }
@@ -186,9 +212,10 @@ fn channel_switcher_result_lines(
     items: &[ChannelSwitcherItem],
     selected: usize,
     max_result_lines: usize,
+    scroll: usize,
 ) -> Vec<Line<'static>> {
     let selected = selected.min(items.len().saturating_sub(1));
-    let rows = channel_switcher_visible_result_rows(items, selected, max_result_lines);
+    let rows = channel_switcher_visible_result_rows(items, scroll, max_result_lines);
     rows.into_iter()
         .map(|row| match row {
             ChannelSwitcherResultRow::Item(index) => {
@@ -196,7 +223,7 @@ fn channel_switcher_result_lines(
             }
             ChannelSwitcherResultRow::Group(label) => Line::from(Span::styled(
                 label,
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                theme::current().style(theme::HighlightGroup::Heading),
             )),
         })
         .collect()
@@ -209,11 +236,12 @@ enum ChannelSwitcherResultRow {
 
 fn channel_switcher_visible_result_rows(
     items: &[ChannelSwitcherItem],
-    selected: usize,
+    scroll: usize,
     max_result_lines: usize,
 ) -> Vec<ChannelSwitcherResultRow> {
-    let selected = selected.min(items.len().saturating_sub(1));
-    let start = channel_switcher_visible_start(items, selected, max_result_lines);
+    // Group headers are interleaved as the window is walked and share the row
+    // budget, so the trailing `truncate` keeps the popup height.
+    let start = scroll.min(items.len().saturating_sub(1));
     let end = items.len().min(start.saturating_add(max_result_lines));
     let mut rows = Vec::new();
     let mut last_group: Option<&str> = None;
@@ -228,26 +256,16 @@ fn channel_switcher_visible_result_rows(
     rows
 }
 
-fn channel_switcher_visible_start(
-    items: &[ChannelSwitcherItem],
-    selected: usize,
-    max_result_lines: usize,
-) -> usize {
-    if items.is_empty() || max_result_lines == 0 {
-        return 0;
-    }
-    selected.saturating_sub(max_result_lines / 2)
-}
-
 fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Line<'static> {
     let style = if selected {
         highlight_style()
     } else {
         Style::default()
     };
-    let badge = channel_switcher_unread_badge(item);
+    let badge =
+        channel_switcher_unread_badge(item).map(|badge| selected_text_span(selected, badge));
     let (_, name_style) = channel_unread_decoration(item.unread, style, false);
-    let marker = if selected { "› " } else { "  " };
+    let name_style = selected_text_style(selected, name_style);
     let indent = "  ".repeat(item.depth.saturating_add(1));
     let parent = item
         .parent_label
@@ -255,15 +273,18 @@ fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Lin
         .map(|label| format!("{label} / "))
         .unwrap_or_default();
     let mut spans = vec![
-        Span::styled(marker, Style::default().fg(ACCENT)),
+        selectable_popup_marker(selected),
         Span::raw(indent),
-        Span::styled(parent, Style::default().fg(DIM)),
+        Span::styled(
+            parent,
+            theme::current().style(theme::HighlightGroup::SearchContext),
+        ),
     ];
     if let Some(badge) = badge {
         spans.push(badge);
     }
     spans.push(Span::styled(item.channel_label.clone(), name_style));
-    Line::from(spans)
+    selected_row_line(Line::from(spans), selected)
 }
 
 fn channel_switcher_unread_badge(item: &ChannelSwitcherItem) -> Option<Span<'static>> {

@@ -8,7 +8,9 @@ use crate::discord::{
 };
 use crate::tui::fuzzy::{best_fuzzy_name_match_score, fuzzy_text_score};
 use crate::tui::keybindings::SelectionAction;
-use crate::tui::state::popups::{ActiveModalPopupKind, ModalPopup, SelectablePopupState};
+use crate::tui::state::popups::{
+    ActiveModalPopupKind, ModalPopup, SelectablePopupState, SelectablePopupTarget,
+};
 use crate::tui::text_input::TextInputState;
 use chrono::NaiveDate;
 
@@ -182,6 +184,40 @@ impl SearchPopupState {
             .selected_for_len(self.suggestions.len())
     }
 
+    pub(super) fn active_selectable_target(&self) -> SelectablePopupTarget {
+        if self.suggestions.is_empty() {
+            SelectablePopupTarget::SearchResults
+        } else {
+            SelectablePopupTarget::SearchSuggestions
+        }
+    }
+
+    pub(super) fn selectable_state(
+        &self,
+        target: SelectablePopupTarget,
+    ) -> Option<(&SelectablePopupState, usize)> {
+        match target {
+            SelectablePopupTarget::SearchResults => Some((&self.selection, self.results.len())),
+            SelectablePopupTarget::SearchSuggestions => {
+                Some((&self.suggestion_selection, self.suggestions.len()))
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn selectable_state_mut(
+        &mut self,
+        target: SelectablePopupTarget,
+    ) -> Option<(&mut SelectablePopupState, usize)> {
+        match target {
+            SelectablePopupTarget::SearchResults => Some((&mut self.selection, self.results.len())),
+            SelectablePopupTarget::SearchSuggestions => {
+                Some((&mut self.suggestion_selection, self.suggestions.len()))
+            }
+            _ => None,
+        }
+    }
+
     fn view(&self) -> SearchPopupView {
         SearchPopupView {
             mode: self.mode,
@@ -199,8 +235,10 @@ impl SearchPopupState {
                 .collect(),
             suggestions: self.suggestions.clone(),
             selected_suggestion: self.selected_suggestion(),
+            suggestion_scroll: self.suggestion_selection.scroll(),
             results: self.results.clone(),
             selected: self.selected(),
+            scroll: self.selection.scroll(),
             loading: self.loading,
             error: self.error.clone(),
             total_results: self.total_results,
@@ -219,12 +257,14 @@ impl DashboardState {
     }
 
     pub fn open_message_search_popup(&mut self) {
-        self.popups.modal = Some(ModalPopup::Search(SearchPopupState::message()));
+        self.popups
+            .set_modal(ModalPopup::Search(SearchPopupState::message()));
     }
 
     pub fn open_member_search_popup(&mut self) {
         let results = self.member_search_results_for_query("");
-        self.popups.modal = Some(ModalPopup::Search(SearchPopupState::member(results)));
+        self.popups
+            .set_modal(ModalPopup::Search(SearchPopupState::member(results)));
     }
 
     pub fn close_search_popup(&mut self) {
@@ -234,14 +274,30 @@ impl DashboardState {
     }
 
     pub fn search_popup_view(&self) -> Option<SearchPopupView> {
-        self.popups.search_popup().map(SearchPopupState::view)
+        let mut view = self.popups.search_popup().map(SearchPopupState::view)?;
+        for result in &mut view.results {
+            if let SearchResultItem::Message(message) = result {
+                message.author = self.channel_user_display_name(
+                    message.channel_id,
+                    message.author_id,
+                    &message.author,
+                );
+            }
+        }
+        Some(view)
+    }
+
+    pub(in crate::tui) fn search_popup_has_visible_loading_indicator(&self) -> bool {
+        self.popups
+            .search_popup()
+            .is_some_and(|search| search.loading)
     }
 
     pub fn cycle_search_field_next(&mut self) {
-        if let Some(search) = self.popups.search_popup_mut() {
-            if !search.fields.is_empty() {
-                search.active_field = (search.active_field + 1) % search.fields.len();
-            }
+        if let Some(search) = self.popups.search_popup_mut()
+            && !search.fields.is_empty()
+        {
+            search.active_field = (search.active_field + 1) % search.fields.len();
         }
         self.refresh_message_search_suggestions();
     }
@@ -403,20 +459,26 @@ impl DashboardState {
         }
     }
 
-    pub fn search_popup_member_query(&self) -> Option<&str> {
+    pub fn member_search_popup_query(&self) -> Option<&str> {
         let search = self.popups.search_popup()?;
-        match search.mode {
-            SearchPopupMode::Member => search.field_value("member"),
-            SearchPopupMode::Message => {
-                let field = search.fields.get(search.active_field)?;
-                let value = field.value().trim();
-                (matches!(field.label, "from" | "mentions")
-                    && !value.is_empty()
-                    && field.selection.is_none()
-                    && parse_search_id(value).is_none())
-                .then_some(value)
-            }
+        if !matches!(search.mode, SearchPopupMode::Member) {
+            return None;
         }
+        search.field_value("member")
+    }
+
+    pub fn message_search_member_query(&self) -> Option<&str> {
+        let search = self.popups.search_popup()?;
+        if !matches!(search.mode, SearchPopupMode::Message) {
+            return None;
+        }
+        let field = search.fields.get(search.active_field)?;
+        let value = field.value().trim();
+        (matches!(field.label, "from" | "mentions")
+            && !value.is_empty()
+            && field.selection.is_none()
+            && parse_search_id(value).is_none())
+        .then_some(value)
     }
 
     pub(in crate::tui::state) fn refresh_search_popup_after_member_cache_update(&mut self) {
@@ -447,14 +509,15 @@ impl DashboardState {
             return None;
         };
         self.close_search_popup();
-        if let Some(channel) = self.discord.cache.channel(result.channel_id) {
-            match channel.guild_id {
-                Some(guild_id) => self.activate_guild(ActiveGuildScope::Guild(guild_id)),
-                None => self.activate_guild(ActiveGuildScope::DirectMessages),
-            }
-        }
-        self.restore_channel_cursor(Some(result.channel_id));
-        self.activate_channel(result.channel_id);
+        let scope = self
+            .discord
+            .cache
+            .channel(result.channel_id)
+            .map(|channel| match channel.guild_id {
+                Some(guild_id) => ActiveGuildScope::Guild(guild_id),
+                None => ActiveGuildScope::DirectMessages,
+            });
+        self.activate_message_history_channel(result.channel_id, scope);
         self.focus_pane(FocusPane::Messages);
         Some(AppCommand::LoadMessageHistoryAround {
             channel_id: result.channel_id,
@@ -710,6 +773,7 @@ impl DashboardState {
         MessageSearchResultItem {
             channel_id: message.channel_id,
             message_id: message.message_id,
+            author_id: message.author_id,
             channel_label,
             author: message.author.clone(),
             content: message_search_content_label(message),
@@ -761,28 +825,28 @@ impl DashboardState {
     }
 
     fn member_search_results_for_query(&self, query: &str) -> Vec<SearchResultItem> {
-        let guild_id = match self.navigation.active_guild {
+        let guild_id = match self.navigation.guilds.active {
             ActiveGuildScope::Guild(guild_id) => Some(guild_id),
             ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
         };
         let mut scored = self
-            .flattened_members()
+            .searchable_members()
             .into_iter()
             .filter_map(|member| {
                 let display_name = self.member_display_name(member);
                 let username = member.username();
                 let score = if query.trim().is_empty() {
-                    Some(0)
+                    0
                 } else {
                     let mut candidates = vec![display_name.as_str()];
                     if let Some(username) = username.as_deref() {
                         candidates.push(username);
                     }
-                    best_fuzzy_name_match_score(&candidates, query).map(|(_, score)| score.0)
-                }?;
+                    best_fuzzy_name_match_score(&candidates, query).map(|(_, score)| score.0)?
+                };
                 Some((
                     score,
-                    display_name.to_ascii_lowercase(),
+                    display_name.to_lowercase(),
                     SearchResultItem::Member(MemberSearchResultItem {
                         user_id: member.user_id(),
                         guild_id,
@@ -939,8 +1003,8 @@ fn message_search_content_label(message: &MessageInfo) -> String {
     if !message.attachments.is_empty() {
         return format!("{} attachment(s)", message.attachments.len());
     }
-    if !message.sticker_names.is_empty() {
-        return format!("{} sticker(s)", message.sticker_names.len());
+    if !message.stickers.is_empty() {
+        return format!("{} sticker(s)", message.stickers.len());
     }
     if !message.embeds.is_empty() {
         return format!("{} embed(s)", message.embeds.len());

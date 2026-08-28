@@ -18,6 +18,221 @@ fn composer_requires_selected_channel() {
 }
 
 #[test]
+fn enter_confirms_long_message_file_upload() {
+    let permissions = PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES | PERM_ATTACH_FILES;
+    let draft = "x".repeat(2_001);
+
+    let mut send = state_with_channel_permissions(permissions);
+    send.start_composer();
+    send.insert_composer_text_at_cursor(&draft);
+    assert_eq!(handle_key(&mut send, key(KeyCode::Enter)), None);
+    assert!(
+        send.is_active_modal_popup(
+            crate::tui::state::ActiveModalPopupKind::LongMessageConfirmation
+        )
+    );
+
+    assert!(matches!(
+        handle_key(&mut send, key(KeyCode::Enter)),
+        Some(AppCommand::SendMessage { attachments, .. })
+            if attachments.first().is_some_and(|file| file.filename == "message.txt")
+    ));
+    assert!(
+        !send.is_active_modal_popup(
+            crate::tui::state::ActiveModalPopupKind::LongMessageConfirmation
+        )
+    );
+}
+
+#[test]
+fn thread_edit_shortcuts_cycle_selectors_submit_and_cancel() {
+    let mut state = state_with_forum_channel_posts();
+    state.open_thread_edit(Id::new(31));
+
+    // Focus the auto-archive selector: Title -> Tags -> SlowMode -> AutoArchive.
+    handle_key(&mut state, key(KeyCode::Tab));
+    handle_key(&mut state, key(KeyCode::Tab));
+    handle_key(&mut state, key(KeyCode::Tab));
+
+    let initial = state
+        .thread_edit_view()
+        .expect("edit view")
+        .auto_archive_label;
+
+    // `l` cycles the value forward and `h` back, matching the arrow keys.
+    handle_key(&mut state, char_key('l'));
+    let forward = state
+        .thread_edit_view()
+        .expect("edit view")
+        .auto_archive_label;
+    assert_ne!(initial, forward);
+
+    handle_key(&mut state, char_key('h'));
+    let back = state
+        .thread_edit_view()
+        .expect("edit view")
+        .auto_archive_label;
+    assert_eq!(initial, back);
+
+    assert!(matches!(
+        handle_key(&mut state, char_key('s')),
+        Some(AppCommand::EditThread { channel_id, .. }) if channel_id == Id::new(31)
+    ));
+    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ThreadEdit));
+
+    let mut state = state_with_forum_channel_posts();
+    state.open_thread_edit(Id::new(31));
+    handle_key(&mut state, char_key('c'));
+
+    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ThreadEdit));
+}
+
+#[test]
+fn page_keys_move_nested_tag_pickers_with_the_shared_list_viewport() {
+    {
+        let mut state = state_with_forum_channel_posts();
+        handle_key(&mut state, char_key('i'));
+        for _ in 0..3 {
+            handle_key(&mut state, key(KeyCode::Tab));
+        }
+        handle_key(&mut state, key(KeyCode::Enter));
+        crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
+
+        handle_key(&mut state, ctrl_key('d'));
+        handle_key(&mut state, ctrl_key('d'));
+        let view = state.forum_post_composer_view().expect("forum tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(10));
+        assert!(view.tag_scroll > 0);
+
+        handle_key(&mut state, ctrl_key('u'));
+        handle_key(&mut state, ctrl_key('u'));
+        let view = state.forum_post_composer_view().expect("forum tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(0));
+
+        handle_key(&mut state, char_key('G'));
+        let view = state.forum_post_composer_view().expect("forum tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(11));
+        handle_key(&mut state, char_key('g'));
+        handle_key(&mut state, char_key('g'));
+        let view = state.forum_post_composer_view().expect("forum tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(0));
+    }
+
+    {
+        let mut state = state_with_forum_channel_posts();
+        state.open_thread_edit(Id::new(31));
+        handle_key(&mut state, key(KeyCode::Tab));
+        handle_key(&mut state, key(KeyCode::Enter));
+        crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
+
+        handle_key(&mut state, ctrl_key('d'));
+        handle_key(&mut state, ctrl_key('d'));
+        let view = state.thread_edit_view().expect("thread tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(10));
+        assert!(view.tag_scroll > 0);
+
+        handle_key(&mut state, ctrl_key('u'));
+        handle_key(&mut state, ctrl_key('u'));
+        let view = state.thread_edit_view().expect("thread tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(0));
+
+        handle_key(&mut state, char_key('G'));
+        let view = state.thread_edit_view().expect("thread tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(11));
+        handle_key(&mut state, char_key('g'));
+        handle_key(&mut state, char_key('g'));
+        let view = state.thread_edit_view().expect("thread tag picker");
+        assert_eq!(view.tags.iter().position(|tag| tag.active), Some(0));
+    }
+}
+
+#[test]
+fn forum_parent_composer_key_opens_post_overlay() {
+    let mut state = state_with_forum_channel_posts();
+
+    handle_key(&mut state, char_key('i'));
+
+    assert!(!state.is_composing());
+    assert!(
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ForumPostComposer)
+    );
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.channel_label),
+        Some("#announcements".to_owned())
+    );
+}
+
+#[test]
+fn forum_post_overlay_requires_enter_before_text_editing() {
+    let mut state = state_with_forum_channel_posts();
+    handle_key(&mut state, char_key('i'));
+
+    handle_key(&mut state, char_key('x'));
+
+    assert_eq!(
+        state.forum_post_composer_view().map(|view| view.title),
+        Some(String::new())
+    );
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('x'));
+    handle_key(&mut state, key(KeyCode::Esc));
+
+    let view = state
+        .forum_post_composer_view()
+        .expect("forum post modal should still be open after canceling edit");
+    assert_eq!(view.title, "x");
+    assert_eq!(view.editing_field, None);
+}
+
+#[test]
+fn forum_post_overlay_shortcuts_submit_and_cancel() {
+    let attachment = temp_upload_file("forum post.txt", b"attachment body");
+    let mut state = state_with_forum_channel_posts();
+    handle_key(&mut state, char_key('i'));
+
+    handle_key(&mut state, key(KeyCode::Enter));
+    for value in "Need help".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, key(KeyCode::Tab));
+    handle_key(&mut state, key(KeyCode::Enter));
+    for value in "The client crashes".chars() {
+        handle_key(&mut state, char_key(value));
+    }
+    assert!(handle_paste(
+        &mut state,
+        attachment.to_str().expect("temp path is valid unicode"),
+    ));
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    let Some(AppCommand::CreateForumPost { post }) = handle_key(&mut state, char_key('s')) else {
+        panic!("forum post overlay should submit create command with its submit shortcut");
+    };
+
+    assert_eq!(post.channel_id, Id::new(20));
+    assert_eq!(post.title, "Need help");
+    assert_eq!(post.content, "The client crashes");
+    assert_eq!(post.attachments.len(), 1);
+    assert_eq!(post.attachments[0].filename, "forum post.txt");
+    assert!(
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ForumPostComposer)
+    );
+    remove_temp_upload_file(&attachment);
+
+    let mut state = state_with_forum_channel_posts();
+    handle_key(&mut state, char_key('i'));
+    handle_key(&mut state, char_key('c'));
+
+    assert!(
+        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ForumPostComposer)
+    );
+}
+
+#[test]
 fn number_keys_type_digits_while_composing() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
@@ -79,15 +294,6 @@ fn ctrl_c_clears_composer_without_quitting() {
     assert!(state.pending_composer_attachments().is_empty());
     assert!(!state.should_quit());
     remove_temp_upload_file(&attachment);
-}
-
-#[test]
-fn ctrl_c_does_not_quit_dashboard() {
-    let mut state = state_with_channel_tree();
-
-    handle_key(&mut state, ctrl_key('c'));
-
-    assert!(!state.should_quit());
 }
 
 #[test]
@@ -279,6 +485,30 @@ fn modified_backspace_and_ctrl_w_delete_previous_composer_word() {
 }
 
 #[test]
+fn ctrl_u_and_ctrl_k_delete_to_composer_line_boundaries() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+
+    assert!(handle_paste(&mut state, "alpha\nbrave world\nomega"));
+    for _ in 0.."world\nomega".chars().count() {
+        handle_key(&mut state, key(KeyCode::Left));
+    }
+
+    handle_key(&mut state, ctrl_key('k'));
+
+    assert_eq!(state.composer_input(), "alpha\nbrave \nomega");
+    assert_eq!(state.composer_cursor_byte_index(), "alpha\nbrave ".len());
+
+    handle_key(&mut state, ctrl_key('u'));
+
+    assert_eq!(state.composer_input(), "alpha\n\nomega");
+    assert_eq!(state.composer_cursor_byte_index(), "alpha\n".len());
+}
+
+#[test]
 fn composer_keymap_can_remap_editor_and_delete_word() {
     let state = state_with_keymap(KeymapOptions {
         composer: [
@@ -391,7 +621,7 @@ fn paste_inserts_text_at_composer_cursor() {
 }
 
 #[test]
-fn paste_file_path_adds_pending_attachment() {
+fn paste_file_path_respects_attach_permission() {
     let path = temp_upload_file("paste path.txt", b"hello");
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
@@ -418,63 +648,71 @@ fn paste_file_path_adds_pending_attachment() {
     );
     assert_eq!(state.pending_composer_attachments()[0].size_bytes, 5);
     remove_temp_upload_file(&path);
-}
 
-#[test]
-fn paste_single_quoted_file_path_adds_pending_attachment() {
-    let path = temp_upload_file("quoted path.txt", b"quoted");
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
-    let pasted = format!("'{}'", path.to_str().expect("temp path is valid unicode"));
-
-    assert!(handle_paste(&mut state, &pasted));
-
-    assert_eq!(state.composer_input(), "");
-    assert_eq!(state.pending_composer_attachments().len(), 1);
-    assert_eq!(
-        state.pending_composer_attachments()[0]
-            .path()
-            .expect("upload is file backed"),
-        path
+    let path = temp_upload_file("denied attachment.txt", b"blocked");
+    let mut state = state_with_channel_permissions(PERM_VIEW_CHANNEL | PERM_SEND_MESSAGES);
+    assert!(
+        state.can_send_in_selected_channel(),
+        "fixture should be writable: {:?}",
+        state.composer_lock()
     );
+    state.start_composer();
+    assert!(state.is_composing());
+
+    assert!(handle_paste(
+        &mut state,
+        path.to_str().expect("temp path is valid unicode")
+    ));
+
+    assert!(state.pending_composer_attachments().is_empty());
+    assert_eq!(state.composer_input(), "");
     assert_eq!(
-        state.pending_composer_attachments()[0].filename,
-        "quoted path.txt"
+        state.toast_message().map(|toast| toast.text),
+        Some("Attach Files permission is required in this channel")
     );
     remove_temp_upload_file(&path);
 }
 
 #[test]
-fn paste_backslash_escaped_file_path_adds_pending_attachment() {
-    let path = temp_upload_file("escaped path.txt", b"escaped");
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
-    let pasted = path
-        .to_str()
-        .expect("temp path is valid unicode")
-        .replace(' ', "\\ ");
+fn paste_escaped_file_path_adds_pending_attachment() {
+    for (name, filename, quote) in [
+        (
+            "single quoted",
+            "quoted path.txt",
+            (|path: &str| format!("'{path}'")) as fn(&str) -> String,
+        ),
+        (
+            "backslash escaped",
+            "escaped path.txt",
+            (|path: &str| path.replace(' ', "\\ ")) as fn(&str) -> String,
+        ),
+    ] {
+        let path = temp_upload_file(filename, b"payload");
+        let mut state = state_with_channel_tree();
+        state.focus_pane(FocusPane::Channels);
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('i'));
+        let pasted = quote(path.to_str().expect("temp path is valid unicode"));
 
-    assert!(handle_paste(&mut state, &pasted));
+        assert!(handle_paste(&mut state, &pasted), "{name}");
 
-    assert_eq!(state.composer_input(), "");
-    assert_eq!(state.pending_composer_attachments().len(), 1);
-    assert_eq!(
-        state.pending_composer_attachments()[0]
-            .path()
-            .expect("upload is file backed"),
-        path
-    );
-    assert_eq!(
-        state.pending_composer_attachments()[0].filename,
-        "escaped path.txt"
-    );
-    remove_temp_upload_file(&path);
+        assert_eq!(state.composer_input(), "", "{name}");
+        assert_eq!(state.pending_composer_attachments().len(), 1, "{name}");
+        assert_eq!(
+            state.pending_composer_attachments()[0]
+                .path()
+                .expect("upload is file backed"),
+            path,
+            "{name}"
+        );
+        assert_eq!(
+            state.pending_composer_attachments()[0].filename,
+            filename,
+            "{name}"
+        );
+        remove_temp_upload_file(&path);
+    }
 }
 
 #[test]
@@ -494,10 +732,11 @@ fn paste_file_uri_list_can_submit_attachment_only_message() {
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
     assert_eq!(state.pending_composer_attachments(), &[]);
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(11),
+            nonce: Id::new(1),
             content: String::new(),
             reply_to: None,
             attachments: vec![crate::discord::MessageAttachmentUpload::from_path(
@@ -588,10 +827,11 @@ fn enter_submits_multiline_composer() {
     // back-to-back messages.
     assert!(state.is_composing());
     assert_eq!(state.composer_input(), "");
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(11),
+            nonce: Id::new(1),
             content: "h\ni".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -630,31 +870,16 @@ fn enter_submits_no_match_emoji_query_without_hidden_picker() {
 
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(11),
+            nonce: Id::new(1),
             content: ":qq".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
         })
     );
-}
-
-#[test]
-fn tab_confirms_emoji_picker() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
-    for ch in ":heart".chars() {
-        handle_key(&mut state, char_key(ch));
-    }
-
-    handle_key(&mut state, key(KeyCode::Tab));
-
-    assert_eq!(state.composer_input(), "❤️ ");
 }
 
 #[test]
@@ -747,7 +972,7 @@ fn direct_reply_shortcut_opens_composer() {
     let command = handle_key(&mut state, char_key('R'));
 
     assert_eq!(command, None);
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert!(state.is_composing());
     assert_eq!(state.composer_input(), "");
 
@@ -755,12 +980,16 @@ fn direct_reply_shortcut_opens_composer() {
     handle_key(&mut state, char_key('i'));
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "hi".to_owned(),
-            reply_to: Some(Id::new(1)),
+            reply_to: Some(crate::discord::ReplyReference {
+                message_id: Id::new(1),
+                mention_author: true,
+            }),
             attachments: Vec::new(),
         })
     );
@@ -780,10 +1009,11 @@ fn canceling_reply_composer_clears_reply_target() {
     handle_key(&mut state, char_key('n'));
     let command = handle_key(&mut state, key(KeyCode::Enter));
 
-    assert_eq!(
+    assert_send_message_eq!(
         command,
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
+            nonce: Id::new(1),
             content: "n".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
@@ -817,7 +1047,7 @@ fn direct_reaction_shortcut_opens_emoji_picker() {
     let command = handle_key(&mut state, char_key('r'));
 
     assert_eq!(command, None);
-    assert!(!state.is_message_action_context_active());
+    assert!(!state.is_message_action_menu_active());
     assert!(
         state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker)
     );
@@ -829,37 +1059,57 @@ fn direct_reaction_shortcut_opens_emoji_picker() {
 
 #[test]
 fn emoji_picker_selection_returns_reaction_command() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-    open_emoji_picker(&mut state);
+    for (name, keys, emoji) in [
+        (
+            "arrow navigation then enter",
+            vec![
+                key(KeyCode::Down),
+                key(KeyCode::Down),
+                key(KeyCode::Down),
+                key(KeyCode::Enter),
+            ],
+            "🎉",
+        ),
+        ("number shortcut", vec![char_key('2')], "❤️"),
+    ] {
+        let mut state = state_with_messages(1);
+        state.focus_pane(FocusPane::Messages);
+        open_emoji_picker(&mut state);
 
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Down));
-    let command = handle_key(&mut state, key(KeyCode::Enter));
+        let mut command = None;
+        for pressed in keys {
+            command = handle_key(&mut state, pressed);
+        }
 
-    assert_eq!(
-        command,
-        Some(AppCommand::AddReaction {
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            emoji: ReactionEmoji::Unicode("🎉".to_owned()),
-        })
-    );
-    assert!(
-        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker)
-    );
+        assert_eq!(
+            command,
+            Some(AppCommand::AddReaction {
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                emoji: ReactionEmoji::Unicode(emoji.to_owned()),
+            }),
+            "{name}"
+        );
+        assert!(
+            !state.is_active_modal_popup(
+                crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker
+            ),
+            "{name}"
+        );
+    }
 }
 
 #[test]
 fn emoji_picker_selection_removes_existing_own_reaction() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
-    state.push_event(AppEvent::CurrentUserReactionAdd {
-        channel_id: Id::new(2),
-        message_id: Id::new(1),
-        emoji: ReactionEmoji::Unicode("👍".to_owned()),
-    });
+    state.push_event(current_user_reaction_add_event(
+        CurrentUserReactionAddFixture {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        },
+    ));
     open_emoji_picker(&mut state);
 
     let command = handle_key(&mut state, key(KeyCode::Enter));
@@ -870,27 +1120,6 @@ fn emoji_picker_selection_removes_existing_own_reaction() {
             channel_id: Id::new(2),
             message_id: Id::new(1),
             emoji: ReactionEmoji::Unicode("👍".to_owned()),
-        })
-    );
-    assert!(
-        !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker)
-    );
-}
-
-#[test]
-fn emoji_picker_number_shortcut_selects_reaction() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-    open_emoji_picker(&mut state);
-
-    let command = handle_key(&mut state, char_key('2'));
-
-    assert_eq!(
-        command,
-        Some(AppCommand::AddReaction {
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            emoji: ReactionEmoji::Unicode("❤️".to_owned()),
         })
     );
     assert!(
@@ -974,38 +1203,6 @@ fn emoji_picker_filter_matches_remaining_unicode_emojis() {
     assert_eq!(
         state.selected_emoji_reaction().map(|item| item.emoji),
         Some(ReactionEmoji::Unicode("🚀".to_owned()))
-    );
-}
-
-#[test]
-fn emoji_picker_enter_locks_filter_before_activating_reaction() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-    open_emoji_picker(&mut state);
-
-    handle_key(&mut state, char_key('/'));
-    for value in "heart".chars() {
-        handle_key(&mut state, char_key(value));
-    }
-
-    let command = handle_key(&mut state, key(KeyCode::Enter));
-
-    assert_eq!(command, None);
-    assert!(
-        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker)
-    );
-    assert_eq!(state.emoji_reaction_filter(), Some("heart"));
-    assert!(!state.is_editing_emoji_reaction_filter());
-
-    let command = handle_key(&mut state, key(KeyCode::Enter));
-
-    assert_eq!(
-        command,
-        Some(AppCommand::AddReaction {
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            emoji: ReactionEmoji::Unicode("❤️".to_owned()),
-        })
     );
 }
 

@@ -4,13 +4,15 @@ use crate::{
     discord::{
         AttachmentInfo, AttachmentUpdate, EmbedFieldInfo, EmbedInfo, MentionInfo, MessageInfo,
         MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-        PollAnswerInfo, PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo,
+        MessageUpdateDispatchInfo, PollAnswerInfo, PollInfo, ReactionEmoji, ReactionInfo,
+        ReplyInfo, StickerFormat, StickerInfo,
+        avatar::user_avatar_url,
         events::AppEvent,
         ids::{
             Id,
             marker::{
                 AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker,
-                RoleMarker, UserMarker,
+                RoleMarker, StickerMarker, UserMarker, WebhookMarker,
             },
         },
     },
@@ -18,18 +20,30 @@ use crate::{
 };
 
 use super::shared::{
-    display_name_from_parts, display_name_from_parts_or_unknown, parse_id, raw_user_avatar_url,
+    display_name_from_parts_or_unknown, extra_fields, parse_id, parse_nonnegative_i64,
 };
 
 pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let channel_id = parse_id::<ChannelMarker>(data.get("channel_id")?)?;
     let message_id = parse_id::<MessageMarker>(data.get("id")?)?;
+    let nonce = data.get("nonce").and_then(parse_id::<MessageMarker>);
+    let webhook_id = data.get("webhook_id").and_then(parse_id::<WebhookMarker>);
     let author = data.get("author")?;
     let author_id = parse_id::<UserMarker>(author.get("id")?)?;
-    let author_name = message_author_display_name(data, author);
-    let author_avatar_url = raw_user_avatar_url(author_id, author);
+    let author_name = if webhook_id.is_some() {
+        display_name_from_parts_or_unknown(
+            None,
+            None,
+            author.get("username").and_then(Value::as_str),
+        )
+    } else {
+        message_author_display_name(data, author)
+    };
+    let author_avatar_url = user_avatar_url(author_id, author);
     let author_is_bot = author.get("bot").and_then(Value::as_bool).unwrap_or(false);
     let author_role_ids = parse_message_author_role_ids(data);
+    let author_role_ids_present = author_role_ids.is_some();
+    let author_role_ids = author_role_ids.unwrap_or_default();
     let guild_id = data.get("guild_id").and_then(parse_id::<GuildMarker>);
     let message_kind = data
         .get("type")
@@ -42,7 +56,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         .and_then(Value::as_str)
         .map(str::to_owned);
     let interaction = parse_message_interaction_info(data);
-    let sticker_names = parse_sticker_names(data.get("sticker_items"));
+    let stickers = parse_sticker_items(data.get("sticker_items"));
     let mentions = parse_mentions(data.get("mentions"));
     let mention_everyone = data
         .get("mention_everyone")
@@ -73,11 +87,14 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         guild_id,
         channel_id,
         message_id,
+        nonce,
+        webhook_id,
         author_id,
         author: author_name,
         author_avatar_url,
         author_is_bot,
         author_role_ids,
+        author_role_ids_present,
         message_kind,
         interaction,
         reference,
@@ -86,7 +103,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         pinned: data.get("pinned").and_then(Value::as_bool).unwrap_or(false),
         reactions: parse_reactions(data.get("reactions")),
         content,
-        sticker_names,
+        stickers,
         mentions,
         mention_everyone,
         mention_roles,
@@ -123,12 +140,11 @@ fn parse_message_interaction_info(data: &Value) -> Option<MessageInteractionInfo
     })
 }
 
-fn parse_message_author_role_ids(data: &Value) -> Vec<Id<RoleMarker>> {
+fn parse_message_author_role_ids(data: &Value) -> Option<Vec<Id<RoleMarker>>> {
     data.get("member")
         .and_then(|member| member.get("roles"))
         .and_then(Value::as_array)
         .map(|roles| roles.iter().filter_map(parse_id::<RoleMarker>).collect())
-        .unwrap_or_default()
 }
 
 fn parse_message_reference_info(value: &Value) -> MessageReferenceInfo {
@@ -146,16 +162,18 @@ pub(super) fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
         .unwrap_or_default()
 }
 
-pub(super) fn parse_sticker_names(value: Option<&Value>) -> Vec<String> {
+pub(super) fn parse_sticker_items(value: Option<&Value>) -> Vec<StickerInfo> {
     value
         .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_owned))
-                .collect()
-        })
+        .map(|items| items.iter().filter_map(parse_sticker_item).collect())
         .unwrap_or_default()
+}
+
+fn parse_sticker_item(value: &Value) -> Option<StickerInfo> {
+    let id = parse_id::<StickerMarker>(value.get("id")?)?;
+    let name = value.get("name").and_then(Value::as_str)?.to_owned();
+    let format = StickerFormat::from_discord(value.get("format_type").and_then(Value::as_u64));
+    Some(StickerInfo::new(id, name, format))
 }
 
 pub(super) fn parse_embeds(value: Option<&Value>) -> Vec<EmbedInfo> {
@@ -166,7 +184,8 @@ pub(super) fn parse_embeds(value: Option<&Value>) -> Vec<EmbedInfo> {
 }
 
 fn parse_embed(value: &Value) -> Option<EmbedInfo> {
-    if value.get("type").and_then(Value::as_str) == Some("poll_result") {
+    let embed_type = value.get("type").and_then(Value::as_str).map(str::to_owned);
+    if embed_type.as_deref() == Some("poll_result") {
         return None;
     }
 
@@ -175,6 +194,29 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
         .and_then(Value::as_array)
         .map(|fields| fields.iter().filter_map(parse_embed_field).collect())
         .unwrap_or_default();
+    let video_url = value
+        .get("video")
+        .and_then(|video| video.get("url"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let thumbnail_url = value
+        .get("thumbnail")
+        .and_then(|thumbnail| thumbnail.get("url"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let thumbnail_proxy_url = value
+        .get("thumbnail")
+        .and_then(|thumbnail| thumbnail.get("proxy_url"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let (gifv_image_url, gifv_image_proxy_url) = if embed_type.as_deref() == Some("gifv") {
+        match video_url.as_deref().and_then(giphy_gifv_image_url) {
+            Some(url) => (Some(url), None),
+            None => (thumbnail_url.clone(), thumbnail_proxy_url.clone()),
+        }
+    } else {
+        (None, None)
+    };
     let embed = EmbedInfo {
         color: value
             .get("color")
@@ -209,16 +251,8 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
             .and_then(Value::as_str)
             .map(str::to_owned),
         url: value.get("url").and_then(Value::as_str).map(str::to_owned),
-        thumbnail_url: value
-            .get("thumbnail")
-            .and_then(|thumbnail| thumbnail.get("url"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        thumbnail_proxy_url: value
-            .get("thumbnail")
-            .and_then(|thumbnail| thumbnail.get("proxy_url"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        thumbnail_url,
+        thumbnail_proxy_url,
         thumbnail_width: value
             .get("thumbnail")
             .and_then(|thumbnail| thumbnail.get("width"))
@@ -227,6 +261,11 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
             .get("thumbnail")
             .and_then(|thumbnail| thumbnail.get("height"))
             .and_then(Value::as_u64),
+        thumbnail_flags: value
+            .get("thumbnail")
+            .and_then(|thumbnail| thumbnail.get("flags"))
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
         image_url: value
             .get("image")
             .and_then(|image| image.get("url"))
@@ -245,14 +284,35 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
             .get("image")
             .and_then(|image| image.get("height"))
             .and_then(Value::as_u64),
-        video_url: value
-            .get("video")
-            .and_then(|video| video.get("url"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        image_flags: value
+            .get("image")
+            .and_then(|image| image.get("flags"))
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        gifv_image_url,
+        gifv_image_proxy_url,
+        video_url,
     };
 
     embed_has_renderable_content(&embed).then_some(embed)
+}
+
+/// Giphy publishes equivalent MP4 and animated WebP renditions at the same
+/// media path. Discord sends the MP4 as `video.url` for `gifv` embeds, while
+/// Concord's inline renderer consumes animated image frames.
+fn giphy_gifv_image_url(video_url: &str) -> Option<String> {
+    let mut url = reqwest::Url::parse(video_url).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = url.host_str()?;
+    if host != "giphy.com" && !host.ends_with(".giphy.com") {
+        return None;
+    }
+
+    let image_path = format!("{}.webp", url.path().strip_suffix(".mp4")?);
+    url.set_path(&image_path);
+    Some(url.into())
 }
 
 fn parse_embed_field(value: &Value) -> Option<EmbedFieldInfo> {
@@ -304,14 +364,14 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    let sticker_names = parse_sticker_names(value.get("sticker_items"));
+    let stickers = parse_sticker_items(value.get("sticker_items"));
     let mentions = parse_mentions(value.get("mentions"));
 
     Some(ReplyInfo {
         author_id,
         author: author_name,
         content,
-        sticker_names,
+        stickers,
         mentions,
     })
 }
@@ -372,13 +432,13 @@ fn parse_mention_info(value: &Value) -> Option<MentionInfo> {
         .and_then(Value::as_str);
     let global_name = value.get("global_name").and_then(Value::as_str);
     let username = value.get("username").and_then(Value::as_str);
-    let display_name = display_name_from_parts(nick, global_name, username)?;
-    log_mention_raw_fields(user_id, member, nick, global_name, username, display_name);
+    let display_name = display_name_from_parts_or_unknown(nick, global_name, username);
+    log_mention_raw_fields(user_id, member, nick, global_name, username, &display_name);
 
     Some(MentionInfo {
         user_id,
         guild_nick: nick.filter(|value| !value.is_empty()).map(str::to_owned),
-        display_name: display_name.to_owned(),
+        display_name,
     })
 }
 
@@ -571,7 +631,7 @@ fn parse_message_snapshot(
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let sticker_names = parse_sticker_names(message.get("sticker_items"));
+    let stickers = parse_sticker_items(message.get("sticker_items"));
     let attachments = parse_attachments(message.get("attachments"));
     let embeds = parse_embeds(message.get("embeds"));
     let mentions = parse_mentions(message.get("mentions"));
@@ -581,7 +641,7 @@ fn parse_message_snapshot(
         .map(str::to_owned);
 
     if content.as_deref().is_some_and(|value| !value.is_empty())
-        || !sticker_names.is_empty()
+        || !stickers.is_empty()
         || !attachments.is_empty()
         || !embeds.is_empty()
         || source_channel_id.is_some()
@@ -589,7 +649,7 @@ fn parse_message_snapshot(
     {
         Some(MessageSnapshotInfo {
             content,
-            sticker_names,
+            stickers,
             mentions,
             attachments,
             embeds,
@@ -632,6 +692,10 @@ fn parse_attachment(value: &Value) -> Option<AttachmentInfo> {
             .get("description")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        flags: value
+            .get("flags")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
     })
 }
 
@@ -648,9 +712,9 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let sticker_names = data
+    let stickers = data
         .get("sticker_items")
-        .map(|value| parse_sticker_names(Some(value)));
+        .map(|value| parse_sticker_items(Some(value)));
     let attachments = if data.get("attachments").is_some() {
         AttachmentUpdate::Replace(parse_attachments(data.get("attachments")))
     } else {
@@ -669,25 +733,48 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
         .get("mention_roles")
         .map(|value| parse_mention_roles(Some(value)));
     let flags = data.get("flags").and_then(Value::as_u64);
+    let pinned = data.get("pinned").and_then(Value::as_bool);
     let edited_timestamp = data
         .get("edited_timestamp")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    Some(AppEvent::MessageUpdate {
-        guild_id,
-        channel_id,
-        message_id,
-        fields: crate::discord::MessageUpdateEventFields {
-            poll,
-            content,
-            sticker_names,
-            mentions,
-            mention_everyone,
-            mention_roles,
-            flags,
-            attachments,
-            embeds,
-            edited_timestamp,
+    Some(AppEvent::MessageUpdateDispatch {
+        update: MessageUpdateDispatchInfo {
+            guild_id,
+            channel_id,
+            message_id,
+            fields: crate::discord::MessageUpdateEventFields {
+                poll,
+                content,
+                stickers,
+                mentions,
+                mention_everyone,
+                mention_roles,
+                flags,
+                pinned,
+                attachments,
+                embeds,
+                edited_timestamp,
+            },
+            extra_fields: extra_fields(
+                data,
+                &[
+                    "id",
+                    "guild_id",
+                    "channel_id",
+                    "poll",
+                    "content",
+                    "sticker_items",
+                    "mentions",
+                    "mention_everyone",
+                    "mention_roles",
+                    "flags",
+                    "pinned",
+                    "attachments",
+                    "embeds",
+                    "edited_timestamp",
+                ],
+            ),
         },
     })
 }
@@ -729,7 +816,10 @@ pub(super) fn parse_message_ack(data: &Value) -> Option<AppEvent> {
         mention_count: data
             .get("mention_count")
             .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
+            .and_then(|count| u32::try_from(count).ok()),
+        flags: data.get("flags").and_then(Value::as_u64),
+        last_viewed: data.get("last_viewed").and_then(Value::as_u64),
+        version: Some(parse_nonnegative_i64(data.get("version")?)?),
     })
 }
 

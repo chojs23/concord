@@ -296,19 +296,13 @@ mod tests {
     };
 
     #[test]
-    fn local_sessions_try_native_clipboard_before_osc52() {
-        assert_eq!(
-            copy_text_backend_order(false),
-            [CopyTextBackend::Native, CopyTextBackend::Osc52]
-        );
-    }
-
-    #[test]
-    fn remote_sessions_try_osc52_before_native_clipboard() {
-        assert_eq!(
-            copy_text_backend_order(true),
-            [CopyTextBackend::Osc52, CopyTextBackend::Native]
-        );
+    fn remote_sessions_invert_the_copy_backend_order() {
+        for (remote, expected) in [
+            (false, [CopyTextBackend::Native, CopyTextBackend::Osc52]),
+            (true, [CopyTextBackend::Osc52, CopyTextBackend::Native]),
+        ] {
+            assert_eq!(copy_text_backend_order(remote), expected, "remote={remote}");
+        }
     }
 
     #[test]

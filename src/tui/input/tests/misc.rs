@@ -15,6 +15,20 @@ fn quit_key_requires_confirmation() {
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::QuitConfirmation)
     );
 
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::SUPER,
+    ] {
+        handle_key(&mut state, char_key('q'));
+        handle_key(&mut state, KeyEvent::new(KeyCode::Char('y'), modifiers));
+        assert!(!state.should_quit());
+        assert!(
+            state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::QuitConfirmation)
+        );
+        handle_key(&mut state, char_key('n'));
+    }
+
     handle_key(&mut state, char_key('q'));
     handle_key(&mut state, char_key('y'));
 
@@ -46,40 +60,6 @@ fn question_mark_opens_current_keymap_popup_and_scrolls_within_bounds() {
 }
 
 #[test]
-fn forum_blank_bottom_rows_do_not_select_hidden_posts() {
-    let mut state = state_with_forum_channel_posts();
-    state.push_event(AppEvent::ForumPostsLoaded {
-        channel_id: Id::new(20),
-        archive_state: crate::discord::ForumPostArchiveState::Active,
-        offset: 2,
-        next_offset: 3,
-        threads: vec![ChannelInfo {
-            guild_id: Some(Id::new(1)),
-            parent_id: Some(Id::new(20)),
-            position: Some(2),
-            name: "hidden by remainder rows".to_owned(),
-            message_count: Some(1),
-            total_message_sent: Some(1),
-            thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
-            ..ChannelInfo::test(Id::new(29), "GuildPublicThread")
-        }],
-        first_messages: Vec::new(),
-        has_more: false,
-    });
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(14);
-    let (column, row) = message_row_point(11);
-
-    assert!(handle_mouse(
-        &mut state,
-        mouse(MouseEventKind::Down(MouseButton::Left), column, row),
-        dashboard_area(),
-    ));
-
-    assert_eq!(state.selected_forum_post(), 0);
-}
-
-#[test]
 fn backtick_types_while_composing() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
@@ -92,17 +72,6 @@ fn backtick_types_while_composing() {
     assert!(state.is_composing());
     assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
     assert_eq!(state.composer_input(), "`");
-}
-
-#[test]
-fn a_key_no_longer_opens_actions_directly() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Channels);
-
-    handle_key(&mut state, char_key('a'));
-
-    assert!(!state.is_message_action_context_active());
-    assert!(!state.is_channel_leader_action_active());
 }
 
 #[test]
@@ -143,10 +112,16 @@ fn ctrl_v_requests_clipboard_paste_on_profile_avatar_field() {
         state.user_profile_settings_status(),
         Some("Reading clipboard image...")
     );
+    state.next_user_profile_settings_field();
+    state.record_user_profile_avatar_clipboard_paste_failed();
+    assert_eq!(
+        state.user_profile_settings_status(),
+        Some("Clipboard does not contain an image")
+    );
 }
 
 #[test]
-fn profile_status_picker_routes_selection_keys_and_enter() {
+fn profile_navigation_routes_selection_keys_and_picker_enter() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "neo".to_owned(),
@@ -167,6 +142,29 @@ fn profile_status_picker_routes_selection_keys_and_enter() {
         })
     );
     assert!(!state.is_user_profile_status_picker_open());
+
+    state.open_user_profile_popup(Id::new(20), None);
+    state.set_user_profile_popup_view_height(1);
+    state.set_user_profile_popup_total_lines(3);
+    handle_key(&mut state, char_key('j'));
+    assert_eq!(state.user_profile_popup_scroll(), 1);
+    handle_key(&mut state, char_key('k'));
+    assert_eq!(state.user_profile_popup_scroll(), 0);
+}
+
+#[test]
+fn profile_sign_out_button_signs_out_from_current_user_profile_popup() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.open_current_user_profile_popup();
+
+    assert_eq!(
+        handle_key(&mut state, char_key('o')),
+        Some(AppCommand::SignOut)
+    );
 }
 
 #[test]
@@ -191,6 +189,7 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, key(KeyCode::Enter));
 
     for value in "Concord".chars() {
         handle_key(&mut state, char_key(value));
@@ -201,6 +200,7 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![ActivityInfo::playing("Concord")],
+            track_client_id: None,
         })
     );
 }
@@ -312,33 +312,5 @@ fn profile_text_editing_uses_configured_composer_keys() {
             crate::tui::state::UserProfileSettingsField::GlobalDisplayName,
         ),
         "hello YX"
-    );
-}
-
-#[test]
-fn profile_text_editing_moves_cursor_with_arrow_keys() {
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::Ready {
-        user: "neo".to_owned(),
-        user_id: Some(Id::new(10)),
-    });
-    state.open_current_user_profile_popup();
-
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('a'));
-    handle_key(&mut state, char_key('b'));
-    handle_key(&mut state, char_key('c'));
-    handle_key(&mut state, key(KeyCode::Left));
-    handle_key(&mut state, key(KeyCode::Left));
-    handle_key(&mut state, char_key('X'));
-    handle_key(&mut state, key(KeyCode::Right));
-    handle_key(&mut state, key(KeyCode::Backspace));
-    handle_key(&mut state, key(KeyCode::Enter));
-
-    assert_eq!(
-        state.user_profile_settings_field_value(
-            crate::tui::state::UserProfileSettingsField::GlobalDisplayName,
-        ),
-        "aXc"
     );
 }

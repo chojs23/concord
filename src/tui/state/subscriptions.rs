@@ -13,12 +13,13 @@ impl DashboardState {
     /// channel and falls back to the first text channel in the guild so the
     /// sidebar still updates while no channel is selected.
     pub fn member_list_subscription_target(&self) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
-        let guild_id = match self.navigation.active_guild {
+        let guild_id = match self.navigation.guilds.active {
             ActiveGuildScope::Guild(guild_id) => guild_id,
             ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => return None,
         };
         let channel_id = self
             .navigation
+            .channels
             .active_channel_id
             .filter(|channel_id| {
                 self.discord
@@ -30,12 +31,35 @@ impl DashboardState {
         Some((guild_id, channel_id))
     }
 
+    /// Selected thread whose complete participant list should be included in
+    /// the guild's op-37 subscription. Discord sends one authoritative
+    /// `THREAD_MEMBER_LIST_UPDATE` immediately after this value changes.
+    pub fn thread_member_list_subscription_target(
+        &self,
+    ) -> Option<(Id<GuildMarker>, Id<ChannelMarker>)> {
+        let guild_id = match self.navigation.guilds.active {
+            ActiveGuildScope::Guild(guild_id) => guild_id,
+            ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => return None,
+        };
+        let channel = self
+            .navigation
+            .channels
+            .active_channel_id
+            .and_then(|channel_id| self.discord.cache.channel(channel_id))?;
+        (channel.guild_id == Some(guild_id) && channel.is_thread())
+            .then_some((guild_id, channel.id))
+    }
+
     /// Highest 100-member bucket the user has scrolled the member sidebar
     /// into. Bucket 0 covers indexes 0..=99, bucket 1 covers 100..=199, etc.
     pub fn member_subscription_top_bucket(&self) -> u32 {
-        let scroll = u32::try_from(self.navigation.members.scroll).unwrap_or(u32::MAX);
-        let view = u32::try_from(self.navigation.members.view_height).unwrap_or(0);
+        let scroll = u32::try_from(self.navigation.members.list.scroll).unwrap_or(u32::MAX);
+        let view = u32::try_from(self.navigation.members.list.view_height).unwrap_or(0);
         scroll.saturating_add(view) / 100
+    }
+
+    pub(in crate::tui) fn member_list_refresh_generation(&self, guild_id: Id<GuildMarker>) -> u64 {
+        self.discord.cache.member_list_refresh_generation(guild_id)
     }
 
     /// op-37 channel ranges that cover the member viewport plus a small

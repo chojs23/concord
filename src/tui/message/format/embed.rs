@@ -1,14 +1,17 @@
-use chrono::{DateTime, Local};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     discord::EmbedInfo,
-    tui::format::{RenderedText, replace_custom_emoji_markup_in_rendered_with_images},
+    tui::{
+        message::time::format_rfc3339_local_time,
+        text::{RenderedText, replace_custom_emoji_markup_in_rendered_with_images},
+        theme,
+    },
 };
 
 use super::{
-    DIM, MessageContentLine, prefix_message_content_line_with_style,
+    MessageContentLine, prefix_message_content_line_with_style,
     wrap_rendered_text_lines_with_loaded_custom_emoji_urls,
 };
 
@@ -16,6 +19,7 @@ pub(super) fn format_embed_lines(
     embeds: &[EmbedInfo],
     message_content: Option<&str>,
     show_custom_emoji: bool,
+    hour_format_24: bool,
     width: usize,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
@@ -26,6 +30,7 @@ pub(super) fn format_embed_lines(
                 embed,
                 message_content,
                 show_custom_emoji,
+                hour_format_24,
                 width,
                 loaded_custom_emoji_urls,
             )
@@ -37,6 +42,7 @@ fn format_embed(
     embed: &EmbedInfo,
     message_content: Option<&str>,
     show_custom_emoji: bool,
+    hour_format_24: bool,
     width: usize,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
@@ -95,7 +101,7 @@ fn format_embed(
             loaded_custom_emoji_urls,
         );
     }
-    let footer = format_embed_footer(embed);
+    let footer = format_embed_footer(embed, hour_format_24);
     push_embed_text(
         &mut lines,
         footer.as_deref(),
@@ -213,22 +219,19 @@ fn strip_embed_markdown_emphasis(value: &str) -> String {
     value.replace("**", "")
 }
 
-fn format_embed_footer(embed: &EmbedInfo) -> Option<String> {
+fn format_embed_footer(embed: &EmbedInfo, hour_format_24: bool) -> Option<String> {
     match (
         embed.footer_text.as_deref(),
-        embed.timestamp.as_deref().and_then(format_embed_timestamp),
+        embed
+            .timestamp
+            .as_deref()
+            .and_then(|timestamp| format_rfc3339_local_time(timestamp, hour_format_24)),
     ) {
         (Some(text), Some(timestamp)) => Some(format!("{text} · {timestamp}")),
         (Some(text), None) => Some(text.to_owned()),
         (None, Some(timestamp)) => Some(timestamp),
         (None, None) => None,
     }
-}
-
-fn format_embed_timestamp(timestamp: &str) -> Option<String> {
-    DateTime::parse_from_rfc3339(timestamp)
-        .ok()
-        .map(|datetime| datetime.with_timezone(&Local).format("%H:%M").to_string())
 }
 
 fn push_embed_text(
@@ -261,41 +264,34 @@ fn push_embed_text(
 }
 
 fn embed_provider_style() -> Style {
-    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedFooter)
 }
 
 fn embed_author_style() -> Style {
-    Style::default().add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedAuthor)
 }
 
 fn embed_title_style() -> Style {
-    Style::default()
-        .fg(Color::Blue)
-        .add_modifier(Modifier::BOLD)
+    theme::current().style(theme::HighlightGroup::EmbedTitle)
 }
 
 fn embed_field_name_style() -> Style {
-    Style::default()
-        .add_modifier(Modifier::BOLD)
-        .add_modifier(Modifier::UNDERLINED)
+    theme::current().style(theme::HighlightGroup::EmbedFieldName)
 }
 
 fn embed_footer_style() -> Style {
-    Style::default().fg(DIM).add_modifier(Modifier::ITALIC)
+    theme::current().style(theme::HighlightGroup::EmbedFooter)
 }
 
 fn embed_url_style() -> Style {
-    Style::default()
-        .fg(Color::Blue)
-        .add_modifier(Modifier::UNDERLINED)
+    theme::current().style(theme::HighlightGroup::EmbedLink)
 }
 
 fn embed_line_style(embed: &EmbedInfo) -> Style {
-    Style::default().fg(embed_line_color(embed))
-}
-
-fn embed_line_color(embed: &EmbedInfo) -> Color {
-    embed.color.map(embed_color).unwrap_or(Color::Red)
+    let style = theme::current().style(theme::HighlightGroup::EmbedGutter);
+    embed
+        .color
+        .map_or(style, |color| style.fg(embed_color(color)))
 }
 
 pub(in crate::tui) fn embed_color(color: u32) -> Color {

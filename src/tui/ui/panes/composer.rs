@@ -1,4 +1,6 @@
 use super::*;
+use crate::tui::state::MINIMUM_ESTABLISHED_DM_MESSAGES;
+use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_column, overlay_emoji_slots};
 
 pub(in crate::tui::ui) fn render_composer(
     frame: &mut Frame,
@@ -6,34 +8,67 @@ pub(in crate::tui::ui) fn render_composer(
     state: &DashboardState,
     emoji_images: &[EmojiImage<'_>],
 ) {
-    let inner_width = composer_inner_width(area.width);
+    let inner_width = composer_content_width(area.width);
     let ready_urls = ready_custom_emoji_urls(emoji_images);
     let prompt = composer_lines_with_loaded_custom_emoji_urls(state, inner_width, &ready_urls);
-    let border_color = if state.is_composing() { ACCENT } else { DIM };
+    let total_lines = prompt.len();
+    let vertical_scroll = composer_vertical_scroll(area, state, &ready_urls, total_lines);
+    let composer_active = state.is_composing() && state.composer_lock().is_none();
+    let theme = theme::current();
+    let border_style = if composer_active {
+        theme.style(theme::HighlightGroup::ActiveComposerBorder)
+    } else {
+        theme.style(theme::HighlightGroup::ComposerBorder)
+    };
+    let character_count = state.composer_character_count();
+    let character_limit = state.composer_character_limit();
+    let character_style = if character_count > character_limit {
+        theme.style(theme::HighlightGroup::Error)
+    } else {
+        theme.style(theme::HighlightGroup::MessageSecondary)
+    };
+    let block = Block::default()
+        .title(state.composer_title())
+        .title(
+            Line::from(Span::styled(
+                format!(" {character_count} / {character_limit} "),
+                character_style,
+            ))
+            .right_aligned(),
+        )
+        .borders(Borders::ALL)
+        .border_type(theme.border_type(theme::BorderSurface::Composer))
+        .border_style(border_style)
+        .title_style(theme.style(theme::HighlightGroup::ComposerTitle));
 
     frame.render_widget(
         Paragraph::new(prompt)
-            .style(if state.is_composing() {
-                Style::default().fg(Color::White)
+            .scroll((vertical_scroll, 0))
+            .style(if composer_active {
+                Style::default()
             } else {
-                Style::default().fg(DIM)
+                theme.style(theme::HighlightGroup::Disabled)
             })
-            .block(
-                Block::default()
-                    .title(state.composer_title())
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(border_color))
-                    .title_style(Style::default().fg(Color::White).bold()),
-            ),
+            .block(block),
         area,
     );
+    render_vertical_scrollbar(
+        frame,
+        panel_scrollbar_area(area),
+        usize::from(vertical_scroll),
+        usize::from(area.height.saturating_sub(2)),
+        total_lines,
+    );
     if state.show_custom_emoji() {
-        render_composer_custom_emoji_images(frame, area, state, emoji_images);
+        render_composer_custom_emoji_images(frame, area, state, emoji_images, vertical_scroll);
     }
-    if let Some(position) =
-        composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &ready_urls)
-    {
+    render_composer_attachment_previews(frame, area, state, vertical_scroll);
+    if let Some(position) = composer_cursor_position_with_loaded_custom_emoji_urls(
+        area,
+        state,
+        &ready_urls,
+        vertical_scroll,
+    ) {
         frame.set_cursor_position(position);
     }
 }
@@ -47,39 +82,30 @@ pub(in crate::tui::ui) fn composer_cursor_position(
     area: Rect,
     state: &DashboardState,
 ) -> Option<Position> {
-    composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &[])
+    let total_lines = composer_lines_with_loaded_custom_emoji_urls(
+        state,
+        composer_content_width(area.width),
+        &[],
+    )
+    .len();
+    let vertical_scroll = composer_vertical_scroll(area, state, &[], total_lines);
+    composer_cursor_position_with_loaded_custom_emoji_urls(area, state, &[], vertical_scroll)
 }
 
 fn composer_cursor_position_with_loaded_custom_emoji_urls(
     area: Rect,
     state: &DashboardState,
     loaded_custom_emoji_urls: &[String],
+    vertical_scroll: u16,
 ) -> Option<Position> {
-    if !state.is_composing() || area.width < 3 || area.height < 3 {
+    if !state.is_composing() || state.composer_lock().is_some() || area.width < 3 || area.height < 3
+    {
         return None;
     }
 
-    let inner_width = composer_inner_width(area.width) as usize;
-    let cursor = state.composer_cursor_byte_index();
-    let display_input = composer_display_input(state, loaded_custom_emoji_urls);
-    let display_cursor = display_input
-        .map_byte_index(cursor)
-        .min(display_input.input.len());
-    let text_before_cursor = &display_input.input[..display_cursor];
-    let prefixed = prefixed_composer_input(text_before_cursor);
-    let wrapped = wrap_text_lines(&prefixed, inner_width);
-    let mut prompt_row = wrapped.len().saturating_sub(1);
-    let mut prompt_column = wrapped.last().map(|line| line.width()).unwrap_or_default();
-    if prompt_column >= inner_width {
-        prompt_row = prompt_row.saturating_add(1);
-        prompt_column = 0;
-    }
-
-    let mut content_row = state.pending_composer_upload_line_count();
-    if state.reply_target_message_state().is_some() {
-        content_row = content_row.saturating_add(1);
-    }
-    content_row = content_row.saturating_add(prompt_row);
+    let (content_row, prompt_column) =
+        composer_cursor_document_position(area, state, loaded_custom_emoji_urls);
+    let viewport_row = content_row.saturating_sub(usize::from(vertical_scroll));
 
     let x = area
         .x
@@ -88,7 +114,7 @@ fn composer_cursor_position_with_loaded_custom_emoji_urls(
     let y = area
         .y
         .saturating_add(1)
-        .saturating_add(u16::try_from(content_row).unwrap_or(u16::MAX));
+        .saturating_add(u16::try_from(viewport_row).unwrap_or(u16::MAX));
     let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
     let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
     if x >= inner_right || y >= inner_bottom {
@@ -96,6 +122,51 @@ fn composer_cursor_position_with_loaded_custom_emoji_urls(
     }
 
     Some(Position { x, y })
+}
+
+fn composer_vertical_scroll(
+    area: Rect,
+    state: &DashboardState,
+    loaded_custom_emoji_urls: &[String],
+    total_lines: usize,
+) -> u16 {
+    if !state.is_composing() || state.composer_lock().is_some() || area.height < 3 {
+        return 0;
+    }
+
+    let (cursor_row, _) = composer_cursor_document_position(area, state, loaded_custom_emoji_urls);
+    let viewport_height = usize::from(area.height.saturating_sub(2));
+    // Start from the stored viewport and reveal only when the cursor crosses an
+    // edge. Rechecking current render geometry keeps loaded emoji replacements
+    // and terminal resizing safe without forcing the cursor to the bottom.
+    let scroll = state.composer_scroll_for(
+        viewport_height,
+        total_lines.max(cursor_row.saturating_add(1)),
+        cursor_row,
+    );
+    u16::try_from(scroll).unwrap_or(u16::MAX)
+}
+
+fn composer_cursor_document_position(
+    area: Rect,
+    state: &DashboardState,
+    loaded_custom_emoji_urls: &[String],
+) -> (usize, usize) {
+    let cursor = state.composer_cursor_byte_index();
+    let display_input = composer_display_input(state, loaded_custom_emoji_urls);
+    let display_cursor = display_input
+        .map_byte_index(cursor)
+        .min(display_input.input.len());
+    let (prompt_row, prompt_column) = composer_prompt_cursor_position(
+        &display_input.input,
+        display_cursor,
+        composer_content_width(area.width),
+    );
+
+    (
+        composer_rows_before_input(state).saturating_add(prompt_row),
+        prompt_column,
+    )
 }
 
 pub(in crate::tui::ui) fn render_composer_mention_picker(
@@ -118,15 +189,15 @@ pub(in crate::tui::ui) fn render_composer_mention_picker(
     ) else {
         return;
     };
-    frame.render_widget(Clear, setup.area);
+    clear_area(frame, setup.area);
     let visible_candidates = &candidates[setup.visible_range.clone()];
     let lines = mention_picker_lines(visible_candidates, setup.selected_offset, setup.inner_width);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(DIM))
+        .border_type(theme::current().border_type(theme::BorderSurface::Picker))
+        .border_style(theme::current().style(theme::HighlightGroup::ComposerPickerBorder))
         .title(" mention ")
-        .title_style(Style::default().fg(Color::White).bold());
+        .title_style(theme::current().style(theme::HighlightGroup::ComposerTitle));
     frame.render_widget(Paragraph::new(lines).block(block), setup.area);
     render_composer_picker_scrollbar(frame, &setup, candidates.len());
 }
@@ -156,9 +227,15 @@ pub(in crate::tui::ui) fn render_composer_command_picker(
         setup.selected_offset,
         setup.inner_width,
     );
-    frame.render_widget(Clear, setup.area);
+    clear_area(frame, setup.area);
     frame.render_widget(
-        Paragraph::new(lines).block(Block::default().title(" Commands ").borders(Borders::ALL)),
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(" Commands ")
+                .borders(Borders::ALL)
+                .border_type(theme::current().border_type(theme::BorderSurface::Picker))
+                .border_style(theme::current().style(theme::HighlightGroup::ComposerPickerBorder)),
+        ),
         setup.area,
     );
     render_composer_picker_scrollbar(frame, &setup, candidates.len());
@@ -185,7 +262,7 @@ pub(in crate::tui::ui) fn render_composer_emoji_picker(
     ) else {
         return;
     };
-    frame.render_widget(Clear, setup.area);
+    clear_area(frame, setup.area);
     let visible_candidates = &candidates[setup.visible_range.clone()];
     let ready_urls = emoji_images
         .iter()
@@ -200,10 +277,10 @@ pub(in crate::tui::ui) fn render_composer_emoji_picker(
     );
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(DIM))
+        .border_type(theme::current().border_type(theme::BorderSurface::Picker))
+        .border_style(theme::current().style(theme::HighlightGroup::ComposerPickerBorder))
         .title(" emoji ")
-        .title_style(Style::default().fg(Color::White).bold());
+        .title_style(theme::current().style(theme::HighlightGroup::ComposerTitle));
     frame.render_widget(Paragraph::new(lines).block(block), setup.area);
     if state.show_custom_emoji() {
         render_composer_emoji_picker_images(frame, setup.area, visible_candidates, emoji_images);
@@ -262,6 +339,31 @@ fn render_composer_picker_scrollbar(
 /// Picks a rectangle directly above the composer for the picker. Returns
 /// `None` when there isn't enough room (very short terminal) so the caller
 /// can silently skip drawing.
+pub(in crate::tui::ui) fn active_composer_picker_area(
+    message_areas: MessageAreas,
+    state: &DashboardState,
+) -> Option<Rect> {
+    if state.composer_command_query().is_some() {
+        let candidates = state.composer_command_candidates();
+        if !candidates.is_empty() {
+            return composer_picker_area(message_areas, candidates.len());
+        }
+    }
+    if state.composer_mention_query().is_some() {
+        let candidates = state.composer_mention_candidates();
+        if !candidates.is_empty() {
+            return composer_picker_area(message_areas, candidates.len());
+        }
+    }
+    if state.composer_emoji_query().is_some() {
+        let candidates = state.composer_emoji_candidates();
+        if !candidates.is_empty() {
+            return composer_picker_area(message_areas, candidates.len());
+        }
+    }
+    None
+}
+
 fn composer_picker_area(message_areas: MessageAreas, candidate_count: usize) -> Option<Rect> {
     let composer = message_areas.composer;
     let messages = message_areas.list;
@@ -291,13 +393,16 @@ fn mention_picker_lines(
     selected: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let max_label_width = width.saturating_sub(4).max(1);
+    let max_label_width = width
+        .saturating_sub(selection_marker_width())
+        .saturating_sub(2)
+        .max(1);
     candidates
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let cursor = if index == selected { "› " } else { "  " };
-            let bot_marker = if entry.is_bot { " [BOT]" } else { "" };
+            let selected = index == selected;
+            let cursor = selection_marker(selected);
             // Show the raw username next to the alias when they differ so the
             // user can see which row matched their query when they typed
             // against the username instead of the alias.
@@ -307,36 +412,70 @@ fn mention_picker_lines(
                 .filter(|name| !name.eq_ignore_ascii_case(&entry.display_name))
                 .map(|name| format!(" @{name}"))
                 .unwrap_or_default();
-            let label = format!("{}{bot_marker}{username_hint}", entry.display_label());
-            let label = truncate_display_width(&label, max_label_width);
-            let mut row_style = mention_picker_entry_style(entry);
-            if index == selected {
-                row_style = row_style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
-            }
+            let bot_marker = if entry.is_bot { " [BOT]" } else { "" };
+            let bot_width = bot_marker.width().min(max_label_width);
+            let label = truncate_display_width(
+                entry.display_label(),
+                max_label_width.saturating_sub(bot_width),
+            );
+            let username_hint = truncate_display_width(
+                &username_hint,
+                max_label_width
+                    .saturating_sub(bot_width)
+                    .saturating_sub(label.width()),
+            );
+            let role_color = match entry.target {
+                MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => entry.role_color,
+                MentionPickerTarget::User(_) | MentionPickerTarget::Channel(_) => None,
+            };
+            let row_style = selected_discord_text_style(
+                selected,
+                mention_picker_entry_style(entry),
+                role_color,
+            );
             let marker = match entry.target {
                 MentionPickerTarget::User(_) => presence_marker(entry.status).to_string(),
                 MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => "@".to_owned(),
                 MentionPickerTarget::Channel(_) => "#".to_owned(),
             };
-            Line::from(vec![
-                Span::styled(cursor, Style::default().fg(ACCENT)),
-                Span::styled(marker, row_style),
+            let marker_style = if matches!(entry.target, MentionPickerTarget::User(_)) {
+                selected_presence_style(selected, entry.status)
+            } else {
+                row_style
+            };
+            let mut spans = vec![
+                cursor,
+                Span::styled(marker, marker_style),
                 Span::styled(" ", row_style),
                 Span::styled(label, row_style),
-            ])
+            ];
+            if entry.is_bot && bot_width == bot_marker.width() {
+                spans.push(Span::raw(bot_marker));
+            }
+            spans.push(Span::styled(username_hint, row_style));
+            selected_row_line(Line::from(spans), selected)
         })
         .collect()
 }
 
+#[cfg(test)]
+pub(in crate::tui::ui) fn mention_picker_lines_for_test(
+    candidates: &[MentionPickerEntry],
+    selected: usize,
+    width: usize,
+) -> Vec<Line<'static>> {
+    mention_picker_lines(candidates, selected, width)
+}
+
 fn mention_picker_entry_style(entry: &MentionPickerEntry) -> Style {
     match entry.target {
-        MentionPickerTarget::User(_) => Style::default().fg(presence_color(entry.status)),
         MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => {
-            Style::default().fg(discord_color(entry.role_color, Color::Magenta))
+            apply_discord_foreground(
+                theme::current().style(theme::HighlightGroup::MentionPickerRole),
+                entry.role_color,
+            )
         }
-        MentionPickerTarget::Channel(_) => Style::default().fg(Color::Cyan),
+        MentionPickerTarget::User(_) | MentionPickerTarget::Channel(_) => Style::default(),
     }
 }
 
@@ -349,25 +488,32 @@ fn command_picker_lines(
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let marker = selection_marker(index == selected);
+            let selected = index == selected;
+            let marker = selection_marker(selected);
             let marker_width = marker.content.width();
             let label_width = entry.label.width();
             let detail_width = inner_width
                 .saturating_sub(marker_width)
                 .saturating_sub(label_width)
                 .saturating_sub(1);
-            Line::from(vec![
-                marker,
-                Span::styled(
-                    entry.label.clone(),
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    truncate_display_width(&entry.detail, detail_width),
-                    Style::default().fg(DIM),
-                ),
-            ])
+            selected_row_line(
+                Line::from(vec![
+                    marker,
+                    Span::styled(
+                        entry.label.clone(),
+                        selected_text_style(
+                            selected,
+                            theme::current().style(theme::HighlightGroup::Strong),
+                        ),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        truncate_display_width(&entry.detail, detail_width),
+                        theme::current().style(theme::HighlightGroup::Description),
+                    ),
+                ]),
+                selected,
+            )
         })
         .collect()
 }
@@ -383,7 +529,8 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let cursor = if index == selected { "› " } else { "  " };
+            let cursor = selection_marker(index == selected);
+            let cursor_width = cursor.content.width();
             let custom_image_ready = show_custom_emoji
                 && entry
                     .custom_image_url
@@ -395,23 +542,21 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
                 .map(|value| value.width().saturating_add(" - ".width()))
                 .unwrap_or_default();
             let max_label_width = width
-                .saturating_sub(2)
+                .saturating_sub(cursor_width)
                 .saturating_sub(prefix_width)
                 .saturating_sub(description_width)
                 .max(1);
             let label = format!(":{}: {}", entry.shortcode, entry.name);
             let label = truncate_display_width(&label, max_label_width);
             let mut row_style = if entry.available {
-                Style::default().fg(Color::White)
+                Style::default()
             } else {
-                Style::default().fg(DIM).add_modifier(Modifier::CROSSED_OUT)
+                theme::current().style(theme::HighlightGroup::UnavailableEmoji)
             };
             if index == selected {
-                row_style = row_style
-                    .bg(Color::Rgb(40, 45, 90))
-                    .add_modifier(Modifier::BOLD);
+                row_style = theme::current().apply(theme::HighlightGroup::SelectedRow, row_style);
             }
-            let mut spans = vec![Span::styled(cursor, Style::default().fg(ACCENT))];
+            let mut spans = vec![cursor];
             spans.extend(emoji_picker_entry_prefix(
                 entry,
                 custom_image_ready,
@@ -419,17 +564,24 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
             ));
             spans.push(Span::styled(label, row_style));
             if let Some(description) = description {
-                spans.push(Span::styled(" - ", Style::default().fg(DIM)));
-                spans.push(Span::styled(description, Style::default().fg(DIM)));
+                spans.push(Span::styled(
+                    " - ",
+                    theme::current().style(theme::HighlightGroup::Description),
+                ));
+                spans.push(Span::styled(
+                    description,
+                    theme::current().style(theme::HighlightGroup::Description),
+                ));
             }
-            Line::from(spans)
+            selected_row_line(Line::from(spans), index == selected)
         })
         .collect()
 }
 
 fn emoji_picker_entry_prefix_width(entry: &EmojiPickerEntry, custom_image_ready: bool) -> usize {
     if entry.custom_image_url.is_some() {
-        usize::from(custom_image_ready) * usize::from(EMOJI_REACTION_IMAGE_WIDTH.saturating_add(1))
+        usize::from(custom_image_ready)
+            * usize::from(EmojiImageSize::Compact.width().saturating_add(1))
     } else {
         entry.emoji.as_str().width().saturating_add(1)
     }
@@ -443,7 +595,9 @@ fn emoji_picker_entry_prefix(
     if entry.custom_image_url.is_some() {
         if custom_image_ready {
             vec![Span::styled(
-                " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH.saturating_add(1))),
+                " ".repeat(usize::from(
+                    EmojiImageSize::Compact.width().saturating_add(1),
+                )),
                 row_style,
             )]
         } else {
@@ -467,33 +621,15 @@ fn render_composer_emoji_picker_images(
         horizontal: 1,
         vertical: 1,
     });
-    if content.width <= EMOJI_REACTION_IMAGE_WIDTH || content.height == 0 {
-        return;
-    }
-
-    for (offset, entry) in candidates.iter().enumerate() {
-        let Some(url) = entry.custom_image_url.as_deref() else {
-            continue;
-        };
-        let Some(image) = emoji_images.iter().find(|image| image.url == url) else {
-            continue;
-        };
-        let y = content
-            .y
-            .saturating_add(u16::try_from(offset).unwrap_or(u16::MAX));
-        if y >= content.y.saturating_add(content.height) {
-            continue;
-        }
-        let image_area = Rect::new(
-            content.x.saturating_add(2),
-            y,
-            EMOJI_REACTION_IMAGE_WIDTH.min(content.width.saturating_sub(2)),
-            1,
-        );
-        if image_area.width > 0 {
-            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-        }
-    }
+    overlay_emoji_column(
+        frame,
+        content,
+        2,
+        candidates
+            .iter()
+            .map(|entry| entry.custom_image_url.as_deref()),
+        emoji_images,
+    );
 }
 
 #[cfg(test)]
@@ -506,20 +642,27 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
     width: u16,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<Line<'static>> {
-    if state.is_composing()
-        || !state.composer_input().is_empty()
-        || !state.pending_composer_attachments().is_empty()
-        || state.clipboard_paste_pending()
+    if state.composer_lock().is_none()
+        && (state.is_composing()
+            || !state.composer_input().is_empty()
+            || !state.pending_composer_attachments().is_empty()
+            || state.clipboard_paste_pending())
     {
         let mut lines = pending_upload_lines(state, width);
+        append_composer_upload_preview_lines(&mut lines, state, width);
         let display_input = composer_display_input(state, loaded_custom_emoji_urls);
         if state.is_composing()
             && let Some(message) = state.reply_target_message_state()
         {
-            lines.push(Line::from(Span::styled(
-                reply_target_hint(message, state, width),
-                Style::default().fg(DIM),
-            )));
+            let (ping_label, ping_style) = reply_ping_indicator(state);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    reply_target_hint(message, state, width),
+                    theme::current().style(theme::HighlightGroup::MessageSecondary),
+                ),
+                Span::raw(REPLY_PING_SEPARATOR),
+                Span::styled(ping_label, ping_style),
+            ]));
         }
         let prefixed_input = prefixed_composer_input(&display_input.input);
         let wrapped = wrap_text_lines(&prefixed_input, width as usize);
@@ -529,7 +672,24 @@ pub(in crate::tui::ui) fn composer_lines_with_loaded_custom_emoji_urls(
         return lines;
     }
 
-    vec![Line::from(composer_text(state, width))]
+    let text = composer_text(state, width);
+    let wrapped = wrap_text_lines(&text, width as usize);
+    // A locked composer is a hard stop, so override the dimmed placeholder with red.
+    if state
+        .composer_lock()
+        .is_some_and(|lock| lock != ComposerLock::LoadingMessages)
+    {
+        return wrapped
+            .into_iter()
+            .map(|subline| {
+                Line::from(Span::styled(
+                    subline,
+                    theme::current().style(theme::HighlightGroup::Error),
+                ))
+            })
+            .collect();
+    }
+    wrapped.into_iter().map(Line::from).collect()
 }
 
 struct ComposerDisplayInput {
@@ -605,7 +765,7 @@ fn composer_display_input(
             .iter()
             .any(|url| url == &completion.url)
         {
-            let placeholder = " ".repeat(usize::from(EMOJI_REACTION_IMAGE_WIDTH));
+            let placeholder = " ".repeat(usize::from(EmojiImageSize::Compact.width()));
             input.push_str(&placeholder);
             replacements.push(ComposerEmojiReplacement {
                 start,
@@ -631,6 +791,7 @@ fn render_composer_custom_emoji_images(
     area: Rect,
     state: &DashboardState,
     emoji_images: &[EmojiImage<'_>],
+    vertical_scroll: u16,
 ) {
     if !state.is_composing() || area.width < 3 || area.height < 3 {
         return;
@@ -639,19 +800,11 @@ fn render_composer_custom_emoji_images(
     let ready_urls = ready_custom_emoji_urls(emoji_images);
     let display_input = composer_display_input(state, &ready_urls);
     let input = display_input.input.as_str();
-    let inner_width = composer_inner_width(area.width) as usize;
-    let mut content_row = state.pending_composer_upload_line_count();
-    if state.reply_target_message_state().is_some() {
-        content_row = content_row.saturating_add(1);
-    }
+    let inner_width = composer_content_width(area.width) as usize;
+    let content_row = composer_rows_before_input(state);
 
+    let mut slots = Vec::new();
     for completion in state.composer_emoji_image_completions() {
-        let Some(image) = emoji_images
-            .iter()
-            .find(|image| image.url == completion.url)
-        else {
-            continue;
-        };
         let Some((row, column)) = composer_custom_emoji_image_position(
             input,
             display_input.map_byte_index(completion.byte_start),
@@ -660,29 +813,24 @@ fn render_composer_custom_emoji_images(
         ) else {
             continue;
         };
-        let x = area
-            .x
-            .saturating_add(1)
-            .saturating_add(u16::try_from(column).unwrap_or(u16::MAX));
-        let y = area
-            .y
-            .saturating_add(1)
-            .saturating_add(u16::try_from(content_row.saturating_add(row)).unwrap_or(u16::MAX));
-        let inner_right = area.x.saturating_add(area.width.saturating_sub(1));
-        let inner_bottom = area.y.saturating_add(area.height.saturating_sub(1));
-        if x >= inner_right || y >= inner_bottom {
-            continue;
-        }
-        let image_area = Rect::new(
-            x,
-            y,
-            EMOJI_REACTION_IMAGE_WIDTH.min(inner_right.saturating_sub(x)),
-            1,
-        );
-        if image_area.width > 0 {
-            frame.render_widget(RatatuiImage::new(image.protocol), image_area);
-        }
+        slots.push(EmojiSlot {
+            row_in_list: 1isize
+                .saturating_add(content_row.saturating_add(row) as isize)
+                .saturating_sub(vertical_scroll as isize),
+            col: area.x as isize + 1 + column as isize,
+            max_width: u16::MAX,
+            image_size: crate::tui::text::EmojiImageSize::Compact,
+            url: completion.url,
+        });
     }
+
+    // Keep both the border and reserved scrollbar column outside image bounds.
+    let list = Rect {
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(1),
+        ..area
+    };
+    overlay_emoji_slots(frame, list, emoji_images, &[], slots.into_iter());
 }
 
 fn composer_custom_emoji_image_position(
@@ -710,10 +858,107 @@ fn composer_custom_emoji_image_position(
     ))
 }
 
+fn render_composer_attachment_previews(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+    vertical_scroll: u16,
+) {
+    let previews = state.composer_attachment_previews();
+    if previews.is_empty() || composer_upload_preview_line_count(state) == 0 {
+        return;
+    }
+    let Some(preview_row) = composer_upload_preview_start_row(state) else {
+        return;
+    };
+    let inner = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let inner = Rect {
+        width: inner.width.saturating_sub(1),
+        ..inner
+    };
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    // Image widgets scale into their render area instead of cropping. Once the
+    // viewport starts inside a preview, omit it rather than draw a distorted
+    // partial image over the correctly scrolled placeholder rows.
+    let Some(viewport_row) = preview_row.checked_sub(vertical_scroll) else {
+        return;
+    };
+    let y = inner.y.saturating_add(viewport_row);
+    if y >= inner.y.saturating_add(inner.height) {
+        return;
+    }
+    let height = LOCAL_UPLOAD_PREVIEW_HEIGHT.min(inner.y.saturating_add(inner.height) - y);
+    if height == 0 {
+        return;
+    }
+    let tile_width = LOCAL_UPLOAD_PREVIEW_WIDTH.min(inner.width);
+    if tile_width == 0 {
+        return;
+    }
+    for (index, preview) in previews.into_iter().enumerate() {
+        let x_offset = u16::try_from(index)
+            .unwrap_or(u16::MAX)
+            .saturating_mul(tile_width.saturating_add(1));
+        let x = inner.x.saturating_add(x_offset);
+        if x >= inner.x.saturating_add(inner.width) {
+            break;
+        }
+        let preview_area = Rect {
+            x,
+            y,
+            width: tile_width.min(inner.x.saturating_add(inner.width) - x),
+            height,
+        };
+        render_composer_attachment_preview(frame, preview_area, preview);
+    }
+}
+
+fn composer_upload_preview_start_row(state: &DashboardState) -> Option<u16> {
+    (composer_upload_preview_line_count(state) > 0).then(|| {
+        u16::try_from(state.pending_composer_upload_line_count())
+            .unwrap_or(u16::MAX)
+            .saturating_add(1)
+    })
+}
+
+fn render_composer_attachment_preview(
+    frame: &mut Frame,
+    area: Rect,
+    preview: LocalUploadPreviewView<'_>,
+) {
+    match preview {
+        LocalUploadPreviewView::Loading { filename } => frame.render_widget(
+            Paragraph::new(format!("loading {filename}..."))
+                .style(theme::current().style(theme::HighlightGroup::Loading))
+                .wrap(Wrap { trim: false }),
+            area,
+        ),
+        LocalUploadPreviewView::Failed { filename, message } => frame.render_widget(
+            Paragraph::new(format!("{filename}: {message}"))
+                .style(theme::current().style(theme::HighlightGroup::Warning))
+                .wrap(Wrap { trim: false }),
+            area,
+        ),
+        LocalUploadPreviewView::Ready { protocol } => {
+            frame.render_widget(RatatuiImage::new(protocol), area);
+        }
+    }
+}
+
 fn pending_upload_lines(state: &DashboardState, width: u16) -> Vec<Line<'static>> {
     pending_upload_texts(state, width)
         .into_iter()
-        .map(|label| Line::from(Span::styled(label, Style::default().fg(ACCENT))))
+        .map(|label| {
+            Line::from(Span::styled(
+                label,
+                theme::current().style(theme::HighlightGroup::Warning),
+            ))
+        })
         .collect()
 }
 
@@ -740,22 +985,68 @@ fn pending_upload_texts(state: &DashboardState, width: u16) -> Vec<String> {
     lines
 }
 
+fn append_composer_upload_preview_lines(
+    lines: &mut Vec<Line<'static>>,
+    state: &DashboardState,
+    width: u16,
+) {
+    append_composer_upload_preview_rows(lines, state, width, |text| {
+        Line::from(Span::styled(
+            text,
+            theme::current().style(theme::HighlightGroup::Description),
+        ))
+    });
+}
+
+fn append_composer_upload_preview_texts(
+    lines: &mut Vec<String>,
+    state: &DashboardState,
+    width: u16,
+) {
+    append_composer_upload_preview_rows(lines, state, width, |text| text);
+}
+
+fn append_composer_upload_preview_rows<T>(
+    lines: &mut Vec<T>,
+    state: &DashboardState,
+    width: u16,
+    build_line: impl Fn(String) -> T,
+) {
+    if composer_upload_preview_line_count(state) == 0 {
+        return;
+    }
+    let max_width = usize::from(width).max(1);
+    let separator = truncate_display_width(&"─".repeat(max_width), max_width);
+    lines.push(build_line(separator.clone()));
+    for _ in 0..LOCAL_UPLOAD_PREVIEW_HEIGHT {
+        lines.push(build_line(String::new()));
+    }
+    lines.push(build_line(separator));
+}
+
 pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> String {
-    if state.is_composing() {
+    if state.composer_lock().is_none() && state.is_composing() {
         let mut lines = pending_upload_texts(state, width);
+        append_composer_upload_preview_texts(&mut lines, state, width);
         let input = prefixed_composer_input(state.composer_input());
         if let Some(message) = state.reply_target_message_state() {
-            lines.push(reply_target_hint(message, state, width));
+            let (ping_label, _) = reply_ping_indicator(state);
+            lines.push(format!(
+                "{}{REPLY_PING_SEPARATOR}{ping_label}",
+                reply_target_hint(message, state, width)
+            ));
         }
         lines.push(input);
         return lines.join("\n");
     }
 
-    if !state.composer_input().is_empty()
-        || !state.pending_composer_attachments().is_empty()
-        || state.clipboard_paste_pending()
+    if state.composer_lock().is_none()
+        && (!state.composer_input().is_empty()
+            || !state.pending_composer_attachments().is_empty()
+            || state.clipboard_paste_pending())
     {
         let mut lines = pending_upload_texts(state, width);
+        append_composer_upload_preview_texts(&mut lines, state, width);
         lines.push(prefixed_composer_input(state.composer_input()));
         return lines.join("\n");
     }
@@ -766,6 +1057,51 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
             "group-dm" | "Group" => channel.name.clone(),
             _ => format!("#{}", channel.name),
         };
+        if channel.is_forum() {
+            if state.can_create_post_in_selected_channel() {
+                return format!(
+                    "press {} to create a post in {label}",
+                    state.key_bindings().start_composer_key_label()
+                );
+            }
+            return format!("read-only · cannot create posts in {label}");
+        }
+        if let Some(lock) = state.composer_lock() {
+            return match lock {
+                ComposerLock::LoadingMessages => {
+                    format!("loading messages in {label}...")
+                }
+                ComposerLock::MessageLoadFailed => {
+                    format!("read-only · could not load messages in {label}. reopen it to retry")
+                }
+                ComposerLock::Spam => {
+                    format!(
+                        "read-only · {label} is flagged as spam. open it in the official app first"
+                    )
+                }
+                ComposerLock::MessageRequest => {
+                    format!(
+                        "read-only · {label} is a message request. accept it in the official app first"
+                    )
+                }
+                ComposerLock::NewConversation => {
+                    format!(
+                        "read-only · {label} is a new conversation. send at least {MINIMUM_ESTABLISHED_DM_MESSAGES} messages in the official app first"
+                    )
+                }
+                ComposerLock::EmptyChannel => {
+                    format!(
+                        "read-only · {label} has no messages. start it in the official app first"
+                    )
+                }
+                ComposerLock::SlowMode { remaining_seconds } => {
+                    format!("slowmode · wait {remaining_seconds}s before writing in {label}")
+                }
+                ComposerLock::Verification(restriction) => {
+                    verification_composer_text(&label, restriction)
+                }
+            };
+        }
         // Tell the user up-front if the shortcut won't open the composer here,
         // so they don't repeatedly press `i` and wonder why nothing happens.
         if !state.can_send_in_selected_channel() {
@@ -788,13 +1124,65 @@ pub(in crate::tui::ui) fn composer_text(state: &DashboardState, width: u16) -> S
     "select a channel to write a message".to_owned()
 }
 
+pub(in crate::tui::ui) fn verification_composer_text(
+    label: &str,
+    block: GuildParticipationBlock,
+) -> String {
+    let GuildParticipationBlock::Restricted(restriction) = block else {
+        return format!("read-only · Discord verification status is not available for {label}");
+    };
+    match restriction {
+        GuildParticipationRestriction::MembershipScreening => {
+            format!("read-only · complete {label}'s membership screening in the official app")
+        }
+        GuildParticipationRestriction::OnboardingIncomplete => {
+            format!("read-only · complete {label}'s server onboarding in the official app")
+        }
+        GuildParticipationRestriction::EmailVerificationRequired => {
+            format!("read-only · verify your Discord account email before writing in {label}")
+        }
+        GuildParticipationRestriction::AccountTooNew { remaining_seconds } => format!(
+            "read-only · account verification wait: {remaining_seconds}s remaining for {label}"
+        ),
+        GuildParticipationRestriction::MemberTooNew { remaining_seconds } => format!(
+            "read-only · server verification wait: {remaining_seconds}s remaining for {label}"
+        ),
+        GuildParticipationRestriction::PhoneVerificationRequired => {
+            format!("read-only · verify your Discord account phone before writing in {label}")
+        }
+        GuildParticipationRestriction::UnsupportedLevel { value } => {
+            format!("read-only · {label} uses unsupported verification level {value}")
+        }
+    }
+}
+
+const REPLY_PING_SEPARATOR: &str = "  ";
+
 fn reply_target_hint(message: &MessageState, state: &DashboardState, width: u16) -> String {
     const PREFIX: &str = "reply to ";
-    let excerpt_width = usize::from(width).saturating_sub(PREFIX.width()).max(1);
+    // Reserve room for the trailing ping indicator so the excerpt never runs
+    // into it.
+    let (ping_label, _) = reply_ping_indicator(state);
+    let reserved = PREFIX.width() + REPLY_PING_SEPARATOR.width() + ping_label.width();
+    let excerpt_width = usize::from(width).saturating_sub(reserved).max(1);
     format!(
         "{PREFIX}{}",
         truncate_display_width(&reply_target_excerpt(message, state), excerpt_width)
     )
+}
+
+fn reply_ping_indicator(state: &DashboardState) -> (&'static str, Style) {
+    if state.ping_on_reply() {
+        (
+            "@ on",
+            theme::current().style(theme::HighlightGroup::ReplyPingEnabled),
+        )
+    } else {
+        (
+            "@ off",
+            theme::current().style(theme::HighlightGroup::Disabled),
+        )
+    }
 }
 
 fn reply_target_excerpt(message: &MessageState, state: &DashboardState) -> String {

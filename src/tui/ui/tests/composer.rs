@@ -1,4 +1,59 @@
 use super::*;
+use crate::discord::{
+    GuildParticipationBlock, GuildParticipationDataGap, GuildParticipationRestriction,
+};
+
+#[test]
+fn verification_composer_text_explains_each_restriction() {
+    let cases = [
+        (
+            GuildParticipationRestriction::MembershipScreening,
+            "membership screening",
+        ),
+        (
+            GuildParticipationRestriction::OnboardingIncomplete,
+            "server onboarding",
+        ),
+        (
+            GuildParticipationRestriction::EmailVerificationRequired,
+            "account email",
+        ),
+        (
+            GuildParticipationRestriction::AccountTooNew {
+                remaining_seconds: 30,
+            },
+            "account verification wait: 30s",
+        ),
+        (
+            GuildParticipationRestriction::MemberTooNew {
+                remaining_seconds: 60,
+            },
+            "server verification wait: 60s",
+        ),
+        (
+            GuildParticipationRestriction::PhoneVerificationRequired,
+            "account phone",
+        ),
+    ];
+
+    for (restriction, expected) in cases {
+        assert!(
+            verification_composer_text(
+                "#general",
+                GuildParticipationBlock::Restricted(restriction)
+            )
+            .contains(expected)
+        );
+    }
+
+    assert!(
+        verification_composer_text(
+            "#general",
+            GuildParticipationBlock::DataUnavailable(GuildParticipationDataGap::Guild)
+        )
+        .contains("verification status is not available")
+    );
+}
 
 #[test]
 fn sync_view_heights_reserves_space_for_composer_height() {
@@ -29,8 +84,18 @@ fn sync_view_heights_reserves_space_for_composer_height() {
 }
 
 #[test]
-fn composer_prompt_line_count_uses_display_width_for_wide_chars() {
-    assert_eq!(composer_prompt_line_count("漢字仮", 4), 2);
+fn composer_height_is_capped_at_half_the_message_panel() {
+    let mut state = state_with_message();
+    state.start_composer();
+    state.insert_composer_text_at_cursor(&("line\n".repeat(20)));
+
+    let areas = message_areas(Rect::new(0, 0, 80, 20), &state);
+
+    assert_eq!(areas.composer.height, 10);
+    assert_eq!(areas.list.height, 10);
+
+    let short_areas = message_areas(Rect::new(0, 0, 80, 5), &DashboardState::new());
+    assert_eq!(short_areas.composer.height, 3);
 }
 
 #[test]
@@ -46,6 +111,10 @@ fn composer_prompt_line_count_matches_prefixed_multiline_rendering() {
     assert_eq!(rendered, vec!["> a", "  bbb", "b"]);
     assert_eq!(composer_prompt_line_count(state.composer_input(), 5), 3);
     assert_eq!(composer_content_line_count(&state, 5), 3);
+
+    // Wrapping counts display columns, so three wide glyphs need two rows in a
+    // four-column composer even though that is only three `char`s.
+    assert_eq!(composer_prompt_line_count("漢字仮", 4), 2);
 }
 
 #[test]
@@ -66,6 +135,88 @@ fn composer_lines_show_saved_draft_when_not_composing() {
 }
 
 #[test]
+fn composer_locks_use_the_same_red_hint_for_dm_and_server_channels() {
+    let mut server = DashboardState::new();
+    server.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![ChannelInfo {
+            guild_id: Some(Id::new(1)),
+            name: "general".to_owned(),
+            ..ChannelInfo::test(Id::new(2), "GuildText")
+        }],
+        ..GuildCreateFixture::new(Id::new(1))
+    }));
+    server.confirm_selected_guild();
+    server.confirm_selected_channel();
+    server.push_event(empty_latest_message_history_loaded_event(Id::new(2)));
+
+    let mut dm = DashboardState::new();
+    dm.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        name: "alice".to_owned(),
+        ..ChannelInfo::test(Id::new(20), "dm")
+    }));
+    dm.confirm_selected_guild();
+    dm.confirm_selected_channel();
+    dm.push_event(empty_latest_message_history_loaded_event(Id::new(20)));
+
+    for state in [&server, &dm] {
+        assert!(state.composer_lock().is_some());
+        let lines = composer_lines(state, 120);
+        assert!(
+            lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .all(|span| span.style.fg == Some(Color::Red))
+        );
+    }
+}
+
+#[test]
+fn message_history_statuses_override_a_saved_draft() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        last_message_id: Some(Id::new(200)),
+        name: "alice".to_owned(),
+        ..ChannelInfo::test(Id::new(20), "dm")
+    }));
+    state.confirm_selected_guild();
+    state.confirm_selected_channel();
+    for ch in "draft".chars() {
+        state.push_composer_char(ch);
+    }
+
+    assert_eq!(state.composer_lock(), Some(ComposerLock::LoadingMessages));
+    let lines = composer_lines(&state, 120);
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["loading messages in @alice..."]
+    );
+    assert!(
+        lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| span.style.fg != Some(Color::Red))
+    );
+
+    state.push_event(AppEvent::MessageHistoryLoadFailed {
+        channel_id: Id::new(20),
+        target: crate::discord::MessageHistoryLoadTarget::Latest,
+        message: "offline".to_owned(),
+    });
+    assert_eq!(state.composer_lock(), Some(ComposerLock::MessageLoadFailed));
+    let lines = composer_lines(&state, 120);
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["read-only · could not load messages in @alice. reopen it to retry"]
+    );
+    assert!(
+        lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .all(|span| span.style.fg == Some(Color::Red))
+    );
+}
+
+#[test]
 fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
     let mut state = state_with_message();
     state.direct_reply_to_selected_message();
@@ -78,11 +229,11 @@ fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
         Some("newer selected message")
     );
 
-    assert_eq!(composer_text(&state, 80), "reply to hello\n> ");
+    assert_eq!(composer_text(&state, 80), "reply to hello  @ on\n> ");
 }
 
 #[test]
-fn reply_composer_hint_line_is_dim() {
+fn reply_composer_hint_line_shows_dim_excerpt_and_semantic_ping_indicator() {
     let mut state = state_with_message();
     state.direct_reply_to_selected_message();
 
@@ -90,10 +241,32 @@ fn reply_composer_hint_line_is_dim() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["reply to hello", "> "]
+        vec!["reply to hello  @ on", "> "]
     );
-    assert_eq!(lines[0].spans[0].style.fg, Some(DIM));
+    assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::DIM));
+    assert_eq!(
+        lines[0].spans.last().unwrap().style.fg,
+        theme::current()
+            .style(theme::HighlightGroup::ReplyPingEnabled)
+            .fg
+    );
     assert_eq!(lines[1].spans[0].style.fg, None);
+
+    state.toggle_ping_on_reply();
+    let lines = composer_lines(&state, 80);
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["reply to hello  @ off", "> "]
+    );
+    assert!(
+        lines[0]
+            .spans
+            .last()
+            .unwrap()
+            .style
+            .add_modifier
+            .contains(Modifier::DIM)
+    );
 }
 
 #[test]
@@ -120,6 +293,63 @@ fn composer_border_title_tracks_message_mode() {
     );
     assert!(reply_rendered.contains("Reply"), "{reply_rendered}");
     assert!(edit_rendered.contains("Edit Message"), "{edit_rendered}");
+
+    let inactive = state_with_message();
+    let custom = theme::Theme::default()
+        .with_border_type(theme::BorderSurface::Composer, BorderType::Double)
+        .with_style(
+            theme::HighlightGroup::ComposerBorder,
+            Style::default().fg(Color::Red),
+        )
+        .with_style(
+            theme::HighlightGroup::ActiveComposerBorder,
+            Style::default().fg(Color::Green),
+        );
+    theme::with_test_theme(custom, || {
+        for (state, expected) in [(&normal, Color::Green), (&inactive, Color::Red)] {
+            let backend = TestBackend::new(40, 4);
+            let mut terminal = Terminal::new(backend).expect("test terminal should build");
+            terminal
+                .draw(|frame| render_composer(frame, frame.area(), state, &[]))
+                .expect("composer should render");
+
+            assert_eq!(terminal.backend().buffer()[(0, 0)].fg, expected);
+            assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "╔");
+        }
+    });
+}
+
+#[test]
+fn composer_title_shows_the_account_limit_and_marks_overflow_in_red() {
+    for (premium_tier, expected) in [
+        (crate::discord::PremiumTier::None, "0 / 2000"),
+        (crate::discord::PremiumTier::Nitro, "0 / 4000"),
+    ] {
+        let mut state = state_with_message();
+        state.push_event(AppEvent::CurrentUserCapabilities { premium_tier });
+        state.start_composer();
+        let rendered = render_dashboard_dump(80, 16, &mut state).join("\n");
+        assert!(rendered.contains(expected), "{rendered}");
+    }
+
+    let mut base = state_with_message();
+    base.start_composer();
+    base.insert_composer_text_at_cursor(&"x".repeat(2_001));
+    let backend = TestBackend::new(40, 4);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_composer(frame, frame.area(), &base, &[]))
+        .expect("composer should render");
+    let buffer = terminal.backend().buffer();
+    let (start_x, row) = find_cell(buffer, "2001 / 2000")
+        .expect("character indicator should be visible in the composer title");
+    let error_color = theme::current()
+        .style(theme::HighlightGroup::Error)
+        .fg
+        .expect("error theme should define a foreground color");
+    for column in start_x..start_x + "2001 / 2000".len() as u16 {
+        assert_eq!(buffer[(column, row)].fg, error_color);
+    }
 }
 
 #[test]
@@ -136,10 +366,21 @@ fn composer_lines_show_pending_upload_rows_above_input() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["upload: cat.png (2.0 KiB)", "> "]
+        vec![
+            "upload: cat.png (2.0 KiB)",
+            "────────────────────────────────────────────────────────────────────────────────",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "────────────────────────────────────────────────────────────────────────────────",
+            "> ",
+        ]
     );
-    assert_eq!(lines[0].spans[0].style.fg, Some(ACCENT));
-    assert_eq!(composer_content_line_count(&state, 80), 2);
+    assert_eq!(lines[0].spans[0].style.fg, Some(Color::Yellow));
+    assert_eq!(composer_content_line_count(&state, 80), 10);
 
     let mut processing = state_with_message();
     processing.start_composer();
@@ -152,7 +393,7 @@ fn composer_lines_show_pending_upload_rows_above_input() {
         line_texts_from_ratatui(&processing_lines),
         vec!["upload: ⠋ processing clipboard attachment...", "> "]
     );
-    assert_eq!(processing_lines[0].spans[0].style.fg, Some(ACCENT));
+    assert_eq!(processing_lines[0].spans[0].style.fg, Some(Color::Yellow));
     assert_eq!(composer_content_line_count(&processing, 80), 2);
 }
 
@@ -216,8 +457,103 @@ fn composer_cursor_position_accounts_for_upload_and_reply_rows() {
     }
 
     assert_eq!(
-        composer_cursor_position(Rect::new(10, 20, 20, 6), &state),
-        Some(Position { x: 15, y: 23 })
+        composer_cursor_position(Rect::new(10, 20, 20, 14), &state),
+        Some(Position { x: 15, y: 31 })
+    );
+}
+
+#[test]
+fn overflowing_pasted_composer_scrolls_naturally_and_shows_the_shared_scrollbar() {
+    fn visible_composer_rows(area: Rect, state: &DashboardState) -> Vec<String> {
+        let backend = TestBackend::new(area.width, area.height);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| render_composer(frame, area, state, &[]))
+            .expect("composer should render");
+        let buffer = terminal.backend().buffer();
+        (1..area.height - 1)
+            .map(|row| {
+                (1..area.width - 2)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    fn composer_scrollbar_symbols(area: Rect, state: &DashboardState) -> Vec<String> {
+        let backend = TestBackend::new(area.width, area.height);
+        let mut terminal = Terminal::new(backend).expect("test terminal should build");
+        terminal
+            .draw(|frame| render_composer(frame, area, state, &[]))
+            .expect("composer should render");
+        let buffer = terminal.backend().buffer();
+        let column = area.width.saturating_sub(2);
+        (1..area.height - 1)
+            .map(|row| buffer[(column, row)].symbol().to_owned())
+            .collect()
+    }
+
+    let mut short = state_with_message();
+    short.start_composer();
+    short.insert_composer_text_at_cursor("short");
+    let area = Rect::new(0, 0, 20, 5);
+    assert!(
+        composer_scrollbar_symbols(area, &short)
+            .iter()
+            .all(|symbol| symbol == " ")
+    );
+
+    let mut state = state_with_message();
+    state.start_composer();
+    state.insert_composer_text_at_cursor("first\nsecond\nthird\nfourth");
+    sync_composer_viewport(area, &mut state);
+
+    assert!(
+        composer_scrollbar_symbols(area, &state)
+            .iter()
+            .any(|symbol| symbol == "┃")
+    );
+    assert_eq!(
+        visible_composer_rows(area, &state),
+        vec!["  second", "  third", "  fourth"]
+    );
+    assert_eq!(
+        composer_cursor_position(area, &state),
+        Some(Position { x: 9, y: 3 })
+    );
+
+    state.move_composer_cursor_up();
+    sync_composer_viewport(area, &mut state);
+
+    assert_eq!(
+        visible_composer_rows(area, &state),
+        vec!["  second", "  third", "  fourth"]
+    );
+    assert_eq!(
+        composer_cursor_position(area, &state),
+        Some(Position { x: 8, y: 2 })
+    );
+
+    state.move_composer_cursor_up();
+    sync_composer_viewport(area, &mut state);
+
+    assert_eq!(
+        visible_composer_rows(area, &state),
+        vec!["  second", "  third", "  fourth"]
+    );
+
+    state.move_composer_cursor_up();
+    sync_composer_viewport(area, &mut state);
+
+    assert_eq!(
+        visible_composer_rows(area, &state),
+        vec!["> first", "  second", "  third"]
+    );
+    assert_eq!(
+        composer_cursor_position(area, &state),
+        Some(Position { x: 8, y: 1 })
     );
 }
 
@@ -335,6 +671,119 @@ fn dashboard_renders_composer_pickers_across_composer_width() {
 }
 
 #[test]
+fn mention_picker_selection_keeps_presence_foreground_and_base_background() {
+    let entries = vec![
+        MentionPickerEntry {
+            target: MentionPickerTarget::User(Id::new(101)),
+            display_name: "Unselected User".to_owned(),
+            username: Some("unselected".to_owned()),
+            status: PresenceStatus::Online,
+            is_bot: false,
+            role_color: None,
+        },
+        MentionPickerEntry {
+            target: MentionPickerTarget::User(Id::new(102)),
+            display_name: "Selected Bot".to_owned(),
+            username: Some("selected".to_owned()),
+            status: PresenceStatus::Offline,
+            is_bot: true,
+            role_color: None,
+        },
+        MentionPickerEntry {
+            target: MentionPickerTarget::Role(Id::new(103)),
+            display_name: "Uncolored Role".to_owned(),
+            username: None,
+            status: PresenceStatus::Unknown,
+            is_bot: false,
+            role_color: None,
+        },
+        MentionPickerEntry {
+            target: MentionPickerTarget::Role(Id::new(104)),
+            display_name: "Colored Role".to_owned(),
+            username: None,
+            status: PresenceStatus::Unknown,
+            is_bot: false,
+            role_color: Some(0x3366CC),
+        },
+    ];
+    let custom = theme::Theme::default().with_style(
+        theme::HighlightGroup::MentionPickerRole,
+        Style::default().fg(Color::LightMagenta),
+    );
+
+    theme::with_test_theme(custom, || {
+        let lines = mention_picker_lines_for_test(&entries, 1, 80);
+
+        assert_eq!(lines[0].spans[0].content, "  ");
+        assert_eq!(lines[1].spans[0].content, "▸ ");
+        assert_eq!(lines[0].spans[1].style.fg, Some(Color::Green));
+        assert_eq!(lines[0].spans[3].style.fg, None);
+        assert_eq!(lines[0].spans[4].style.fg, None);
+        assert_eq!(
+            lines[1].spans[3].style.fg,
+            theme::current()
+                .style(theme::HighlightGroup::SelectedRow)
+                .fg
+        );
+        assert!(
+            lines[1].spans[3]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(
+            lines[1].spans[1].style.fg,
+            presence_style(PresenceStatus::Offline).fg
+        );
+        assert_eq!(
+            lines[1].spans[1].style.bg,
+            theme::current().style(theme::HighlightGroup::Normal).bg
+        );
+        assert!(
+            lines[1].spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(lines[1].spans[4].style.fg, None);
+        assert_eq!(
+            lines[1].spans[5].style.fg,
+            theme::current()
+                .style(theme::HighlightGroup::SelectedRow)
+                .fg
+        );
+        assert_eq!(lines[2].spans[1].style.fg, Some(Color::LightMagenta));
+        assert_eq!(lines[2].spans[3].style.fg, Some(Color::LightMagenta));
+        assert_eq!(
+            lines[3].spans[1].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+        assert_eq!(
+            lines[3].spans[3].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+
+        let selected_role = mention_picker_lines_for_test(&entries, 3, 80);
+        assert_eq!(
+            selected_role[3].spans[3].style.fg,
+            Some(Color::Rgb(0x33, 0x66, 0xCC))
+        );
+        assert_eq!(
+            selected_role[3].spans[3].style.bg,
+            theme::current()
+                .style(theme::HighlightGroup::SelectedRow)
+                .bg
+        );
+        assert!(
+            selected_role[3].spans[3]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+    });
+}
+
+#[test]
 fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
     let lines = emoji_picker_lines(
         &[
@@ -400,7 +849,7 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
         lines[2].spans[4].content.as_ref(),
         "available as image link"
     );
-    assert_eq!(lines[2].spans[4].style.fg, Some(DIM));
+    assert!(lines[2].spans[4].style.add_modifier.contains(Modifier::DIM));
 }
 
 #[test]
@@ -429,10 +878,6 @@ fn dashboard_renders_scrollbar_for_overflowing_composer_pickers() {
         "selected overflow mention candidate should stay visible:\n{rendered}"
     );
     assert!(
-        !rendered.contains("@scroll00"),
-        "picker should scroll away from the first row after selecting the bottom overflow candidate:\n{rendered}"
-    );
-    assert!(
         rendered.contains('┃'),
         "overflowing mention picker should render a scrollbar thumb:\n{rendered}"
     );
@@ -458,10 +903,6 @@ fn dashboard_renders_scrollbar_for_overflowing_composer_pickers() {
     assert!(
         rendered.contains(":overflow_09:"),
         "selected overflow emoji candidate should stay visible:\n{rendered}"
-    );
-    assert!(
-        !rendered.contains(":overflow_00:"),
-        "picker should scroll away from the first row after selecting the bottom overflow candidate:\n{rendered}"
     );
     assert!(
         rendered.contains('┃'),

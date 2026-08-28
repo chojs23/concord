@@ -31,8 +31,20 @@ pub(super) async fn send_or_record_closed(
     commands: &mpsc::Sender<AppCommand>,
     command: AppCommand,
 ) -> CommandSendOutcome {
+    let pending_message = match &command {
+        AppCommand::SendMessage {
+            channel_id, nonce, ..
+        }
+        | AppCommand::SendTtsMessage {
+            channel_id, nonce, ..
+        } => Some((*channel_id, *nonce)),
+        _ => None,
+    };
     if commands.send(command).await.is_ok() {
         return CommandSendOutcome::Sent;
+    }
+    if let Some((channel_id, nonce)) = pending_message {
+        state.remove_pending_message(channel_id, nonce);
     }
     record_command_channel_closed(state);
     CommandSendOutcome::ChannelClosed
