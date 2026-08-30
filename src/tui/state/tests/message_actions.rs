@@ -906,31 +906,20 @@ fn message_action_detects_embed_urls() {
         vec![MessageInfo {
             content: Some("embed below".to_owned()),
             embeds: vec![EmbedInfo {
-                color: None,
-                provider_name: None,
-                author_name: None,
+                provider_url: Some("https://provider.example".to_owned()),
+                author_url: Some("https://author.example".to_owned()),
                 title: Some("Release notes".to_owned()),
                 description: Some("Read [docs](<https://docs.example/release>)".to_owned()),
-                timestamp: None,
                 fields: vec![EmbedFieldInfo {
                     name: "Links".to_owned(),
                     value: "Status https://status.example".to_owned(),
+                    inline: false,
                 }],
-                footer_text: None,
                 url: Some("https://app.example/releases/1".to_owned()),
                 thumbnail_url: Some("https://media.example/thumb.jpg".to_owned()),
-                thumbnail_proxy_url: None,
-                thumbnail_width: None,
-                thumbnail_height: None,
-                thumbnail_flags: 0,
                 image_url: Some("https://media.example/image.jpg".to_owned()),
-                image_proxy_url: None,
-                image_width: None,
-                image_height: None,
-                image_flags: 0,
-                gifv_image_url: None,
-                gifv_image_proxy_url: None,
                 video_url: Some("https://media.example/video.mp4".to_owned()),
+                ..EmbedInfo::test()
             }],
             ..message_info(Id::new(2), 1)
         }],
@@ -942,7 +931,94 @@ fn message_action_detects_embed_urls() {
 
     assert_eq!(
         urls.into_iter().map(|item| item.url).collect::<Vec<_>>(),
-        vec!["https://app.example/releases/1"]
+        vec![
+            "https://app.example/releases/1",
+            "https://provider.example",
+            "https://author.example",
+            "https://media.example/thumb.jpg",
+            "https://media.example/image.jpg",
+            "https://media.example/video.mp4",
+            "https://docs.example/release",
+            "https://status.example",
+        ]
+    );
+}
+
+#[test]
+fn message_action_detects_components_v2_text_and_link_button_urls() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            content: Some(String::new()),
+            flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+            components: vec![MessageComponentInfo::Container {
+                accent_color: None,
+                spoiler: false,
+                components: vec![
+                    MessageComponentInfo::TextDisplay {
+                        content: "Details: https://example.com/details".to_owned(),
+                    },
+                    MessageComponentInfo::ActionRow {
+                        components: vec![MessageComponentInfo::Button {
+                            label: Some("Open".to_owned()),
+                            emoji: None,
+                            url: Some("https://example.com/open".to_owned()),
+                            disabled: false,
+                        }],
+                    },
+                ],
+            }],
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+    state.open_selected_message_actions();
+
+    let urls = state.selected_message_url_items();
+
+    assert_eq!(
+        urls.into_iter().map(|item| item.url).collect::<Vec<_>>(),
+        vec!["https://example.com/details", "https://example.com/open",]
+    );
+}
+
+#[test]
+fn components_v2_actions_copy_text_but_do_not_offer_invalid_content_edit() {
+    let mut state = state_with_messages(1);
+    state.push_event(latest_history_loaded(
+        Id::new(2),
+        vec![MessageInfo {
+            content: Some(String::new()),
+            flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+            components: vec![MessageComponentInfo::Container {
+                accent_color: None,
+                spoiler: false,
+                components: vec![
+                    MessageComponentInfo::TextDisplay {
+                        content: "First component".to_owned(),
+                    },
+                    MessageComponentInfo::TextDisplay {
+                        content: "Second component".to_owned(),
+                    },
+                ],
+            }],
+            ..message_info(Id::new(2), 1)
+        }],
+    ));
+    state.focus_pane(FocusPane::Messages);
+
+    let actions = state.selected_message_action_items();
+    assert!(message_action(&actions, MessageActionKind::CopyContent).is_enabled());
+    assert!(!message_action(&actions, MessageActionKind::Edit).is_enabled());
+
+    state.direct_copy_selected_message_content();
+    assert_eq!(
+        state.take_copy_text_request(),
+        Some((
+            "First component\nSecond component".to_owned(),
+            "Message copied"
+        ))
     );
 }
 
@@ -979,6 +1055,7 @@ fn message_action_detects_urls_in_reply_quote_and_forwarded_snapshot() {
             "https://reply.example/page",
             "https://forward.example/doc",
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
         ]
     );
 }

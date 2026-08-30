@@ -749,6 +749,25 @@ fn forwarded_snapshot_renders_discord_embed_preview() {
 }
 
 #[test]
+fn forwarded_components_v2_snapshot_renders_components_instead_of_legacy_fields() {
+    let mut snapshot = forwarded_snapshot(Some("legacy content"), vec![image_attachment()]);
+    snapshot.flags = MESSAGE_FLAG_IS_COMPONENTS_V2;
+    snapshot.embeds = vec![youtube_embed()];
+    snapshot.components = vec![MessageComponentInfo::TextDisplay {
+        content: "**Forwarded component text**".to_owned(),
+    }];
+    let message = message_with_forwarded_snapshot(snapshot);
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    let text = line_texts(&lines).join("\n");
+
+    assert!(text.contains("Forwarded component text"));
+    assert!(!text.contains("legacy content"));
+    assert!(!text.contains("[image: cat.png]"));
+    assert!(!text.contains("Example Video"));
+}
+
+#[test]
 fn selected_grouped_continuation_stamps_time_on_border() {
     let mut state = state_with_message();
     push_message(&mut state, 2, "follow-up");

@@ -301,7 +301,7 @@ impl DashboardState {
             None => message.author.clone(),
         };
         let body = message_notification_body(
-            message.content.as_deref(),
+            message.summary_text(),
             message.stickers.len(),
             message.attachments.len(),
             message.embeds.len(),

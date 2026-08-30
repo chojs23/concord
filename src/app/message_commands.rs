@@ -493,6 +493,7 @@ fn message_update_event(message: MessageInfo) -> AppEvent {
                 pinned: Some(message.pinned),
                 attachments: AttachmentUpdate::Replace(message.attachments),
                 embeds: Some(message.embeds),
+                components: Some(message.components),
                 edited_timestamp: message.edited_timestamp,
             },
             extra_fields: BTreeMap::new(),

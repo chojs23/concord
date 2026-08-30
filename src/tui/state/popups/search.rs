@@ -996,7 +996,7 @@ fn parse_search_bool(value: &str) -> Option<bool> {
 }
 
 fn message_search_content_label(message: &MessageInfo) -> String {
-    let content = message.content.as_deref().unwrap_or_default().trim();
+    let content = message.summary_text().unwrap_or_default().trim();
     if !content.is_empty() {
         return content.split_whitespace().collect::<Vec<_>>().join(" ");
     }

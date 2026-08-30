@@ -999,6 +999,7 @@ impl DashboardState {
                     || !message.attachments.is_empty()
                     || !message.stickers.is_empty()
                     || !message.embeds.is_empty()
+                    || !message.components.is_empty()
             })
             .collect::<Vec<_>>();
         let start = eligible
@@ -1016,7 +1017,7 @@ impl DashboardState {
                 content: self.inbox_preview_content(
                     message.guild_id,
                     &message.mentions,
-                    message.content.as_deref(),
+                    message.summary_text(),
                     !message.attachments.is_empty(),
                     &message.stickers,
                     !message.embeds.is_empty(),
@@ -1073,7 +1074,7 @@ impl DashboardState {
         let content = self.inbox_preview_content(
             message.guild_id,
             &message.mentions,
-            message.content.as_deref(),
+            message.summary_text(),
             !message.attachments.is_empty(),
             &message.stickers,
             !message.embeds.is_empty(),

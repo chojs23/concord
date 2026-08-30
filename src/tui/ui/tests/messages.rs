@@ -322,6 +322,8 @@ fn history_message_author_uses_channel_guild_for_role_color() {
 
 #[test]
 fn attachment_summary_replaces_or_follows_the_message_body() {
+    let mut spoiler_image = image_attachment();
+    spoiler_image.flags = 1 << 3;
     let cases = [
         (
             "image",
@@ -332,6 +334,11 @@ fn attachment_summary_replaces_or_follows_the_message_body() {
             "video",
             message_with_attachment(Some(String::new()), video_attachment()),
             "[video: clip.mp4] 1920x1080",
+        ),
+        (
+            "spoiler image",
+            message_with_attachment(Some(String::new()), spoiler_image),
+            "[image: cat.png] 640x480",
         ),
         (
             "forwarded, no body",
@@ -351,6 +358,67 @@ fn attachment_summary_replaces_or_follows_the_message_body() {
     for (name, message, expected) in cases {
         assert_eq!(format_message_content(&message, 200), expected, "{name}");
     }
+}
+
+#[test]
+fn components_v2_message_renders_text_layout_and_link_fallback() {
+    let message = MessageState {
+        content: Some(String::new()),
+        flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+        components: vec![MessageComponentInfo::Container {
+            accent_color: Some(0x3366cc),
+            spoiler: false,
+            components: vec![
+                MessageComponentInfo::TextDisplay {
+                    content: "# Last.fm\n**neo** listened to a track".to_owned(),
+                },
+                MessageComponentInfo::Separator {
+                    divider: true,
+                    spacing: 1,
+                },
+                MessageComponentInfo::Section {
+                    components: vec![MessageComponentInfo::TextDisplay {
+                        content: "Artist · Album".to_owned(),
+                    }],
+                    accessory: Some(Box::new(MessageComponentInfo::Thumbnail {
+                        media: ComponentMediaInfo {
+                            url: "attachment://cover.png".to_owned(),
+                            ..ComponentMediaInfo::default()
+                        },
+                        description: Some("Album cover".to_owned()),
+                        spoiler: false,
+                    })),
+                },
+                MessageComponentInfo::ActionRow {
+                    components: vec![MessageComponentInfo::Button {
+                        label: Some("Open Last.fm".to_owned()),
+                        emoji: None,
+                        url: Some("https://www.last.fm/user/neo".to_owned()),
+                        disabled: false,
+                    }],
+                },
+            ],
+        }],
+        attachments: vec![AttachmentInfo {
+            filename: "cover.png".to_owned(),
+            ..image_attachment()
+        }],
+        ..MessageState::default()
+    };
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    let text = line_texts(&lines).join("\n");
+
+    assert!(text.contains("# Last.fm"));
+    assert!(text.contains("neo listened to a track"));
+    assert!(text.contains("Artist · Album"));
+    assert!(text.contains("[image: Album cover]"));
+    assert!(text.contains("[Open Last.fm] https://www.last.fm/user/neo"));
+    assert!(!text.contains("<empty message>"));
+    assert_eq!(message.inline_previews().len(), 1);
+    assert_eq!(message.inline_previews()[0].filename, "cover.png");
+    assert_eq!(message.inline_previews()[0].accent_color, Some(0x3366cc));
+    assert_eq!(message.attachments_in_display_order().count(), 1);
 }
 
 #[test]
@@ -489,6 +557,104 @@ fn message_embed_url_underlines_url_text() {
             .add_modifier
             .contains(Modifier::UNDERLINED)
     );
+}
+
+#[test]
+fn message_embed_renders_documented_link_targets_and_media_descriptions() {
+    let mut message = message_with_content(Some("watch this".to_owned()));
+    message.embeds = vec![EmbedInfo {
+        provider_name: Some("Provider".to_owned()),
+        provider_url: Some("https://provider.example".to_owned()),
+        author_name: Some("Uploader".to_owned()),
+        author_url: Some("https://provider.example/uploader".to_owned()),
+        thumbnail_url: Some("https://cdn.example/thumb.png".to_owned()),
+        thumbnail_description: Some("Small preview".to_owned()),
+        image_url: Some("https://cdn.example/image.png".to_owned()),
+        image_description: Some("Main diagram".to_owned()),
+        video_url: Some("https://cdn.example/video.mp4".to_owned()),
+        video_description: Some("Video walkthrough".to_owned()),
+        ..EmbedInfo::test()
+    }];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+    let texts = line_texts(&lines);
+
+    assert!(texts.contains(&"  ▎ Provider · https://provider.example"));
+    assert!(texts.contains(&"  ▎ Uploader · https://provider.example/uploader"));
+    assert!(texts.contains(&"  ▎ [thumbnail: Small preview]"));
+    assert!(texts.contains(&"  ▎ [image: Main diagram]"));
+    assert!(texts.contains(&"  ▎ [video: Video walkthrough]"));
+}
+
+#[test]
+fn message_embed_groups_documented_inline_fields() {
+    let mut message = message_with_content(Some("stats".to_owned()));
+    message.embeds = vec![EmbedInfo {
+        fields: vec![
+            crate::discord::EmbedFieldInfo {
+                name: "Duration".to_owned(),
+                value: "3:33".to_owned(),
+                inline: true,
+            },
+            crate::discord::EmbedFieldInfo {
+                name: "Quality".to_owned(),
+                value: "HD".to_owned(),
+                inline: true,
+            },
+            crate::discord::EmbedFieldInfo {
+                name: "Notes".to_owned(),
+                value: "Full description".to_owned(),
+                inline: false,
+            },
+        ],
+        ..EmbedInfo::test()
+    }];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "stats",
+            "  ▎ Duration: 3:33 │ Quality: HD",
+            "  ▎ Notes",
+            "  ▎ Full description",
+        ]
+    );
+}
+
+#[test]
+fn duplicate_embed_urls_render_text_once_but_keep_distinct_media() {
+    let mut message = message_with_content(Some("link".to_owned()));
+    message.embeds = vec![
+        EmbedInfo {
+            title: Some("Primary embed".to_owned()),
+            url: Some("https://example.com/article".to_owned()),
+            image_url: Some("https://example.com/one.png".to_owned()),
+            ..EmbedInfo::test()
+        },
+        EmbedInfo {
+            title: Some("Duplicate text".to_owned()),
+            url: Some("https://example.com/article".to_owned()),
+            image_url: Some("https://example.com/two.png".to_owned()),
+            ..EmbedInfo::test()
+        },
+        EmbedInfo {
+            url: Some("https://example.com/article".to_owned()),
+            image_url: Some("https://example.com/two.png".to_owned()),
+            ..EmbedInfo::test()
+        },
+    ];
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 120);
+    let text = line_texts(&lines).join("\n");
+    let previews = message.inline_previews();
+
+    assert!(text.contains("Primary embed"));
+    assert!(!text.contains("Duplicate text"));
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0].url, "https://example.com/one.png");
+    assert_eq!(previews[1].url, "https://example.com/two.png");
 }
 
 #[test]

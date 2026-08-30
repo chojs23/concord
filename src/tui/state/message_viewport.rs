@@ -1368,7 +1368,7 @@ impl DashboardState {
     }
 
     pub(super) fn thread_message_preview_text(&self, message: &MessageState) -> String {
-        if let Some(content) = message_preview_text(message.content.as_deref(), &message.stickers) {
+        if let Some(content) = message_preview_text(message.summary_text(), &message.stickers) {
             return self
                 .render_user_mentions(message.guild_id, &message.mentions, &content)
                 .split_whitespace()

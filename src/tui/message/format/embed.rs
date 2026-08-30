@@ -23,19 +23,25 @@ pub(super) fn format_embed_lines(
     width: usize,
     loaded_custom_emoji_urls: &[String],
 ) -> Vec<MessageContentLine> {
-    embeds
-        .iter()
-        .flat_map(|embed| {
-            format_embed(
-                embed,
-                message_content,
-                show_custom_emoji,
-                hour_format_24,
-                width,
-                loaded_custom_emoji_urls,
-            )
-        })
-        .collect()
+    let mut seen_urls = Vec::new();
+    let mut lines = Vec::new();
+    for embed in embeds {
+        if let Some(url) = embed.url.as_deref() {
+            if seen_urls.contains(&url) {
+                continue;
+            }
+            seen_urls.push(url);
+        }
+        lines.extend(format_embed(
+            embed,
+            message_content,
+            show_custom_emoji,
+            hour_format_24,
+            width,
+            loaded_custom_emoji_urls,
+        ));
+    }
+    lines
 }
 
 fn format_embed(
@@ -50,17 +56,22 @@ fn format_embed(
     let inner_width = width.saturating_sub(PREFIX.width()).max(1);
     let mut lines = Vec::new();
 
+    let provider = embed_label_with_url(
+        embed.provider_name.as_deref(),
+        embed.provider_url.as_deref(),
+    );
     push_embed_text(
         &mut lines,
-        embed.provider_name.as_deref(),
+        provider.as_deref(),
         show_custom_emoji,
         inner_width,
         embed_provider_style(),
         loaded_custom_emoji_urls,
     );
+    let author = embed_label_with_url(embed.author_name.as_deref(), embed.author_url.as_deref());
     push_embed_text(
         &mut lines,
-        embed.author_name.as_deref(),
+        author.as_deref(),
         show_custom_emoji,
         inner_width,
         embed_author_style(),
@@ -83,21 +94,33 @@ fn format_embed(
         Style::default(),
         loaded_custom_emoji_urls,
     );
-    for field in &embed.fields {
+    push_embed_fields(
+        &mut lines,
+        embed,
+        show_custom_emoji,
+        inner_width,
+        loaded_custom_emoji_urls,
+    );
+    let mut rendered_media_descriptions = Vec::new();
+    for (kind, description) in [
+        ("thumbnail", embed.thumbnail_description.as_deref()),
+        ("image", embed.image_description.as_deref()),
+        ("video", embed.video_description.as_deref()),
+    ] {
+        let Some(description) = description
+            .filter(|description| !description.trim().is_empty())
+            .filter(|description| embed.description.as_deref() != Some(*description))
+            .filter(|description| !rendered_media_descriptions.contains(description))
+        else {
+            continue;
+        };
+        rendered_media_descriptions.push(description);
         push_embed_text(
             &mut lines,
-            Some(field.name.as_str()),
+            Some(&format!("[{kind}: {description}]")),
             show_custom_emoji,
             inner_width,
-            embed_field_name_style(),
-            loaded_custom_emoji_urls,
-        );
-        push_embed_text(
-            &mut lines,
-            Some(field.value.as_str()),
-            show_custom_emoji,
-            inner_width,
-            Style::default(),
+            embed_footer_style(),
             loaded_custom_emoji_urls,
         );
     }
@@ -114,6 +137,8 @@ fn format_embed(
         .into_iter()
         .filter_map(|url| url.as_deref())
         .filter(|url| !message_content.is_some_and(|content| content.contains(url)))
+        .filter(|url| embed.provider_url.as_deref() != Some(*url))
+        .filter(|url| embed.author_url.as_deref() != Some(*url))
     {
         push_embed_text(
             &mut lines,
@@ -129,6 +154,78 @@ fn format_embed(
         .into_iter()
         .map(|line| prefix_message_content_line_with_style(PREFIX, embed_line_style(embed), line))
         .collect()
+}
+
+fn embed_label_with_url(label: Option<&str>, url: Option<&str>) -> Option<String> {
+    match (
+        label.filter(|value| !value.trim().is_empty()),
+        url.filter(|value| !value.trim().is_empty()),
+    ) {
+        (Some(label), Some(url)) => Some(format!("{label} · {url}")),
+        (Some(label), None) => Some(label.to_owned()),
+        (None, Some(url)) => Some(url.to_owned()),
+        (None, None) => None,
+    }
+}
+
+fn push_embed_fields(
+    lines: &mut Vec<MessageContentLine>,
+    embed: &EmbedInfo,
+    show_custom_emoji: bool,
+    width: usize,
+    loaded_custom_emoji_urls: &[String],
+) {
+    let mut index = 0usize;
+    while index < embed.fields.len() {
+        if embed.fields[index].inline {
+            let end = embed.fields[index..]
+                .iter()
+                .take(3)
+                .take_while(|field| field.inline)
+                .count()
+                .saturating_add(index);
+            let row = embed.fields[index..end]
+                .iter()
+                .map(|field| {
+                    format!(
+                        "{}: {}",
+                        plain_embed_text(&field.name),
+                        plain_embed_text(&field.value)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" │ ");
+            push_embed_text(
+                lines,
+                Some(&row),
+                show_custom_emoji,
+                width,
+                embed_field_name_style(),
+                loaded_custom_emoji_urls,
+            );
+            index = end;
+            continue;
+        }
+
+        let field = &embed.fields[index];
+        push_embed_text(
+            lines,
+            Some(field.name.as_str()),
+            show_custom_emoji,
+            width,
+            embed_field_name_style(),
+            loaded_custom_emoji_urls,
+        );
+        push_embed_text(
+            lines,
+            Some(field.value.as_str()),
+            show_custom_emoji,
+            width,
+            Style::default(),
+            loaded_custom_emoji_urls,
+        );
+        index = index.saturating_add(1);
+    }
 }
 
 fn plain_embed_text(value: &str) -> String {

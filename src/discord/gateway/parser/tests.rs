@@ -9,8 +9,9 @@ use super::{
 use crate::discord::{
     ActivityKind, AppEvent, AttachmentUpdate, ChannelVisibilityStats, DiscordState, FriendStatus,
     GuildMemberListItem, GuildMemberListOperation, GuildOnboardingMode, GuildVerificationLevel,
-    MentionInfo, MessageKind, NotificationLevel, PollAnswerInfo, PollInfo, PremiumTier,
-    PresenceStatus, ReactionEmoji, ReplyInfo, StickerInfo,
+    MESSAGE_FLAG_IS_COMPONENTS_V2, MentionInfo, MessageComponentInfo, MessageKind,
+    NotificationLevel, PollAnswerInfo, PollInfo, PremiumTier, PresenceStatus, ReactionEmoji,
+    ReplyInfo, StickerInfo,
 };
 
 #[test]
@@ -1965,6 +1966,40 @@ fn message_update_parser_distinguishes_absent_and_empty_attachments() {
 }
 
 #[test]
+fn message_update_parser_distinguishes_absent_and_empty_components() {
+    let cases = [
+        (
+            json!({
+                "id": "20",
+                "channel_id": "10",
+                "content": "edited"
+            }),
+            None,
+        ),
+        (
+            json!({
+                "id": "20",
+                "channel_id": "10",
+                "content": "edited",
+                "components": []
+            }),
+            Some(0),
+        ),
+    ];
+
+    for (payload, expected_len) in cases {
+        let event = parse_message_update(&payload).expect("message update should parse");
+        let AppEvent::MessageUpdateDispatch { update } = event else {
+            panic!("expected message update event");
+        };
+        assert_eq!(
+            update.fields.components.as_ref().map(Vec::len),
+            expected_len
+        );
+    }
+}
+
+#[test]
 fn message_update_parser_preserves_pin_state() {
     let event = parse_message_update(&json!({
         "id": "20",
@@ -2700,25 +2735,52 @@ fn message_create_parser_keeps_regular_embeds() {
         "content": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         "embeds": [{
             "type": "video",
+            "flags": 16,
             "color": 16711680,
-            "provider": { "name": "YouTube" },
+            "provider": {
+                "name": "YouTube",
+                "url": "https://www.youtube.com"
+            },
+            "author": {
+                "name": "Uploader",
+                "url": "https://www.youtube.com/@uploader"
+            },
             "title": "Example Video",
             "description": "A video description",
+            "fields": [{
+                "name": "Duration",
+                "value": "3:33",
+                "inline": true
+            }],
             "timestamp": "2026-05-13T15:22:03+00:00",
             "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "thumbnail": {
                 "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
                 "proxy_url": "https://images-ext-1.discordapp.net/external/thumb/hash/https/i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
                 "width": 480,
-                "height": 360
+                "height": 360,
+                "content_type": "image/jpeg",
+                "description": "Video thumbnail",
+                "flags": 32
             },
             "image": {
                 "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
                 "proxy_url": "https://images-ext-2.discordapp.net/external/image/hash/https/i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
                 "width": 1280,
-                "height": 720
+                "height": 720,
+                "content_type": "image/jpeg",
+                "description": "Video still",
+                "flags": 32
             },
-            "video": { "url": "https://www.youtube.com/embed/dQw4w9WgXcQ" }
+            "video": {
+                "url": "https://www.youtube.com/embed/dQw4w9WgXcQ",
+                "proxy_url": "https://media.discordapp.net/external/video.mp4",
+                "width": 1920,
+                "height": 1080,
+                "content_type": "video/mp4",
+                "description": "Video player",
+                "flags": 32
+            }
         }]
     }))
     .expect("message create should parse");
@@ -2727,9 +2789,21 @@ fn message_create_parser_keeps_regular_embeds() {
         panic!("expected message create event");
     };
     assert_eq!(message.embeds.len(), 1);
+    assert_eq!(message.embeds[0].flags, 16);
     assert_eq!(message.embeds[0].color, Some(16711680));
+    assert_eq!(message.embeds[0].kind.as_deref(), Some("video"));
     assert_eq!(message.embeds[0].provider_name.as_deref(), Some("YouTube"));
+    assert_eq!(
+        message.embeds[0].provider_url.as_deref(),
+        Some("https://www.youtube.com")
+    );
+    assert_eq!(message.embeds[0].author_name.as_deref(), Some("Uploader"));
+    assert_eq!(
+        message.embeds[0].author_url.as_deref(),
+        Some("https://www.youtube.com/@uploader")
+    );
     assert_eq!(message.embeds[0].title.as_deref(), Some("Example Video"));
+    assert!(message.embeds[0].fields[0].inline);
     assert_eq!(
         message.embeds[0].timestamp.as_deref(),
         Some("2026-05-13T15:22:03+00:00")
@@ -2747,6 +2821,15 @@ fn message_create_parser_keeps_regular_embeds() {
     assert_eq!(message.embeds[0].thumbnail_width, Some(480));
     assert_eq!(message.embeds[0].thumbnail_height, Some(360));
     assert_eq!(
+        message.embeds[0].thumbnail_description.as_deref(),
+        Some("Video thumbnail")
+    );
+    assert_eq!(
+        message.embeds[0].thumbnail_content_type.as_deref(),
+        Some("image/jpeg")
+    );
+    assert_eq!(message.embeds[0].thumbnail_flags, 32);
+    assert_eq!(
         message.embeds[0].image_url.as_deref(),
         Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg")
     );
@@ -2759,9 +2842,33 @@ fn message_create_parser_keeps_regular_embeds() {
     assert_eq!(message.embeds[0].image_width, Some(1280));
     assert_eq!(message.embeds[0].image_height, Some(720));
     assert_eq!(
+        message.embeds[0].image_description.as_deref(),
+        Some("Video still")
+    );
+    assert_eq!(
+        message.embeds[0].image_content_type.as_deref(),
+        Some("image/jpeg")
+    );
+    assert_eq!(message.embeds[0].image_flags, 32);
+    assert_eq!(
         message.embeds[0].video_url.as_deref(),
         Some("https://www.youtube.com/embed/dQw4w9WgXcQ")
     );
+    assert_eq!(
+        message.embeds[0].video_proxy_url.as_deref(),
+        Some("https://media.discordapp.net/external/video.mp4")
+    );
+    assert_eq!(message.embeds[0].video_width, Some(1920));
+    assert_eq!(message.embeds[0].video_height, Some(1080));
+    assert_eq!(
+        message.embeds[0].video_content_type.as_deref(),
+        Some("video/mp4")
+    );
+    assert_eq!(
+        message.embeds[0].video_description.as_deref(),
+        Some("Video player")
+    );
+    assert_eq!(message.embeds[0].video_flags, 32);
 }
 
 #[test]
@@ -3407,6 +3514,7 @@ fn message_create_parser_keeps_forwarded_snapshot_fields() {
             "message": {
                 "content": "hello <@40>",
                 "timestamp": "2026-04-30T12:34:56.000000+00:00",
+                "flags": 32768,
                 "mentions": [{ "id": "40", "username": "alice" }],
                 "attachments": [{
                     "id": "41",
@@ -3420,7 +3528,11 @@ fn message_create_parser_keeps_forwarded_snapshot_fields() {
                 }],
                 "sticker_items": [
                     { "id": "42", "name": "Wave", "format_type": 1 }
-                ]
+                ],
+                "components": [{
+                    "type": 10,
+                    "content": "Forwarded component text"
+                }]
             }
         }, {
             "message": {
@@ -3447,6 +3559,10 @@ fn message_create_parser_keeps_forwarded_snapshot_fields() {
         Some("2026-04-30T12:34:56.000000+00:00")
     );
     assert_eq!(
+        message.forwarded_snapshots[0].flags,
+        MESSAGE_FLAG_IS_COMPONENTS_V2
+    );
+    assert_eq!(
         message.forwarded_snapshots[0].mentions,
         vec![mention_info(40, "alice")]
     );
@@ -3459,7 +3575,116 @@ fn message_create_parser_keeps_forwarded_snapshot_fields() {
         message.forwarded_snapshots[0].attachments[0].filename,
         "cat.png"
     );
+    assert!(matches!(
+        &message.forwarded_snapshots[0].components[0],
+        MessageComponentInfo::TextDisplay { content }
+            if content == "Forwarded component text"
+    ));
     assert_eq!(message.forwarded_snapshots[1].content.as_deref(), Some(""));
+}
+
+#[test]
+fn message_create_parser_keeps_components_v2_display_tree() {
+    let event = parse_message_create(&json!({
+        "id": "20",
+        "channel_id": "10",
+        "author": { "id": "30", "username": "fmbot", "bot": true },
+        "content": "",
+        "flags": MESSAGE_FLAG_IS_COMPONENTS_V2,
+        "attachments": [{
+            "id": "40",
+            "filename": "cover.png",
+            "url": "https://cdn.discordapp.com/cover.png",
+            "proxy_url": "https://media.discordapp.net/cover.png",
+            "content_type": "image/png",
+            "size": 2048,
+            "width": 640,
+            "height": 640
+        }],
+        "components": [{
+            "type": 17,
+            "accent_color": 0x3366cc,
+            "components": [{
+                "type": 10,
+                "content": "# Last.fm\n**neo** listened to a track"
+            }, {
+                "type": 9,
+                "components": [{
+                    "type": 10,
+                    "content": "Artist · Album"
+                }],
+                "accessory": {
+                    "type": 11,
+                    "media": { "url": "attachment://cover.png" },
+                    "description": "Album cover"
+                }
+            }, {
+                "type": 14,
+                "divider": true,
+                "spacing": 2
+            }, {
+                "type": 1,
+                "components": [{
+                    "type": 2,
+                    "style": 5,
+                    "label": "Open Last.fm",
+                    "url": "https://www.last.fm/user/neo"
+                }]
+            }]
+        }]
+    }))
+    .expect("Components V2 message should parse");
+
+    let AppEvent::MessageCreate { message } = event else {
+        panic!("expected message create event");
+    };
+    assert_eq!(message.flags, MESSAGE_FLAG_IS_COMPONENTS_V2);
+    assert_eq!(message.components.len(), 1);
+
+    let MessageComponentInfo::Container {
+        components,
+        accent_color,
+        spoiler,
+    } = &message.components[0]
+    else {
+        panic!("expected container component");
+    };
+    assert_eq!(*accent_color, Some(0x3366cc));
+    assert!(!spoiler);
+    assert!(matches!(
+        &components[0],
+        MessageComponentInfo::TextDisplay { content }
+            if content == "# Last.fm\n**neo** listened to a track"
+    ));
+    assert!(matches!(
+        &components[1],
+        MessageComponentInfo::Section { accessory: Some(accessory), .. }
+            if matches!(
+                accessory.as_ref(),
+                MessageComponentInfo::Thumbnail { media, description, spoiler }
+                    if media.url == "attachment://cover.png"
+                        && description.as_deref() == Some("Album cover")
+                        && !spoiler
+            )
+    ));
+    assert!(matches!(
+        &components[2],
+        MessageComponentInfo::Separator {
+            divider: true,
+            spacing: 2
+        }
+    ));
+    assert!(matches!(
+        &components[3],
+        MessageComponentInfo::ActionRow { components }
+            if matches!(
+                &components[0],
+                MessageComponentInfo::Button { label, url, disabled, .. }
+                    if label.as_deref() == Some("Open Last.fm")
+                        && url.as_deref() == Some("https://www.last.fm/user/neo")
+                        && !disabled
+            )
+    ));
 }
 
 fn mention_info(user_id: u64, display_name: &str) -> MentionInfo {

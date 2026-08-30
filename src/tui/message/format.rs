@@ -3,6 +3,7 @@
 //! per-feature renderers to the submodules below.
 
 mod attachments;
+mod components;
 mod embed;
 mod markdown;
 mod polls;
@@ -12,6 +13,7 @@ mod wrap;
 
 pub(in crate::tui) use attachments::format_attachment_summary;
 use attachments::format_attachment_summary_lines;
+use components::{ComponentFormatContext, format_component_lines};
 pub(in crate::tui) use embed::embed_color;
 use embed::format_embed_lines;
 use markdown::wrap_markdown_message_lines_with_loaded_custom_emoji_urls;
@@ -42,7 +44,9 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::discord::{MessageState, ReplyInfo, StickerInfo, unicode_emoji_image_url};
+use crate::discord::{
+    MESSAGE_FLAG_IS_COMPONENTS_V2, MessageState, ReplyInfo, StickerInfo, unicode_emoji_image_url,
+};
 use crate::tui::{
     state::{DashboardState, apply_discord_foreground, discord_role_mention_background},
     text::{
@@ -313,7 +317,8 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
     width: usize,
     loaded_custom_emoji_urls: &[String],
 ) -> (Vec<MessageContentLine>, Vec<MessageContentLine>) {
-    let attachment_summary_lines = if message.attachments.is_empty() {
+    let is_components_v2 = message.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0;
+    let attachment_summary_lines = if is_components_v2 || message.attachments.is_empty() {
         Vec::new()
     } else {
         format_attachment_summary_lines(&message.attachments)
@@ -360,7 +365,7 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
     }
 
     let mut last_standalone_emoji_row = None;
-    let standalone_content = (!renders_poll_card)
+    let standalone_content = (!renders_poll_card && !is_components_v2)
         .then(|| display_text_with_stickers(message.content.as_deref(), &message.stickers))
         .flatten();
     if let Some(value) = standalone_content {
@@ -395,11 +400,26 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
             ));
         }
     }
-    lines.extend(format_embed_lines(
-        &message.embeds,
-        message.content.as_deref(),
-        state.show_custom_emoji(),
-        state.hour_format_24(),
+    if !is_components_v2 {
+        lines.extend(format_embed_lines(
+            &message.embeds,
+            message.content.as_deref(),
+            state.show_custom_emoji(),
+            state.hour_format_24(),
+            width,
+            loaded_custom_emoji_urls,
+        ));
+    }
+    lines.extend(format_component_lines(
+        &message.components,
+        &ComponentFormatContext {
+            guild_id: message.guild_id,
+            mentions: &message.mentions,
+            mention_everyone: message.mention_everyone,
+            mention_roles: &message.mention_roles,
+            attachments: &message.attachments,
+        },
+        state,
         width,
         loaded_custom_emoji_urls,
     ));

@@ -17,9 +17,11 @@ use crate::{
     config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo,
-        ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedInfo, ForumPostDataInfo,
-        MessageInfo, MessageSnapshotInfo, PresenceEventFields, PresenceStatus, ProfileAvatarUpload,
-        ReactionEmoji, ReactionInfo, StickerFormat, StickerInfo,
+        ChannelInfo, ChannelRecipientInfo, ComponentMediaInfo, ComponentMediaItemInfo,
+        CustomEmojiInfo, EmbedInfo, ForumPostDataInfo, MESSAGE_FLAG_IS_COMPONENTS_V2,
+        MessageComponentInfo, MessageInfo, MessageSnapshotInfo, MessageState, PresenceEventFields,
+        PresenceStatus, ProfileAvatarUpload, ReactionEmoji, ReactionInfo, StickerFormat,
+        StickerInfo,
     },
     tui::{
         message::time::test_message_id_for_unix_millis,
@@ -487,6 +489,155 @@ fn image_preview_targets_choose_embed_media_url() {
         "https://media2.giphy.com/media/hvY8Ahy9r340SU8xLY/giphy.webp"
     );
     assert_eq!(target.filename, "embed-gifv");
+}
+
+#[test]
+fn rich_embed_exposes_image_and_thumbnail_as_distinct_previews() {
+    let message = MessageState {
+        embeds: vec![EmbedInfo {
+            kind: Some("rich".to_owned()),
+            image_url: Some("https://example.com/main.png".to_owned()),
+            image_width: Some(1200),
+            image_height: Some(800),
+            thumbnail_url: Some("https://example.com/thumb.png".to_owned()),
+            thumbnail_width: Some(200),
+            thumbnail_height: Some(200),
+            ..EmbedInfo::test()
+        }],
+        ..MessageState::default()
+    };
+
+    let previews = message.inline_previews();
+
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0].filename, "embed-image");
+    assert_eq!(previews[0].url, "https://example.com/main.png");
+    assert_eq!(previews[1].filename, "embed-thumbnail");
+    assert_eq!(previews[1].url, "https://example.com/thumb.png");
+}
+
+#[test]
+fn video_only_embed_uses_documented_video_proxy_as_preview_fallback() {
+    let message = MessageState {
+        embeds: vec![EmbedInfo {
+            kind: Some("video".to_owned()),
+            video_url: Some("https://cdn.example.com/video.mp4".to_owned()),
+            video_proxy_url: Some("https://media.discordapp.net/external/video.mp4".to_owned()),
+            video_width: Some(1920),
+            video_height: Some(1080),
+            ..EmbedInfo::test()
+        }],
+        ..MessageState::default()
+    };
+
+    let previews = message.inline_previews();
+
+    assert_eq!(previews.len(), 1);
+    assert_eq!(previews[0].filename, "embed-video");
+    assert_eq!(
+        previews[0].url,
+        "https://media.discordapp.net/external/video.mp4"
+    );
+    assert_eq!(previews[0].width, Some(1920));
+    assert_eq!(previews[0].height, Some(1080));
+    assert!(previews[0].proxy_preview_only);
+    assert!(previews[0].show_play_marker);
+}
+
+#[test]
+fn components_v2_media_accepts_received_animation_flag_variants() {
+    for flags in [1, 1 << 5] {
+        let message = MessageState {
+            flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+            components: vec![MessageComponentInfo::MediaGallery {
+                items: vec![ComponentMediaItemInfo {
+                    media: ComponentMediaInfo {
+                        url: "https://example.com/animated.webp".to_owned(),
+                        content_type: Some("image/webp".to_owned()),
+                        flags,
+                        ..ComponentMediaInfo::default()
+                    },
+                    description: None,
+                    spoiler: false,
+                }],
+            }],
+            ..MessageState::default()
+        };
+
+        let previews = message.inline_previews();
+
+        assert_eq!(previews.len(), 1);
+        assert!(previews[0].animated, "flags={flags}");
+    }
+}
+
+#[test]
+fn components_v2_hides_attachments_that_are_not_exposed_by_components() {
+    let message = MessageState {
+        flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+        attachments: vec![image_attachment(1)],
+        components: vec![MessageComponentInfo::TextDisplay {
+            content: "Only this component is visible".to_owned(),
+        }],
+        ..MessageState::default()
+    };
+
+    assert!(message.inline_previews().is_empty());
+    assert!(message.attachments_in_display_order().next().is_none());
+}
+
+#[test]
+fn spoiler_and_sensitive_media_remain_visible_in_inline_previews() {
+    let mut attachment = image_attachment(1);
+    attachment.filename = "SPOILER_image-1.png".to_owned();
+    attachment.flags = 1 << 3;
+    let attachment_message = MessageState {
+        attachments: vec![attachment],
+        ..MessageState::default()
+    };
+
+    let embed_message = MessageState {
+        embeds: vec![EmbedInfo {
+            flags: 1 << 4,
+            image_url: Some("https://example.com/sensitive.png".to_owned()),
+            ..EmbedInfo::test()
+        }],
+        ..MessageState::default()
+    };
+
+    let component_message = MessageState {
+        flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+        components: vec![MessageComponentInfo::Container {
+            components: vec![MessageComponentInfo::MediaGallery {
+                items: vec![ComponentMediaItemInfo {
+                    media: ComponentMediaInfo {
+                        url: "https://example.com/sensitive.png".to_owned(),
+                        content_type: Some("image/png".to_owned()),
+                        flags: 1 << 6,
+                        ..ComponentMediaInfo::default()
+                    },
+                    description: None,
+                    spoiler: true,
+                }],
+            }],
+            accent_color: None,
+            spoiler: true,
+        }],
+        ..MessageState::default()
+    };
+
+    assert!(
+        attachment_message.attachments[0]
+            .inline_preview_url()
+            .is_some()
+    );
+    for (label, message) in [
+        ("attachment", attachment_message),
+        ("embed", embed_message),
+        ("component", component_message),
+    ] {
+        assert_eq!(message.inline_previews().len(), 1, "{label}");
+    }
 }
 
 #[test]
