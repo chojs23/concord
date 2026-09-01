@@ -36,7 +36,6 @@ keyring = { version = "3.6.3", default-features = false, features = [
 ] }
 mime_guess = "2.0"
 notify-rust = "4"
-opus = { version = "1.6.1", package = "opusic-c" }
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 ratatui = "0.30.0"
@@ -143,6 +142,14 @@ stream-broadcast = [
   "dep:objc2-screen-capture-kit",
   "dep:objc2-video-toolbox",
 ]
+
+[target.'cfg(all(target_arch = "arm", target_os = "linux"))'.dependencies]
+# Generic ARM32 Linux targets do not guarantee NEON, and bundled libopus cannot
+# compile its runtime NEON path without target-specific C flags.
+opus = { version = "1.6.1", package = "opusic-c", features = ["no-simd"] }
+
+[target.'cfg(not(all(target_arch = "arm", target_os = "linux")))'.dependencies]
+opus = { version = "1.6.1", package = "opusic-c" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa = { version = "0.11", optional = true }
