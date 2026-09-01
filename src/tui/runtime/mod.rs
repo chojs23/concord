@@ -157,6 +157,11 @@ pub(super) async fn run_dashboard(
     // input responsive. Flicker is no longer a reason to suppress redraws: the
     // image emission tracker re-emits a surface only when it actually changes.
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
+    // Frees inside the arena only reach the OS when something asks, and the
+    // image pipeline frees constantly. Once a minute is often enough to keep
+    // resident memory tracking live data and rare enough not to matter.
+    const HEAP_TRIM_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+    let mut last_heap_trim = std::time::Instant::now();
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut animation_frame_deadline: Option<tokio::time::Instant> = None;
     #[cfg(feature = "voice-playback")]
@@ -200,6 +205,10 @@ pub(super) async fn run_dashboard(
                 redraw_plan,
             )?;
             media_runtime.commit_placements();
+            if last_heap_trim.elapsed() >= HEAP_TRIM_INTERVAL {
+                crate::allocator::trim();
+                last_heap_trim = std::time::Instant::now();
+            }
             if state.terminal_focused() {
                 media_runtime.sync_animation_visibility(std::time::Instant::now());
             } else {
