@@ -98,8 +98,8 @@ body:
     attributes:
       label: Logs
       description: |
-        Start Concord in [debug mode](https://github.com/chojs23/concord#debug-mode), reproduce the issue,
-        and paste the relevant excerpt from `concord.log`.
+        Follow the [debug logging instructions](https://github.com/chojs23/concord/blob/main/CONTRIBUTING.md#reporting-bugs),
+        reproduce the issue, and paste the relevant excerpt from `concord.log`.
         **Redact tokens, passwords, MFA codes, QR tickets, and any raw auth response bodies.**
       render: shell
 

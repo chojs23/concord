@@ -50,24 +50,7 @@ pub(in crate::tui::ui) fn render_channels(
     let channel_entries = state.channel_pane_filtered_entries();
     let channel_rows = state.channel_pane_rows_from_entries(&channel_entries);
     let channel_line_count = channel_rows.len();
-    let all_channel_entries;
-    let populated_channel_entries = if state.channel_pane_filter_query().is_some() {
-        all_channel_entries = state.channel_pane_entries();
-        all_channel_entries.as_slice()
-    } else {
-        channel_entries.as_slice()
-    };
-    let populated_voice_channel_ids: HashSet<_> = populated_channel_entries
-        .windows(2)
-        .filter_map(|window| match (&window[0], &window[1]) {
-            (
-                ChannelPaneEntry::Channel { state: channel, .. }
-                | ChannelPaneEntry::Thread { state: channel, .. },
-                ChannelPaneEntry::VoiceParticipant { .. },
-            ) => Some(channel.id),
-            _ => None,
-        })
-        .collect();
+    let voice_participant_counts = state.selected_guild_voice_participant_counts();
     let channel_scroll = state.channel_scroll();
     let content_height = state.channel_content_height();
     let selected_line = state.focused_channel_selection_line(&channel_entries);
@@ -157,8 +140,12 @@ pub(in crate::tui::ui) fn render_channels(
                         let prefix_width = dm_prefix_span
                             .as_ref()
                             .map_or_else(|| channel_prefix.width(), |span| span.content.width());
+                        let voice_participant_count = voice_participant_counts
+                            .get(&state.id)
+                            .copied()
+                            .unwrap_or(0);
                         let populated_voice_channel =
-                            state.is_voice() && populated_voice_channel_ids.contains(&state.id);
+                            state.is_voice() && voice_participant_count > 0;
                         let base_style = active_text_style(is_active, Style::default());
                         let is_muted = dashboard.channel_notification_muted(state.id);
                         let unread = dashboard.sidebar_channel_unread(state.id);
@@ -199,11 +186,25 @@ pub(in crate::tui::ui) fn render_channels(
                         let tag_width = request_tag
                             .map(|tag| tag.width().saturating_add(3))
                             .unwrap_or(0);
+                        let capacity_label = state
+                            .user_limit
+                            .filter(|limit| state.is_voice() && *limit > 0)
+                            .map(|limit| format!("[{voice_participant_count}/{limit}]"));
+                        let capacity_width = capacity_label
+                            .as_deref()
+                            .map(|label| label.width().saturating_add(1))
+                            .unwrap_or(0);
                         let label_width = max_width
                             .saturating_sub(branch_prefix.width())
                             .saturating_sub(prefix_width)
                             .saturating_sub(badge_width)
-                            .saturating_sub(tag_width);
+                            .saturating_sub(tag_width)
+                            .saturating_sub(capacity_width);
+                        let channel_name = truncate_display_width_from(
+                            &state.name,
+                            horizontal_scroll,
+                            label_width,
+                        );
                         let mut spans = vec![
                             selection_marker(is_selected),
                             Span::styled(
@@ -228,19 +229,32 @@ pub(in crate::tui::ui) fn render_channels(
                                 theme::current().style(theme::HighlightGroup::ChannelTypeMarker),
                             ));
                         }
-                        spans.push(Span::styled(
-                            truncate_display_width_from(
-                                &state.name,
-                                horizontal_scroll,
-                                label_width,
-                            ),
-                            name_style,
-                        ));
+                        spans.push(Span::styled(channel_name.clone(), name_style));
                         if let Some(tag) = request_tag {
                             spans.push(Span::styled(
                                 format!(" [{tag}]"),
                                 theme::current().apply(
                                     theme::HighlightGroup::Emphasis,
+                                    theme::current().style(theme::HighlightGroup::Description),
+                                ),
+                            ));
+                        }
+                        if let Some(capacity_label) = capacity_label {
+                            let content_width = branch_prefix
+                                .width()
+                                .saturating_add(prefix_width)
+                                .saturating_add(badge_width)
+                                .saturating_add(channel_name.width())
+                                .saturating_add(tag_width);
+                            let padding_width = max_width
+                                .saturating_sub(content_width)
+                                .saturating_sub(capacity_label.width())
+                                .max(1);
+                            spans.push(Span::raw(" ".repeat(padding_width)));
+                            spans.push(Span::styled(
+                                capacity_label,
+                                selected_text_style(
+                                    is_selected,
                                     theme::current().style(theme::HighlightGroup::Description),
                                 ),
                             ));

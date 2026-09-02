@@ -1,5 +1,7 @@
 #[cfg(feature = "voice-playback")]
 pub(crate) mod audio_output;
+#[cfg(any(target_os = "macos", test))]
+pub(crate) mod macos_notification;
 pub(crate) mod media_player;
 pub mod paths;
 pub(crate) mod private_file;

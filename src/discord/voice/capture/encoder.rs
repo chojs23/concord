@@ -7,7 +7,9 @@ use openh264::{
     formats::YUVSlices,
 };
 
-use super::{STREAM_CAPTURE_FPS, STREAM_ENCODER_BITRATE, STREAM_INTRA_FRAME_PERIOD_FRAMES};
+#[cfg(test)]
+use super::STREAM_INTRA_FRAME_PERIOD_FRAMES;
+use super::{STREAM_CAPTURE_FPS, STREAM_ENCODER_BITRATE};
 #[cfg(any(test, target_os = "linux", target_os = "macos", target_os = "windows"))]
 use super::{STREAM_CAPTURE_HEIGHT, STREAM_CAPTURE_WIDTH};
 use crate::logging;
@@ -64,7 +66,12 @@ impl EncodedH264Frame {
     }
 }
 
-pub(super) enum StreamEncoder {
+pub(super) struct StreamEncoder {
+    backend: StreamEncoderBackend,
+    keyframe_interval_frames: u32,
+}
+
+enum StreamEncoderBackend {
     OpenH264(Box<OpenH264Encoder>),
     #[cfg(target_os = "linux")]
     VaApi(Box<vaapi::VaApiEncoder>),
@@ -75,43 +82,56 @@ pub(super) enum StreamEncoder {
 }
 
 impl StreamEncoder {
-    pub(super) fn new_auto() -> Result<Self, String> {
+    pub(super) fn new_auto(keyframe_interval_frames: u32) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         return Self::new_with_hardware(
             "VA API",
-            vaapi::VaApiEncoder::new().map(|encoder| Self::VaApi(Box::new(encoder))),
+            vaapi::VaApiEncoder::new(keyframe_interval_frames)
+                .map(|encoder| StreamEncoderBackend::VaApi(Box::new(encoder))),
+            keyframe_interval_frames,
         );
 
         #[cfg(target_os = "macos")]
         return Self::new_with_hardware(
             "VideoToolbox",
-            macos::VideoToolboxEncoder::new().map(|encoder| Self::VideoToolbox(Box::new(encoder))),
+            macos::VideoToolboxEncoder::new(keyframe_interval_frames)
+                .map(|encoder| StreamEncoderBackend::VideoToolbox(Box::new(encoder))),
+            keyframe_interval_frames,
         );
 
         #[cfg(target_os = "windows")]
         return Self::new_with_hardware(
             "Media Foundation",
-            windows::MediaFoundationEncoder::new()
-                .map(|encoder| Self::MediaFoundation(Box::new(encoder))),
+            windows::MediaFoundationEncoder::new(keyframe_interval_frames)
+                .map(|encoder| StreamEncoderBackend::MediaFoundation(Box::new(encoder))),
+            keyframe_interval_frames,
         );
 
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        let encoder = Self::OpenH264(Box::new(OpenH264Encoder::new()?));
+        let backend = StreamEncoderBackend::OpenH264(Box::new(OpenH264Encoder::new(
+            keyframe_interval_frames,
+        )?));
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         logging::debug(
             "stream",
-            format!("stream H264 encoder selected: backend={}", encoder.name()),
+            format!("stream H264 encoder selected: backend={}", backend.name()),
         );
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        return Ok(encoder);
+        return Ok(Self {
+            backend,
+            keyframe_interval_frames,
+        });
     }
 
     fn new_with_hardware(
         hardware_name: &'static str,
-        hardware: Result<Self, String>,
+        hardware: Result<StreamEncoderBackend, String>,
+        keyframe_interval_frames: u32,
     ) -> Result<Self, String> {
         let selection = select_with_software_fallback(hardware_name, hardware, || {
-            OpenH264Encoder::new().map(Box::new).map(Self::OpenH264)
+            OpenH264Encoder::new(keyframe_interval_frames)
+                .map(Box::new)
+                .map(StreamEncoderBackend::OpenH264)
         })?;
         if let Some(error) = selection.hardware_failure.as_deref() {
             logging::debug(
@@ -128,9 +148,47 @@ impl StreamEncoder {
                 selection.encoder.name()
             ),
         );
-        Ok(selection.encoder)
+        Ok(Self {
+            backend: selection.encoder,
+            keyframe_interval_frames,
+        })
     }
 
+    pub(super) fn encode(
+        &mut self,
+        frame: I420Frame<'_>,
+        force_keyframe: bool,
+    ) -> Result<Option<EncodedH264Frame>, String> {
+        let hardware_name = self.backend.hardware_name();
+        let initial_result = self.backend.encode(frame, force_keyframe);
+        let keyframe_interval_frames = self.keyframe_interval_frames;
+        match recover_runtime_hardware_failure(hardware_name, initial_result, |force_keyframe| {
+            let mut encoder = Box::new(OpenH264Encoder::new(keyframe_interval_frames)?);
+            let encoded = encoder.encode(frame, force_keyframe)?;
+            validate_runtime_fallback_frame(encoded.as_ref())?;
+            Ok((encoder, encoded))
+        })? {
+            RuntimeEncodeOutcome::Encoded(encoded) => Ok(encoded),
+            RuntimeEncodeOutcome::FellBack {
+                encoder,
+                encoded,
+                hardware_name,
+                hardware_error,
+            } => {
+                logging::debug(
+                    "stream",
+                    format!(
+                        "{hardware_name} H264 encoder failed during broadcast; switched to OpenH264: {hardware_error}"
+                    ),
+                );
+                self.backend = StreamEncoderBackend::OpenH264(encoder);
+                Ok(encoded)
+            }
+        }
+    }
+}
+
+impl StreamEncoderBackend {
     fn name(&self) -> &'static str {
         match self {
             Self::OpenH264(_) => "openh264",
@@ -155,39 +213,7 @@ impl StreamEncoder {
         }
     }
 
-    pub(super) fn encode(
-        &mut self,
-        frame: I420Frame<'_>,
-        force_keyframe: bool,
-    ) -> Result<Option<EncodedH264Frame>, String> {
-        let hardware_name = self.hardware_name();
-        let initial_result = self.encode_current(frame, force_keyframe);
-        match recover_runtime_hardware_failure(hardware_name, initial_result, |force_keyframe| {
-            let mut encoder = Box::new(OpenH264Encoder::new()?);
-            let encoded = encoder.encode(frame, force_keyframe)?;
-            validate_runtime_fallback_frame(encoded.as_ref())?;
-            Ok((encoder, encoded))
-        })? {
-            RuntimeEncodeOutcome::Encoded(encoded) => Ok(encoded),
-            RuntimeEncodeOutcome::FellBack {
-                encoder,
-                encoded,
-                hardware_name,
-                hardware_error,
-            } => {
-                logging::debug(
-                    "stream",
-                    format!(
-                        "{hardware_name} H264 encoder failed during broadcast; switched to OpenH264: {hardware_error}"
-                    ),
-                );
-                *self = Self::OpenH264(encoder);
-                Ok(encoded)
-            }
-        }
-    }
-
-    fn encode_current(
+    fn encode(
         &mut self,
         frame: I420Frame<'_>,
         force_keyframe: bool,
@@ -271,10 +297,12 @@ pub(super) struct OpenH264Encoder {
 }
 
 impl OpenH264Encoder {
-    fn new() -> Result<Self, String> {
-        let encoder =
-            Encoder::with_api_config(OpenH264API::from_source(), openh264_encoder_config())
-                .map_err(|error| format!("OpenH264 encoder creation failed: {error}"))?;
+    fn new(keyframe_interval_frames: u32) -> Result<Self, String> {
+        let encoder = Encoder::with_api_config(
+            OpenH264API::from_source(),
+            openh264_encoder_config_with_interval(keyframe_interval_frames),
+        )
+        .map_err(|error| format!("OpenH264 encoder creation failed: {error}"))?;
         Ok(Self { encoder })
     }
 
@@ -304,7 +332,12 @@ impl OpenH264Encoder {
     }
 }
 
+#[cfg(test)]
 pub(super) fn openh264_encoder_config() -> EncoderConfig {
+    openh264_encoder_config_with_interval(STREAM_INTRA_FRAME_PERIOD_FRAMES)
+}
+
+fn openh264_encoder_config_with_interval(keyframe_interval_frames: u32) -> EncoderConfig {
     // OpenH264 enables these camera-oriented tools by default, but its
     // screen-content mode rejects them and writes warnings directly to stderr.
     EncoderConfig::new()
@@ -317,9 +350,7 @@ pub(super) fn openh264_encoder_config() -> EncoderConfig {
         .max_frame_rate(FrameRate::from_hz(STREAM_CAPTURE_FPS as f32))
         .profile(Profile::Baseline)
         .level(Level::Level_3_1)
-        .intra_frame_period(IntraFramePeriod::from_num_frames(
-            STREAM_INTRA_FRAME_PERIOD_FRAMES,
-        ))
+        .intra_frame_period(IntraFramePeriod::from_num_frames(keyframe_interval_frames))
         .vui(VuiConfig::bt709())
 }
 
@@ -388,9 +419,8 @@ mod vaapi {
 
     use super::{
         EncodedH264Frame, I420Frame, STREAM_CAPTURE_FPS, STREAM_CAPTURE_HEIGHT,
-        STREAM_CAPTURE_WIDTH, STREAM_ENCODER_BITRATE, STREAM_INTRA_FRAME_PERIOD_FRAMES,
-        annex_b_contains_idr, copy_i420_to_nv12, split_nv12_image_planes,
-        validate_parameterized_h264_idr,
+        STREAM_CAPTURE_WIDTH, STREAM_ENCODER_BITRATE, annex_b_contains_idr, copy_i420_to_nv12,
+        split_nv12_image_planes, validate_parameterized_h264_idr,
     };
 
     const VA_INPUT_FRAME_COUNT: usize = 3;
@@ -407,12 +437,12 @@ mod vaapi {
     }
 
     impl VaApiEncoder {
-        pub(super) fn new() -> Result<Self, String> {
+        pub(super) fn new(keyframe_interval_frames: u32) -> Result<Self, String> {
             let paths = render_device_paths()?;
             let mut failures = Vec::new();
 
             for path in paths {
-                match Self::for_device(&path) {
+                match Self::for_device(&path, keyframe_interval_frames) {
                     Ok(encoder) => return Ok(encoder),
                     Err(error) => failures.push(format!("{}: {error}", path.display())),
                 }
@@ -424,7 +454,7 @@ mod vaapi {
             ))
         }
 
-        fn for_device(path: &Path) -> Result<Self, String> {
+        fn for_device(path: &Path, keyframe_interval_frames: u32) -> Result<Self, String> {
             let display = Display::open_drm_display(path)
                 .map_err(|error| format!("VA display initialization failed: {error}"))?;
             let entrypoints = display
@@ -438,7 +468,7 @@ mod vaapi {
             };
             let fourcc = Fourcc::from(b"NV12");
             let frame_layout = nv12_frame_layout(fourcc, resolution);
-            let config = hardware_encoder_config(resolution);
+            let config = hardware_encoder_config(resolution, keyframe_interval_frames);
             let mut encoder_errors = Vec::new();
 
             for low_power in power_modes {
@@ -668,14 +698,17 @@ mod vaapi {
             .map_err(|error| format!("VA API NV12 upload failed: {error}"))
     }
 
-    fn hardware_encoder_config(resolution: Resolution) -> EncoderConfig {
+    fn hardware_encoder_config(
+        resolution: Resolution,
+        keyframe_interval_frames: u32,
+    ) -> EncoderConfig {
         EncoderConfig {
             resolution,
             profile: Profile::Baseline,
             level: Level::L3_1,
             pred_structure: PredictionStructure::LowDelay {
-                limit: u16::try_from(STREAM_INTRA_FRAME_PERIOD_FRAMES)
-                    .expect("stream intra period fits in u16"),
+                limit: u16::try_from(keyframe_interval_frames)
+                    .expect("keyframe interval fits in u16"),
             },
             initial_tunings: Tunings {
                 rate_control: RateControl::ConstantBitrate(u64::from(STREAM_ENCODER_BITRATE)),
@@ -947,13 +980,20 @@ mod tests {
     }
 
     #[test]
-    fn screen_content_encoder_keeps_bitrate_and_two_second_intra_period() {
+    fn screen_content_encoder_keeps_bitrate_and_uses_requested_intra_period() {
+        for (frames, config) in [
+            (60, format!("{:?}", openh264_encoder_config())),
+            (
+                75,
+                format!("{:?}", openh264_encoder_config_with_interval(75)),
+            ),
+        ] {
+            assert!(
+                config.contains(&format!("intra_frame_period: IntraFramePeriod({frames})")),
+                "unexpected stream encoder configuration: {config}"
+            );
+        }
         let config = format!("{:?}", openh264_encoder_config());
-
-        assert!(
-            config.contains("intra_frame_period: IntraFramePeriod(60)"),
-            "unexpected stream encoder configuration: {config}"
-        );
         assert!(
             config.contains("bitrate: BitRate(6000000)"),
             "unexpected stream encoder configuration: {config}"
@@ -1089,7 +1129,8 @@ mod tests {
 
     #[test]
     fn openh264_runtime_fallback_produces_a_parameterized_idr() {
-        let mut encoder = OpenH264Encoder::new().expect("OpenH264 should initialize");
+        let mut encoder = OpenH264Encoder::new(STREAM_INTRA_FRAME_PERIOD_FRAMES)
+            .expect("OpenH264 should initialize");
         let width = STREAM_CAPTURE_WIDTH as usize;
         let height = STREAM_CAPTURE_HEIGHT as usize;
         let y = vec![16; width * height];

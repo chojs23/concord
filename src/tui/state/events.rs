@@ -493,9 +493,9 @@ impl DashboardState {
                     popup.load_error = Some(message.clone());
                     if popup.settings.saving {
                         popup.settings.saving = false;
-                        popup.settings.status = Some(format!(
+                        popup.set_settings_status(Some(format!(
                             "Save succeeded, but profile reload failed: {message}"
-                        ));
+                        )));
                     }
                 }
             }

@@ -3,8 +3,9 @@ use crate::discord::ids::{
     marker::{ChannelMarker, MessageMarker},
 };
 use crate::discord::{
-    AppCommand, AttachmentMediaType, DiscordAction, EmbedInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS,
-    MediaPlaybackSource, MediaPlaybackTarget, MessageState, ReactionEmoji,
+    AppCommand, AttachmentMediaType, DiscordAction, EmbedInfo, MESSAGE_FLAG_IS_COMPONENTS_V2,
+    MESSAGE_FLAG_SUPPRESS_EMBEDS, MediaPlaybackSource, MediaPlaybackTarget, MessageComponentInfo,
+    MessageState, ReactionEmoji,
 };
 use crate::tui::keybindings::{KeyChord, SelectionAction};
 use crate::tui::text::detected_urls;
@@ -126,7 +127,7 @@ impl DashboardState {
         };
         match kind {
             MessageActionKind::CopyContent => message
-                .content
+                .copyable_content()
                 .is_none()
                 .then(|| "no message text".to_owned()),
             MessageActionKind::OpenReactionPicker => {
@@ -444,6 +445,7 @@ impl DashboardState {
         self.discord_action_allowed_in_channel(message.channel_id, DiscordAction::EditMessage)
             && Some(message.author_id) == self.discord.current_user_id
             && message.message_kind.is_regular_or_reply()
+            && message.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 == 0
             && message.content.is_some()
     }
 
@@ -636,11 +638,11 @@ impl DashboardState {
     pub fn direct_copy_selected_message_content(&mut self) {
         let Some(content) = self
             .selected_message_state()
-            .and_then(|message| message.content.as_ref())
+            .and_then(MessageState::copyable_content)
         else {
             return;
         };
-        self.runtime.copy_text_requested = Some((content.clone(), "Message copied"));
+        self.runtime.copy_text_requested = Some((content, "Message copied"));
     }
 
     pub(in crate::tui) fn take_copy_text_request(&mut self) -> Option<(String, &'static str)> {
@@ -879,6 +881,7 @@ fn message_urls(message: &MessageState) -> Vec<String> {
         urls.extend(detected_urls(content));
     }
     urls.extend(embed_urls(&message.embeds));
+    urls.extend(component_urls(&message.components));
     urls.extend(
         message
             .attachments_in_display_order()
@@ -895,15 +898,113 @@ fn message_urls(message: &MessageState) -> Vec<String> {
             urls.extend(detected_urls(content));
         }
         urls.extend(embed_urls(&snapshot.embeds));
+        urls.extend(component_urls(&snapshot.components));
     }
     dedupe_urls(urls)
 }
 
 fn embed_urls(embeds: &[EmbedInfo]) -> Vec<String> {
-    embeds
-        .iter()
-        .filter_map(|embed| embed.url.clone())
-        .collect()
+    let mut urls = Vec::new();
+    for embed in embeds {
+        urls.extend(
+            [
+                embed.url.as_deref(),
+                embed.provider_url.as_deref(),
+                embed.author_url.as_deref(),
+                embed.thumbnail_url.as_deref(),
+                embed.image_url.as_deref(),
+                embed.video_url.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::to_owned),
+        );
+        for text in [
+            embed.title.as_deref(),
+            embed.description.as_deref(),
+            embed.footer_text.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            urls.extend(detected_urls(text));
+        }
+        for field in &embed.fields {
+            urls.extend(detected_urls(&field.name));
+            urls.extend(detected_urls(&field.value));
+        }
+    }
+    urls
+}
+
+fn component_urls(components: &[MessageComponentInfo]) -> Vec<String> {
+    let mut urls = Vec::new();
+    for component in components {
+        match component {
+            MessageComponentInfo::ActionRow { components }
+            | MessageComponentInfo::Container { components, .. } => {
+                urls.extend(component_urls(components));
+            }
+            MessageComponentInfo::Button {
+                label, emoji, url, ..
+            } => {
+                urls.extend(url.iter().cloned());
+                for text in [label.as_deref(), emoji.as_deref()].into_iter().flatten() {
+                    urls.extend(detected_urls(text));
+                }
+            }
+            MessageComponentInfo::Select {
+                placeholder,
+                options,
+                ..
+            } => {
+                if let Some(placeholder) = placeholder {
+                    urls.extend(detected_urls(placeholder));
+                }
+                for option in options {
+                    urls.extend(detected_urls(&option.label));
+                    if let Some(description) = &option.description {
+                        urls.extend(detected_urls(description));
+                    }
+                }
+            }
+            MessageComponentInfo::Section {
+                components,
+                accessory,
+            } => {
+                urls.extend(component_urls(components));
+                if let Some(accessory) = accessory {
+                    urls.extend(component_urls(std::slice::from_ref(accessory.as_ref())));
+                }
+            }
+            MessageComponentInfo::TextDisplay { content } => {
+                urls.extend(detected_urls(content));
+            }
+            MessageComponentInfo::Thumbnail {
+                media, description, ..
+            } => {
+                urls.extend(detected_urls(&media.url));
+                if let Some(description) = description {
+                    urls.extend(detected_urls(description));
+                }
+            }
+            MessageComponentInfo::MediaGallery { items } => {
+                for item in items {
+                    urls.extend(detected_urls(&item.media.url));
+                    if let Some(description) = &item.description {
+                        urls.extend(detected_urls(description));
+                    }
+                }
+            }
+            MessageComponentInfo::File { name, .. } => {
+                if let Some(name) = name {
+                    urls.extend(detected_urls(name));
+                }
+            }
+            MessageComponentInfo::Separator { .. } | MessageComponentInfo::Unknown { .. } => {}
+        }
+    }
+    urls
 }
 
 fn dedupe_urls(urls: Vec<String>) -> Vec<String> {

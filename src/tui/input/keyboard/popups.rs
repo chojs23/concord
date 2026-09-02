@@ -1070,10 +1070,6 @@ fn handle_user_profile_popup_fixed_key(
     }
 
     match state.key_bindings().profile_popup_action(key, false)? {
-        ProfilePopupAction::Close if shortcut_key(key, 'c') => {
-            state.close_active_popup();
-            Some(None)
-        }
         ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Global) => {
             state.switch_user_profile_settings_to_global();
             Some(None)
@@ -1134,9 +1130,11 @@ fn handle_user_profile_popup_key(state: &mut DashboardState, key: KeyEvent) -> O
             state.scroll_user_profile_popup_down()
         }
         Some(ProfilePopupAction::Scroll(ScrollAction::Up)) => state.scroll_user_profile_popup_up(),
-        Some(ProfilePopupAction::NextField) => state.next_user_profile_settings_field(),
-        Some(ProfilePopupAction::PreviousField) => state.previous_user_profile_settings_field(),
-        Some(ProfilePopupAction::SwitchTab(_)) => {}
+        Some(
+            ProfilePopupAction::NextField
+            | ProfilePopupAction::PreviousField
+            | ProfilePopupAction::SwitchTab(_),
+        ) => {}
         Some(ProfilePopupAction::StartOrCommitEdit) => {
             if state.is_user_profile_popup_editing() {
                 return state.start_or_commit_user_profile_edit();

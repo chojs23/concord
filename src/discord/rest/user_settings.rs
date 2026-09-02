@@ -261,12 +261,11 @@ fn parse_field(message: &[u8], start: usize) -> Result<ParsedField> {
         u32::try_from(key >> 3).map_err(|_| invalid_proto("field number does not fit in u32"))?;
     let wire_type = (key & 0x07) as u8;
     let value_start;
-    let value_end;
-    match wire_type {
+    let value_end = match wire_type {
         0 => {
             value_start = cursor;
             read_varint(message, &mut cursor)?;
-            value_end = cursor;
+            cursor
         }
         1 => {
             value_start = cursor;
@@ -274,7 +273,7 @@ fn parse_field(message: &[u8], start: usize) -> Result<ParsedField> {
                 .checked_add(8)
                 .filter(|end| *end <= message.len())
                 .ok_or_else(|| invalid_proto("fixed64 field is truncated"))?;
-            value_end = cursor;
+            cursor
         }
         2 => {
             let length = usize::try_from(read_varint(message, &mut cursor)?)
@@ -284,7 +283,7 @@ fn parse_field(message: &[u8], start: usize) -> Result<ParsedField> {
                 .checked_add(length)
                 .filter(|end| *end <= message.len())
                 .ok_or_else(|| invalid_proto("length-delimited field is truncated"))?;
-            value_end = cursor;
+            cursor
         }
         5 => {
             value_start = cursor;
@@ -292,10 +291,10 @@ fn parse_field(message: &[u8], start: usize) -> Result<ParsedField> {
                 .checked_add(4)
                 .filter(|end| *end <= message.len())
                 .ok_or_else(|| invalid_proto("fixed32 field is truncated"))?;
-            value_end = cursor;
+            cursor
         }
         _ => return Err(invalid_proto("unsupported protobuf wire type")),
-    }
+    };
 
     Ok(ParsedField {
         number,

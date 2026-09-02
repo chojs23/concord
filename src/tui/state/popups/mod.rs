@@ -729,6 +729,19 @@ pub(super) struct UserProfilePopupState {
     /// pane scroll: j/k and the mouse wheel adjust this, never moving a
     /// cursor that the renderer would have to chase.
     pub(super) scroll: ScrollablePopupState,
+    /// Selection and edit changes ask the next layout pass to reveal the
+    /// focused field. Manual scrolling leaves this false so the viewport does
+    /// not snap back until focus changes again.
+    pub(super) pending_scroll_reveal: bool,
+}
+
+impl UserProfilePopupState {
+    /// Status rows sit above the document and can change its viewport height.
+    /// Re-reveal focus whenever their content changes.
+    pub(super) fn set_settings_status(&mut self, status: Option<String>) {
+        self.settings.status = status;
+        self.pending_scroll_reveal = true;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -748,7 +761,7 @@ pub enum UserProfileSettingsField {
     GuildNickname,
     GuildPronouns,
     Save,
-    Cancel,
+    Close,
     SignOut,
 }
 
@@ -784,7 +797,7 @@ impl UserProfileSettingsState {
     ];
     const GLOBAL_ACTIONS: [UserProfileSettingsField; 3] = [
         UserProfileSettingsField::Save,
-        UserProfileSettingsField::Cancel,
+        UserProfileSettingsField::Close,
         UserProfileSettingsField::SignOut,
     ];
     const GUILD_FIELDS: [UserProfileSettingsField; 2] = [
@@ -793,7 +806,7 @@ impl UserProfileSettingsState {
     ];
     const GUILD_ACTIONS: [UserProfileSettingsField; 3] = [
         UserProfileSettingsField::Save,
-        UserProfileSettingsField::Cancel,
+        UserProfileSettingsField::Close,
         UserProfileSettingsField::SignOut,
     ];
 
@@ -861,7 +874,7 @@ impl UserProfileSettingsState {
             UserProfileSettingsField::GuildNickname => self.guild_nickname = Some(value),
             UserProfileSettingsField::GuildPronouns => self.guild_pronouns = Some(value),
             UserProfileSettingsField::Save
-            | UserProfileSettingsField::Cancel
+            | UserProfileSettingsField::Close
             | UserProfileSettingsField::SignOut => {}
         }
     }
@@ -881,6 +894,14 @@ impl UserProfileSettingsState {
                 .map(PathBuf::from)
                 .map(ProfileAvatarUpload::from_path)
         })
+    }
+
+    pub(super) fn has_pending_global_avatar_upload(&self) -> bool {
+        self.global_avatar_upload.is_some()
+            || self
+                .global_avatar_path
+                .as_deref()
+                .is_some_and(|path| !path.trim().is_empty())
     }
 
     pub(super) fn pending_global_avatar_preview_key(&self) -> Option<&str> {
@@ -1862,9 +1883,16 @@ impl DashboardState {
             }
             ScrollablePopupTarget::ReactionUsers => self.navigate_reaction_users_popup(action),
             ScrollablePopupTarget::UserProfile => {
-                match action {
-                    SelectionAction::Next => self.next_user_profile_settings_field(),
-                    SelectionAction::Previous => self.previous_user_profile_settings_field(),
+                if self.is_current_user_profile_popup() {
+                    match action {
+                        SelectionAction::Next => self.next_user_profile_settings_field(),
+                        SelectionAction::Previous => self.previous_user_profile_settings_field(),
+                    }
+                } else {
+                    match action {
+                        SelectionAction::Next => self.scroll_user_profile_popup_down(),
+                        SelectionAction::Previous => self.scroll_user_profile_popup_up(),
+                    }
                 }
                 None
             }

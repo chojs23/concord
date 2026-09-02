@@ -1,8 +1,6 @@
 use super::*;
 use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
-const MEMBER_ACTIVITY_LEADING_WIDTH: usize = 4;
-
 pub(in crate::tui::ui) fn render_members(
     frame: &mut Frame,
     area: Rect,
@@ -18,7 +16,12 @@ pub(in crate::tui::ui) fn render_members(
     // (absolute_line_index, relative_column, cdn_url) for loaded activity emoji images.
     let mut emoji_line_urls: Vec<(usize, usize, String)> = Vec::new();
     let content_width = (area.width as usize).saturating_sub(2);
-    let max_name_width = (area.width as usize).saturating_sub(7).max(8);
+    let marker_width = selection_marker_width();
+    let max_name_width = (area.width as usize)
+        .saturating_sub(marker_width)
+        .saturating_sub(5)
+        .max(8);
+    let activity_leading_width = marker_width.saturating_add(2);
     let selected_line = state
         .focused_member_selection_line_in_groups(&groups)
         .map(|line| line + state.member_scroll());
@@ -106,8 +109,8 @@ pub(in crate::tui::ui) fn render_members(
                     {
                         let activity_line = compact_activity_line(
                             render,
-                            MEMBER_ACTIVITY_LEADING_WIDTH,
-                            MEMBER_ACTIVITY_LEADING_WIDTH.saturating_add(max_name_width),
+                            activity_leading_width,
+                            activity_leading_width.saturating_add(max_name_width),
                             h_scroll,
                         );
                         if let Some(image) = activity_line.image {

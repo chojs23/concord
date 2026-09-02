@@ -846,6 +846,17 @@ impl DashboardState {
         }
     }
 
+    pub(in crate::tui) fn selected_guild_voice_participant_counts(
+        &self,
+    ) -> BTreeMap<Id<ChannelMarker>, usize> {
+        self.selected_guild_id()
+            .map(|guild_id| {
+                self.discord
+                    .voice_participant_counts_by_channel_for_guild(guild_id)
+            })
+            .unwrap_or_default()
+    }
+
     pub fn channel_pane_entries(&self) -> Vec<ChannelPaneEntry<'_>> {
         let mut channels = self.channels();
         if self.navigation.guilds.active == ActiveGuildScope::DirectMessages {

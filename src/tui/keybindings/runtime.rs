@@ -428,7 +428,6 @@ impl KeyBindings {
                 Some(ProfilePopupAction::SwitchTab(ProfilePopupTabAction::Guild))
             }
             KeyCode::Char('s') if is_shortcut_key(key) => Some(ProfilePopupAction::Save),
-            KeyCode::Char('c') if is_shortcut_key(key) => Some(ProfilePopupAction::Close),
             KeyCode::Char('o') if is_shortcut_key(key) => Some(ProfilePopupAction::SignOut),
             _ => self
                 .selection_action(key, SelectionKeySet::Navigation)
@@ -833,6 +832,15 @@ impl KeyBindings {
 
     pub fn start_composer_key_label(&self) -> String {
         self.binding_label(UiAction::StartComposer)
+    }
+
+    pub fn popup_close_key_label(&self) -> String {
+        let configured = self.binding_label(UiAction::ClosePopup);
+        if configured.is_empty() {
+            "Esc".to_owned()
+        } else {
+            configured
+        }
     }
 
     pub fn emoji_reaction_filter_prefix(&self) -> &'static str {

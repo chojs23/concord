@@ -4,7 +4,7 @@ use crate::discord::ids::{
 };
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, GlobalUserProfileUpdate, GuildUserProfileUpdate,
-    MessageAttachmentUpload, PresenceStatus, ProfileAvatarUpload, UserProfileInfo,
+    MessageAttachmentUpload, PresenceStatus, ProfileAvatarUpload, RoleState, UserProfileInfo,
     UserProfileUpdate,
 };
 use crate::tui::keybindings::{KeyChord, SelectionAction};
@@ -17,6 +17,9 @@ use super::{
     SelectablePopupTarget, UserProfilePopupState, UserProfileSettingsField,
     UserProfileSettingsState, UserProfileSettingsTab,
 };
+
+const AVATAR_CLIPBOARD_READING_STATUS: &str = "Reading clipboard image...";
+const AVATAR_CLIPBOARD_FAILED_STATUS: &str = "Clipboard does not contain an image";
 
 impl DashboardState {
     pub fn is_member_action_menu_active(&self) -> bool {
@@ -166,6 +169,7 @@ impl DashboardState {
                 load_error: None,
                 settings: UserProfileSettingsState::default(),
                 scroll: Default::default(),
+                pending_scroll_reveal: true,
             }));
         Some(AppCommand::LoadUserProfile { user_id, guild_id })
     }
@@ -180,17 +184,20 @@ impl DashboardState {
         if let Some(popup) = self.popups.user_profile_popup_mut()
             && popup.settings.status_picker.take().is_some()
         {
+            popup.pending_scroll_reveal = true;
             return;
         }
         if let Some(popup) = self.popups.user_profile_popup_mut()
             && popup.settings.activity_picker.take().is_some()
         {
+            popup.pending_scroll_reveal = true;
             return;
         }
         if let Some(popup) = self.popups.user_profile_popup_mut()
             && popup.settings.editing.take().is_some()
         {
             popup.settings.edit_input.clear();
+            popup.pending_scroll_reveal = true;
             return;
         }
         self.close_user_profile_popup();
@@ -282,7 +289,6 @@ impl DashboardState {
             return 0;
         };
         profile_settings_changed_field_count(
-            popup.user_id,
             &popup.settings,
             self.user_profile_popup_data(),
             popup.guild_id,
@@ -300,6 +306,14 @@ impl DashboardState {
         self.popups
             .user_profile_popup()
             .and_then(|popup| popup.guild_id)
+    }
+
+    pub(in crate::tui) fn user_profile_popup_roles(&self) -> Option<Vec<&RoleState>> {
+        let popup = self.popups.user_profile_popup()?;
+        let guild_id = popup.guild_id?;
+        self.discord
+            .cache
+            .user_profile_roles(guild_id, popup.user_id)
     }
 
     pub(in crate::tui) fn user_profile_settings_field_value(
@@ -360,7 +374,7 @@ impl DashboardState {
                 .or_else(|| profile.and_then(|profile| profile.guild_pronouns.clone()))
                 .unwrap_or_default(),
             UserProfileSettingsField::Save
-            | UserProfileSettingsField::Cancel
+            | UserProfileSettingsField::Close
             | UserProfileSettingsField::SignOut => String::new(),
         }
     }
@@ -373,6 +387,7 @@ impl DashboardState {
             && popup.settings.editing.is_none()
         {
             popup.settings.next_field();
+            popup.pending_scroll_reveal = true;
         }
     }
 
@@ -384,6 +399,7 @@ impl DashboardState {
             && popup.settings.editing.is_none()
         {
             popup.settings.previous_field();
+            popup.pending_scroll_reveal = true;
         }
     }
 
@@ -395,6 +411,7 @@ impl DashboardState {
             && popup.settings.editing.is_none()
         {
             popup.settings.tab = UserProfileSettingsTab::Global;
+            popup.pending_scroll_reveal = true;
         }
     }
 
@@ -406,6 +423,7 @@ impl DashboardState {
             && popup.settings.editing.is_none()
         {
             popup.settings.tab = UserProfileSettingsTab::Guild;
+            popup.pending_scroll_reveal = true;
         }
     }
 
@@ -425,7 +443,7 @@ impl DashboardState {
                 popup.settings.set_field_value(field, value);
                 popup.settings.editing = None;
                 popup.settings.edit_input.clear();
-                popup.settings.status = None;
+                popup.set_settings_status(None);
             }
             if field == UserProfileSettingsField::ManualActivity {
                 let status = self.user_profile_settings_presence_status();
@@ -451,7 +469,7 @@ impl DashboardState {
         if field == UserProfileSettingsField::Save {
             return self.save_user_profile_settings_command();
         }
-        if field == UserProfileSettingsField::Cancel {
+        if field == UserProfileSettingsField::Close {
             self.close_or_cancel_user_profile_popup();
             return None;
         }
@@ -462,6 +480,7 @@ impl DashboardState {
         if let Some(popup) = self.popups.user_profile_popup_mut() {
             popup.settings.editing = Some(field);
             popup.settings.edit_input.set_value(value);
+            popup.pending_scroll_reveal = true;
         }
         None
     }
@@ -513,6 +532,7 @@ impl DashboardState {
         let statuses = PresenceStatus::user_selectable();
         let status = statuses[picker.selected_for_len(statuses.len())];
         popup.settings.presence_status = Some(status);
+        popup.pending_scroll_reveal = true;
         Some(AppCommand::UpdateCurrentUserStatus { status })
     }
 
@@ -581,6 +601,7 @@ impl DashboardState {
             if let Some(popup) = self.popups.user_profile_popup_mut() {
                 popup.settings.activity_picker = None;
                 popup.settings.manual_activity = Some(activity.name.clone());
+                popup.pending_scroll_reveal = true;
             }
             return Some(AppCommand::UpdateCurrentUserActivity {
                 status,
@@ -595,6 +616,7 @@ impl DashboardState {
             popup.settings.activity_picker = None;
             popup.settings.editing = Some(UserProfileSettingsField::ManualActivity);
             popup.settings.edit_input.set_value(value);
+            popup.pending_scroll_reveal = true;
         }
         None
     }
@@ -633,6 +655,7 @@ impl DashboardState {
             && popup.settings.editing.is_some()
         {
             popup.settings.edit_input.insert_str(value);
+            popup.pending_scroll_reveal = true;
         }
     }
 
@@ -644,6 +667,7 @@ impl DashboardState {
             && popup.settings.editing.is_some()
         {
             popup.settings.edit_input.apply_edit_action(action);
+            popup.pending_scroll_reveal = true;
         }
     }
 
@@ -653,26 +677,40 @@ impl DashboardState {
                 == Some(UserProfileSettingsField::GlobalAvatarPath)
     }
 
+    pub(in crate::tui) fn is_user_profile_avatar_clipboard_paste_pending(&self) -> bool {
+        self.user_profile_settings_status() == Some(AVATAR_CLIPBOARD_READING_STATUS)
+    }
+
     pub fn request_user_profile_avatar_clipboard_paste(&mut self) {
         if !self.accepts_user_profile_avatar_paste() {
             if let Some(popup) = self.popups.user_profile_popup_mut() {
-                popup.settings.status = Some("Select the avatar image field first".to_owned());
+                popup.set_settings_status(Some("Select the avatar image field first".to_owned()));
             }
             return;
         }
         if let Some(popup) = self.popups.user_profile_popup_mut() {
             popup.settings.editing = None;
             popup.settings.edit_input.clear();
-            popup.settings.status = Some("Reading clipboard image...".to_owned());
+            popup.set_settings_status(Some(AVATAR_CLIPBOARD_READING_STATUS.to_owned()));
         }
         self.request_paste_clipboard();
+    }
+
+    pub(in crate::tui) fn record_user_profile_avatar_clipboard_paste_failed(&mut self) {
+        if let Some(popup) = self.popups.user_profile_popup_mut()
+            && popup.settings.status.as_deref() == Some(AVATAR_CLIPBOARD_READING_STATUS)
+        {
+            popup.set_settings_status(Some(AVATAR_CLIPBOARD_FAILED_STATUS.to_owned()));
+        }
     }
 
     pub fn set_user_profile_avatar_from_attachment(
         &mut self,
         upload: MessageAttachmentUpload,
     ) -> bool {
-        if !self.accepts_user_profile_avatar_paste() {
+        if !self.accepts_user_profile_avatar_paste()
+            && !self.is_user_profile_avatar_clipboard_paste_pending()
+        {
             return false;
         }
         let upload = ProfileAvatarUpload::from_message_attachment(upload);
@@ -680,7 +718,7 @@ impl DashboardState {
             popup.settings.set_avatar_upload(upload);
             popup.settings.editing = None;
             popup.settings.edit_input.clear();
-            popup.settings.status = None;
+            popup.set_settings_status(None);
             return true;
         }
         false
@@ -691,17 +729,17 @@ impl DashboardState {
         let profile = self.user_profile_popup_data().cloned();
         let popup = self.popups.user_profile_popup_mut()?;
         if current_user_id != Some(popup.user_id) {
-            popup.settings.status = Some("Only your own profile can be edited".to_owned());
+            popup.set_settings_status(Some("Only your own profile can be edited".to_owned()));
             return None;
         }
         if popup.settings.editing.is_some() {
-            popup.settings.status = Some("Press Enter to finish editing first".to_owned());
+            popup.set_settings_status(Some("Press Enter to finish editing first".to_owned()));
             return None;
         }
         if popup.guild_id.is_none()
             && (popup.settings.guild_nickname.is_some() || popup.settings.guild_pronouns.is_some())
         {
-            popup.settings.status = Some("Server profile needs an active server".to_owned());
+            popup.set_settings_status(Some("Server profile needs an active server".to_owned()));
             return None;
         }
         let update = pending_user_profile_update(
@@ -711,11 +749,11 @@ impl DashboardState {
             profile.as_ref(),
         );
         if update.is_empty() {
-            popup.settings.status = Some("No profile changes to save".to_owned());
+            popup.set_settings_status(Some("No profile changes to save".to_owned()));
             return None;
         }
         popup.settings.saving = true;
-        popup.settings.status = Some("Saving profile changes...".to_owned());
+        popup.set_settings_status(Some("Saving profile changes...".to_owned()));
         Some(AppCommand::UpdateUserProfile { update })
     }
 
@@ -728,7 +766,7 @@ impl DashboardState {
             popup.settings.edit_input.clear();
             popup.settings.status_picker = None;
             popup.settings.activity_picker = None;
-            popup.settings.status = Some("Signing out...".to_owned());
+            popup.set_settings_status(Some("Signing out...".to_owned()));
         }
         Some(AppCommand::SignOut)
     }
@@ -744,6 +782,7 @@ impl DashboardState {
             && popup.settings.saving
         {
             popup.settings.clear_after_save();
+            popup.pending_scroll_reveal = true;
         }
     }
 
@@ -758,7 +797,7 @@ impl DashboardState {
             && popup.guild_id == guild_id
         {
             popup.settings.saving = false;
-            popup.settings.status = Some(format!("Save failed: {message}"));
+            popup.set_settings_status(Some(format!("Save failed: {message}")));
         }
     }
 
@@ -875,14 +914,27 @@ impl DashboardState {
         }
     }
 
+    /// Renderer hook: apply a pending focus reveal after wrapped field rows
+    /// have been measured. This mirrors the forum post and thread edit forms.
+    pub(in crate::tui) fn reveal_user_profile_popup_rows(&mut self, start: usize, end: usize) {
+        if let Some(popup) = self.popups.user_profile_popup_mut()
+            && popup.pending_scroll_reveal
+        {
+            popup.scroll.reveal(start, end);
+            popup.pending_scroll_reveal = false;
+        }
+    }
+
     pub fn scroll_user_profile_popup_down(&mut self) {
         if let Some(popup) = self.popups.user_profile_popup_mut() {
+            popup.pending_scroll_reveal = false;
             popup.scroll.scroll_down();
         }
     }
 
     pub fn scroll_user_profile_popup_up(&mut self) {
         if let Some(popup) = self.popups.user_profile_popup_mut() {
+            popup.pending_scroll_reveal = false;
             popup.scroll.scroll_up();
         }
     }
@@ -914,8 +966,11 @@ fn activity_picker_label(activity: &ActivityInfo) -> String {
 
 fn changed_text(dirty: Option<&String>, current: Option<&str>) -> Option<String> {
     let dirty = dirty?;
-    let current = current.unwrap_or_default();
-    (dirty != current).then(|| dirty.clone())
+    profile_text_changed(Some(dirty), current).then(|| dirty.clone())
+}
+
+fn profile_text_changed(dirty: Option<&String>, current: Option<&str>) -> bool {
+    dirty.is_some_and(|dirty| dirty != current.unwrap_or_default())
 }
 
 fn pending_user_profile_update(
@@ -954,24 +1009,30 @@ fn pending_user_profile_update(
     }
 }
 
-fn user_profile_update_changed_field_count(update: &UserProfileUpdate) -> usize {
-    let mut count = 0;
-    count += usize::from(update.global.display_name.is_some());
-    count += usize::from(update.global.pronouns.is_some());
-    count += usize::from(update.global.avatar.is_some());
-    if let Some(guild) = update.guild.as_ref() {
-        count += usize::from(guild.nickname.is_some());
-        count += usize::from(guild.pronouns.is_some());
-    }
-    count
-}
-
 fn profile_settings_changed_field_count(
-    user_id: Id<UserMarker>,
     settings: &UserProfileSettingsState,
     profile: Option<&UserProfileInfo>,
     guild_id: Option<Id<GuildMarker>>,
 ) -> usize {
-    let update = pending_user_profile_update(user_id, guild_id, settings, profile);
-    user_profile_update_changed_field_count(&update)
+    let mut count = 0;
+    count += usize::from(profile_text_changed(
+        settings.global_display_name.as_ref(),
+        profile.and_then(|profile| profile.global_name.as_deref()),
+    ));
+    count += usize::from(profile_text_changed(
+        settings.global_pronouns.as_ref(),
+        profile.and_then(|profile| profile.pronouns.as_deref()),
+    ));
+    count += usize::from(settings.has_pending_global_avatar_upload());
+    if guild_id.is_some() {
+        count += usize::from(profile_text_changed(
+            settings.guild_nickname.as_ref(),
+            profile.and_then(|profile| profile.guild_nick.as_deref()),
+        ));
+        count += usize::from(profile_text_changed(
+            settings.guild_pronouns.as_ref(),
+            profile.and_then(|profile| profile.guild_pronouns.as_deref()),
+        ));
+    }
+    count
 }

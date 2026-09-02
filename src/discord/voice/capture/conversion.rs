@@ -209,8 +209,11 @@ fn convert_packed(
                 });
             }
             _ => {
-                for (source, destination) in
-                    source.chunks_exact(4).zip(destination.chunks_exact_mut(4))
+                for (source, destination) in source
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(destination.as_chunks_mut::<4>().0)
                 {
                     let [encoded_red, encoded_green, encoded_blue, alpha] =
                         packed_rgba(source, format);
@@ -227,7 +230,12 @@ fn convert_packed(
 /// Monomorphized per channel order so the indices stay constant and the copy
 /// vectorizes; a runtime index table does not.
 fn swizzle_packed_row(source: &[u8], destination: &mut [u8], swizzle: impl Fn(&[u8]) -> [u8; 4]) {
-    for (source, destination) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
+    for (source, destination) in source
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(destination.as_chunks_mut::<4>().0)
+    {
         destination.copy_from_slice(&swizzle(source));
     }
 }
@@ -384,8 +392,10 @@ fn convert_p010(
 
 fn p010_samples(bytes: Vec<u8>) -> Vec<u16> {
     bytes
-        .chunks_exact(2)
-        .map(|sample| u16::from_le_bytes([sample[0], sample[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|sample| u16::from_le_bytes(*sample))
         .collect()
 }
 
@@ -458,7 +468,7 @@ pub(super) fn normalize_rgba_color(rgba: &mut [u8], color: CaptureColorInfo) {
     if !requires_color_normalization(color) {
         return;
     }
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         let encoded = [
             f32::from(pixel[0]) / 255.0,
             f32::from(pixel[1]) / 255.0,
@@ -721,7 +731,10 @@ mod tests {
             )
             .expect("odd bi-planar dimensions should round up chroma rows");
             assert!(
-                rgba.chunks_exact(4).all(|pixel| pixel == [0, 0, 0, 255]),
+                rgba.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|pixel| pixel == &[0, 0, 0, 255]),
                 "format={format:?}"
             );
         }
@@ -785,7 +798,10 @@ mod tests {
             )
             .expect("packed row should convert");
             assert!(
-                rgba.chunks_exact(4).all(|converted| converted == expected),
+                rgba.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|converted| converted == &expected),
                 "format={format:?} rgba={rgba:?}"
             );
         }

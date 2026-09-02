@@ -119,13 +119,13 @@ impl AudioSampleRing {
         let mut write = self.write.load(Ordering::Relaxed);
         let mut dropped = 0u64;
 
-        for sample in bytes.chunks_exact(size_of::<f32>()) {
+        for sample in bytes.as_chunks::<4>().0 {
             let next = (write + 1) % self.samples.len();
             if next == read {
                 dropped = dropped.saturating_add(1);
                 continue;
             }
-            let sample = f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]);
+            let sample = f32::from_le_bytes(*sample);
             self.samples[write].store(sample.to_bits(), Ordering::Relaxed);
             write = next;
         }

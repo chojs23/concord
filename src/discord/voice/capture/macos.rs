@@ -465,7 +465,12 @@ fn copy_bgra_frame(
         let source =
             unsafe { slice::from_raw_parts(base_address.add(row * bytes_per_row), row_length) };
         let destination = &mut rgba[row * row_length..(row + 1) * row_length];
-        for (bgra, rgba) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
+        for (bgra, rgba) in source
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(destination.as_chunks_mut::<4>().0)
+        {
             rgba.copy_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
         }
     }

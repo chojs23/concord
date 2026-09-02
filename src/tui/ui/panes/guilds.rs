@@ -12,7 +12,9 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
 
     let entry_count = state.guild_pane_filtered_entries().len();
     let entries = state.visible_guild_pane_entries();
-    let max_width = list_area.width.saturating_sub(6) as usize;
+    let max_width = (list_area.width as usize)
+        .saturating_sub(selection_marker_width())
+        .saturating_sub(4);
     let horizontal_scroll = state.guild_horizontal_scroll();
     let selected = state.focused_guild_selection();
     let items: Vec<ListItem> = entries

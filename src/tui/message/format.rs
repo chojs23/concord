@@ -3,6 +3,7 @@
 //! per-feature renderers to the submodules below.
 
 mod attachments;
+mod components;
 mod embed;
 mod markdown;
 mod polls;
@@ -12,6 +13,7 @@ mod wrap;
 
 pub(in crate::tui) use attachments::format_attachment_summary;
 use attachments::format_attachment_summary_lines;
+use components::{ComponentFormatContext, format_component_lines};
 pub(in crate::tui) use embed::embed_color;
 use embed::format_embed_lines;
 use markdown::wrap_markdown_message_lines_with_loaded_custom_emoji_urls;
@@ -31,8 +33,8 @@ use system::{
     format_chat_input_command_line, format_forwarded_snapshot, format_message_kind_line,
     format_system_message_lines,
 };
-pub(in crate::tui) use wrap::wrap_text_lines;
-use wrap::{highlights_for_range, styled_ranges_for_range, wrap_text_with_metadata};
+pub(in crate::tui) use wrap::{WrappedTextLine, wrap_text_lines, wrap_text_with_metadata};
+use wrap::{highlights_for_range, styled_ranges_for_range};
 
 use crate::discord::ids::{Id, marker::GuildMarker};
 use ratatui::{
@@ -42,7 +44,9 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::discord::{MessageState, ReplyInfo, unicode_emoji_image_url};
+use crate::discord::{
+    MESSAGE_FLAG_IS_COMPONENTS_V2, MessageState, ReplyInfo, StickerInfo, unicode_emoji_image_url,
+};
 use crate::tui::{
     state::{DashboardState, apply_discord_foreground, discord_role_mention_background},
     text::{
@@ -68,6 +72,7 @@ pub(in crate::tui) struct MessageContentLine {
     mention_highlights: Vec<TextHighlight>,
     styled_prefixes: Vec<StyledPrefix>,
     pub(in crate::tui) image_slots: Vec<MessageContentImageSlot>,
+    pub(in crate::tui) preview_slots: Vec<MessageContentPreviewSlot>,
 }
 
 #[derive(Clone, Copy)]
@@ -90,6 +95,14 @@ pub(in crate::tui) struct MessageContentImageSlot {
     pub(in crate::tui) url: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::tui) struct MessageContentPreviewSlot {
+    pub(in crate::tui) section_thumbnail_index: usize,
+    pub(in crate::tui) col: u16,
+    pub(in crate::tui) width: u16,
+    pub(in crate::tui) height: u16,
+}
+
 impl MessageContentLine {
     pub(in crate::tui) fn plain(text: String) -> Self {
         Self::styled_text(text, Style::default(), Vec::new())
@@ -102,6 +115,7 @@ impl MessageContentLine {
             mention_highlights,
             styled_prefixes: Vec::new(),
             image_slots: Vec::new(),
+            preview_slots: Vec::new(),
         }
     }
 
@@ -313,7 +327,8 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
     width: usize,
     loaded_custom_emoji_urls: &[String],
 ) -> (Vec<MessageContentLine>, Vec<MessageContentLine>) {
-    let attachment_summary_lines = if message.attachments.is_empty() {
+    let is_components_v2 = message.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0;
+    let attachment_summary_lines = if is_components_v2 || message.attachments.is_empty() {
         Vec::new()
     } else {
         format_attachment_summary_lines(&message.attachments)
@@ -363,8 +378,8 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
     }
 
     let mut last_standalone_emoji_row = None;
-    let standalone_content = (!renders_poll_card)
-        .then(|| display_text_with_stickers(message.content.as_deref(), &message.sticker_names))
+    let standalone_content = (!renders_poll_card && !is_components_v2)
+        .then(|| display_text_with_stickers(message.content.as_deref(), &message.stickers))
         .flatten();
     if let Some(value) = standalone_content {
         let value = render_discord_timestamps(&value);
@@ -399,13 +414,30 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
             ));
         }
     }
-    lines.extend(format_embed_lines(
-        &message.embeds,
-        message.content.as_deref(),
-        state.show_custom_emoji(),
-        state.hour_format_24(),
+    if !is_components_v2 {
+        lines.extend(format_embed_lines(
+            &message.embeds,
+            message.content.as_deref(),
+            state.show_custom_emoji(),
+            state.hour_format_24(),
+            width,
+            loaded_custom_emoji_urls,
+        ));
+    }
+    let mut next_section_thumbnail_index = 0;
+    lines.extend(format_component_lines(
+        &message.components,
+        &ComponentFormatContext {
+            guild_id: message.guild_id,
+            mentions: &message.mentions,
+            mention_everyone: message.mention_everyone,
+            mention_roles: &message.mention_roles,
+            attachments: &message.attachments,
+        },
+        state,
         width,
         loaded_custom_emoji_urls,
+        &mut next_section_thumbnail_index,
     ));
     for attachment in attachment_summary_lines {
         lines.push(MessageContentLine::attachment(truncate_text(
@@ -419,6 +451,7 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
             state,
             width,
             loaded_custom_emoji_urls,
+            &mut next_section_thumbnail_index,
         ));
     }
     if lines.is_empty() {
@@ -450,8 +483,8 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
 }
 
 /// Discord treats emoji-only messages as media rather than inline text. Keep
-/// that decision in the formatter so scroll metrics reserve every second image
-/// row before the image protocols finish loading.
+/// that decision in the formatter so scroll metrics reserve the full image
+/// height before the image protocols finish loading.
 struct StandaloneEmoji {
     fallback: String,
     url: String,
@@ -534,11 +567,13 @@ fn format_standalone_emoji_lines(
         lines.push(
             MessageContentLine::styled_text(text, style, Vec::new()).with_image_slots(image_slots),
         );
-        lines.push(MessageContentLine::styled_text(
-            String::new(),
-            style,
-            Vec::new(),
-        ));
+        for _ in 1..EmojiImageSize::Standalone.height() {
+            lines.push(MessageContentLine::styled_text(
+                String::new(),
+                style,
+                Vec::new(),
+            ));
+        }
     }
 
     lines
@@ -574,8 +609,8 @@ fn append_standalone_emoji_edited_marker(
         return;
     }
 
-    // The row immediately after the emoji is occupied by the image. Insert a
-    // separate marker below it instead of letting the image cover the text.
+    // The rows below the anchor are occupied by the image. Insert a separate
+    // marker below them instead of letting the image cover the text.
     let marker_index = line_index
         .saturating_add(usize::from(EmojiImageSize::Standalone.height()))
         .min(lines.len());
@@ -842,6 +877,9 @@ fn prefix_message_content_line(prefix: &str, mut line: MessageContentLine) -> Me
         slot.col = slot.col.saturating_add(col_shift);
         slot.byte_start = slot.byte_start.saturating_add(byte_shift);
     }
+    for slot in &mut line.preview_slots {
+        slot.col = slot.col.saturating_add(col_shift);
+    }
     line.text.insert_str(0, prefix);
     line
 }
@@ -898,7 +936,7 @@ fn format_reply_line(
     state: &DashboardState,
     width: usize,
 ) -> MessageContentLine {
-    let content = display_text_with_stickers(reply.content.as_deref(), &reply.sticker_names)
+    let content = display_text_with_stickers(reply.content.as_deref(), &reply.stickers)
         .unwrap_or_else(|| "<empty message>".to_owned());
     let content = render_discord_timestamps(&content);
     let content =
@@ -910,9 +948,9 @@ fn format_reply_line(
     )
 }
 
-fn display_text_with_stickers(content: Option<&str>, sticker_names: &[String]) -> Option<String> {
+fn display_text_with_stickers(content: Option<&str>, stickers: &[StickerInfo]) -> Option<String> {
     let content = content.filter(|value| !value.is_empty());
-    let stickers = sticker_display_text(sticker_names);
+    let stickers = sticker_display_text(stickers);
     match (content, stickers) {
         (Some(content), Some(stickers)) => Some(format!("{content}\n{stickers}")),
         (Some(content), None) => Some(content.to_owned()),
@@ -921,11 +959,11 @@ fn display_text_with_stickers(content: Option<&str>, sticker_names: &[String]) -
     }
 }
 
-fn sticker_display_text(sticker_names: &[String]) -> Option<String> {
-    (!sticker_names.is_empty()).then(|| {
-        sticker_names
+fn sticker_display_text(stickers: &[StickerInfo]) -> Option<String> {
+    (!stickers.is_empty()).then(|| {
+        stickers
             .iter()
-            .map(|name| format!("[Sticker: {name}]"))
+            .map(|sticker| format!("[Sticker: {}]", sticker.name))
             .collect::<Vec<_>>()
             .join(" ")
     })
@@ -980,6 +1018,7 @@ mod tests {
                 patch_base: false,
             }],
             image_slots: Vec::new(),
+            preview_slots: Vec::new(),
         };
 
         let spans = line.spans();
@@ -994,6 +1033,22 @@ mod tests {
         assert_eq!(
             spans[2].style.bg,
             mention_highlight_style(TextHighlightKind::SelfMention).bg
+        );
+    }
+
+    #[test]
+    fn sticker_only_message_renders_sticker_label() {
+        let message = MessageState {
+            stickers: vec![StickerInfo::test(11, "Laugh")],
+            ..Default::default()
+        };
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+        assert_eq!(
+            lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["[Sticker: Laugh]"]
         );
     }
 }

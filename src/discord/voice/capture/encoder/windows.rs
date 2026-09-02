@@ -18,10 +18,12 @@ use windows::{
     core::{GUID, HRESULT, IUnknown, Interface},
 };
 
+#[cfg(test)]
+use super::STREAM_INTRA_FRAME_PERIOD_FRAMES;
 use super::{
     EncodedH264Frame, I420Frame, STREAM_CAPTURE_FPS, STREAM_CAPTURE_HEIGHT, STREAM_CAPTURE_WIDTH,
-    STREAM_ENCODER_BITRATE, STREAM_INTRA_FRAME_PERIOD_FRAMES, annex_b_contains_idr,
-    copy_i420_to_nv12, normalize_h264_access_unit, validate_parameterized_h264_idr,
+    STREAM_ENCODER_BITRATE, annex_b_contains_idr, copy_i420_to_nv12, normalize_h264_access_unit,
+    validate_parameterized_h264_idr,
 };
 use crate::logging;
 
@@ -90,7 +92,7 @@ pub(in crate::discord::voice::capture) struct MediaFoundationEncoder {
 }
 
 impl MediaFoundationEncoder {
-    pub(super) fn new() -> Result<Self, String> {
+    pub(super) fn new(keyframe_interval_frames: u32) -> Result<Self, String> {
         let com = Rc::new(ComApartment::new()?);
         let media_foundation = Rc::new(MediaFoundationPlatform::new()?);
         let activations = enumerate_hardware_encoders()?;
@@ -101,6 +103,7 @@ impl MediaFoundationEncoder {
                 activation.clone(),
                 Rc::clone(&media_foundation),
                 Rc::clone(&com),
+                keyframe_interval_frames,
             ) {
                 Ok(mut probe) => match probe.probe() {
                     Ok(()) => {
@@ -112,6 +115,7 @@ impl MediaFoundationEncoder {
                             activation,
                             Rc::clone(&media_foundation),
                             Rc::clone(&com),
+                            keyframe_interval_frames,
                         );
                     }
                     Err(error) => failures.push(error),
@@ -134,6 +138,7 @@ impl MediaFoundationEncoder {
         activation: IMFActivate,
         media_foundation: Rc<MediaFoundationPlatform>,
         com: Rc<ComApartment>,
+        keyframe_interval_frames: u32,
     ) -> Result<Self, String> {
         // SAFETY: COM and Media Foundation are initialized on this thread.
         let transform: IMFTransform = unsafe { activation.ActivateObject() }
@@ -146,7 +151,7 @@ impl MediaFoundationEncoder {
             .map_err(|error| format!("hardware H264 MFT has no ICodecAPI: {error}"))?;
 
         configure_async_transform(&transform)?;
-        configure_codec(&codec_api)?;
+        configure_codec(&codec_api, keyframe_interval_frames)?;
         configure_media_types(&transform)?;
 
         // SAFETY: Stream zero exists because type negotiation above succeeded.
@@ -564,7 +569,7 @@ fn video_type(subtype: GUID, with_color: bool) -> Result<IMFMediaType, String> {
     Ok(media_type)
 }
 
-fn configure_codec(codec: &ICodecApi) -> Result<(), String> {
+fn configure_codec(codec: &ICodecApi, keyframe_interval_frames: u32) -> Result<(), String> {
     // Static encoder properties are set before the output type. Some H264 MFTs
     // ignore these values after media type negotiation has completed.
     set_codec_u32(
@@ -577,11 +582,7 @@ fn configure_codec(codec: &ICodecApi) -> Result<(), String> {
         &CODECAPI_AVEncCommonMeanBitRate,
         STREAM_ENCODER_BITRATE,
     )?;
-    set_codec_u32(
-        codec,
-        &CODECAPI_AVEncMPVGOPSize,
-        STREAM_INTRA_FRAME_PERIOD_FRAMES,
-    )?;
+    set_codec_u32(codec, &CODECAPI_AVEncMPVGOPSize, keyframe_interval_frames)?;
     set_optional_codec_bool(codec, &CODECAPI_AVEncCommonRealTime, true, "real-time mode");
     set_optional_codec_bool(
         codec,
@@ -844,7 +845,7 @@ mod tests {
     #[test]
     #[ignore = "requires a physical Media Foundation H264 encoder"]
     fn hardware_encoder_produces_parameterized_idr() {
-        let mut encoder = MediaFoundationEncoder::new()
+        let mut encoder = MediaFoundationEncoder::new(STREAM_INTRA_FRAME_PERIOD_FRAMES)
             .expect("Media Foundation hardware encoder should pass its startup probe");
         let width = STREAM_CAPTURE_WIDTH as usize;
         let height = STREAM_CAPTURE_HEIGHT as usize;

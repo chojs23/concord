@@ -118,8 +118,15 @@ pub(in crate::tui) fn thread_card_lines(
     show_custom_emoji: bool,
     show_images: bool,
 ) -> Vec<Line<'static>> {
-    let marker = if selected { "› " } else { "  " };
-    let card_width = width.saturating_sub(marker.width()).max(4);
+    let marker_style = if selected {
+        theme::current().style(theme::HighlightGroup::ForumSelectedBorder)
+    } else {
+        Style::default()
+    };
+    let marker = selection_marker_with_style(selected, marker_style);
+    let marker_width = marker.content.width();
+    let marker_placeholder = " ".repeat(marker_width);
+    let card_width = width.saturating_sub(marker_width).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
     let text_width = thread_card_text_width(post, inner_width, width, show_images);
     let title_rows = thread_card_title_rows(post, text_width);
@@ -132,14 +139,7 @@ pub(in crate::tui) fn thread_card_lines(
     let border = theme::current().border_set(theme::BorderSurface::Forum);
 
     let mut lines = vec![Line::from(vec![
-        Span::styled(
-            marker,
-            if selected {
-                theme::current().style(theme::HighlightGroup::ForumSelectedBorder)
-            } else {
-                Style::default()
-            },
-        ),
+        marker,
         Span::styled(
             format!(
                 "{}{}{}",
@@ -152,20 +152,20 @@ pub(in crate::tui) fn thread_card_lines(
     ])];
     lines.extend(title_rows.into_iter().map(|row| {
         thread_card_inner_line(
-            "  ",
+            &marker_placeholder,
             thread_card_title_row_spans(row),
             inner_width,
             selected,
         )
     }));
     lines.push(thread_card_inner_line(
-        "  ",
+        &marker_placeholder,
         Vec::new(),
         inner_width,
         selected,
     ));
     lines.push(thread_card_inner_line(
-        "  ",
+        &marker_placeholder,
         thread_card_preview_spans(post, text_width),
         inner_width,
         selected,
@@ -173,7 +173,7 @@ pub(in crate::tui) fn thread_card_lines(
     // Untagged posts drop the tags row entirely (shrinking `card_height` by one).
     if !post.applied_tags.is_empty() {
         lines.push(thread_card_inner_line(
-            "  ",
+            &marker_placeholder,
             thread_card_tag_spans(post, text_width),
             inner_width,
             selected,
@@ -181,20 +181,20 @@ pub(in crate::tui) fn thread_card_lines(
     }
     while lines.len() < layout.metadata_row {
         lines.push(thread_card_inner_line(
-            "  ",
+            &marker_placeholder,
             Vec::new(),
             inner_width,
             selected,
         ));
     }
     lines.push(thread_card_inner_line(
-        "  ",
+        &marker_placeholder,
         thread_card_metadata_spans(post, text_width, show_custom_emoji),
         inner_width,
         selected,
     ));
     lines.push(Line::from(vec![
-        Span::raw("  "),
+        Span::raw(marker_placeholder),
         Span::styled(
             format!(
                 "{}{}{}",
@@ -213,10 +213,11 @@ pub(in crate::tui) fn thread_card_lines(
 /// Keeps an embedded card within the message content while preserving the
 /// historical maximum width used by thread-created system messages.
 pub(in crate::tui) fn thread_card_width_in_message(content_width: usize) -> usize {
+    let marker_width = selection_marker_width();
     content_width
-        .saturating_sub(2)
+        .saturating_sub(marker_width)
         .clamp(4, 72)
-        .saturating_add(2)
+        .saturating_add(marker_width)
 }
 
 fn thread_card_section_header_line(label: &str, width: usize) -> Line<'static> {
@@ -414,7 +415,8 @@ fn thread_card_image_slot_for(
     if preview_width < THREAD_CARD_IMAGE_MIN_WIDTH {
         return None;
     }
-    let column = 4usize
+    let column = selection_marker_width()
+        .saturating_add(2)
         .saturating_add(inner_width)
         .saturating_sub(preview_width);
     Some(ThreadCardImageSlot {
@@ -753,7 +755,8 @@ pub(super) fn render_thread_card_reaction_emojis(
     show_images: bool,
 ) {
     let list_left = list.x as isize;
-    let content_start = 4isize;
+    let content_start =
+        isize::try_from(selection_marker_width().saturating_add(2)).unwrap_or(isize::MAX);
     let inner_width = thread_card_inner_width_for_reactions(width);
 
     let mut slots = Vec::new();
@@ -913,7 +916,7 @@ pub(super) fn thread_card_tag_rows_for_test(
 }
 
 fn thread_card_inner_width_for_reactions(width: usize) -> usize {
-    let card_width = width.saturating_sub(2).max(4);
+    let card_width = width.saturating_sub(selection_marker_width()).max(4);
     card_width.saturating_sub(4).max(1)
 }
 

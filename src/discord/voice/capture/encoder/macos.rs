@@ -38,10 +38,12 @@ use objc2_video_toolbox::{
     kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
 };
 
+#[cfg(test)]
+use super::STREAM_INTRA_FRAME_PERIOD_FRAMES;
 use super::{
     EncodedH264Frame, I420Frame, STREAM_CAPTURE_FPS, STREAM_CAPTURE_HEIGHT, STREAM_CAPTURE_WIDTH,
-    STREAM_ENCODER_BITRATE, STREAM_INTRA_FRAME_PERIOD_FRAMES, annex_b_contains_idr,
-    copy_i420_to_nv12, length_prefixed_h264_to_annex_b, validate_parameterized_h264_idr,
+    STREAM_ENCODER_BITRATE, annex_b_contains_idr, copy_i420_to_nv12,
+    length_prefixed_h264_to_annex_b, validate_parameterized_h264_idr,
 };
 use crate::logging;
 
@@ -60,17 +62,17 @@ pub(in crate::discord::voice::capture) struct VideoToolboxEncoder {
 }
 
 impl VideoToolboxEncoder {
-    pub(super) fn new() -> Result<Self, String> {
+    pub(super) fn new(keyframe_interval_frames: u32) -> Result<Self, String> {
         // A disposable session proves the hardware path without making the
         // black probe a reference picture for the first frame sent to Discord.
-        let mut probe_encoder = Self::create_configured()?;
+        let mut probe_encoder = Self::create_configured(keyframe_interval_frames)?;
         probe_encoder.run_startup_probe()?;
         drop(probe_encoder);
 
-        Self::create_configured()
+        Self::create_configured(keyframe_interval_frames)
     }
 
-    fn create_configured() -> Result<Self, String> {
+    fn create_configured(keyframe_interval_frames: u32) -> Result<Self, String> {
         let mut callback_state = Box::new(CallbackState {
             completed: Mutex::new(VecDeque::new()),
             panicked: AtomicBool::new(false),
@@ -102,7 +104,7 @@ impl VideoToolboxEncoder {
         // `VTCompressionSessionCreate` returns a +1 retained Core Foundation object.
         let session = unsafe { CFRetained::from_raw(raw_session) };
 
-        configure_session(&session)?;
+        configure_session(&session, keyframe_interval_frames)?;
         let status = unsafe { session.prepare_to_encode_frames() };
         status_result(status, "VideoToolbox H264 encoder preparation")?;
         verify_hardware_encoder(&session)?;
@@ -192,7 +194,10 @@ impl Drop for VideoToolboxEncoder {
     }
 }
 
-fn configure_session(session: &VTCompressionSession) -> Result<(), String> {
+fn configure_session(
+    session: &VTCompressionSession,
+    keyframe_interval_frames: u32,
+) -> Result<(), String> {
     // VideoToolbox exports these process-lifetime property keys and values.
     let (real_time, frame_reordering, bitrate, frame_rate, gop, profile, constrained_baseline) = unsafe {
         (
@@ -233,7 +238,7 @@ fn configure_session(session: &VTCompressionSession) -> Result<(), String> {
     set_number_property(
         session,
         gop,
-        STREAM_INTRA_FRAME_PERIOD_FRAMES as i32,
+        i32::try_from(keyframe_interval_frames).expect("keyframe interval fits i32"),
         "keyframe interval",
     )?;
     set_property(
@@ -645,7 +650,7 @@ mod tests {
     #[test]
     #[ignore = "requires a physical VideoToolbox H264 encoder"]
     fn hardware_encoder_produces_parameterized_idr() {
-        let mut encoder = VideoToolboxEncoder::new()
+        let mut encoder = VideoToolboxEncoder::new(STREAM_INTRA_FRAME_PERIOD_FRAMES)
             .expect("VideoToolbox hardware encoder should pass its startup probe");
         let width = STREAM_CAPTURE_WIDTH as usize;
         let height = STREAM_CAPTURE_HEIGHT as usize;

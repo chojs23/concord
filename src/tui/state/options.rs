@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::config::{
     AppOptions, ComposerOptions, CredentialOptions, DisplayOptions, ImagePreviewQualityPreset,
-    KeymapOptions, NotificationOptions, PresenceOptions, UiStateOptions, VoiceOptions,
-    VoiceParticipantPlaybackOption,
+    KeymapOptions, NotificationOptions, PresenceOptions, ReactionOptions, UiStateOptions,
+    VoiceOptions, VoiceParticipantPlaybackOption,
 };
 use crate::discord::ids::{Id, marker::UserMarker};
 use crate::discord::{AppCommand, VoiceAudioSourceOptions, VoiceParticipantPlaybackSettings};
@@ -69,6 +69,8 @@ pub(super) struct SettingsState {
     // Not editable in the TUI: kept only so saving unrelated options round-trips
     // the user's Rich Presence choice instead of resetting it to the default.
     pub(super) presence_options: PresenceOptions,
+    // Not editable in the TUI: favorite reaction emojis live in config.toml.
+    pub(super) reaction_options: ReactionOptions,
     pub(super) key_bindings: KeyBindings,
     pub(super) voice_participant_playback:
         BTreeMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
@@ -105,6 +107,10 @@ impl DashboardState {
 
     pub(in crate::tui) fn apply_presence_options(&mut self, presence_options: PresenceOptions) {
         self.options.presence_options = presence_options;
+    }
+
+    pub(in crate::tui) fn apply_reaction_options(&mut self, reaction_options: ReactionOptions) {
+        self.options.reaction_options = reaction_options;
     }
 
     #[cfg(test)]
@@ -358,6 +364,7 @@ impl DashboardState {
         Some(AppOptions {
             display: self.options.display_options,
             composer: self.options.composer_options,
+            reactions: self.options.reaction_options.clone(),
             credentials: self.options.credential_options,
             notifications: self.options.notification_options.clone(),
             voice: self.options.voice_options.clone(),

@@ -917,7 +917,10 @@ pub(in crate::discord) fn selected_role_ids_color(
         .and_then(|role| role.color)
 }
 
-fn role_display_order(left: &RoleState, right: &RoleState) -> std::cmp::Ordering {
+pub(in crate::discord) fn role_display_order(
+    left: &RoleState,
+    right: &RoleState,
+) -> std::cmp::Ordering {
     right
         .position
         .cmp(&left.position)

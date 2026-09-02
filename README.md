@@ -11,7 +11,6 @@ Concord is a feature-rich TUI client for Discord, written in Rust with ratatui.
 - [Features](#features)
 - [Configuration](#configuration)
 - [Performance](#performance)
-- [Debug mode](#debug-mode)
 - [FAQ](#faq)
 - [Security](#security)
 - [Contributing](#contributing)
@@ -285,7 +284,7 @@ These shortcuts act on the selected message when the Messages pane is focused.
 | Key | Action                     |
 | --- | -------------------------- |
 | `y` | Copy message text          |
-| `r` | Add or remove a reaction   |
+| `r` | Open the reaction picker   |
 | `R` | Reply                      |
 | `d` | Delete                     |
 | `e` | Edit                       |
@@ -368,6 +367,11 @@ hour_format_24 = true
 # Send custom emoji your account cannot use directly as image links.
 emojis_as_links = false
 
+[reactions]
+# Up to 10 unicode emoji pinned at the top of the reaction picker.
+# When unset or empty, Concord uses the built-in quick reactions.
+# favorite_emojis = ["🔥", "👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀", "💯"]
+
 [presence]
 # Relay Rich Presence from local apps as your activity.
 share_rich_presence = true
@@ -384,13 +388,13 @@ desktop_notifications = true
 # Optional notification icon to include in notifications. May not work on all platforms.
 # When unset, no icon is used. It must either be a name of an icon (typically in /usr/share/icons)
 # or a path to an icon.
-notification_icon = "/path/to/icon.svg"
+# notification_icon = "/path/to/icon.svg"
 
 # Optional WAV files for message, voice join/leave notification sounds.
 # When unset, Concord uses built-in generated tones.
-notification_sound = "/path/to/message.wav"
-voice_join_sound = "/path/to/join.wav"
-voice_leave_sound = "/path/to/leave.wav"
+# notification_sound = "/path/to/message.wav"
+# voice_join_sound = "/path/to/join.wav"
+# voice_leave_sound = "/path/to/leave.wav"
 
 [voice]
 # Join or update Discord voice with Concord self-muted.
@@ -574,8 +578,8 @@ ToggleReplyPing = "<A-p>"
 
 ### Theme
 
-See [Theme options](./docs/theme-options.md) for available groups, values, and
-border shapes.
+See [Theme options](./docs/theme-options.md) for available groups, values,
+border shapes, and selection marker settings.
 
 <details>
 <summary>Default theme config</summary>
@@ -600,6 +604,11 @@ default = "plain"
 composer = "rounded"
 message = "rounded"
 forum = "rounded"
+
+# Selection markers are UI glyphs. This value is shared by list panes and
+# pickers, while `highlight.SelectionMarker` controls its style.
+[ui.indicator]
+selection = "▸ "
 
 [highlight.Normal]
 foreground = "terminal_default"
@@ -1007,11 +1016,6 @@ Image-heavy screens can temporarily use more memory because compressed image
 bytes need to be decoded before they can be rendered in the terminal. When many
 images are loaded, memory can briefly rise to around 100-200 MB while decoding
 and then drop again as work completes and caches are pruned.
-
-## Debug mode
-
-Run `CONCORD_DEBUG=1 concord`. Logs are written to `concord.log` in the Concord
-config directory.
 
 ## FAQ
 

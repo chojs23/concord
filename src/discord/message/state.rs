@@ -5,9 +5,10 @@ use crate::discord::ids::{
     marker::{ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker, WebhookMarker},
 };
 use crate::discord::{
-    AttachmentInfo, AttachmentMediaType, EmbedInfo, InlinePreviewInfo, MemberInfo, MentionInfo,
-    MessageInfo, MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-    MessageUpdateEventFields, PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo,
+    AttachmentInfo, AttachmentMediaType, EmbedInfo, InlinePreviewInfo,
+    MESSAGE_FLAG_IS_COMPONENTS_V2, MemberInfo, MentionInfo, MessageComponentInfo, MessageInfo,
+    MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
+    MessageUpdateEventFields, PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo, StickerInfo,
 };
 use crate::discord::{
     member::{selected_member_role_color, selected_role_ids_color},
@@ -37,13 +38,14 @@ pub struct MessageState {
     pub pinned: bool,
     pub reactions: Vec<ReactionInfo>,
     pub content: Option<String>,
-    pub sticker_names: Vec<String>,
+    pub stickers: Vec<StickerInfo>,
     pub mentions: Vec<MentionInfo>,
     pub mention_everyone: bool,
     pub mention_roles: Vec<Id<RoleMarker>>,
     pub flags: u64,
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
+    pub components: Vec<MessageComponentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
     pub edited_timestamp: Option<String>,
 }
@@ -68,13 +70,14 @@ impl Default for MessageState {
             pinned: false,
             reactions: Vec::new(),
             content: None,
-            sticker_names: Vec::new(),
+            stickers: Vec::new(),
             mentions: Vec::new(),
             mention_everyone: false,
             mention_roles: Vec::new(),
             flags: 0,
             attachments: Vec::new(),
             embeds: Vec::new(),
+            components: Vec::new(),
             forwarded_snapshots: Vec::new(),
             edited_timestamp: None,
         }
@@ -98,51 +101,165 @@ impl MessageState {
         self.reply = None;
         self.poll = None;
         self.content = None;
-        self.sticker_names.clear();
+        self.stickers.clear();
         self.mentions.clear();
         self.attachments.clear();
         self.embeds.clear();
+        self.components.clear();
         self.forwarded_snapshots.clear();
         self.edited_timestamp = None;
     }
 
     pub fn attachments_in_display_order(&self) -> impl Iterator<Item = &AttachmentInfo> {
-        self.attachments.iter().chain(
-            self.forwarded_snapshots
-                .iter()
-                .flat_map(|snapshot| snapshot.attachments.iter()),
-        )
+        self.attachments
+            .iter()
+            .filter(|attachment| {
+                self.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 == 0
+                    || MessageComponentInfo::references_attachment(
+                        &self.components,
+                        &attachment.filename,
+                    )
+            })
+            .chain(self.forwarded_snapshots.iter().flat_map(|snapshot| {
+                snapshot.attachments.iter().filter(|attachment| {
+                    snapshot.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 == 0
+                        || MessageComponentInfo::references_attachment(
+                            &snapshot.components,
+                            &attachment.filename,
+                        )
+                })
+            }))
     }
 
     pub fn first_inline_preview(&self) -> Option<InlinePreviewInfo<'_>> {
-        self.attachments_in_display_order()
-            .find_map(AttachmentInfo::inline_preview_info)
-            .or_else(|| {
-                self.embeds
-                    .iter()
-                    .chain(
-                        self.forwarded_snapshots
-                            .iter()
-                            .flat_map(|snapshot| snapshot.embeds.iter()),
-                    )
-                    .find_map(EmbedInfo::inline_preview_info)
-            })
+        self.inline_previews().into_iter().next()
     }
 
     pub fn inline_previews(&self) -> Vec<InlinePreviewInfo<'_>> {
-        self.attachments_in_display_order()
-            .filter_map(AttachmentInfo::inline_preview_info)
-            .chain(
-                self.embeds
+        self.inline_previews_with_section_thumbnails(true)
+    }
+
+    pub(crate) fn flow_inline_previews(&self) -> Vec<InlinePreviewInfo<'_>> {
+        self.inline_previews_with_section_thumbnails(false)
+    }
+
+    fn inline_previews_with_section_thumbnails(
+        &self,
+        include_section_thumbnails: bool,
+    ) -> Vec<InlinePreviewInfo<'_>> {
+        let mut previews = Vec::new();
+        if self.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0 {
+            previews.extend(if include_section_thumbnails {
+                MessageComponentInfo::inline_previews(&self.components, &self.attachments)
+            } else {
+                MessageComponentInfo::flow_inline_previews(&self.components, &self.attachments)
+            });
+        } else {
+            previews.extend(
+                self.attachments
                     .iter()
-                    .chain(
-                        self.forwarded_snapshots
-                            .iter()
-                            .flat_map(|snapshot| snapshot.embeds.iter()),
+                    .filter_map(AttachmentInfo::inline_preview_info),
+            );
+        }
+        for (index, snapshot) in self.forwarded_snapshots.iter().enumerate() {
+            if snapshot.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0 {
+                // Only the first forwarded snapshot is formatted into the body.
+                // Later snapshots keep the existing shared media flow.
+                previews.extend(if include_section_thumbnails || index > 0 {
+                    MessageComponentInfo::inline_previews(
+                        &snapshot.components,
+                        &snapshot.attachments,
                     )
-                    .filter_map(EmbedInfo::inline_preview_info),
-            )
-            .collect()
+                } else {
+                    MessageComponentInfo::flow_inline_previews(
+                        &snapshot.components,
+                        &snapshot.attachments,
+                    )
+                });
+            } else {
+                previews.extend(
+                    snapshot
+                        .attachments
+                        .iter()
+                        .filter_map(AttachmentInfo::inline_preview_info),
+                );
+            }
+        }
+
+        if self.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 == 0 {
+            previews.extend(self.embeds.iter().flat_map(EmbedInfo::inline_previews));
+        }
+        previews.extend(
+            self.forwarded_snapshots
+                .iter()
+                .filter(|snapshot| snapshot.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 == 0)
+                .flat_map(|snapshot| snapshot.embeds.iter())
+                .flat_map(EmbedInfo::inline_previews),
+        );
+        if self.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 == 0 {
+            previews.extend(
+                self.stickers
+                    .iter()
+                    .filter_map(StickerInfo::inline_preview_info),
+            );
+        }
+        previews.extend(
+            self.forwarded_snapshots
+                .iter()
+                .filter(|snapshot| snapshot.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 == 0)
+                .flat_map(|snapshot| snapshot.stickers.iter())
+                .filter_map(StickerInfo::inline_preview_info),
+        );
+        dedupe_inline_previews(previews)
+    }
+
+    pub(crate) fn section_thumbnail_previews(&self) -> Vec<(usize, InlinePreviewInfo<'_>)> {
+        let mut previews = Vec::new();
+        let mut next_index = 0;
+        if self.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0 {
+            MessageComponentInfo::collect_section_thumbnail_previews(
+                &self.components,
+                &self.attachments,
+                &mut next_index,
+                &mut previews,
+            );
+        }
+        if let Some(snapshot) = self
+            .forwarded_snapshots
+            .first()
+            .filter(|snapshot| snapshot.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0)
+        {
+            MessageComponentInfo::collect_section_thumbnail_previews(
+                &snapshot.components,
+                &snapshot.attachments,
+                &mut next_index,
+                &mut previews,
+            );
+        }
+        previews
+    }
+
+    pub(crate) fn summary_text(&self) -> Option<&str> {
+        let content = self
+            .content
+            .as_deref()
+            .filter(|content| !content.trim().is_empty());
+        if self.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0 {
+            MessageComponentInfo::first_text(&self.components)
+        } else {
+            content.or_else(|| MessageComponentInfo::first_text(&self.components))
+        }
+    }
+
+    pub(crate) fn copyable_content(&self) -> Option<String> {
+        if self.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0 {
+            return MessageComponentInfo::text_display_content(&self.components);
+        }
+        self.content
+            .as_deref()
+            .filter(|content| !content.is_empty())
+            .map(str::to_owned)
+            .or_else(|| MessageComponentInfo::text_display_content(&self.components))
     }
 
     pub fn capabilities(&self) -> MessageCapabilities {
@@ -178,6 +295,19 @@ impl MessageState {
 
         capabilities
     }
+}
+
+fn dedupe_inline_previews(previews: Vec<InlinePreviewInfo<'_>>) -> Vec<InlinePreviewInfo<'_>> {
+    let mut unique = Vec::new();
+    for preview in previews {
+        if !unique
+            .iter()
+            .any(|existing: &InlinePreviewInfo<'_>| existing.url == preview.url)
+        {
+            unique.push(preview);
+        }
+    }
+    unique
 }
 
 pub(in crate::discord) type MessageAuthorRoleIds =
@@ -1359,13 +1489,14 @@ impl DiscordState {
             pinned: message.pinned,
             reactions: message.reactions.clone(),
             content: message.content.clone(),
-            sticker_names: message.sticker_names.clone(),
+            stickers: message.stickers.clone(),
             mentions: message.mentions.clone(),
             mention_everyone: message.mention_everyone,
             mention_roles: message.mention_roles.clone(),
             flags: message.flags,
             attachments: message.attachments.clone(),
             embeds: message.embeds.clone(),
+            components: message.components.clone(),
             forwarded_snapshots: message.forwarded_snapshots.clone(),
             edited_timestamp: message.edited_timestamp.clone(),
         }
@@ -1541,12 +1672,14 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     merge_shared_message_fields(existing, incoming);
     existing.author_is_bot |= incoming.author_is_bot;
     if let Some(content) = &incoming.content
-        && (!content.is_empty() || message_content_is_empty(existing))
+        && (!content.is_empty()
+            || message_content_is_empty(existing)
+            || incoming.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0)
     {
         existing.content = Some(content.clone());
     }
-    if !incoming.sticker_names.is_empty() || existing.sticker_names.is_empty() {
-        existing.sticker_names = incoming.sticker_names.clone();
+    if !incoming.stickers.is_empty() || existing.stickers.is_empty() {
+        existing.stickers = incoming.stickers.clone();
     }
     existing.mentions = merge_message_mentions(&existing.mentions, &incoming.mentions);
     existing.mention_everyone = incoming.mention_everyone;
@@ -1554,6 +1687,9 @@ fn merge_message(existing: &mut MessageState, incoming: &MessageState) {
     existing.flags = incoming.flags;
     if !incoming.embeds.is_empty() || existing.embeds.is_empty() {
         existing.embeds = incoming.embeds.clone();
+    }
+    if !incoming.components.is_empty() || existing.components.is_empty() {
+        existing.components = incoming.components.clone();
     }
     if incoming.edited_timestamp.is_some() || existing.edited_timestamp.is_none() {
         existing.edited_timestamp = incoming.edited_timestamp.clone();
@@ -1663,8 +1799,8 @@ fn update_message_in(
         if let Some(content) = &update.body.content {
             existing.content = Some(content.clone());
         }
-        if let Some(sticker_names) = &update.body.sticker_names {
-            existing.sticker_names = sticker_names.clone();
+        if let Some(stickers) = &update.body.stickers {
+            existing.stickers = stickers.clone();
         }
         if let Some(mentions) = &update.body.mentions {
             existing.mentions = mentions.clone();
@@ -1680,6 +1816,9 @@ fn update_message_in(
         }
         if let Some(embeds) = &update.body.embeds {
             existing.embeds = embeds.clone();
+        }
+        if let Some(components) = &update.body.components {
+            existing.components = components.clone();
         }
         if let Some(edited_timestamp) = &update.body.edited_timestamp {
             existing.edited_timestamp = Some(edited_timestamp.clone());

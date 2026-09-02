@@ -151,7 +151,6 @@ const GATEWAY_SEND_LIMIT: usize = 120;
 const GATEWAY_SEND_WINDOW: Duration = Duration::from_secs(60);
 const GATEWAY_SHUTDOWN_LEAVE_TIMEOUT: Duration = Duration::from_millis(1_500);
 const GUILD_MEMBER_REQUEST_RESPONSE_TTL: Duration = Duration::from_secs(2 * 60);
-const GUILD_MEMBER_REQUEST_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_PENDING_GUILD_MEMBER_REQUESTS: usize = 512;
 const MAX_SENT_GUILD_MEMBER_REQUESTS: usize = 512;
 const MAX_GATEWAY_RETRY_DELAY: Duration = Duration::from_secs(30 * 60);
@@ -320,7 +319,7 @@ struct GuildMemberRequestScheduler {
     pending: VecDeque<PendingGuildMemberRequest>,
     in_flight: Option<ScheduledGuildMemberRequest>,
     awaiting_response: VecDeque<SentGuildMemberRequest>,
-    next_guild_request_at: HashMap<Id<GuildMarker>, Instant>,
+    guild_rate_limit_until: HashMap<Id<GuildMarker>, Instant>,
     next_nonce: u64,
 }
 
@@ -341,7 +340,7 @@ impl Default for GuildMemberRequestScheduler {
             pending: VecDeque::new(),
             in_flight: None,
             awaiting_response: VecDeque::new(),
-            next_guild_request_at: HashMap::new(),
+            guild_rate_limit_until: HashMap::new(),
             next_nonce: 1,
         }
     }
@@ -384,7 +383,7 @@ impl GuildMemberRequestScheduler {
         nonce: String,
         now: Instant,
     ) -> bool {
-        self.prune_awaiting(now);
+        self.prune_expired(now);
         let request = GuildMemberRequest {
             guild_id,
             nonce,
@@ -428,7 +427,7 @@ impl GuildMemberRequestScheduler {
         presences: bool,
         now: Instant,
     ) {
-        self.prune_awaiting(now);
+        self.prune_expired(now);
         let mut seen = BTreeSet::new();
         let mut remaining = user_ids
             .into_iter()
@@ -526,14 +525,16 @@ impl GuildMemberRequestScheduler {
         // Hydration requests resolve concrete users already visible in the UI,
         // so losing them is worse than briefly exceeding the search queue's
         // soft memory bound. IDs are deduplicated and grouped into 100-member
-        // payloads here, then the scheduler spaces every payload for the guild.
+        // payloads here. The shared Gateway writer enforces the connection-wide
+        // send budget, while RATE_LIMITED dispatches provide the only guild
+        // delay that targeted requests need.
         let send_at = self.guild_request_at(request.guild_id, now);
         self.pending
             .push_back(PendingGuildMemberRequest { request, send_at });
     }
 
     fn guild_request_at(&self, guild_id: Id<GuildMarker>, requested_at: Instant) -> Instant {
-        self.next_guild_request_at
+        self.guild_rate_limit_until
             .get(&guild_id)
             .copied()
             .unwrap_or(requested_at)
@@ -582,14 +583,11 @@ impl GuildMemberRequestScheduler {
             .in_flight
             .take()
             .expect("sent guild member request exists");
-        let guild_id = completed.request.guild_id;
-        self.delay_guild_until(guild_id, sent_at + GUILD_MEMBER_REQUEST_INTERVAL);
         if let Some(retry_at) = completed.retry_at {
             self.pending.push_front(PendingGuildMemberRequest {
                 request: completed.request,
                 send_at: retry_at,
             });
-            self.delay_guild_until(guild_id, retry_at);
             return;
         }
 
@@ -597,7 +595,7 @@ impl GuildMemberRequestScheduler {
             return;
         }
 
-        self.prune_awaiting(sent_at);
+        self.prune_expired(sent_at);
         if self.awaiting_response.len() >= MAX_SENT_GUILD_MEMBER_REQUESTS {
             self.awaiting_response.pop_front();
         }
@@ -628,7 +626,7 @@ impl GuildMemberRequestScheduler {
         retry_after: Duration,
         now: Instant,
     ) {
-        self.prune_awaiting(now);
+        self.prune_expired(now);
         let retry_at = now + retry_after;
         let has_newer_search = self
             .pending
@@ -651,7 +649,7 @@ impl GuildMemberRequestScheduler {
                 in_flight.retry_at = Some(retry_at);
                 in_flight.accepted = false;
             }
-            self.delay_guild_until(guild_id, retry_at);
+            self.apply_guild_rate_limit_until(guild_id, retry_at);
             return;
         }
 
@@ -677,7 +675,7 @@ impl GuildMemberRequestScheduler {
                 });
             }
         }
-        self.delay_guild_until(guild_id, retry_at);
+        self.apply_guild_rate_limit_until(guild_id, retry_at);
     }
 
     fn acknowledge(&mut self, nonce: &str) {
@@ -704,12 +702,16 @@ impl GuildMemberRequestScheduler {
         }
     }
 
-    fn delay_guild_until(&mut self, guild_id: Id<GuildMarker>, earliest: Instant) {
+    fn apply_guild_rate_limit_until(&mut self, guild_id: Id<GuildMarker>, retry_at: Instant) {
         let earliest = *self
-            .next_guild_request_at
+            .guild_rate_limit_until
             .entry(guild_id)
-            .and_modify(|current| *current = (*current).max(earliest))
-            .or_insert(earliest);
+            .and_modify(|current| *current = (*current).max(retry_at))
+            .or_insert(retry_at);
+        self.delay_pending_guild_until(guild_id, earliest);
+    }
+
+    fn delay_pending_guild_until(&mut self, guild_id: Id<GuildMarker>, earliest: Instant) {
         for pending in self
             .pending
             .iter_mut()
@@ -719,16 +721,18 @@ impl GuildMemberRequestScheduler {
         }
     }
 
-    fn prune_awaiting(&mut self, now: Instant) {
+    fn prune_expired(&mut self, now: Instant) {
         while self.awaiting_response.front().is_some_and(|sent| {
             now.saturating_duration_since(sent.sent_at) >= GUILD_MEMBER_REQUEST_RESPONSE_TTL
         }) {
             self.awaiting_response.pop_front();
         }
+        self.guild_rate_limit_until
+            .retain(|_, retry_at| *retry_at > now);
     }
 
     fn prepare_reconnect(&mut self, now: Instant) {
-        self.prune_awaiting(now);
+        self.prune_expired(now);
         self.cancel_in_flight(now);
         self.recover_awaiting(now);
     }
@@ -752,17 +756,22 @@ impl GuildMemberRequestScheduler {
         recovered.append(&mut self.pending);
         self.pending = recovered;
         for guild_id in recovered_guilds {
-            self.delay_guild_until(guild_id, earliest);
+            self.delay_pending_guild_until(guild_id, earliest);
         }
     }
 
     fn start_new_session(&mut self, now: Instant) {
-        self.prune_awaiting(now);
+        self.prune_expired(now);
         self.cancel_in_flight(now);
         self.recover_awaiting(now);
-        self.next_guild_request_at.clear();
         for pending in &mut self.pending {
-            pending.send_at = now;
+            let earliest = self
+                .guild_rate_limit_until
+                .get(&pending.request.guild_id)
+                .copied()
+                .unwrap_or(now)
+                .max(now);
+            pending.send_at = pending.send_at.max(earliest);
         }
     }
 }
@@ -1258,8 +1267,9 @@ async fn connect_and_run(
         }
     });
 
-    // Main loop: race incoming frames against outgoing user commands. The
-    // heartbeat task is already running on its own cadence in the background.
+    // Main loop: race incoming frames against outgoing work. Keep branch
+    // polling fair because a busy command or dispatch stream must not starve a
+    // due member request or its writer completion.
     let mut member_request_send: Option<InFlightGuildMemberRequest> = None;
     let outcome = loop {
         let member_request_delay = member_request_send
@@ -1267,8 +1277,6 @@ async fn connect_and_run(
             .then(|| resources.guild_member_requests.next_delay(Instant::now()))
             .flatten();
         tokio::select! {
-            biased;
-
             maybe_command = commands.recv() => {
                 match maybe_command {
                     Some(command) => {

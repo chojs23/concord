@@ -466,22 +466,28 @@ fn decode_wav_samples(
             .map(|sample| (f32::from(*sample) - 128.0) / 128.0)
             .collect::<Vec<_>>(),
         (1, 16) => data
-            .chunks_exact(2)
-            .map(|sample| {
-                f32::from(i16::from_le_bytes([sample[0], sample[1]])) / f32::from(i16::MAX)
-            })
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|sample| f32::from(i16::from_le_bytes(*sample)) / f32::from(i16::MAX))
             .collect(),
-        (1, 24) => data.chunks_exact(3).map(decode_i24_sample).collect(),
+        (1, 24) => data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|sample| decode_i24_sample(sample))
+            .collect(),
         (1, 32) => data
-            .chunks_exact(4)
-            .map(|sample| {
-                i32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]) as f32
-                    / i32::MAX as f32
-            })
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|sample| i32::from_le_bytes(*sample) as f32 / i32::MAX as f32)
             .collect(),
         (3, 32) => data
-            .chunks_exact(4)
-            .map(|sample| f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|sample| f32::from_le_bytes(*sample))
             .collect(),
         _ => {
             return Err(format!(

@@ -990,6 +990,51 @@ fn message_update_handles_attachment_update_tristate() {
 }
 
 #[test]
+fn message_update_replaces_components_only_when_present() {
+    let channel_id: Id<ChannelMarker> = Id::new(10);
+    let original = vec![MessageComponentInfo::TextDisplay {
+        content: "before".to_owned(),
+    }];
+    let replacement = vec![MessageComponentInfo::TextDisplay {
+        content: "after".to_owned(),
+    }];
+
+    let mut state = DiscordState::default();
+    state.apply_event(&message_create_event(MessageCreateFixture {
+        guild_id: None,
+        channel_id,
+        message_id: Id::new(20),
+        author_id: Id::new(99),
+        content: Some(String::new()),
+        components: original.clone(),
+        ..MessageCreateFixture::test_fixture_default()
+    }));
+
+    state.apply_event(&message_update_event(
+        channel_id,
+        Id::new(20),
+        MessageUpdateEventFields::default(),
+    ));
+    assert_eq!(
+        state.messages_for_channel(channel_id)[0].components,
+        original
+    );
+
+    state.apply_event(&message_update_event(
+        channel_id,
+        Id::new(20),
+        MessageUpdateEventFields {
+            components: Some(replacement.clone()),
+            ..MessageUpdateEventFields::default()
+        },
+    ));
+    assert_eq!(
+        state.messages_for_channel(channel_id)[0].components,
+        replacement
+    );
+}
+
+#[test]
 fn history_respects_message_limit_after_merge() {
     let channel_id: Id<ChannelMarker> = Id::new(10);
     let mut state = DiscordState::new(2);

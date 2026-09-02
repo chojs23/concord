@@ -58,6 +58,7 @@ pub(in crate::tui) struct ImagePreviewTarget {
     pub(in crate::tui) thread_card: bool,
     pub(in crate::tui) message_index: usize,
     pub(in crate::tui) preview_index: usize,
+    pub(in crate::tui) body_line_index: Option<usize>,
     pub(in crate::tui) preview_x_offset_columns: u16,
     pub(in crate::tui) preview_y_offset_rows: usize,
     pub(in crate::tui) preview_width: u16,
@@ -164,6 +165,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             thread_card: false,
             message_index: 0,
             preview_index,
+            body_line_index: None,
             preview_x_offset_columns: 0,
             preview_y_offset_rows: 0,
             preview_width,
@@ -194,7 +196,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             break;
         }
 
-        let previews = row.message.inline_previews();
+        let previews = row.message.flow_inline_previews();
         let album =
             image_preview_album_layout(&previews, layout.preview_width, layout.max_preview_height);
         let preview_top_base = row.body_top + row.metrics.body_rows() as isize;
@@ -213,6 +215,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
                     thread_card: false,
                     message_index,
                     preview_index: cell.preview_index,
+                    body_line_index: None,
                     preview_x_offset_columns: cell.x_offset_columns,
                     preview_y_offset_rows: cell.y_offset_rows,
                     preview_width: cell.width,
@@ -227,6 +230,73 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
                     filename: preview.filename.to_owned(),
                 });
             }
+        }
+
+        let section_thumbnails = row.message.section_thumbnail_previews();
+        if section_thumbnails.is_empty() {
+            continue;
+        }
+        let content_lines =
+            format_message_content_lines(row.message, state, layout.content_width.max(8));
+        for (line_index, slot) in content_lines
+            .iter()
+            .enumerate()
+            .flat_map(|(line_index, line)| {
+                line.preview_slots
+                    .iter()
+                    .map(move |slot| (line_index, slot))
+            })
+        {
+            let Some((_, preview)) = section_thumbnails
+                .iter()
+                .find(|(index, _)| *index == slot.section_thumbnail_index)
+            else {
+                continue;
+            };
+            let (preview_width, preview_height) = image_preview_size_for_dimensions(
+                slot.width,
+                slot.height,
+                preview.width,
+                preview.height,
+                false,
+                layout.font_size,
+            );
+            if preview_width == 0 || preview_height == 0 {
+                continue;
+            }
+
+            let x_offset = slot
+                .col
+                .saturating_add(slot.width.saturating_sub(preview_width));
+            let centered_y = usize::from(slot.height.saturating_sub(preview_height) / 2);
+            let body_line_index = line_index.saturating_add(centered_y);
+            let preview_top = row.image_preview_row(Some(body_line_index), 0);
+            let preview_bottom = preview_top.saturating_add(preview_height as isize);
+            let visible_top = preview_top.max(0);
+            let visible_bottom = preview_bottom.min(layout.list_height as isize);
+            if visible_top >= visible_bottom {
+                continue;
+            }
+            let top_clip_rows = u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX);
+            targets.push(ImagePreviewTarget {
+                viewer: false,
+                thread_card: false,
+                message_index,
+                preview_index: previews.len().saturating_add(slot.section_thumbnail_index),
+                body_line_index: Some(body_line_index),
+                preview_x_offset_columns: x_offset,
+                preview_y_offset_rows: usize::from(top_clip_rows),
+                preview_width,
+                preview_height,
+                visible_preview_height: u16::try_from(visible_bottom - visible_top)
+                    .unwrap_or(u16::MAX),
+                top_clip_rows,
+                accent_color: None,
+                show_play_marker: preview.show_play_marker,
+                message_id: row.message.id,
+                url: preview_request_url(*preview, preview_width, preview_height, quality),
+                filename: preview.filename.to_owned(),
+            });
         }
     }
 
@@ -349,6 +419,7 @@ fn thread_card_image_preview_target(
         thread_card: true,
         message_index,
         preview_index: 0,
+        body_line_index: None,
         preview_x_offset_columns: card_left
             .saturating_add(slot.column)
             .saturating_add(slot.width.saturating_sub(preview_width)),

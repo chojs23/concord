@@ -485,7 +485,7 @@ fn message_update_event(message: MessageInfo) -> AppEvent {
             fields: MessageUpdateEventFields {
                 poll: message.poll,
                 content: message.content,
-                sticker_names: Some(message.sticker_names),
+                stickers: Some(message.stickers),
                 mentions: Some(message.mentions),
                 mention_everyone: Some(message.mention_everyone),
                 mention_roles: Some(message.mention_roles),
@@ -493,6 +493,7 @@ fn message_update_event(message: MessageInfo) -> AppEvent {
                 pinned: Some(message.pinned),
                 attachments: AttachmentUpdate::Replace(message.attachments),
                 embeds: Some(message.embeds),
+                components: Some(message.components),
                 edited_timestamp: message.edited_timestamp,
             },
             extra_fields: BTreeMap::new(),

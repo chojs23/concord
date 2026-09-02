@@ -17,6 +17,7 @@ pub struct ImagePreview<'a> {
     pub viewer: bool,
     pub thread_card: bool,
     pub message_index: usize,
+    pub body_line_index: Option<usize>,
     pub preview_x_offset_columns: u16,
     pub preview_y_offset_rows: usize,
     pub preview_width: u16,
@@ -107,5 +108,6 @@ pub(super) struct UserProfilePopupText {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) emoji_overlays: Vec<(usize, String)>,
     pub(super) cursor: Option<(usize, usize)>,
+    pub(super) reveal_rows: Option<std::ops::Range<usize>>,
     pub(super) picker_rows: Option<std::ops::Range<usize>>,
 }

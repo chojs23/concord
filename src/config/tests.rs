@@ -360,7 +360,7 @@ fn valid_config_reports_no_warnings() {
         ));
     }
     content.push_str(
-        "\n[ui.border]\ndefault = \"plain\"\ncomposer = \"rounded\"\nmodal = \"thick\"\n",
+        "\n[ui.border]\ndefault = \"plain\"\ncomposer = \"rounded\"\nmodal = \"thick\"\n\n[ui.indicator]\nselection = \"❯ \"\n",
     );
     let (theme, warnings) =
         parse_theme_options(&content).expect("the highlight inventory should parse");
@@ -374,7 +374,37 @@ fn valid_config_reports_no_warnings() {
         theme.border_shapes().get(BorderSurface::Modal),
         Some(BorderShape::Thick)
     );
+    assert_eq!(theme.selection_marker(), Some("❯ "));
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn theme_selection_marker_parses_from_ui_indicator() {
+    let (theme, warnings) = parse_theme_options("[ui.indicator]\nselection = \"❯ \"\n")
+        .expect("selection marker config should parse");
+
+    assert_eq!(theme.selection_marker(), Some("❯ "));
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn invalid_theme_selection_markers_warn_and_fall_back() {
+    for (selection, expected_warning) in [
+        ("", "non-zero display width"),
+        ("\u{0301}", "non-zero display width"),
+        ("first\nsecond", "single line"),
+    ] {
+        let content = format!(
+            "[ui.indicator]\nselection = {}\n",
+            toml::Value::String(selection.to_owned())
+        );
+        let (theme, warnings) =
+            parse_theme_options(&content).expect("invalid selection marker TOML should parse");
+
+        assert_eq!(theme.selection_marker(), None, "{selection:?}");
+        assert_eq!(warnings.len(), 1, "{selection:?}");
+        assert!(warnings[0].contains(expected_warning), "{warnings:?}");
+    }
 }
 
 #[test]
@@ -695,6 +725,7 @@ fn options_save_and_load_round_trip() {
             emojis_as_links: true,
             ping_on_reply: false,
         },
+        reactions: Default::default(),
         credentials: CredentialOptions {
             store: CredentialStoreMode::Plain,
         },
@@ -732,6 +763,7 @@ fn options_save_and_load_round_trip() {
 
     assert_eq!(loaded.display, options.display);
     assert_eq!(loaded.composer, options.composer);
+    assert_eq!(loaded.reactions, options.reactions);
     assert_eq!(loaded.notifications, options.notifications);
     assert_eq!(loaded.voice, options.voice);
     assert_eq!(loaded.presence, options.presence);
@@ -800,4 +832,53 @@ fn parse_keymap_options(toml: &str) -> KeymapOptions {
     toml::from_str::<KeymapFileOptions>(toml)
         .expect("keymap config should parse")
         .keymap
+}
+
+#[test]
+fn reaction_favorite_emojis_parse_and_normalize() {
+    let (options, warnings) = parse_app_options(
+        r#"[reactions]
+favorite_emojis = ["🔥", "not-an-emoji", "👍", "🔥", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀", "💯", "✨"]
+"#,
+    )
+    .expect("reactions config should parse");
+
+    assert_eq!(
+        options.reactions.favorite_emojis,
+        vec![
+            "🔥".to_owned(),
+            "👍".to_owned(),
+            "❤️".to_owned(),
+            "😂".to_owned(),
+            "🎉".to_owned(),
+            "😮".to_owned(),
+            "😢".to_owned(),
+            "🙏".to_owned(),
+            "👀".to_owned(),
+            "💯".to_owned(),
+        ]
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("not a valid unicode emoji"))
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("duplicates an earlier entry"))
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("truncated to 10 entries"))
+    );
+}
+
+#[test]
+fn reaction_favorite_emojis_default_empty() {
+    let (options, warnings) =
+        parse_app_options("[display]\n").expect("empty reactions should use defaults");
+    assert!(options.reactions.favorite_emojis.is_empty());
+    assert!(warnings.is_empty());
 }

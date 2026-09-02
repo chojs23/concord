@@ -214,6 +214,11 @@ fn profile_settings_save_dispatches_dirty_global_fields() {
             },
         })
     );
+    state.record_user_profile_update_succeeded(Id::new(10), None);
+    assert_eq!(
+        state.user_profile_settings_status(),
+        Some("Saved profile changes")
+    );
 }
 
 #[test]
@@ -347,7 +352,6 @@ fn profile_settings_save_dispatches_pasted_avatar_upload() {
             vec![1, 2, 3]
         ),)
     );
-
     assert_eq!(
         state.save_user_profile_settings_command(),
         Some(AppCommand::UpdateUserProfile {

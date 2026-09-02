@@ -12,7 +12,7 @@ use rand::random;
 use serde_json::{Value, json};
 use tokio::{
     net::UdpSocket,
-    sync::{Mutex, mpsc, oneshot},
+    sync::{Mutex, mpsc, oneshot, watch},
     task::JoinHandle,
     time::{Instant as TokioInstant, sleep, sleep_until, timeout},
 };
@@ -720,6 +720,7 @@ async fn connect_stream_broadcast(
     let mut ready_audio_ssrc: Option<u32> = None;
     let mut ready_video: Option<BroadcastVideoSsrcs> = None;
     let mut current_description: Option<VoiceSessionDescription> = None;
+    let mut keyframe_interval_tx: Option<watch::Sender<Option<u64>>> = None;
 
     gateway::send_voice_text(&writer, stream_broadcast_identify_payload(session)).await?;
     logging::debug("stream", "broadcast identify sent");
@@ -801,16 +802,7 @@ async fn connect_stream_broadcast(
                     }
                     VOICE_OP_SESSION_DESCRIPTION => {
                         let description = gateway::parse_voice_session_description(&value)?;
-                        if description
-                            .video_codec
-                            .as_deref()
-                            .is_some_and(|codec| !codec.eq_ignore_ascii_case("H264"))
-                        {
-                            break Err(BroadcastConnectionFailure::stop(format!(
-                                "stream selected unsupported video codec: {}",
-                                description.video_codec.as_deref().unwrap_or("none")
-                            )));
-                        }
+                        validate_broadcast_video_codec(&description)?;
                         dave_state
                             .lock()
                             .await
@@ -840,6 +832,8 @@ async fn connect_stream_broadcast(
                         let media_status_publisher = status_publisher.clone();
                         let preview_uploader = stream_preview_uploader.clone();
                         let captures = broadcast_captures.clone();
+                        let (next_keyframe_interval_tx, keyframe_interval_rx) =
+                            watch::channel(description.keyframe_interval);
                         media_generation = media_generation.wrapping_add(1).max(1);
                         let generation = media_generation;
                         // The previous media task owns the prepared capture until
@@ -850,6 +844,7 @@ async fn connect_stream_broadcast(
                             let result = run_stream_broadcast_media(
                                 socket,
                                 media_description,
+                                keyframe_interval_rx,
                                 dave_for_media,
                                 target,
                                 audio_ssrc,
@@ -866,6 +861,7 @@ async fn connect_stream_broadcast(
                             let _ = finished.send((generation, result));
                         });
                         child_tasks.install_media_gracefully(media_task, media_stop_tx);
+                        keyframe_interval_tx = Some(next_keyframe_interval_tx);
                         child_tasks
                             .replace_udp_ping(tokio::spawn(gateway::run_voice_udp_ping(
                                 Arc::clone(
@@ -883,17 +879,12 @@ async fn connect_stream_broadcast(
                                 "broadcast session update arrived before session description",
                             ));
                         };
-                        gateway::apply_voice_session_update(&value, description)?;
-                        if description
-                            .video_codec
-                            .as_deref()
-                            .is_some_and(|codec| !codec.eq_ignore_ascii_case("H264"))
-                        {
-                            break Err(BroadcastConnectionFailure::stop(format!(
-                                "stream selected unsupported video codec: {}",
-                                description.video_codec.as_deref().unwrap_or("none")
-                            )));
-                        }
+                        let Some(keyframe_interval_tx) = keyframe_interval_tx.as_ref() else {
+                            break Err(BroadcastConnectionFailure::reconnect(
+                                "broadcast session update arrived before media startup",
+                            ));
+                        };
+                        apply_broadcast_session_update(&value, description, keyframe_interval_tx)?;
                         logging::debug(
                             "stream",
                             format!("broadcast session updated: {description:?}"),
@@ -923,6 +914,33 @@ async fn connect_stream_broadcast(
 
     child_tasks.shutdown().await;
     result
+}
+
+fn validate_broadcast_video_codec(
+    description: &VoiceSessionDescription,
+) -> Result<(), BroadcastConnectionFailure> {
+    if description
+        .video_codec
+        .as_deref()
+        .is_some_and(|codec| !codec.eq_ignore_ascii_case("H264"))
+    {
+        return Err(BroadcastConnectionFailure::stop(format!(
+            "stream selected unsupported video codec: {}",
+            description.video_codec.as_deref().unwrap_or("none")
+        )));
+    }
+    Ok(())
+}
+
+fn apply_broadcast_session_update(
+    value: &Value,
+    description: &mut VoiceSessionDescription,
+    keyframe_interval_tx: &watch::Sender<Option<u64>>,
+) -> Result<(), BroadcastConnectionFailure> {
+    gateway::apply_voice_session_update(value, description)?;
+    validate_broadcast_video_codec(description)?;
+    keyframe_interval_tx.send_replace(description.keyframe_interval);
+    Ok(())
 }
 
 fn broadcast_media_result_for_generation(
@@ -1791,6 +1809,7 @@ async fn run_stream_broadcast_audio(
 async fn run_stream_broadcast_media(
     socket: Arc<UdpSocket>,
     description: VoiceSessionDescription,
+    mut keyframe_interval_rx: watch::Receiver<Option<u64>>,
     dave_state: Arc<Mutex<VoiceDaveState>>,
     target: super::StreamCaptureTarget,
     audio_ssrc: u32,
@@ -1806,6 +1825,10 @@ async fn run_stream_broadcast_media(
     let mut prepared_capture = broadcast_captures.take(&stream_key).ok_or_else(|| {
         BroadcastConnectionFailure::stop("prepared stream capture is unavailable")
     })?;
+    prepared_capture
+        .capture
+        .handle
+        .set_keyframe_interval(*keyframe_interval_rx.borrow_and_update());
     let preview_task = match prepared_capture.preview_task.take() {
         Some(preview_task) => preview_task,
         None => {
@@ -1856,11 +1879,21 @@ async fn run_stream_broadcast_media(
     });
     let mut stable_deadline: Option<TokioInstant> = None;
     let mut stable = false;
+    let mut keyframe_interval_updates_open = true;
 
     let result = async {
         loop {
             tokio::select! {
                 _ = &mut stop_rx => return Ok(()),
+                update = keyframe_interval_rx.changed(), if keyframe_interval_updates_open => {
+                    if update.is_err() {
+                        keyframe_interval_updates_open = false;
+                        continue;
+                    }
+                    prepared_capture.capture.handle.set_keyframe_interval(
+                        *keyframe_interval_rx.borrow_and_update(),
+                    );
+                }
                 audio_result = audio_task.completion() => {
                     if let Err(error) = audio_result {
                         report_system_audio_fallback(&status_publisher, error).await;
@@ -2153,7 +2186,7 @@ fn parse_generic_nack(
         return Ok(());
     }
 
-    for entry in packet[12..].chunks_exact(4) {
+    for entry in packet[12..].as_chunks::<4>().0 {
         let packet_id = u16::from_be_bytes([entry[0], entry[1]]);
         let bitmask = u16::from_be_bytes([entry[2], entry[3]]);
         feedback.nack_sequences.push(packet_id);
@@ -2176,7 +2209,7 @@ fn parse_full_intra_request(
     if packet.len() < 12 || !(packet.len() - 12).is_multiple_of(8) {
         return Err("RTCP FIR packet has invalid feedback length".to_owned());
     }
-    feedback.request_keyframe |= packet[12..].chunks_exact(8).any(|entry| {
+    feedback.request_keyframe |= packet[12..].as_chunks::<8>().0.iter().any(|entry| {
         u32::from_be_bytes(entry[..4].try_into().expect("validated FIR media SSRC")) == video_ssrc
     });
     Ok(())
@@ -2453,6 +2486,26 @@ mod tests {
             media_session_id: "media-session".to_owned(),
             keyframe_interval: Some(1_000),
         }
+    }
+
+    #[test]
+    fn broadcast_session_update_publishes_the_new_keyframe_interval() {
+        let mut description = voice_description();
+        let (keyframe_interval_tx, keyframe_interval_rx) =
+            tokio::sync::watch::channel(description.keyframe_interval);
+        let update = json!({
+            "op": 14,
+            "d": {
+                "video_codec": "H264",
+                "keyframe_interval": 2_500,
+            },
+        });
+
+        apply_broadcast_session_update(&update, &mut description, &keyframe_interval_tx)
+            .expect("broadcast session update should apply");
+
+        assert_eq!(description.keyframe_interval, Some(2_500));
+        assert_eq!(*keyframe_interval_rx.borrow(), Some(2_500));
     }
 
     struct DropNotice(Option<tokio::sync::oneshot::Sender<()>>);

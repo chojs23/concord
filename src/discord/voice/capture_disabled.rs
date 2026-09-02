@@ -32,6 +32,10 @@ impl StreamCaptureHandle {
         // Disabled builds never construct a capture handle.
     }
 
+    pub(super) fn set_keyframe_interval(&self, _milliseconds: Option<u64>) {
+        // Disabled builds never construct a capture handle.
+    }
+
     pub(super) async fn shutdown(self) {
         // Disabled builds never construct a capture handle.
     }

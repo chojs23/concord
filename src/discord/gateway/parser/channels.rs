@@ -107,6 +107,7 @@ pub(crate) fn parse_channel_info(
         kind,
         message_count: value.get("message_count").and_then(Value::as_u64),
         member_count: value.get("member_count").and_then(Value::as_u64),
+        user_limit: value.get("user_limit").and_then(Value::as_u64),
         total_message_sent: value.get("total_message_sent").and_then(Value::as_u64),
         thread_metadata: value.get("thread_metadata").and_then(parse_thread_metadata),
         flags: value.get("flags").and_then(Value::as_u64),

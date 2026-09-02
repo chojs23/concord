@@ -258,11 +258,10 @@ pub(in crate::tui::ui) fn render_messages(
         let Some(row_plan) = render_plan.row(image_preview.message_index) else {
             continue;
         };
-        let row = row_plan
-            .body_top
-            .saturating_add(row_plan.metrics.body_rows() as isize)
-            .saturating_add(image_preview.preview_y_offset_rows as isize)
-            .saturating_sub(1);
+        let row = row_plan.image_preview_row(
+            image_preview.body_line_index,
+            image_preview.preview_y_offset_rows,
+        );
         if let Some(mut preview_area) = inline_image_preview_area(
             message_areas.list,
             row,
@@ -1148,7 +1147,7 @@ fn inline_preview_spacers_for_message(
     preview_width: u16,
     max_preview_height: u16,
 ) -> Vec<InlinePreviewSpacer> {
-    let previews = message.inline_previews();
+    let previews = message.flow_inline_previews();
     let album = media::image_preview_album_layout(&previews, preview_width, max_preview_height);
     (album.height > 0)
         .then(|| {

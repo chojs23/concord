@@ -2,6 +2,74 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.15] - 2026-09-01
+
+### Bug Fixes
+
+- _(notifications)_ Use OSC protocols for macOS terminal alerts (#343) in [#343](https://github.com/chojs23/concord/pull/343) by @chojs23
+- Disable Opus SIMD only for ARM32 Linux targets (#344) in [#344](https://github.com/chojs23/concord/pull/344) by @chojs23
+
+## [2.5.14] - 2026-08-30
+
+### Bug Fixes
+
+- _(tui)_ Expand tabs in fenced code blocks (#336) in [#336](https://github.com/chojs23/concord/pull/336) by @gandol
+- _(tui)_ Preserve syntax semantics when expanding code tabs by @chojs23
+- _(voice)_ Satisfy Rust 1.91 clippy (#334) in [#334](https://github.com/chojs23/concord/pull/334) by @Andiveli
+- _(ci)_ Skip CI for unrelated repository changes by @chojs23
+- _(messages)_ Fix Components V2 section thumbnail layout by @chojs23
+
+### Features
+
+- _(tui)_ Enlarge standalone custom emoji previews (#335) in [#335](https://github.com/chojs23/concord/pull/335) by @gandol
+- _(messages)_ Support Components V2 and improve embed rendering (#340) in [#340](https://github.com/chojs23/concord/pull/340) by @chojs23
+- _(tui)_ Show voice channel capacity in channel pane by @chojs23
+
+### New Contributors
+
+- @Andiveli made their first contribution in [#334](https://github.com/chojs23/concord/pull/334)
+
+## [2.5.13] - 2026-08-24
+
+### Bug Fixes
+
+- Message member hydration by @chojs23
+
+### Documentation
+
+- Update readme by @chojs23
+
+### Features
+
+- Apply negotiated keyframe intervals to Go Live encoders by @chojs23
+
+## [2.5.12] - 2026-08-21
+
+### Bug Fixes
+
+- Remove repeated allocations from emoji reaction filtering by @chojs23
+- Fix Rust 1.98 Clippy failures by @chojs23
+- _(tui)_ Synchronize animated media redraws by @chojs23
+- _(tui)_ Fix profile update picker row by @chojs23
+
+### Features
+
+- Enlarge all emoji in emoji-only messages by @chojs23
+- _(reactions)_ Customizing top 10 emojis in config.toml (#326) in [#326](https://github.com/chojs23/concord/pull/326) by @Wulgaren
+- Improve profile popup ui by @chojs23
+- _(theme)_ Add configurable unified selection markers to theme settings (#330) in [#330](https://github.com/chojs23/concord/pull/330) by @chojs23
+- _(tui)_ Preview guild stickers as inline media (#329) in [#329](https://github.com/chojs23/concord/pull/329) by @gandol
+- _(tui)_ Render Discord Lottie stickers inline by @chojs23
+
+### Miscellaneous Tasks
+
+- Remove cache warm by @chojs23
+
+### New Contributors
+
+- @gandol made their first contribution in [#329](https://github.com/chojs23/concord/pull/329)
+- @Wulgaren made their first contribution in [#326](https://github.com/chojs23/concord/pull/326)
+
 ## [2.5.11] - 2026-08-17
 
 ### Bug Fixes
@@ -982,7 +1050,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 
-- _(tui)_ Detect URLs in reply quotes and forwarded messages (#107) in [#107](https://github.com/chojs23/concord/pull/107) by @SAY-5
+- _(tui)_ Detect URLs in reply quotes and forwarded messages (#107) by @SAY-5
 - Use transient typing display names for TYPING_START by @chojs23
 - Clear typing indicator when a typer sends a message by @chojs23
 - Composer newline fallbacks (#112) in [#112](https://github.com/chojs23/concord/pull/112) by @chojs23
@@ -1004,7 +1072,7 @@ All notable changes to this project will be documented in this file.
 
 ### New Contributors
 
-- @SAY-5 made their first contribution in [#107](https://github.com/chojs23/concord/pull/107)
+- @SAY-5 made their first contribution
 
 ## [2.0.3] - 2026-05-19
 

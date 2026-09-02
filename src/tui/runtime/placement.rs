@@ -125,6 +125,7 @@ mod tests {
             thread_card: false,
             message_index: 0,
             preview_index: 0,
+            body_line_index: None,
             preview_x_offset_columns: 0,
             preview_y_offset_rows: y_offset,
             preview_width: 20,

@@ -741,6 +741,96 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
 }
 
 #[test]
+fn channel_pane_shows_capacity_only_for_limited_voice_channels() {
+    let guild_id = Id::new(1);
+    let limited_voice_id = Id::new(10);
+    let unlimited_voice_id = Id::new(11);
+    let alice = Id::new(20);
+    let bob = Id::new(21);
+    let carol = Id::new(22);
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(GuildCreateFixture {
+        channels: vec![
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                position: Some(0),
+                name: "Limited Lobby".to_owned(),
+                user_limit: Some(5),
+                ..ChannelInfo::test(limited_voice_id, "GuildVoice")
+            },
+            ChannelInfo {
+                guild_id: Some(guild_id),
+                position: Some(1),
+                name: "Unlimited Lobby".to_owned(),
+                user_limit: Some(0),
+                ..ChannelInfo::test(unlimited_voice_id, "GuildVoice")
+            },
+        ],
+        members: vec![
+            MemberInfo::test(alice, "Alice"),
+            MemberInfo::test(bob, "Bob"),
+            MemberInfo::test(carol, "Carol"),
+        ],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    for (channel_id, user_id) in [
+        (limited_voice_id, alice),
+        (limited_voice_id, bob),
+        (unlimited_voice_id, carol),
+    ] {
+        state.push_event(AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo::test(guild_id, Some(channel_id), user_id),
+        });
+    }
+    state.confirm_selected_guild();
+    state.set_channel_view_height(8);
+
+    let backend = TestBackend::new(40, 9);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
+        .expect("draw should succeed");
+
+    let buffer = terminal.backend().buffer();
+    let rows = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let limited_row = rows
+        .iter()
+        .find(|row| row.contains("Limited Lobby"))
+        .expect("limited voice channel should render");
+    let unlimited_row = rows
+        .iter()
+        .find(|row| row.contains("Unlimited Lobby"))
+        .expect("unlimited voice channel should render");
+
+    assert!(limited_row.contains("[2/5]"), "{limited_row}");
+    assert!(limited_row.ends_with("[2/5]│"), "{limited_row}");
+    assert!(!unlimited_row.contains('/'), "{unlimited_row}");
+
+    let backend = TestBackend::new(18, 9);
+    let mut terminal = Terminal::new(backend).expect("narrow test terminal should build");
+    terminal
+        .draw(|frame| render_channels(frame, frame.area(), &state, &[]))
+        .expect("narrow draw should succeed");
+    let buffer = terminal.backend().buffer();
+    let limited_row = (0..buffer.area.height)
+        .map(|row| {
+            (0..buffer.area.width)
+                .map(|col| buffer[(col, row)].symbol().to_owned())
+                .collect::<String>()
+        })
+        .find(|row| row.contains("[2/5]"))
+        .expect("narrow limited voice row should keep its capacity");
+
+    assert!(limited_row.ends_with("[2/5]│"), "{limited_row}");
+}
+
+#[test]
 fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation() {
     let guild_id = Id::new(1);
     let voice_id = Id::new(10);
@@ -1174,7 +1264,7 @@ fn forum_post_lines_render_title_author_and_preview() {
 
     assert_eq!(texts.len(), 8);
     assert_eq!(texts[0].trim_end(), "Active posts");
-    assert!(texts[1].starts_with("› ┏"));
+    assert!(texts[1].starts_with("▸ ┏"));
     assert!(texts[2].starts_with("  ┃ "));
     assert!(texts.iter().all(|text| text.width() == 80));
     assert!(texts[2].contains("A useful Rust crate"));
@@ -1433,12 +1523,31 @@ fn forum_post_lines_can_reserve_scrollbar_column() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    assert!(texts[0].starts_with("› ╭"));
+    assert!(texts[0].starts_with("▸ ╭"));
     assert!(texts[0].ends_with("╮"));
     assert!(texts[1].ends_with("│"));
     // The untagged post has no tags row, so the card is six rows.
     assert!(texts[5].ends_with("╯"));
     assert!(texts.iter().all(|text| text.width() == 79));
+}
+
+#[test]
+fn forum_post_cards_align_with_a_wide_configured_selection_marker() {
+    let (options, parse_warnings) =
+        crate::config::parse_theme_options_for_test("[ui.indicator]\nselection = \"界 \"\n")
+            .expect("selection marker config should parse");
+    assert!(parse_warnings.is_empty());
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+    let post = ChannelThreadItem::test(Id::new(30));
+
+    let lines = theme::with_test_theme(custom, || {
+        thread_card_viewport_lines(&[post], Some(0), 40, false)
+    });
+    let texts = line_texts_from_ratatui(&lines);
+
+    assert!(texts[0].starts_with("界 ╭"));
+    assert!(texts[1].starts_with("   │ "));
+    assert!(texts.iter().all(|text| text.width() == 40));
 }
 
 #[test]

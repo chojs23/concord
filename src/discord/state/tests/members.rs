@@ -1483,6 +1483,61 @@ fn message_author_role_color_uses_the_best_complete_role_source() {
 }
 
 #[test]
+fn guild_member_chunk_refreshes_visible_message_author_identity_and_role() {
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let message_id = Id::new(3);
+    let user_id = Id::new(10);
+    let role_id = Id::new(90);
+    let role_color = 0x00AAFF;
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        channels: vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            ..channel_info(channel_id, "GuildText", Vec::new())
+        }],
+        roles: vec![RoleInfo {
+            color: Some(role_color),
+            position: 10,
+            ..RoleInfo::test(role_id, "Blue")
+        }],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+
+    let mut message = message_info(channel_id, message_id.get(), "hello");
+    message.guild_id = Some(guild_id);
+    message.author_id = user_id;
+    message.author = "Old Name".to_owned();
+    state.apply_event(&latest_history_loaded(channel_id, vec![message]));
+
+    state.apply_event(&AppEvent::GuildMembersChunk {
+        chunk: GuildMembersChunkInfo {
+            guild_id,
+            members: vec![MemberInfo {
+                username: Some("alice".to_owned()),
+                nickname: Some("New Nick".to_owned()),
+                nickname_present: true,
+                role_ids: vec![role_id],
+                ..MemberInfo::test(user_id, "New Nick")
+            }],
+            presences: Vec::new(),
+            chunk_index: Some(0),
+            chunk_count: Some(1),
+            nonce: Some("member-hydration".to_owned()),
+            not_found: Vec::new(),
+            extra_fields: BTreeMap::new(),
+        },
+    });
+
+    let visible_message = state.messages_for_channel(channel_id)[0];
+    assert_eq!(visible_message.author, "New Nick");
+    assert_eq!(
+        state.message_author_role_color(guild_id, channel_id, message_id, user_id),
+        Some(role_color)
+    );
+}
+
+#[test]
 fn chunk_style_member_upserts_populate_member_list() {
     let guild_id = Id::new(1);
     let alice = Id::new(10);

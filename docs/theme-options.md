@@ -1,8 +1,9 @@
 # Theme options
 
 Concord reads `theme.toml` beside `config.toml` and `keymap.toml`. Named UI
-Highlight Groups control colors and text modifiers, while `[ui.border]`
-controls border shapes. Every group and field is optional.
+Highlight Groups control colors and text modifiers, while `[ui.border]` and
+`[ui.indicator]` control UI geometry and glyphs. Every group and field is
+optional.
 
 ```toml
 [highlight.Normal]
@@ -21,6 +22,9 @@ background = "none"
 [ui.border]
 default = "plain"
 composer = "rounded"
+
+[ui.indicator]
+selection = "❯ "
 ```
 
 ## Group fields
@@ -103,6 +107,22 @@ Border sides remain fixed. Allowing a theme to remove a side would change the
 inner widget area and break layout calculations. Message and forum cards use
 the same Ratatui glyph sets as block borders, so their configured shape stays
 consistent with the other surfaces.
+
+## Selection marker
+
+The selection marker is the glyph shown before the selected row in list panes
+and pickers. It defaults to `▸ ` and can be changed independently from its
+style.
+
+```toml
+[ui.indicator]
+selection = "❯ "
+```
+
+The value must be a single-line string with non-zero Unicode display width.
+Concord reserves the same display width with spaces on unselected rows so list
+content stays aligned. Invalid values warn and fall back to `▸ `. Use
+`[highlight.SelectionMarker]` to change the marker's color and text modifiers.
 
 ## Common semantic groups
 

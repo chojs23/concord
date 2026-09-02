@@ -21,6 +21,27 @@ pub(in crate::tui) struct MessageViewportRow<'a> {
     pub(in crate::tui) shows_unread_divider: bool,
 }
 
+impl MessageViewportRow<'_> {
+    pub(in crate::tui) fn image_preview_row(
+        &self,
+        body_line_index: Option<usize>,
+        y_offset_rows: usize,
+    ) -> isize {
+        match body_line_index {
+            Some(line_index) => self
+                .body_top
+                .saturating_add(self.metrics.header_rows as isize)
+                .saturating_add(line_index as isize)
+                .saturating_add(y_offset_rows as isize),
+            None => self
+                .body_top
+                .saturating_add(self.metrics.body_rows() as isize)
+                .saturating_add(y_offset_rows as isize)
+                .saturating_sub(1),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(in crate::tui) struct MessageViewportPlan<'a> {
     rows: Vec<MessageViewportRow<'a>>,

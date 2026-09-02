@@ -327,6 +327,22 @@ impl DiscordState {
         participants_by_channel
     }
 
+    pub(crate) fn voice_participant_counts_by_channel_for_guild(
+        &self,
+        guild_id: Id<GuildMarker>,
+    ) -> BTreeMap<Id<ChannelMarker>, usize> {
+        let scope = VoiceScope::Guild(guild_id);
+        let mut counts = BTreeMap::new();
+        for ((state_scope, _), state) in &self.voice.states {
+            if *state_scope != scope {
+                continue;
+            }
+            let count = counts.entry(state.channel_id).or_insert(0usize);
+            *count = count.saturating_add(1);
+        }
+        counts
+    }
+
     fn voice_participant_state(
         &self,
         scope: VoiceScope,

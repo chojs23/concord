@@ -80,7 +80,7 @@ mod tests {
 
         for frame_index in 0..40 {
             let mut samples = vec![0_i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-            for stereo_sample in samples.chunks_exact_mut(2) {
+            for stereo_sample in samples.as_chunks_mut::<2>().0 {
                 seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 let sample = ((seed >> 16) as i16) / 4;
                 stereo_sample.fill(sample);
@@ -90,7 +90,9 @@ mod tests {
             assert!(suppressor.process_20ms_stereo(&mut samples));
             assert!(
                 samples
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .all(|stereo_sample| stereo_sample[0] == stereo_sample[1])
             );
 

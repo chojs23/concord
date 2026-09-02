@@ -44,6 +44,17 @@ impl Default for ComposerOptions {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ReactionOptions {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub favorite_emojis: Vec<String>,
+}
+
+impl ReactionOptions {
+    pub const MAX_FAVORITE_EMOJIS: usize = 10;
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CredentialOptions {
@@ -226,6 +237,7 @@ impl Default for PresenceOptions {
 pub struct AppOptions {
     pub display: DisplayOptions,
     pub composer: ComposerOptions,
+    pub reactions: ReactionOptions,
     pub credentials: CredentialOptions,
     pub notifications: NotificationOptions,
     pub voice: VoiceOptions,
@@ -240,6 +252,7 @@ pub struct AppOptions {
 pub struct ThemeOptions {
     highlights: BTreeMap<HighlightGroup, HighlightDefinitionOptions>,
     border_shapes: BorderShapeOptions,
+    selection_marker: Option<String>,
 }
 
 impl ThemeOptions {
@@ -253,6 +266,14 @@ impl ThemeOptions {
 
     pub(crate) const fn border_shapes_mut(&mut self) -> &mut BorderShapeOptions {
         &mut self.border_shapes
+    }
+
+    pub(crate) fn selection_marker(&self) -> Option<&str> {
+        self.selection_marker.as_deref()
+    }
+
+    pub(crate) fn set_selection_marker(&mut self, marker: String) {
+        self.selection_marker = Some(marker);
     }
 
     pub(crate) fn highlight_mut(

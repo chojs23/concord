@@ -237,14 +237,14 @@ impl EmojiImageSize {
     pub(in crate::tui) const fn width(self) -> u16 {
         match self {
             Self::Compact => 2,
-            Self::Standalone => 4,
+            Self::Standalone => 8,
         }
     }
 
     pub(in crate::tui) const fn height(self) -> u16 {
         match self {
             Self::Compact => 1,
-            Self::Standalone => 2,
+            Self::Standalone => 4,
         }
     }
 }

@@ -1,10 +1,6 @@
 use std::collections::VecDeque;
 
-use crossterm::{
-    event::EventStream,
-    execute,
-    terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
-};
+use crossterm::event::EventStream;
 use futures::StreamExt;
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc, watch};
@@ -33,15 +29,16 @@ pub(super) mod events;
 mod media_runtime;
 pub(super) mod notification_audio;
 mod placement;
+mod redraw;
 mod redraw_gate;
 mod scheduler;
 
 use effects as effect_helpers;
 use media_runtime::{
-    DashboardMediaRuntime, LocalUploadPreviewResult, clear_image_surfaces_frame,
-    drain_pending_commands_after_draw, draw_dashboard_frame, schedule_media_loads_after_draw,
-    store_local_upload_preview_result,
+    DashboardMediaRuntime, LocalUploadPreviewResult, drain_pending_commands_after_draw,
+    schedule_media_loads_after_draw, store_local_upload_preview_result,
 };
+use redraw::{DashboardRedrawState, draw_dashboard_transaction};
 use scheduler::DashboardCommandScheduler;
 
 type ClipboardPasteResult = std::result::Result<
@@ -117,6 +114,7 @@ pub(super) async fn run_dashboard(
         ui_state_options,
     );
     state.apply_presence_options(options.presence);
+    state.apply_reaction_options(options.reactions);
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
     let mut current_snapshot_revision = initial_snapshot.revision.global;
@@ -152,6 +150,7 @@ pub(super) async fn run_dashboard(
     let mut clipboard = ClipboardService::default();
     let mut last_frame_area = Rect::default();
     let mut dirty = true;
+    let mut redraw_state = DashboardRedrawState::default();
     // Background Discord events (presence, typing, off-screen messages) are
     // coalesced into the next pending deadline so a burst does not schedule a
     // draw per event. Key and mouse arms still mark `dirty` immediately to keep
@@ -191,27 +190,18 @@ pub(super) async fn run_dashboard(
             // overlays (overpainting the stale pixels) before the real frame.
             // When nothing moved we draw a single frame.
             media_runtime.prepare_frame(&mut state, area);
-            let need_clear = media_runtime.need_clear();
-            // The erase frame blanks the moved images and the real frame redraws
-            // them. Wrap both in a synchronized update (DEC mode 2026) so the
-            // terminal presents them as one atomic repaint. Without it, terminals
-            // that paint each flush eagerly (iTerm2, Kitty) show the blanked frame
-            // for a beat and every image flickers on each scroll. WezTerm
-            // coalesces draws so it never revealed the gap. Best-effort: terminals
-            // without 2026 ignore the markers and behave as before.
-            if need_clear {
-                let _ = execute!(terminal.backend_mut(), BeginSynchronizedUpdate);
-                terminal.draw(|frame| {
-                    last_frame_area =
-                        clear_image_surfaces_frame(frame, &mut state, &mut media_runtime);
-                })?;
-            }
-            terminal.draw(|frame| {
-                last_frame_area = draw_dashboard_frame(frame, &mut state, &mut media_runtime);
-            })?;
-            if need_clear {
-                let _ = execute!(terminal.backend_mut(), EndSynchronizedUpdate);
-            }
+            // Pixel media can expose an intermediate cleared surface both when it
+            // moves and when an animation replaces one frame with the next. One
+            // shared transaction hides that partial state without terminal- or
+            // format-specific redraw branches.
+            let redraw_plan = redraw_state.take_plan(media_runtime.need_clear());
+            draw_dashboard_transaction(
+                terminal,
+                &mut state,
+                &mut media_runtime,
+                &mut last_frame_area,
+                redraw_plan,
+            )?;
             media_runtime.commit_placements();
             if state.terminal_focused() {
                 media_runtime.sync_animation_visibility(std::time::Instant::now());
@@ -545,6 +535,7 @@ pub(super) async fn run_dashboard(
                 }
             } => {
                 if media_runtime.advance_animations(std::time::Instant::now()) {
+                    redraw_state.request_media_animation();
                     dirty = true;
                 }
             }
@@ -681,19 +672,25 @@ fn schedule_background_redraw(
 fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardPasteResult) {
     match result {
         Ok(Ok(data)) => {
-            let _ = apply_clipboard_paste_data(state, data);
+            if !apply_clipboard_paste_data(state, data) {
+                state.record_user_profile_avatar_clipboard_paste_failed();
+            }
         }
         Ok(Err(error)) => {
             logging::debug("clipboard", format!("clipboard paste unavailable: {error}"));
+            state.record_user_profile_avatar_clipboard_paste_failed();
         }
         Err(error) => {
             logging::debug("clipboard", format!("clipboard paste task failed: {error}"));
+            state.record_user_profile_avatar_clipboard_paste_failed();
         }
     }
 }
 
 fn apply_clipboard_paste_data(state: &mut DashboardState, data: ClipboardPasteData) -> bool {
-    if state.accepts_user_profile_avatar_paste() {
+    if state.accepts_user_profile_avatar_paste()
+        || state.is_user_profile_avatar_clipboard_paste_pending()
+    {
         if let Some(mut attachments) = data.file_attachments {
             if attachments.is_empty() {
                 return false;

@@ -606,3 +606,24 @@ fn reaction_users_popup_opens_highlighted_reaction() {
     );
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ReactionUsers));
 }
+
+#[test]
+fn emoji_picker_uses_configured_favorite_emojis_at_top() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    state.apply_reaction_options(crate::config::ReactionOptions {
+        favorite_emojis: vec!["🔥".to_owned(), "💯".to_owned()],
+    });
+
+    let items = state.emoji_reaction_items();
+    assert_eq!(
+        items[..2]
+            .iter()
+            .map(|item| item.emoji.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            ReactionEmoji::Unicode("🔥".to_owned()),
+            ReactionEmoji::Unicode("💯".to_owned()),
+        ]
+    );
+}

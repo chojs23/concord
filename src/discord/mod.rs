@@ -93,10 +93,12 @@ pub use guild::{
 pub use ids::{Id, marker};
 pub use member::{MemberInfo, MemberOnboardingStatus, RoleInfo};
 pub use message::{
-    AttachmentInfo, AttachmentMediaType, AttachmentUpdate, EmbedFieldInfo, EmbedInfo,
-    InlinePreviewInfo, MESSAGE_FLAG_SUPPRESS_EMBEDS, MentionInfo, MessageInfo,
-    MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo,
-    PollInfo, ReactionInfo, ReactionUserInfo, ReplyInfo,
+    AttachmentInfo, AttachmentMediaType, AttachmentUpdate, ComponentMediaInfo,
+    ComponentMediaItemInfo, ComponentSelectKind, ComponentSelectOptionInfo, EmbedFieldInfo,
+    EmbedInfo, InlinePreviewInfo, MESSAGE_FLAG_IS_COMPONENTS_V2, MESSAGE_FLAG_SUPPRESS_EMBEDS,
+    MentionInfo, MessageComponentInfo, MessageInfo, MessageInteractionInfo, MessageKind,
+    MessageReferenceInfo, MessageSnapshotInfo, PollAnswerInfo, PollInfo, ReactionInfo,
+    ReactionUserInfo, ReplyInfo, StickerFormat, StickerInfo,
 };
 pub(crate) use message_policy::{
     validate_attachment_sizes, validate_message_content, validate_message_content_length,
@@ -112,7 +114,8 @@ pub use presence::{
     ActivitySecrets, ActivityTimestamps, PresenceStatus,
 };
 pub use profile::{
-    FriendStatus, MutualGuildInfo, RelationshipInfo, RelationshipUpdateInfo, UserProfileInfo,
+    FriendStatus, MutualFriendInfo, MutualGuildInfo, RelationshipInfo, RelationshipUpdateInfo,
+    UserProfileInfo,
 };
 pub use read::ReadStateInfo;
 pub(crate) use request_lifecycle::{

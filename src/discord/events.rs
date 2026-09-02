@@ -15,13 +15,13 @@ use super::commands::{
 use super::{
     ActivityInfo, AttachmentUpdate, ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedInfo,
     FriendStatus, GuildBoostTier, GuildNotificationSettingsInfo, GuildOnboardingInfo,
-    GuildVerificationLevel, MemberInfo, MentionInfo, MessageInfo, PollInfo, PremiumTier,
-    PresenceStatus, ReactionUserInfo, ReadStateInfo, RelationshipInfo, RelationshipUpdateInfo,
-    RoleInfo, SnapshotAreas, StreamCaptureTarget, StreamCreateInfo, StreamDeleteInfo,
-    StreamServerInfo, StreamUpdateInfo, ThreadGatewayInfo, ThreadListSyncInfo, ThreadMemberInfo,
-    ThreadMemberListUpdateInfo, ThreadMembersUpdateInfo, UserProfileInfo, UserSettingsInfo,
-    VoiceConnectionStatus, VoiceScope, VoiceServerInfo, VoiceSoundKind, VoiceStateInfo,
-    is_thread_kind,
+    GuildVerificationLevel, MemberInfo, MentionInfo, MessageComponentInfo, MessageInfo, PollInfo,
+    PremiumTier, PresenceStatus, ReactionUserInfo, ReadStateInfo, RelationshipInfo,
+    RelationshipUpdateInfo, RoleInfo, SnapshotAreas, StickerInfo, StreamCaptureTarget,
+    StreamCreateInfo, StreamDeleteInfo, StreamServerInfo, StreamUpdateInfo, ThreadGatewayInfo,
+    ThreadListSyncInfo, ThreadMemberInfo, ThreadMemberListUpdateInfo, ThreadMembersUpdateInfo,
+    UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceScope, VoiceServerInfo,
+    VoiceSoundKind, VoiceStateInfo, is_thread_kind,
 };
 use super::{ApplicationCommandChoiceInfo, ApplicationCommandInfo};
 use super::{ArchivedThreadsPage, ForumPostDataInfo};
@@ -46,7 +46,7 @@ pub struct ChannelUnreadInfo {
 pub struct MessageUpdateEventFields {
     pub poll: Option<PollInfo>,
     pub content: Option<String>,
-    pub sticker_names: Option<Vec<String>>,
+    pub stickers: Option<Vec<StickerInfo>>,
     pub mentions: Option<Vec<MentionInfo>>,
     pub mention_everyone: Option<bool>,
     pub mention_roles: Option<Vec<Id<RoleMarker>>>,
@@ -54,6 +54,7 @@ pub struct MessageUpdateEventFields {
     pub pinned: Option<bool>,
     pub attachments: AttachmentUpdate,
     pub embeds: Option<Vec<EmbedInfo>>,
+    pub components: Option<Vec<MessageComponentInfo>>,
     pub edited_timestamp: Option<String>,
 }
 
@@ -71,7 +72,7 @@ impl Default for MessageUpdateEventFields {
         Self {
             poll: None,
             content: None,
-            sticker_names: None,
+            stickers: None,
             mentions: None,
             mention_everyone: None,
             mention_roles: None,
@@ -79,6 +80,7 @@ impl Default for MessageUpdateEventFields {
             pinned: None,
             attachments: AttachmentUpdate::Unchanged,
             embeds: None,
+            components: None,
             edited_timestamp: None,
         }
     }

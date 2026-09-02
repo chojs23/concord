@@ -1447,19 +1447,28 @@ fn mute_request_body_includes_selected_time_window() {
 }
 
 #[test]
-fn user_profile_parser_keeps_guild_member_roles() {
+fn user_profile_parser_keeps_roles_and_mutual_friends() {
     let profile = parse_user_profile_response(
         Id::new(10),
         None,
         &serde_json::json!({
             "user": { "id": "10", "username": "test-user" },
-            "guild_member": { "roles": ["90", "91"] }
+            "guild_member": { "roles": ["90", "91"] },
+            "mutual_friends": [
+                { "id": "50", "username": "alice", "global_name": "Alice" },
+                { "id": "51", "username": "bob", "global_name": null }
+            ],
+            "mutual_friends_count": 2
         }),
         None,
     );
 
     assert_eq!(profile.role_ids, vec![Id::new(90), Id::new(91)]);
     assert!(profile.role_ids_present);
+    assert_eq!(profile.mutual_friends_count, 2);
+    assert_eq!(profile.mutual_friends.len(), 2);
+    assert_eq!(profile.mutual_friends[0].display_name(), "Alice");
+    assert_eq!(profile.mutual_friends[1].display_name(), "bob");
 }
 
 #[test]

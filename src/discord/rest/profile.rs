@@ -9,8 +9,9 @@ use crate::discord::ids::{
 use crate::{
     AppError, Result,
     discord::{
-        FriendStatus, GlobalUserProfileUpdate, GuildUserProfileUpdate, MutualGuildInfo,
-        UserProfileInfo, UserProfileUpdate, avatar::member_avatar_url, read_profile_avatar_image,
+        FriendStatus, GlobalUserProfileUpdate, GuildUserProfileUpdate, MutualFriendInfo,
+        MutualGuildInfo, UserProfileInfo, UserProfileUpdate, avatar::member_avatar_url,
+        read_profile_avatar_image,
     },
 };
 
@@ -28,7 +29,9 @@ impl DiscordRest {
             user_id.get(),
         );
         if !is_self {
-            url.push_str("with_mutual_guilds=true&with_mutual_friends_count=true&");
+            url.push_str(
+                "with_mutual_guilds=true&with_mutual_friends=true&with_mutual_friends_count=true&",
+            );
         }
         if let Some(guild_id) = guild_id {
             url.push_str(&format!("guild_id={}", guild_id.get()));
@@ -175,6 +178,7 @@ pub(super) struct UserProfileResponse {
     pub(super) guild_member: Option<Value>,
     pub(super) guild_member_profile: Option<Value>,
     pub(super) mutual_guilds: Vec<Value>,
+    pub(super) mutual_friends: Vec<Value>,
     pub(super) extra_fields: std::collections::BTreeMap<String, Value>,
 }
 
@@ -258,6 +262,11 @@ impl UserProfileResponse {
             .and_then(Value::as_u64)
             .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
             .unwrap_or(0);
+        let mutual_friends = body
+            .get("mutual_friends")
+            .and_then(Value::as_array)
+            .map(|array| array.iter().filter_map(parse_mutual_friend).collect())
+            .unwrap_or_default();
         let guild_nick = body
             .get("guild_member")
             .and_then(|member| member.get("nick"))
@@ -286,6 +295,7 @@ impl UserProfileResponse {
                 pronouns,
                 guild_pronouns,
                 mutual_guilds,
+                mutual_friends,
                 mutual_friends_count,
                 friend_status: FriendStatus::None,
                 note,
@@ -295,6 +305,7 @@ impl UserProfileResponse {
             guild_member: body.get("guild_member").cloned(),
             guild_member_profile: body.get("guild_member_profile").cloned(),
             mutual_guilds: clone_array(body.get("mutual_guilds")),
+            mutual_friends: clone_array(body.get("mutual_friends")),
             extra_fields: extra_fields(
                 body,
                 &[
@@ -303,11 +314,32 @@ impl UserProfileResponse {
                     "guild_member",
                     "guild_member_profile",
                     "mutual_guilds",
+                    "mutual_friends",
                     "mutual_friends_count",
                 ],
             ),
         }
     }
+}
+
+fn parse_mutual_friend(value: &Value) -> Option<MutualFriendInfo> {
+    let user_id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .or_else(|| value.get("id").and_then(Value::as_u64))
+        .and_then(Id::new_checked)?;
+    let username = value.get("username")?.as_str()?.to_owned();
+    let global_name = value
+        .get("global_name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned);
+    Some(MutualFriendInfo {
+        user_id,
+        username,
+        global_name,
+    })
 }
 
 fn parse_profile_role_id(value: &Value) -> Option<Id<RoleMarker>> {

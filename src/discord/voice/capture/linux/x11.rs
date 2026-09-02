@@ -286,8 +286,10 @@ fn ewmh_client_windows(
 
     reply
         .value
-        .chunks_exact(4)
-        .map(|bytes| u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| u32::from_ne_bytes(*bytes))
         .collect()
 }
 
@@ -653,7 +655,13 @@ fn convert_image_to_rgba(
     if image.bits_per_pixel() == BitsPerPixel::B32 && standard_rgb_masks {
         // The common Xorg format can be reordered directly. Other visuals use
         // x11rb's decoder so uncommon bit layouts remain correct.
-        for (source, destination) in image.data().chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
+        for (source, destination) in image
+            .data()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(rgba.as_chunks_mut::<4>().0)
+        {
             match image.byte_order() {
                 ImageOrder::LsbFirst => {
                     destination[0] = source[2];

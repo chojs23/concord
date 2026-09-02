@@ -280,7 +280,7 @@ impl DashboardMediaRuntime {
     /// Inline previews reuse the exact renderer path (`plan.row` +
     /// `inline_image_preview_screen_area`), the viewer uses a coarse size-based
     /// fingerprint (it is a single centered image), avatars use their absolute
-    /// row, and the popup avatar uses (url, circular, popup area).
+    /// row, and the popup avatar uses its cropped visible area.
     fn resolve_placements(
         &self,
         state: &DashboardState,
@@ -317,11 +317,8 @@ impl DashboardMediaRuntime {
             let Some(row_plan) = plan.row(target.message_index) else {
                 continue;
             };
-            let row = row_plan
-                .body_top
-                .saturating_add(row_plan.metrics.body_rows() as isize)
-                .saturating_add(target.preview_y_offset_rows as isize)
-                .saturating_sub(1);
+            let row =
+                row_plan.image_preview_row(target.body_line_index, target.preview_y_offset_rows);
             let Some(mut preview_area) = ui::inline_image_preview_screen_area(
                 list,
                 row,
@@ -349,12 +346,9 @@ impl DashboardMediaRuntime {
             );
         }
 
-        let popup_avatar = self.popup_avatar_url.as_ref().map(|url| {
-            (
-                url.clone(),
-                state.circular_avatars(),
-                ui::user_profile_popup_area(area),
-            )
+        let popup_avatar = self.popup_avatar_url.as_ref().and_then(|url| {
+            ui::user_profile_popup_avatar_viewport(area, state)
+                .map(|(avatar_area, _)| (url.clone(), state.circular_avatars(), avatar_area))
         });
         placements.set_popup_avatar(popup_avatar);
 
@@ -462,11 +456,7 @@ fn clip_image_preview_targets_for_occlusions(
         let Some(row_plan) = plan.row(target.message_index) else {
             continue;
         };
-        let row = row_plan
-            .body_top
-            .saturating_add(row_plan.metrics.body_rows() as isize)
-            .saturating_add(target.preview_y_offset_rows as isize)
-            .saturating_sub(1);
+        let row = row_plan.image_preview_row(target.body_line_index, target.preview_y_offset_rows);
         let Some(area) = ui::inline_image_preview_screen_area(
             list,
             row,
@@ -652,9 +642,12 @@ pub(super) fn draw_dashboard_frame(
         .emoji_images
         .render_state(&media_runtime.emoji_targets);
     let popup_avatar_url = media_runtime.popup_avatar_url.as_deref();
+    let popup_avatar_clip = ui::user_profile_popup_avatar_viewport(area, state)
+        .map(|(avatar_area, top_clip_rows)| (avatar_area.height, top_clip_rows));
     let (rendered_avatars, popup_avatar) = media_runtime.avatar_images.render_state_with_popup(
         &media_runtime.avatar_targets,
         popup_avatar_url,
+        popup_avatar_clip,
         state.circular_avatars(),
     );
     ui::render_with_message_viewport_plan(
@@ -734,9 +727,12 @@ pub(super) fn clear_image_surfaces_frame(
     } else {
         None
     };
+    let popup_avatar_clip = ui::user_profile_popup_avatar_viewport(area, state)
+        .map(|(avatar_area, top_clip_rows)| (avatar_area.height, top_clip_rows));
     let (rendered_avatars, popup_avatar) = media_runtime.avatar_images.render_state_with_popup(
         &unchanged_avatars,
         popup_avatar_url,
+        popup_avatar_clip,
         state.circular_avatars(),
     );
     ui::render_with_message_viewport_plan(
@@ -897,6 +893,7 @@ mod tests {
             thread_card: false,
             message_index: 0,
             preview_index: 0,
+            body_line_index: None,
             preview_x_offset_columns: 0,
             preview_y_offset_rows: 0,
             preview_width: 20,

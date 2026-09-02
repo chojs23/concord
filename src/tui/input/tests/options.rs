@@ -48,6 +48,7 @@ fn options_popup_toggles_and_cycles_display_settings() {
             Some(AppOptions {
                 display: state.display_options(),
                 composer: state.composer_options(),
+                reactions: Default::default(),
                 credentials: Default::default(),
                 notifications: state.notification_options(),
                 voice: state.voice_options(),
@@ -110,6 +111,7 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
         Some(AppOptions {
             display: state.display_options(),
             composer: state.composer_options(),
+            reactions: Default::default(),
             credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),
@@ -276,6 +278,7 @@ fn options_popup_sequences_own_continuations_then_restore_fixed_shortcuts() {
         Some(AppOptions {
             display: state.display_options(),
             composer: state.composer_options(),
+            reactions: Default::default(),
             credentials: Default::default(),
             notifications: state.notification_options(),
             voice: state.voice_options(),

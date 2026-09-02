@@ -112,10 +112,16 @@ fn ctrl_v_requests_clipboard_paste_on_profile_avatar_field() {
         state.user_profile_settings_status(),
         Some("Reading clipboard image...")
     );
+    state.next_user_profile_settings_field();
+    state.record_user_profile_avatar_clipboard_paste_failed();
+    assert_eq!(
+        state.user_profile_settings_status(),
+        Some("Clipboard does not contain an image")
+    );
 }
 
 #[test]
-fn profile_status_picker_routes_selection_keys_and_enter() {
+fn profile_navigation_routes_selection_keys_and_picker_enter() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
         user: "neo".to_owned(),
@@ -136,6 +142,14 @@ fn profile_status_picker_routes_selection_keys_and_enter() {
         })
     );
     assert!(!state.is_user_profile_status_picker_open());
+
+    state.open_user_profile_popup(Id::new(20), None);
+    state.set_user_profile_popup_view_height(1);
+    state.set_user_profile_popup_total_lines(3);
+    handle_key(&mut state, char_key('j'));
+    assert_eq!(state.user_profile_popup_scroll(), 1);
+    handle_key(&mut state, char_key('k'));
+    assert_eq!(state.user_profile_popup_scroll(), 0);
 }
 
 #[test]
@@ -151,7 +165,6 @@ fn profile_sign_out_button_signs_out_from_current_user_profile_popup() {
         handle_key(&mut state, char_key('o')),
         Some(AppCommand::SignOut)
     );
-    assert_eq!(state.user_profile_settings_status(), Some("Signing out..."));
 }
 
 #[test]

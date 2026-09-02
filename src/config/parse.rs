@@ -1,11 +1,13 @@
 //! Tolerant config parsing: invalid values are dropped one field (or one
 //! keybinding) at a time with a warning instead of discarding the file.
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::Result;
 
 use super::{
     AppOptions, BorderShape, BorderSurface, HighlightGroup, HighlightLinkOptions,
-    KeymapFileOptions, KeymapOptions, ThemeOptions, UiStateOptions,
+    KeymapFileOptions, KeymapOptions, ReactionOptions, ThemeOptions, UiStateOptions,
 };
 
 /// Parse `config.toml` tolerantly: a value with a wrong type or unknown variant
@@ -18,6 +20,10 @@ pub(super) fn parse_app_options(content: &str) -> Result<(AppOptions, Vec<String
     let options = AppOptions {
         display: section(&root, "display", &mut warnings),
         composer: section(&root, "composer", &mut warnings),
+        reactions: normalize_reaction_options(
+            section(&root, "reactions", &mut warnings),
+            &mut warnings,
+        ),
         credentials: section(&root, "credentials", &mut warnings),
         notifications: section(&root, "notifications", &mut warnings),
         voice: section(&root, "voice", &mut warnings),
@@ -25,6 +31,45 @@ pub(super) fn parse_app_options(content: &str) -> Result<(AppOptions, Vec<String
     };
 
     Ok((options, warnings))
+}
+
+fn normalize_reaction_options(
+    options: ReactionOptions,
+    warnings: &mut Vec<String>,
+) -> ReactionOptions {
+    let mut favorite_emojis = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut truncated = false;
+
+    for (index, raw) in options.favorite_emojis.into_iter().enumerate() {
+        let Some(emoji) = emojis::get(&raw) else {
+            warnings.push(format!(
+                "[reactions] favorite_emojis[{index}] = \"{raw}\" is not a valid unicode emoji and was ignored"
+            ));
+            continue;
+        };
+        let value = emoji.as_str().to_owned();
+        if !seen.insert(value.clone()) {
+            warnings.push(format!(
+                "[reactions] favorite_emojis[{index}] = \"{raw}\" duplicates an earlier entry and was ignored"
+            ));
+            continue;
+        }
+        if favorite_emojis.len() >= ReactionOptions::MAX_FAVORITE_EMOJIS {
+            truncated = true;
+            continue;
+        }
+        favorite_emojis.push(value);
+    }
+
+    if truncated {
+        warnings.push(format!(
+            "[reactions] favorite_emojis truncated to {} entries",
+            ReactionOptions::MAX_FAVORITE_EMOJIS
+        ));
+    }
+
+    ReactionOptions { favorite_emojis }
 }
 
 fn one_entry(key: &str, value: toml::Value) -> toml::Table {
@@ -119,17 +164,56 @@ struct ThemeLeafParser {
 impl ThemeLeafParser {
     fn parse_ui(&mut self, table: &toml::Table) {
         for (field, value) in table {
-            if field != "border" {
+            match field.as_str() {
+                "border" => {
+                    let Some(fields) = value.as_table() else {
+                        self.warnings
+                            .push("[ui.border] must be a table and was ignored".to_owned());
+                        continue;
+                    };
+                    self.parse_border_shapes(fields);
+                }
+                "indicator" => {
+                    let Some(fields) = value.as_table() else {
+                        self.warnings
+                            .push("[ui.indicator] must be a table and was ignored".to_owned());
+                        continue;
+                    };
+                    self.parse_indicators(fields);
+                }
+                _ => self
+                    .warnings
+                    .push(format!("[ui] {field} is unknown and was ignored")),
+            }
+        }
+    }
+
+    fn parse_indicators(&mut self, fields: &toml::Table) {
+        for (field, value) in fields {
+            if field != "selection" {
                 self.warnings
-                    .push(format!("[ui] {field} is unknown and was ignored"));
+                    .push(format!("[ui.indicator] {field} is unknown and was ignored"));
                 continue;
             }
-            let Some(fields) = value.as_table() else {
+            let Some(raw) = value.as_str() else {
                 self.warnings
-                    .push("[ui.border] must be a table and was ignored".to_owned());
+                    .push("[ui.indicator] selection must be a string and was ignored".to_owned());
                 continue;
             };
-            self.parse_border_shapes(fields);
+            if raw.contains(['\n', '\r']) {
+                self.warnings.push(
+                    "[ui.indicator] selection must be a single line and was ignored".to_owned(),
+                );
+                continue;
+            }
+            if raw.width() == 0 {
+                self.warnings.push(
+                    "[ui.indicator] selection must have non-zero display width and was ignored"
+                        .to_owned(),
+                );
+                continue;
+            }
+            self.options.set_selection_marker(raw.to_owned());
         }
     }
 

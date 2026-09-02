@@ -68,6 +68,19 @@ pub struct MutualGuildInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MutualFriendInfo {
+    pub user_id: Id<UserMarker>,
+    pub username: String,
+    pub global_name: Option<String>,
+}
+
+impl MutualFriendInfo {
+    pub fn display_name(&self) -> &str {
+        self.global_name.as_deref().unwrap_or(&self.username)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserProfileInfo {
     pub user_id: Id<UserMarker>,
     pub username: String,
@@ -83,6 +96,7 @@ pub struct UserProfileInfo {
     pub pronouns: Option<String>,
     pub guild_pronouns: Option<String>,
     pub mutual_guilds: Vec<MutualGuildInfo>,
+    pub mutual_friends: Vec<MutualFriendInfo>,
     pub mutual_friends_count: u32,
     pub friend_status: FriendStatus,
     pub note: Option<String>,
@@ -113,6 +127,7 @@ impl UserProfileInfo {
             pronouns: None,
             guild_pronouns: None,
             mutual_guilds: Vec::new(),
+            mutual_friends: Vec::new(),
             mutual_friends_count: 0,
             friend_status: FriendStatus::None,
             note: None,

@@ -312,7 +312,9 @@ fn notification_inbox_card_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     let marker = selectable_popup_marker(selected);
-    let card_width = width.saturating_sub(marker.content.width()).max(4);
+    let marker_width = marker.content.width();
+    let marker_placeholder = " ".repeat(marker_width);
+    let card_width = width.saturating_sub(marker_width).max(4);
     let inner_width = card_width.saturating_sub(4).max(1);
     let border = notification_inbox_border_style(selected);
     let (header, body) = notification_inbox_card_content(item);
@@ -325,9 +327,9 @@ fn notification_inbox_card_lines(
                 border,
             ),
         ]),
-        notification_inbox_inner_line(header, inner_width, selected),
+        notification_inbox_inner_line(&marker_placeholder, header, inner_width, selected),
         Line::from(vec![
-            Span::raw("  "),
+            Span::raw(marker_placeholder.clone()),
             Span::styled(
                 format!("├{}┤", "─".repeat(card_width.saturating_sub(2))),
                 border,
@@ -336,13 +338,14 @@ fn notification_inbox_card_lines(
     ];
     for content in body {
         lines.push(notification_inbox_inner_line(
+            &marker_placeholder,
             content,
             inner_width,
             selected,
         ));
     }
     lines.push(Line::from(vec![
-        Span::raw("  "),
+        Span::raw(marker_placeholder),
         Span::styled(
             format!("╰{}╯", "─".repeat(card_width.saturating_sub(2))),
             border,
@@ -400,13 +403,14 @@ fn notification_inbox_card_content(
 }
 
 fn notification_inbox_inner_line(
+    marker: &str,
     content: Vec<Span<'static>>,
     inner_width: usize,
     selected: bool,
 ) -> Line<'static> {
     let body = truncate_line_to_display_width(Line::from(content), inner_width);
     let border = notification_inbox_border_style(selected);
-    let mut spans = vec![Span::raw("  "), Span::styled("│ ", border)];
+    let mut spans = vec![Span::raw(marker.to_owned()), Span::styled("│ ", border)];
     spans.extend(body.spans);
     spans.push(Span::styled(" │", border));
     Line::from(spans)

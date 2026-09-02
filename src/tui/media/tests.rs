@@ -17,9 +17,11 @@ use crate::{
     config::{DisplayOptions, ImagePreviewQualityPreset},
     discord::{
         ActivityEmoji, ActivityInfo, ActivityKind, AppCommand, AppEvent, AttachmentInfo,
-        ChannelInfo, ChannelRecipientInfo, CustomEmojiInfo, EmbedInfo, ForumPostDataInfo,
-        MessageInfo, MessageSnapshotInfo, PresenceEventFields, PresenceStatus, ProfileAvatarUpload,
-        ReactionEmoji, ReactionInfo,
+        ChannelInfo, ChannelRecipientInfo, ComponentMediaInfo, ComponentMediaItemInfo,
+        CustomEmojiInfo, EmbedInfo, ForumPostDataInfo, MESSAGE_FLAG_IS_COMPONENTS_V2,
+        MessageComponentInfo, MessageInfo, MessageSnapshotInfo, MessageState, PresenceEventFields,
+        PresenceStatus, ProfileAvatarUpload, ReactionEmoji, ReactionInfo, StickerFormat,
+        StickerInfo,
     },
     tui::{
         message::time::test_message_id_for_unix_millis,
@@ -29,8 +31,8 @@ use crate::{
     },
 };
 
-use super::work::MediaWorkError;
 use super::*;
+use super::{decode::MAX_LOTTIE_JSON_BYTES, work::MediaWorkError};
 
 fn layout(list_height: usize) -> ImagePreviewLayout {
     ImagePreviewLayout {
@@ -490,6 +492,209 @@ fn image_preview_targets_choose_embed_media_url() {
 }
 
 #[test]
+fn rich_embed_exposes_image_and_thumbnail_as_distinct_previews() {
+    let message = MessageState {
+        embeds: vec![EmbedInfo {
+            kind: Some("rich".to_owned()),
+            image_url: Some("https://example.com/main.png".to_owned()),
+            image_width: Some(1200),
+            image_height: Some(800),
+            thumbnail_url: Some("https://example.com/thumb.png".to_owned()),
+            thumbnail_width: Some(200),
+            thumbnail_height: Some(200),
+            ..EmbedInfo::test()
+        }],
+        ..MessageState::default()
+    };
+
+    let previews = message.inline_previews();
+
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0].filename, "embed-image");
+    assert_eq!(previews[0].url, "https://example.com/main.png");
+    assert_eq!(previews[1].filename, "embed-thumbnail");
+    assert_eq!(previews[1].url, "https://example.com/thumb.png");
+}
+
+#[test]
+fn video_only_embed_uses_documented_video_proxy_as_preview_fallback() {
+    let message = MessageState {
+        embeds: vec![EmbedInfo {
+            kind: Some("video".to_owned()),
+            video_url: Some("https://cdn.example.com/video.mp4".to_owned()),
+            video_proxy_url: Some("https://media.discordapp.net/external/video.mp4".to_owned()),
+            video_width: Some(1920),
+            video_height: Some(1080),
+            ..EmbedInfo::test()
+        }],
+        ..MessageState::default()
+    };
+
+    let previews = message.inline_previews();
+
+    assert_eq!(previews.len(), 1);
+    assert_eq!(previews[0].filename, "embed-video");
+    assert_eq!(
+        previews[0].url,
+        "https://media.discordapp.net/external/video.mp4"
+    );
+    assert_eq!(previews[0].width, Some(1920));
+    assert_eq!(previews[0].height, Some(1080));
+    assert!(previews[0].proxy_preview_only);
+    assert!(previews[0].show_play_marker);
+}
+
+#[test]
+fn components_v2_media_accepts_received_animation_flag_variants() {
+    for flags in [1, 1 << 5] {
+        let message = MessageState {
+            flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+            components: vec![MessageComponentInfo::MediaGallery {
+                items: vec![ComponentMediaItemInfo {
+                    media: ComponentMediaInfo {
+                        url: "https://example.com/animated.webp".to_owned(),
+                        content_type: Some("image/webp".to_owned()),
+                        flags,
+                        ..ComponentMediaInfo::default()
+                    },
+                    description: None,
+                    spoiler: false,
+                }],
+            }],
+            ..MessageState::default()
+        };
+
+        let previews = message.inline_previews();
+
+        assert_eq!(previews.len(), 1);
+        assert!(previews[0].animated, "flags={flags}");
+    }
+}
+
+#[test]
+fn components_v2_hides_attachments_that_are_not_exposed_by_components() {
+    let message = MessageState {
+        flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+        attachments: vec![image_attachment(1)],
+        components: vec![MessageComponentInfo::TextDisplay {
+            content: "Only this component is visible".to_owned(),
+        }],
+        ..MessageState::default()
+    };
+
+    assert!(message.inline_previews().is_empty());
+    assert!(message.attachments_in_display_order().next().is_none());
+}
+
+#[test]
+fn spoiler_and_sensitive_media_remain_visible_in_inline_previews() {
+    let mut attachment = image_attachment(1);
+    attachment.filename = "SPOILER_image-1.png".to_owned();
+    attachment.flags = 1 << 3;
+    let attachment_message = MessageState {
+        attachments: vec![attachment],
+        ..MessageState::default()
+    };
+
+    let embed_message = MessageState {
+        embeds: vec![EmbedInfo {
+            flags: 1 << 4,
+            image_url: Some("https://example.com/sensitive.png".to_owned()),
+            ..EmbedInfo::test()
+        }],
+        ..MessageState::default()
+    };
+
+    let component_message = MessageState {
+        flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+        components: vec![MessageComponentInfo::Container {
+            components: vec![MessageComponentInfo::MediaGallery {
+                items: vec![ComponentMediaItemInfo {
+                    media: ComponentMediaInfo {
+                        url: "https://example.com/sensitive.png".to_owned(),
+                        content_type: Some("image/png".to_owned()),
+                        flags: 1 << 6,
+                        ..ComponentMediaInfo::default()
+                    },
+                    description: None,
+                    spoiler: true,
+                }],
+            }],
+            accent_color: None,
+            spoiler: true,
+        }],
+        ..MessageState::default()
+    };
+
+    assert!(
+        attachment_message.attachments[0]
+            .inline_preview_url()
+            .is_some()
+    );
+    for (label, message) in [
+        ("attachment", attachment_message),
+        ("embed", embed_message),
+        ("component", component_message),
+    ] {
+        assert_eq!(message.inline_previews().len(), 1, "{label}");
+    }
+}
+
+#[test]
+fn image_preview_targets_preserve_non_giphy_gifv_thumbnail_animation() {
+    let mut state = state_with_image_messages_and_display_options(
+        1,
+        &[],
+        DisplayOptions {
+            image_preview_quality: ImagePreviewQualityPreset::High,
+            ..DisplayOptions::default()
+        },
+    );
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(2),
+            content: Some("https://klipy.com/gifs/sleep-l0T".to_owned()),
+            embeds: vec![EmbedInfo {
+                url: Some("https://klipy.com/gifs/sleep-l0T".to_owned()),
+                thumbnail_url: Some("https://static.klipy.com/media/thumbnail.webp".to_owned()),
+                thumbnail_proxy_url: Some(
+                    "https://images-ext-1.discordapp.net/external/cache/https/static.klipy.com/media/thumbnail.webp"
+                        .to_owned(),
+                ),
+                thumbnail_width: Some(498),
+                thumbnail_height: Some(279),
+                gifv_image_url: Some(
+                    "https://static.klipy.com/media/thumbnail.webp".to_owned(),
+                ),
+                gifv_image_proxy_url: Some(
+                    "https://images-ext-1.discordapp.net/external/cache/https/static.klipy.com/media/thumbnail.webp"
+                        .to_owned(),
+                ),
+                video_url: Some("https://static.klipy.com/media/video.mp4".to_owned()),
+                ..EmbedInfo::test()
+            }],
+            ..guild_message_create_fixture()
+        },
+    );
+
+    let target = visible_image_preview_targets(&state, layout(8))
+        .into_iter()
+        .next()
+        .expect("gifv thumbnail should produce an inline preview");
+
+    assert_eq!(
+        target.url,
+        concat!(
+            "https://images-ext-1.discordapp.net/external/cache/https/static.klipy.com/media/thumbnail.webp",
+            "?format=webp&animated=true&quality=lossless&width=498&height=279"
+        )
+    );
+    assert_eq!(target.filename, "embed-gifv");
+    assert!(!target.show_play_marker);
+}
+
+#[test]
 fn image_preview_targets_do_not_mark_plain_image_embed_thumbnail_as_playable() {
     let mut state = state_with_image_messages(1, &[]);
     push_media_message(
@@ -769,11 +974,15 @@ fn avatar_protocol_key_tracks_render_clipping() {
     );
     assert_ne!(
         AvatarProtocolKey::message_avatar(&full, false),
-        AvatarProtocolKey::profile_popup(false)
+        AvatarProtocolKey::profile_popup(PROFILE_POPUP_AVATAR_HEIGHT, 0, false)
     );
     assert_ne!(
         AvatarProtocolKey::message_avatar(&full, false),
         AvatarProtocolKey::message_avatar(&full, true)
+    );
+    assert_ne!(
+        AvatarProtocolKey::profile_popup(PROFILE_POPUP_AVATAR_HEIGHT, 0, false),
+        AvatarProtocolKey::profile_popup(PROFILE_POPUP_AVATAR_HEIGHT - 1, 1, false)
     );
 }
 
@@ -1031,6 +1240,56 @@ fn image_preview_targets_include_forwarded_image_attachments() {
 
     assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
     assert_eq!(targets[0].url, "https://cdn.discordapp.com/image-2.png");
+}
+
+#[test]
+fn image_preview_targets_include_guild_stickers() {
+    let mut state = state_with_image_messages(0, &[]);
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some(String::new()),
+            stickers: vec![StickerInfo::new(Id::new(11), "Laugh", StickerFormat::Png)],
+            ..guild_message_create_fixture()
+        },
+    );
+
+    let targets = visible_image_preview_targets(&state, layout(12));
+
+    assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    assert_eq!(
+        targets[0].url,
+        "https://media.discordapp.net/stickers/11.png?size=160&passthrough=false"
+    );
+    assert_eq!(targets[0].filename, "Laugh");
+}
+
+#[test]
+fn image_preview_targets_include_lottie_stickers() {
+    let mut state = state_with_image_messages(0, &[]);
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some(String::new()),
+            stickers: vec![StickerInfo::new(
+                Id::new(12),
+                "Wumpus",
+                StickerFormat::Lottie,
+            )],
+            ..guild_message_create_fixture()
+        },
+    );
+
+    let targets = visible_image_preview_targets(&state, layout(12));
+
+    assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
+    assert_eq!(
+        targets[0].url,
+        "https://cdn.discordapp.com/stickers/12.json"
+    );
+    assert_eq!(targets[0].filename, "Wumpus");
 }
 
 #[test]
@@ -1559,12 +1818,13 @@ fn media_decoder_preserves_and_plays_gif_and_webp_animation_frames() {
     let gif_20_ms = encoded_two_frame_gif(20);
     let gif_30_ms = encoded_two_frame_gif(30);
     let gif_40_ms = encoded_two_frame_gif(40);
-    let cases: [(&str, &[u8]); 5] = [
+    let cases: [(&str, &[u8]); 6] = [
         ("10 ms GIF", &gif_10_ms),
         ("20 ms GIF", &gif_20_ms),
         ("30 ms GIF", &gif_30_ms),
         ("40 ms GIF", &gif_40_ms),
         ("WebP", include_bytes!("testdata/two-frame.webp")),
+        ("APNG", include_bytes!("testdata/two-frame.apng")),
     ];
 
     for (label, bytes) in cases {
@@ -1606,6 +1866,52 @@ fn media_decoder_preserves_and_plays_gif_and_webp_animation_frames() {
         Err(error) => error,
     };
     assert!(error.starts_with("decode failed at animation frame 2:"));
+}
+
+#[test]
+fn media_decoder_rasterizes_and_plays_lottie_animation_frames() {
+    let mut image = decode_media_image_bytes(include_bytes!("testdata/moving-square-lottie.json"))
+        .expect("Lottie animation should decode");
+
+    assert_eq!(image.frame_count(), 20);
+    assert!(image.is_animated());
+    assert_eq!(image.retained_bytes(), 16 * 16 * 4 * 20);
+
+    let first_frame = image.current_frame().to_rgba8();
+    let last_frame = image.frame_shared(image.frame_count() - 1).to_rgba8();
+    assert_ne!(first_frame, last_frame);
+
+    let started_at = Instant::now();
+    image.start_animation(started_at);
+    let first_deadline = image
+        .next_frame_deadline()
+        .expect("visible Lottie animation should schedule its next frame");
+    assert!(image.advance_frame(first_deadline));
+    assert_eq!(image.current_frame_index(), 1);
+}
+
+#[test]
+fn media_decoder_rejects_invalid_lottie_documents() {
+    let mut oversized = vec![b' '; MAX_LOTTIE_JSON_BYTES + 1];
+    oversized[0] = b'{';
+    let cases = [
+        ("malformed", br#"{"v":"5.7""#.as_slice()),
+        ("oversized", oversized.as_slice()),
+    ];
+
+    for (label, bytes) in cases {
+        let error = decode_media_image_bytes(bytes)
+            .err()
+            .unwrap_or_else(|| panic!("{label} Lottie document should fail"));
+        assert!(error.starts_with("decode failed:"), "{label}: {error}");
+    }
+}
+
+#[test]
+fn media_decoder_keeps_static_png_still() {
+    let image = decode_media_image_bytes(&encoded_png(2, 2)).expect("static PNG should decode");
+    assert!(!image.is_animated());
+    assert_eq!(image.frame_count(), 1);
 }
 
 #[test]
@@ -2615,6 +2921,7 @@ fn image_preview_target(id: u64) -> ImagePreviewTarget {
         thread_card: false,
         message_index: 0,
         preview_index: 0,
+        body_line_index: None,
         preview_x_offset_columns: 0,
         preview_y_offset_rows: 0,
         preview_width: 16,

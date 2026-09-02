@@ -16,9 +16,10 @@ use unicode_width::UnicodeWidthStr;
 use super::state::{DisplayOptionGauge, MemberEntry};
 use super::{
     message::format::{
-        MessageContentLine, ReactionLayout, embed_color,
+        MessageContentLine, ReactionLayout, WrappedTextLine, embed_color,
         format_message_content_sections_with_loaded_custom_emoji_urls, format_message_relative_age,
         lay_out_reaction_chips_with_custom_emoji_images, reaction_line_spans, wrap_text_lines,
+        wrap_text_with_metadata,
     },
     message::layout::MessageViewportPlan,
     state::{
@@ -29,11 +30,11 @@ use super::{
         SelectablePopupSnapshot, SelectablePopupTarget, ThreadActionItem, apply_discord_foreground,
         normal_text_style, presence_marker, presence_style,
     },
-    text::{EmojiImageSize, truncate_display_width},
+    text::{EmojiImageSize, sanitize_for_display_width, truncate_display_width},
 };
 use crate::discord::{
     ActivityInfo, ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus,
-    MessageState, PresenceStatus, ReactionInfo, UserProfileInfo, is_thread_kind,
+    MessageState, PresenceStatus, ReactionInfo, RoleState, UserProfileInfo, is_thread_kind,
 };
 
 pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_HEIGHT: u16 = 6;
@@ -72,6 +73,8 @@ use self::panes::{
     mention_picker_lines_for_test, primary_activity_summary, render_composer,
     verification_composer_text,
 };
+#[cfg(test)]
+use self::popups::user_profile_popup_text;
 use self::popups::{
     active_selectable_popup_layout, forum_post_composer_metrics, forum_post_composer_popup_area,
     keymap_popup_text_area, keymap_popup_total_lines, popup_form_areas, render_attachment_viewer,
@@ -87,8 +90,7 @@ use self::popups::{
     render_thread_action_menu, render_thread_delete_confirmation, render_thread_edit,
     render_thread_edit_tag_picker, render_toast, render_user_profile_popup,
     render_voice_participant_audio_popup, thread_edit_metrics, thread_edit_popup_area,
-    user_profile_popup_has_avatar, user_profile_popup_selected_picker_line,
-    user_profile_popup_text_geometry, user_profile_popup_total_lines,
+    user_profile_popup_has_avatar, user_profile_popup_metrics, user_profile_popup_text_geometry,
 };
 pub(crate) use self::types::MouseTarget;
 pub use self::types::{
@@ -126,7 +128,7 @@ use self::{
 };
 use super::theme;
 
-pub(in crate::tui) use self::popups::user_profile_popup_area;
+pub(in crate::tui) use self::popups::user_profile_popup_avatar_viewport;
 #[cfg(test)]
 pub(in crate::tui::ui) use self::popups::{downloads_popup_area, downloads_popup_lines};
 pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
@@ -168,18 +170,22 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
 
     state.set_reaction_users_document_view_height(reaction_users_visible_line_count(area));
     if state.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
-        // The popup body shrinks when the avatar slot is in use, so use
-        // the same has-avatar predicate the renderer uses to keep the
-        // total-line / view-height pair consistent with what gets drawn.
+        // Identity rows reserve avatar columns while the rest of the document
+        // keeps the full width. Use the renderer's predicate so metrics and
+        // avatar clipping follow the same layout.
         let has_avatar = user_profile_popup_has_avatar(
             area,
+            state,
             state.show_avatars() && state.user_profile_popup_has_avatar_preview(),
         );
-        let (text_width, text_height) = user_profile_popup_text_geometry(area, has_avatar);
-        let total_lines = user_profile_popup_total_lines(state, text_width);
+        let (text_width, text_height) = user_profile_popup_text_geometry(area, state);
+        let metrics = user_profile_popup_metrics(state, text_width, has_avatar);
         state.set_user_profile_popup_view_height(text_height as usize);
-        state.set_user_profile_popup_total_lines(total_lines);
-        if let Some(row) = user_profile_popup_selected_picker_line(state, text_width) {
+        state.set_user_profile_popup_total_lines(metrics.total_lines);
+        if let Some(rows) = metrics.reveal_rows {
+            state.reveal_user_profile_popup_rows(rows.start, rows.end);
+        }
+        if let Some(row) = metrics.selected_picker_line {
             state.reveal_user_profile_popup_row(row);
         }
     }
@@ -431,18 +437,23 @@ pub(in crate::tui) fn avatar_gutter_width(show_avatars: bool) -> u16 {
 }
 
 fn selection_marker(selected: bool) -> Span<'static> {
-    selection_marker_with("▸ ", selected)
+    selection_marker_with_style(
+        selected,
+        theme::current().style(theme::HighlightGroup::SelectionMarker),
+    )
 }
 
-fn selection_marker_with(symbol: &'static str, selected: bool) -> Span<'static> {
+fn selection_marker_with_style(selected: bool, style: Style) -> Span<'static> {
+    let symbol = theme::current().selection_marker();
     if selected {
-        Span::styled(
-            symbol,
-            theme::current().style(theme::HighlightGroup::SelectionMarker),
-        )
+        Span::styled(symbol, style)
     } else {
         Span::raw(" ".repeat(symbol.width()))
     }
+}
+
+fn selection_marker_width() -> usize {
+    theme::current().selection_marker().width()
 }
 
 fn active_text_style(active: bool, style: Style) -> Style {

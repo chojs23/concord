@@ -20,9 +20,10 @@ Open an issue at <https://github.com/chojs23/concord/issues> with:
   Sixel, Halfblocks).
 - Concord version
 - Steps to reproduce, expected behavior, actual behavior.
-- Relevant log excerpts. You can enable file logging via the in-app diagnostics
-  popup; **redact tokens, passwords, MFA codes, QR tickets, and any raw auth
-  response bodies before sharing logs**.
+- Relevant log excerpts. To enable detailed file logging, start Concord with
+  `CONCORD_DEBUG=1 concord`. Logs are written to `concord.log` in the Concord
+  config directory. **Redact tokens, passwords, MFA codes, QR tickets, and any
+  raw auth response bodies before sharing logs**.
 
 ## Development setup
 

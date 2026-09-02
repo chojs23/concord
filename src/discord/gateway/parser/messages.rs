@@ -2,17 +2,18 @@ use serde_json::Value;
 
 use crate::{
     discord::{
-        AttachmentInfo, AttachmentUpdate, EmbedFieldInfo, EmbedInfo, MentionInfo, MessageInfo,
-        MessageInteractionInfo, MessageKind, MessageReferenceInfo, MessageSnapshotInfo,
-        MessageUpdateDispatchInfo, PollAnswerInfo, PollInfo, ReactionEmoji, ReactionInfo,
-        ReplyInfo,
+        AttachmentInfo, AttachmentUpdate, ComponentMediaInfo, ComponentMediaItemInfo,
+        ComponentSelectKind, ComponentSelectOptionInfo, EmbedFieldInfo, EmbedInfo, MentionInfo,
+        MessageComponentInfo, MessageInfo, MessageInteractionInfo, MessageKind,
+        MessageReferenceInfo, MessageSnapshotInfo, MessageUpdateDispatchInfo, PollAnswerInfo,
+        PollInfo, ReactionEmoji, ReactionInfo, ReplyInfo, StickerFormat, StickerInfo,
         avatar::user_avatar_url,
         events::AppEvent,
         ids::{
             Id,
             marker::{
                 AttachmentMarker, ChannelMarker, EmojiMarker, GuildMarker, MessageMarker,
-                RoleMarker, UserMarker, WebhookMarker,
+                RoleMarker, StickerMarker, UserMarker, WebhookMarker,
             },
         },
     },
@@ -56,7 +57,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         .and_then(Value::as_str)
         .map(str::to_owned);
     let interaction = parse_message_interaction_info(data);
-    let sticker_names = parse_sticker_names(data.get("sticker_items"));
+    let stickers = parse_sticker_items(data.get("sticker_items"));
     let mentions = parse_mentions(data.get("mentions"));
     let mention_everyone = data
         .get("mention_everyone")
@@ -66,6 +67,7 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
     let flags = data.get("flags").and_then(Value::as_u64).unwrap_or(0);
     let attachments = parse_attachments(data.get("attachments"));
     let embeds = parse_embeds(data.get("embeds"));
+    let components = parse_message_components(data.get("components"));
     let reply = data.get("referenced_message").and_then(parse_reply_info);
     let poll = data
         .get("poll")
@@ -103,13 +105,14 @@ pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
         pinned: data.get("pinned").and_then(Value::as_bool).unwrap_or(false),
         reactions: parse_reactions(data.get("reactions")),
         content,
-        sticker_names,
+        stickers,
         mentions,
         mention_everyone,
         mention_roles,
         flags,
         attachments,
         embeds,
+        components,
         forwarded_snapshots,
         edited_timestamp,
     })
@@ -162,16 +165,212 @@ pub(super) fn parse_attachments(value: Option<&Value>) -> Vec<AttachmentInfo> {
         .unwrap_or_default()
 }
 
-pub(super) fn parse_sticker_names(value: Option<&Value>) -> Vec<String> {
+pub(super) fn parse_sticker_items(value: Option<&Value>) -> Vec<StickerInfo> {
     value
         .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_owned))
-                .collect()
-        })
+        .map(|items| items.iter().filter_map(parse_sticker_item).collect())
         .unwrap_or_default()
+}
+
+fn parse_message_components(value: Option<&Value>) -> Vec<MessageComponentInfo> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(parse_message_component).collect())
+        .unwrap_or_default()
+}
+
+fn parse_message_component(value: &Value) -> MessageComponentInfo {
+    let kind = value.get("type").and_then(Value::as_u64).unwrap_or(0);
+    match kind {
+        1 => MessageComponentInfo::ActionRow {
+            components: parse_message_components(value.get("components")),
+        },
+        2 => MessageComponentInfo::Button {
+            label: value
+                .get("label")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            emoji: value.get("emoji").and_then(parse_component_emoji),
+            url: value.get("url").and_then(Value::as_str).map(str::to_owned),
+            disabled: value
+                .get("disabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        },
+        3 | 5..=8 => MessageComponentInfo::Select {
+            kind: match kind {
+                5 => ComponentSelectKind::User,
+                6 => ComponentSelectKind::Role,
+                7 => ComponentSelectKind::Mentionable,
+                8 => ComponentSelectKind::Channel,
+                _ => ComponentSelectKind::String,
+            },
+            placeholder: value
+                .get("placeholder")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            options: value
+                .get("options")
+                .and_then(Value::as_array)
+                .map(|options| {
+                    options
+                        .iter()
+                        .filter_map(parse_component_select_option)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            disabled: value
+                .get("disabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        },
+        9 => MessageComponentInfo::Section {
+            components: parse_message_components(value.get("components")),
+            accessory: value
+                .get("accessory")
+                .map(parse_message_component)
+                .map(Box::new),
+        },
+        10 => MessageComponentInfo::TextDisplay {
+            content: value
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        },
+        11 => parse_component_media(value.get("media"))
+            .map(|media| MessageComponentInfo::Thumbnail {
+                media,
+                description: value
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                spoiler: value
+                    .get("spoiler")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+            .unwrap_or(MessageComponentInfo::Unknown { kind }),
+        12 => MessageComponentInfo::MediaGallery {
+            items: value
+                .get("items")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(parse_component_media_item)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+        13 => parse_component_media(value.get("file"))
+            .map(|file| MessageComponentInfo::File {
+                name: value.get("name").and_then(Value::as_str).map(str::to_owned),
+                size: value.get("size").and_then(Value::as_u64),
+                spoiler: value
+                    .get("spoiler")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                file,
+            })
+            .unwrap_or(MessageComponentInfo::Unknown { kind }),
+        14 => MessageComponentInfo::Separator {
+            divider: value
+                .get("divider")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            spacing: value
+                .get("spacing")
+                .and_then(Value::as_u64)
+                .and_then(|spacing| u8::try_from(spacing).ok())
+                .unwrap_or(1),
+        },
+        17 => MessageComponentInfo::Container {
+            components: parse_message_components(value.get("components")),
+            accent_color: value
+                .get("accent_color")
+                .and_then(Value::as_u64)
+                .and_then(|color| u32::try_from(color).ok()),
+            spoiler: value
+                .get("spoiler")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        },
+        _ => MessageComponentInfo::Unknown { kind },
+    }
+}
+
+fn parse_component_media(value: Option<&Value>) -> Option<ComponentMediaInfo> {
+    let value = value?;
+    Some(ComponentMediaInfo {
+        url: value.get("url")?.as_str()?.to_owned(),
+        proxy_url: value
+            .get("proxy_url")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        content_type: value
+            .get("content_type")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        width: value.get("width").and_then(Value::as_u64),
+        height: value.get("height").and_then(Value::as_u64),
+        flags: value
+            .get("flags")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+    })
+}
+
+fn parse_component_media_item(value: &Value) -> Option<ComponentMediaItemInfo> {
+    Some(ComponentMediaItemInfo {
+        media: parse_component_media(value.get("media"))?,
+        description: value
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        spoiler: value
+            .get("spoiler")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn parse_component_select_option(value: &Value) -> Option<ComponentSelectOptionInfo> {
+    Some(ComponentSelectOptionInfo {
+        label: value.get("label")?.as_str()?.to_owned(),
+        description: value
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        emoji: value.get("emoji").and_then(parse_component_emoji),
+        selected: value
+            .get("default")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn parse_component_emoji(value: &Value) -> Option<String> {
+    let name = value.get("name").and_then(Value::as_str)?;
+    match value.get("id").and_then(parse_id::<EmojiMarker>) {
+        Some(id)
+            if value
+                .get("animated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false) =>
+        {
+            Some(format!("<a:{name}:{id}>"))
+        }
+        Some(id) => Some(format!("<:{name}:{id}>")),
+        None => Some(name.to_owned()),
+    }
+}
+
+fn parse_sticker_item(value: &Value) -> Option<StickerInfo> {
+    let id = parse_id::<StickerMarker>(value.get("id")?)?;
+    let name = value.get("name").and_then(Value::as_str)?.to_owned();
+    let format = StickerFormat::from_discord(value.get("format_type").and_then(Value::as_u64));
+    Some(StickerInfo::new(id, name, format))
 }
 
 pub(super) fn parse_embeds(value: Option<&Value>) -> Vec<EmbedInfo> {
@@ -192,17 +391,23 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
         .and_then(Value::as_array)
         .map(|fields| fields.iter().filter_map(parse_embed_field).collect())
         .unwrap_or_default();
-    let video_url = value
-        .get("video")
-        .and_then(|video| video.get("url"))
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let gifv_image_url = if embed_type.as_deref() == Some("gifv") {
-        video_url.as_deref().and_then(giphy_gifv_image_url)
+    let thumbnail = parse_embed_media(value.get("thumbnail"));
+    let image = parse_embed_media(value.get("image"));
+    let video = parse_embed_media(value.get("video"));
+    let (gifv_image_url, gifv_image_proxy_url) = if embed_type.as_deref() == Some("gifv") {
+        match video.url.as_deref().and_then(giphy_gifv_image_url) {
+            Some(url) => (Some(url), None),
+            None => (thumbnail.url.clone(), thumbnail.proxy_url.clone()),
+        }
     } else {
-        None
+        (None, None)
     };
     let embed = EmbedInfo {
+        kind: embed_type,
+        flags: value
+            .get("flags")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
         color: value
             .get("color")
             .and_then(Value::as_u64)
@@ -212,9 +417,19 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
             .and_then(|provider| provider.get("name"))
             .and_then(Value::as_str)
             .map(str::to_owned),
+        provider_url: value
+            .get("provider")
+            .and_then(|provider| provider.get("url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         author_name: value
             .get("author")
             .and_then(|author| author.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        author_url: value
+            .get("author")
+            .and_then(|author| author.get("url"))
             .and_then(Value::as_str)
             .map(str::to_owned),
         title: value
@@ -236,57 +451,70 @@ fn parse_embed(value: &Value) -> Option<EmbedInfo> {
             .and_then(Value::as_str)
             .map(str::to_owned),
         url: value.get("url").and_then(Value::as_str).map(str::to_owned),
-        thumbnail_url: value
-            .get("thumbnail")
-            .and_then(|thumbnail| thumbnail.get("url"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        thumbnail_proxy_url: value
-            .get("thumbnail")
-            .and_then(|thumbnail| thumbnail.get("proxy_url"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        thumbnail_width: value
-            .get("thumbnail")
-            .and_then(|thumbnail| thumbnail.get("width"))
-            .and_then(Value::as_u64),
-        thumbnail_height: value
-            .get("thumbnail")
-            .and_then(|thumbnail| thumbnail.get("height"))
-            .and_then(Value::as_u64),
-        thumbnail_flags: value
-            .get("thumbnail")
-            .and_then(|thumbnail| thumbnail.get("flags"))
-            .and_then(Value::as_u64)
-            .unwrap_or_default(),
-        image_url: value
-            .get("image")
-            .and_then(|image| image.get("url"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        image_proxy_url: value
-            .get("image")
-            .and_then(|image| image.get("proxy_url"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        image_width: value
-            .get("image")
-            .and_then(|image| image.get("width"))
-            .and_then(Value::as_u64),
-        image_height: value
-            .get("image")
-            .and_then(|image| image.get("height"))
-            .and_then(Value::as_u64),
-        image_flags: value
-            .get("image")
-            .and_then(|image| image.get("flags"))
-            .and_then(Value::as_u64)
-            .unwrap_or_default(),
+        thumbnail_url: thumbnail.url,
+        thumbnail_proxy_url: thumbnail.proxy_url,
+        thumbnail_width: thumbnail.width,
+        thumbnail_height: thumbnail.height,
+        thumbnail_content_type: thumbnail.content_type,
+        thumbnail_description: thumbnail.description,
+        thumbnail_flags: thumbnail.flags,
+        image_url: image.url,
+        image_proxy_url: image.proxy_url,
+        image_width: image.width,
+        image_height: image.height,
+        image_content_type: image.content_type,
+        image_description: image.description,
+        image_flags: image.flags,
         gifv_image_url,
-        video_url,
+        gifv_image_proxy_url,
+        video_url: video.url,
+        video_proxy_url: video.proxy_url,
+        video_width: video.width,
+        video_height: video.height,
+        video_content_type: video.content_type,
+        video_description: video.description,
+        video_flags: video.flags,
     };
 
     embed_has_renderable_content(&embed).then_some(embed)
+}
+
+#[derive(Default)]
+struct ParsedEmbedMedia {
+    url: Option<String>,
+    proxy_url: Option<String>,
+    width: Option<u64>,
+    height: Option<u64>,
+    content_type: Option<String>,
+    description: Option<String>,
+    flags: u64,
+}
+
+fn parse_embed_media(value: Option<&Value>) -> ParsedEmbedMedia {
+    let Some(value) = value else {
+        return ParsedEmbedMedia::default();
+    };
+    ParsedEmbedMedia {
+        url: value.get("url").and_then(Value::as_str).map(str::to_owned),
+        proxy_url: value
+            .get("proxy_url")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        width: value.get("width").and_then(Value::as_u64),
+        height: value.get("height").and_then(Value::as_u64),
+        content_type: value
+            .get("content_type")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        description: value
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        flags: value
+            .get("flags")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+    }
 }
 
 /// Giphy publishes equivalent MP4 and animated WebP renditions at the same
@@ -311,12 +539,18 @@ fn parse_embed_field(value: &Value) -> Option<EmbedFieldInfo> {
     Some(EmbedFieldInfo {
         name: value.get("name")?.as_str()?.to_owned(),
         value: value.get("value")?.as_str()?.to_owned(),
+        inline: value
+            .get("inline")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
 fn embed_has_renderable_content(embed: &EmbedInfo) -> bool {
     embed.provider_name.is_some()
+        || embed.provider_url.is_some()
         || embed.author_name.is_some()
+        || embed.author_url.is_some()
         || embed.title.is_some()
         || embed.description.is_some()
         || embed.timestamp.is_some()
@@ -326,6 +560,10 @@ fn embed_has_renderable_content(embed: &EmbedInfo) -> bool {
         || embed.thumbnail_url.is_some()
         || embed.image_url.is_some()
         || embed.video_url.is_some()
+        || embed.video_proxy_url.is_some()
+        || embed.thumbnail_description.is_some()
+        || embed.image_description.is_some()
+        || embed.video_description.is_some()
 }
 
 fn parse_message_snapshots(
@@ -356,14 +594,14 @@ fn parse_reply_info(value: &Value) -> Option<ReplyInfo> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    let sticker_names = parse_sticker_names(value.get("sticker_items"));
+    let stickers = parse_sticker_items(value.get("sticker_items"));
     let mentions = parse_mentions(value.get("mentions"));
 
     Some(ReplyInfo {
         author_id,
         author: author_name,
         content,
-        sticker_names,
+        stickers,
         mentions,
     })
 }
@@ -623,9 +861,14 @@ fn parse_message_snapshot(
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let sticker_names = parse_sticker_names(message.get("sticker_items"));
+    let stickers = parse_sticker_items(message.get("sticker_items"));
+    let flags = message
+        .get("flags")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
     let attachments = parse_attachments(message.get("attachments"));
     let embeds = parse_embeds(message.get("embeds"));
+    let components = parse_message_components(message.get("components"));
     let mentions = parse_mentions(message.get("mentions"));
     let timestamp = message
         .get("timestamp")
@@ -633,18 +876,21 @@ fn parse_message_snapshot(
         .map(str::to_owned);
 
     if content.as_deref().is_some_and(|value| !value.is_empty())
-        || !sticker_names.is_empty()
+        || !stickers.is_empty()
         || !attachments.is_empty()
         || !embeds.is_empty()
+        || !components.is_empty()
         || source_channel_id.is_some()
         || timestamp.is_some()
     {
         Some(MessageSnapshotInfo {
             content,
-            sticker_names,
+            stickers,
             mentions,
+            flags,
             attachments,
             embeds,
+            components,
             source_channel_id,
             timestamp,
         })
@@ -704,9 +950,9 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
         .get("content")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let sticker_names = data
+    let stickers = data
         .get("sticker_items")
-        .map(|value| parse_sticker_names(Some(value)));
+        .map(|value| parse_sticker_items(Some(value)));
     let attachments = if data.get("attachments").is_some() {
         AttachmentUpdate::Replace(parse_attachments(data.get("attachments")))
     } else {
@@ -717,6 +963,9 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
         .and_then(parse_poll_info)
         .or_else(|| parse_poll_result_embed(data.get("embeds")));
     let embeds = data.get("embeds").map(|value| parse_embeds(Some(value)));
+    let components = data
+        .get("components")
+        .map(|value| parse_message_components(Some(value)));
     let mentions = data
         .get("mentions")
         .map(|value| parse_mentions(Some(value)));
@@ -738,7 +987,7 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
             fields: crate::discord::MessageUpdateEventFields {
                 poll,
                 content,
-                sticker_names,
+                stickers,
                 mentions,
                 mention_everyone,
                 mention_roles,
@@ -746,6 +995,7 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
                 pinned,
                 attachments,
                 embeds,
+                components,
                 edited_timestamp,
             },
             extra_fields: extra_fields(
@@ -764,6 +1014,7 @@ pub(super) fn parse_message_update(data: &Value) -> Option<AppEvent> {
                     "pinned",
                     "attachments",
                     "embeds",
+                    "components",
                     "edited_timestamp",
                 ],
             ),

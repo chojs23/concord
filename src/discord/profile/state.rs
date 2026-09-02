@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
-use crate::discord::UserProfileInfo;
 use crate::discord::ids::{
     Id,
     marker::{GuildMarker, RoleMarker, UserMarker},
 };
+use crate::discord::member::role_display_order;
+use crate::discord::{RoleState, UserProfileInfo};
 
 use crate::discord::state::DiscordState;
 use crate::discord::state::{
@@ -50,6 +51,25 @@ impl DiscordState {
 
     pub fn current_user(&self) -> Option<&str> {
         self.session.current_user.as_deref()
+    }
+
+    /// Resolves the role IDs returned with a guild-scoped profile against the
+    /// guild role cache. Discord omits the base guild role from its own profile
+    /// UI, so the role whose ID matches the guild ID is not returned here.
+    pub(crate) fn user_profile_roles(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<Vec<&RoleState>> {
+        let role_ids = self.profiles.profile_role_ids.get(&(guild_id, user_id))?;
+        let role_map = self.guild_details.roles.get(&guild_id)?;
+        let mut roles = role_ids
+            .iter()
+            .filter(|role_id| role_id.get() != guild_id.get())
+            .filter_map(|role_id| role_map.get(role_id))
+            .collect::<Vec<_>>();
+        roles.sort_by(|left, right| role_display_order(left, right));
+        Some(roles)
     }
 
     pub(in crate::discord) fn remember_profile_cache_key(&mut self, key: UserProfileCacheKey) {

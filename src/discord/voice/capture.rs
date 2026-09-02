@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc::{
             Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError, TrySendError,
             sync_channel,
@@ -59,6 +59,7 @@ pub(super) const STREAM_TRANSPORT_BITRATE: u32 = 8_000_000;
 // Explicit feedback can still request immediate recovery frames, while this
 // fallback period bounds recovery latency without producing an IDR every second.
 const STREAM_INTRA_FRAME_PERIOD_FRAMES: u32 = STREAM_CAPTURE_FPS * 2;
+const MAX_STREAM_INTRA_FRAME_PERIOD_FRAMES: u32 = u16::MAX as u32;
 const STREAM_CAPTURE_FRAME_INTERVAL: Duration =
     Duration::from_nanos(1_000_000_000 / STREAM_CAPTURE_FPS as u64);
 const STREAM_CAPTURE_STATS_INTERVAL: Duration = Duration::from_secs(5);
@@ -77,9 +78,15 @@ pub(super) struct EncodedStreamFrame {
 }
 
 pub(super) struct StreamCaptureHandle {
+    control: StreamCaptureControl,
+    worker: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone)]
+struct StreamCaptureControl {
     stop: Arc<AtomicBool>,
     force_keyframe: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    keyframe_interval_frames: Arc<AtomicU32>,
 }
 
 pub(super) use super::capture_cancellation::StreamCaptureCancellation;
@@ -623,7 +630,7 @@ impl Drop for StreamCaptureHandle {
             "stream",
             "stream capture handle dropped; signaling the capture worker to stop",
         );
-        self.stop.store(true, Ordering::Release);
+        self.control.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() {
             reap_capture_worker(worker);
         }
@@ -653,11 +660,18 @@ fn reap_capture_worker(worker: JoinHandle<()>) {
 
 impl StreamCaptureHandle {
     pub(super) fn request_keyframe(&self) {
-        self.force_keyframe.store(true, Ordering::Release);
+        self.control.force_keyframe.store(true, Ordering::Release);
+    }
+
+    pub(super) fn set_keyframe_interval(&self, milliseconds: Option<u64>) {
+        self.control.keyframe_interval_frames.store(
+            stream_keyframe_interval_frames(milliseconds),
+            Ordering::Release,
+        );
     }
 
     pub(super) async fn shutdown(mut self) {
-        self.stop.store(true, Ordering::Release);
+        self.control.stop.store(true, Ordering::Release);
         let Some(worker) = self.worker.take() else {
             return;
         };
@@ -709,10 +723,12 @@ pub(super) fn prepare_stream_capture(
     let (preview_frames_tx, preview_frames) = mpsc::channel(1);
     let (errors_tx, errors) = mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = sync_channel(1);
-    let stop = cancellation.flag();
-    let force_keyframe = Arc::new(AtomicBool::new(false));
-    let worker_stop = Arc::clone(&stop);
-    let worker_force_keyframe = Arc::clone(&force_keyframe);
+    let control = StreamCaptureControl {
+        stop: cancellation.flag(),
+        force_keyframe: Arc::new(AtomicBool::new(false)),
+        keyframe_interval_frames: Arc::new(AtomicU32::new(STREAM_INTRA_FRAME_PERIOD_FRAMES)),
+    };
+    let worker_control = control.clone();
     let worker = thread::Builder::new()
         .name("stream-capture".to_owned())
         .spawn(move || {
@@ -721,21 +737,21 @@ pub(super) fn prepare_stream_capture(
                 frames_tx,
                 preview_frames_tx,
                 errors_tx,
-                worker_stop,
-                worker_force_keyframe,
+                worker_control,
                 ready_tx,
             );
         })
         .map_err(|error| format!("stream capture worker spawn failed: {error}"))?;
     let handle = StreamCaptureHandle {
-        stop,
-        force_keyframe,
+        control,
         worker: Some(worker),
     };
 
-    if let Err(error) =
-        wait_for_capture_ready(&ready_rx, &handle.stop, STREAM_CAPTURE_PREPARATION_TIMEOUT)
-    {
+    if let Err(error) = wait_for_capture_ready(
+        &ready_rx,
+        &handle.control.stop,
+        STREAM_CAPTURE_PREPARATION_TIMEOUT,
+    ) {
         logging::debug(
             "stream",
             format!("stream capture preparation failed while waiting for readiness: {error}"),
@@ -781,25 +797,17 @@ fn run_capture_worker(
     frames_tx: mpsc::Sender<Result<EncodedStreamFrame, String>>,
     preview_frames_tx: mpsc::Sender<StreamPreviewFrame>,
     errors_tx: mpsc::UnboundedSender<String>,
-    stop: Arc<AtomicBool>,
-    force_keyframe: Arc<AtomicBool>,
+    control: StreamCaptureControl,
     ready_tx: SyncSender<Result<(), String>>,
 ) {
-    let result = run_capture_loop(
-        &target,
-        &frames_tx,
-        &preview_frames_tx,
-        &stop,
-        &force_keyframe,
-        &ready_tx,
-    );
+    let result = run_capture_loop(&target, &frames_tx, &preview_frames_tx, &control, &ready_tx);
     match result {
         Ok(()) => logging::debug(
             "stream",
             format!(
                 "stream capture worker stopped cleanly: target_kind={:?} cancelled={}",
                 target.kind,
-                stop.load(Ordering::Acquire),
+                control.stop.load(Ordering::Acquire),
             ),
         ),
         Err(error) => {
@@ -808,7 +816,7 @@ fn run_capture_worker(
                 format!(
                     "stream capture worker failed: target_kind={:?} cancelled={} error={error}",
                     target.kind,
-                    stop.load(Ordering::Acquire),
+                    control.stop.load(Ordering::Acquire),
                 ),
             );
             let _ = ready_tx.try_send(Err(error.clone()));
@@ -821,12 +829,11 @@ fn run_capture_loop(
     target: &StreamCaptureTarget,
     frames_tx: &mpsc::Sender<Result<EncodedStreamFrame, String>>,
     preview_frames_tx: &mpsc::Sender<StreamPreviewFrame>,
-    stop: &AtomicBool,
-    force_keyframe: &AtomicBool,
+    control: &StreamCaptureControl,
     ready_tx: &SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
-    let source = resolve_capture_source(target, stop)?;
-    let Some(mut image) = source.wait_for_initial_image(stop)? else {
+    let source = resolve_capture_source(target, &control.stop)?;
+    let Some(mut image) = source.wait_for_initial_image(&control.stop)? else {
         logging::debug(
             "stream",
             "stream capture stopped before receiving an initial image",
@@ -841,7 +848,9 @@ fn run_capture_loop(
             image.image().height(),
         ),
     );
-    let mut encoder = StreamEncoder::new_auto()?;
+    let mut active_keyframe_interval_frames =
+        control.keyframe_interval_frames.load(Ordering::Acquire);
+    let mut encoder = StreamEncoder::new_auto(active_keyframe_interval_frames)?;
     if ready_tx.send(Ok(())).is_err() {
         logging::debug(
             "stream",
@@ -855,7 +864,7 @@ fn run_capture_loop(
     let mut frame_processor = StreamFrameProcessor::new();
     let mut preview_cadence = StreamPreviewCadence::default();
 
-    while !stop.load(Ordering::Acquire) {
+    while !control.stop.load(Ordering::Acquire) {
         let frame_started_at = Instant::now();
 
         let capture_started_at = Instant::now();
@@ -898,8 +907,23 @@ fn run_capture_loop(
             Err(_) => unreachable!("frame reservation only reports queue availability"),
         };
 
+        let requested_keyframe_interval_frames =
+            control.keyframe_interval_frames.load(Ordering::Acquire);
+        let interval_changed =
+            requested_keyframe_interval_frames != active_keyframe_interval_frames;
+        if interval_changed {
+            encoder = StreamEncoder::new_auto(requested_keyframe_interval_frames)?;
+            logging::debug(
+                "stream",
+                format!(
+                    "stream H264 keyframe interval updated: old_frames={active_keyframe_interval_frames} new_frames={requested_keyframe_interval_frames}"
+                ),
+            );
+            active_keyframe_interval_frames = requested_keyframe_interval_frames;
+        }
         let encode_started_at = Instant::now();
-        let force_keyframe = force_keyframe.swap(false, Ordering::AcqRel);
+        let keyframe_requested = control.force_keyframe.swap(false, Ordering::AcqRel);
+        let force_keyframe = interval_changed || keyframe_requested;
         let encoded = encoder.encode(frame_processor.i420_source(), force_keyframe)?;
         let encode_time = encode_started_at.elapsed();
         let (outcome, encoded_bytes) = match encoded {
@@ -962,6 +986,17 @@ fn stream_rtp_timestamp(elapsed: Duration) -> u32 {
     ticks as u32
 }
 
+fn stream_keyframe_interval_frames(milliseconds: Option<u64>) -> u32 {
+    let Some(milliseconds) = milliseconds else {
+        return STREAM_INTRA_FRAME_PERIOD_FRAMES;
+    };
+    let frames = milliseconds
+        .saturating_mul(u64::from(STREAM_CAPTURE_FPS))
+        .div_ceil(1_000)
+        .clamp(1, u64::from(MAX_STREAM_INTRA_FRAME_PERIOD_FRAMES));
+    u32::try_from(frames).expect("clamped keyframe interval fits u32")
+}
+
 fn rate_per_second(count: u64, elapsed: Duration) -> f64 {
     count as f64 / elapsed.as_secs_f64().max(f64::EPSILON)
 }
@@ -988,17 +1023,64 @@ mod tests {
     #[test]
     fn capture_handle_coalesces_keyframe_requests() {
         let mut handle = StreamCaptureHandle {
-            stop: Arc::new(AtomicBool::new(false)),
-            force_keyframe: Arc::new(AtomicBool::new(false)),
+            control: StreamCaptureControl {
+                stop: Arc::new(AtomicBool::new(false)),
+                force_keyframe: Arc::new(AtomicBool::new(false)),
+                keyframe_interval_frames: Arc::new(AtomicU32::new(
+                    STREAM_INTRA_FRAME_PERIOD_FRAMES,
+                )),
+            },
             worker: None,
         };
 
         handle.request_keyframe();
         handle.request_keyframe();
 
-        assert!(handle.force_keyframe.swap(false, Ordering::AcqRel));
-        assert!(!handle.force_keyframe.swap(false, Ordering::AcqRel));
+        assert!(handle.control.force_keyframe.swap(false, Ordering::AcqRel));
+        assert!(!handle.control.force_keyframe.swap(false, Ordering::AcqRel));
         handle.worker = None;
+    }
+
+    #[test]
+    fn discord_keyframe_interval_converts_to_a_safe_frame_count() {
+        for (milliseconds, expected_frames) in [
+            (None, STREAM_INTRA_FRAME_PERIOD_FRAMES),
+            (Some(0), 1),
+            (Some(1), 1),
+            (Some(1_000), 30),
+            (Some(1_001), 31),
+            (Some(u64::MAX), u32::from(u16::MAX)),
+        ] {
+            assert_eq!(
+                stream_keyframe_interval_frames(milliseconds),
+                expected_frames,
+                "milliseconds={milliseconds:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn capture_handle_stores_the_negotiated_keyframe_interval() {
+        let handle = StreamCaptureHandle {
+            control: StreamCaptureControl {
+                stop: Arc::new(AtomicBool::new(false)),
+                force_keyframe: Arc::new(AtomicBool::new(false)),
+                keyframe_interval_frames: Arc::new(AtomicU32::new(
+                    STREAM_INTRA_FRAME_PERIOD_FRAMES,
+                )),
+            },
+            worker: None,
+        };
+
+        handle.set_keyframe_interval(Some(2_500));
+
+        assert_eq!(
+            handle
+                .control
+                .keyframe_interval_frames
+                .load(Ordering::Acquire),
+            75
+        );
     }
 
     #[test]
@@ -1008,8 +1090,13 @@ mod tests {
             let _ = release_rx.recv();
         });
         let handle = StreamCaptureHandle {
-            stop: Arc::new(AtomicBool::new(false)),
-            force_keyframe: Arc::new(AtomicBool::new(false)),
+            control: StreamCaptureControl {
+                stop: Arc::new(AtomicBool::new(false)),
+                force_keyframe: Arc::new(AtomicBool::new(false)),
+                keyframe_interval_frames: Arc::new(AtomicU32::new(
+                    STREAM_INTRA_FRAME_PERIOD_FRAMES,
+                )),
+            },
             worker: Some(worker),
         };
         let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();

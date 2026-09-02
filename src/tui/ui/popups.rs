@@ -265,14 +265,15 @@ pub(super) use options::{options_popup_area, options_popup_list_layout, render_o
 #[cfg(test)]
 pub(super) use polls::poll_vote_picker_lines;
 pub(super) use polls::{poll_vote_picker_popup_area, render_poll_vote_picker};
-pub(in crate::tui) use profile::user_profile_popup_area;
 pub(super) use profile::{
     render_user_profile_popup, user_profile_picker_list_layout, user_profile_popup_has_avatar,
-    user_profile_popup_selected_picker_line, user_profile_popup_text_geometry,
-    user_profile_popup_total_lines,
+    user_profile_popup_metrics, user_profile_popup_text_geometry,
 };
+pub(in crate::tui) use profile::{user_profile_popup_area, user_profile_popup_avatar_viewport};
 #[cfg(test)]
-pub(super) use profile::{user_profile_popup_lines, user_profile_popup_lines_with_activities};
+pub(super) use profile::{
+    user_profile_popup_lines, user_profile_popup_lines_with_activities, user_profile_popup_text,
+};
 #[cfg(test)]
 pub(super) use reactions::{
     emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
@@ -534,8 +535,15 @@ pub(super) struct PopupFormAreas {
 }
 
 pub(super) fn popup_form_areas(popup: Rect) -> PopupFormAreas {
+    popup_form_areas_with_footer_height(popup, 3)
+}
+
+pub(super) fn popup_form_areas_with_footer_height(
+    popup: Rect,
+    footer_height: u16,
+) -> PopupFormAreas {
     let inner = Block::default().borders(Borders::ALL).inner(popup);
-    let footer_height = inner.height.min(3);
+    let footer_height = inner.height.min(footer_height);
     PopupFormAreas {
         content: Rect {
             height: inner.height.saturating_sub(footer_height),
@@ -560,6 +568,16 @@ fn render_popup_form_frame(
     title: &str,
     context: &str,
 ) -> PopupFormAreas {
+    render_popup_form_frame_with_footer_height(frame, popup, title, context, 3)
+}
+
+fn render_popup_form_frame_with_footer_height(
+    frame: &mut Frame,
+    popup: Rect,
+    title: &str,
+    context: &str,
+    footer_height: u16,
+) -> PopupFormAreas {
     clear_area(frame, popup);
     let mut block = modal_block_owned(title.to_owned());
     let required_width = title
@@ -576,7 +594,7 @@ fn render_popup_form_frame(
         );
     }
     frame.render_widget(block, popup);
-    popup_form_areas(popup)
+    popup_form_areas_with_footer_height(popup, footer_height)
 }
 
 /// Renders the always-visible actions shared by create and edit forms. Each
@@ -604,18 +622,16 @@ fn render_popup_form_footer(frame: &mut Frame, area: Rect, actions: PopupFormAct
         return;
     }
 
-    let lines = truncate_popup_lines(
-        vec![
-            popup_button_line_with_style(
-                actions.primary_shortcut,
-                actions.primary_label,
-                actions.primary_active,
-                theme::current().style(theme::HighlightGroup::Strong),
-            ),
-            popup_button_line("c", "Cancel", actions.cancel_active),
-        ],
-        usize::from(inner.width),
-    );
+    let lines = vec![
+        popup_button_line_with_style(
+            actions.primary_shortcut,
+            actions.primary_label,
+            actions.primary_active,
+            theme::current().style(theme::HighlightGroup::Strong),
+        ),
+        popup_button_line("c", "Cancel", actions.cancel_active),
+    ];
+    let lines = truncate_popup_lines(lines, usize::from(inner.width));
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -667,15 +683,11 @@ fn popup_shortcut_help_text(items: &[(&str, &str)]) -> String {
         .join(" · ")
 }
 
-fn popup_button_line(shortcut: &'static str, label: &'static str, active: bool) -> Line<'static> {
+fn popup_button_line(shortcut: &str, label: &'static str, active: bool) -> Line<'static> {
     popup_button_line_with_style(shortcut, label, active, Style::default())
 }
 
-fn popup_danger_button_line(
-    shortcut: &'static str,
-    label: &'static str,
-    active: bool,
-) -> Line<'static> {
+fn popup_danger_button_line(shortcut: &str, label: &'static str, active: bool) -> Line<'static> {
     popup_button_line_with_style(
         shortcut,
         label,
@@ -685,7 +697,7 @@ fn popup_danger_button_line(
 }
 
 fn popup_button_line_with_style(
-    shortcut: &'static str,
+    shortcut: &str,
     label: &'static str,
     active: bool,
     label_style: Style,
@@ -789,7 +801,7 @@ fn push_wrapped_styled_popup_text(
 }
 
 fn selectable_popup_marker(selected: bool) -> Span<'static> {
-    selection_marker_with("› ", selected)
+    selection_marker(selected)
 }
 
 fn editable_field_marker(active: bool) -> &'static str {

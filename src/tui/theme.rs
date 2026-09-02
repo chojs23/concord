@@ -13,10 +13,13 @@ use crate::config::{
 };
 pub(super) use crate::config::{BorderSurface, HighlightGroup};
 
+const DEFAULT_SELECTION_MARKER: &str = "▸ ";
+
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct Theme {
     highlights: [ResolvedHighlight; HighlightGroup::COUNT],
     borders: [BorderType; BorderSurface::COUNT],
+    selection_marker: String,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -62,6 +65,10 @@ impl Theme {
         Self {
             highlights: resolve_definitions(&definitions, warnings),
             borders: resolve_border_types(options.border_shapes()),
+            selection_marker: options
+                .selection_marker()
+                .unwrap_or(DEFAULT_SELECTION_MARKER)
+                .to_owned(),
         }
     }
 
@@ -85,6 +92,10 @@ impl Theme {
 
     pub(super) const fn border_type(&self, surface: BorderSurface) -> BorderType {
         self.borders[surface as usize]
+    }
+
+    pub(super) fn selection_marker(&self) -> &str {
+        &self.selection_marker
     }
 
     #[cfg(test)]
@@ -141,6 +152,10 @@ impl ThemeAccessor {
 
     pub(super) fn border_set(self, surface: BorderSurface) -> border::Set<'static> {
         self.border_type(surface).to_border_set()
+    }
+
+    pub(super) fn selection_marker(self) -> String {
+        read_current_theme(|theme| theme.selection_marker().to_owned())
     }
 }
 

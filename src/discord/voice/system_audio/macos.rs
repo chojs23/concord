@@ -349,24 +349,28 @@ fn audio_buffer_bytes(buffer: &AudioBuffer) -> Option<&[u8]> {
 fn append_f32_samples(output: &mut Vec<f32>, bytes: &[u8]) {
     output.extend(
         bytes
-            .chunks_exact(size_of::<f32>())
-            .map(|sample| f32::from_ne_bytes([sample[0], sample[1], sample[2], sample[3]])),
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|sample| f32::from_ne_bytes(*sample)),
     );
 }
 
 fn append_planar_stereo(output: &mut Vec<f32>, left: &[u8], right: &[u8]) {
     for (left, right) in left
-        .chunks_exact(size_of::<f32>())
-        .zip(right.chunks_exact(size_of::<f32>()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(right.as_chunks::<4>().0.iter())
     {
-        output.push(f32::from_ne_bytes([left[0], left[1], left[2], left[3]]));
-        output.push(f32::from_ne_bytes([right[0], right[1], right[2], right[3]]));
+        output.push(f32::from_ne_bytes(*left));
+        output.push(f32::from_ne_bytes(*right));
     }
 }
 
 fn append_mono_as_stereo(output: &mut Vec<f32>, bytes: &[u8]) {
-    for sample in bytes.chunks_exact(size_of::<f32>()) {
-        let sample = f32::from_ne_bytes([sample[0], sample[1], sample[2], sample[3]]);
+    for sample in bytes.as_chunks::<4>().0 {
+        let sample = f32::from_ne_bytes(*sample);
         output.extend_from_slice(&[sample, sample]);
     }
 }

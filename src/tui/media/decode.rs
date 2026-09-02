@@ -7,9 +7,10 @@ use std::{
 
 use image::{
     AnimationDecoder as _, DynamicImage, Frame, ImageDecoder as _, ImageFormat, ImageReader,
-    Limits,
-    codecs::{gif::GifDecoder, webp::WebPDecoder},
+    Limits, RgbaImage,
+    codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder},
 };
+use thorvg::{ColorSpace, EngineOption, Paint as _, Thorvg};
 use tokio::{sync::mpsc, task};
 
 use super::{
@@ -25,6 +26,7 @@ const MAX_DECODED_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ANIMATION_SOURCE_FRAMES: usize = 4096;
 pub(super) const MAX_RETAINED_ANIMATION_FRAMES: usize = 32;
 const MAX_ANIMATION_DECODE_WORK_BYTES: u64 = 256 * 1024 * 1024;
+pub(super) const MAX_LOTTIE_JSON_BYTES: usize = 1024 * 1024;
 const MIN_ANIMATION_FRAME_DELAY: Duration = Duration::from_millis(50);
 const MAX_UNDERSPECIFIED_FRAME_DELAY: Duration = Duration::from_millis(10);
 const DEFAULT_UNDERSPECIFIED_FRAME_DELAY: Duration = Duration::from_millis(100);
@@ -398,8 +400,185 @@ pub(in crate::tui) fn decode_media_image_bytes(
     match reader.format() {
         Some(ImageFormat::Gif) => decode_gif_animation(bytes),
         Some(ImageFormat::WebP) => decode_webp_animation(bytes),
+        Some(ImageFormat::Png) => decode_png_animation(bytes),
+        None if looks_like_json(bytes) => decode_lottie_animation(bytes),
         _ => decode_image_bytes(bytes).map(DecodedMediaImage::still),
     }
+}
+
+fn looks_like_json(bytes: &[u8]) -> bool {
+    bytes
+        .iter()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .is_some_and(|byte| *byte == b'{')
+}
+
+fn decode_lottie_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
+    if bytes.len() > MAX_LOTTIE_JSON_BYTES {
+        return Err("decode failed: Lottie document exceeds source byte limit".to_owned());
+    }
+
+    let engine = Thorvg::init()
+        .map_err(|error| format!("decode failed: initialize Lottie renderer: {error}"))?;
+    let mut animation = engine
+        .lottie_animation()
+        .map_err(|error| format!("decode failed: create Lottie animation: {error}"))?;
+    animation
+        .load_data(bytes)
+        .map_err(|error| format!("decode failed: load Lottie document: {error}"))?;
+
+    let (source_width, source_height) = animation
+        .picture()
+        .size()
+        .map_err(|error| format!("decode failed: read Lottie dimensions: {error}"))?;
+    let width = checked_lottie_dimension(source_width, MAX_DECODED_IMAGE_WIDTH, "width")?;
+    let height = checked_lottie_dimension(source_height, MAX_DECODED_IMAGE_HEIGHT, "height")?;
+    let frame_bytes = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "decode failed: Lottie dimensions overflow".to_owned())?;
+    if frame_bytes > MAX_DECODED_IMAGE_BYTES {
+        return Err("decode failed: Lottie frame exceeds decoded byte limit".to_owned());
+    }
+
+    let total_frames = animation
+        .total_frame()
+        .map_err(|error| format!("decode failed: read Lottie frame count: {error}"))?;
+    if !total_frames.is_finite()
+        || total_frames <= 0.0
+        || total_frames > MAX_ANIMATION_SOURCE_FRAMES as f32
+    {
+        return Err("decode failed: Lottie frame count is outside limits".to_owned());
+    }
+    let source_frame_count = total_frames.ceil() as usize;
+
+    let duration_seconds = animation
+        .duration()
+        .map_err(|error| format!("decode failed: read Lottie duration: {error}"))?;
+    if !duration_seconds.is_finite() || duration_seconds < 0.0 {
+        return Err("decode failed: Lottie duration is invalid".to_owned());
+    }
+
+    animation
+        .set_size(width as f32, height as f32)
+        .map_err(|error| format!("decode failed: set Lottie render size: {error}"))?;
+
+    let retained_frame_limit = usize::try_from(
+        (MAX_DECODED_IMAGE_BYTES / frame_bytes).min(MAX_ANIMATION_DECODE_WORK_BYTES / frame_bytes),
+    )
+    .unwrap_or(usize::MAX)
+    .min(MAX_RETAINED_ANIMATION_FRAMES);
+    if source_frame_count > 1 && retained_frame_limit < 2 {
+        return Err("decode failed: Lottie animation cannot retain two frames".to_owned());
+    }
+    let retained_frame_count =
+        lottie_retained_frame_count(source_frame_count, retained_frame_limit, duration_seconds);
+    let frame_delay = lottie_frame_delay(duration_seconds, retained_frame_count);
+    let mut sampled_frames = Vec::with_capacity(retained_frame_count);
+
+    for retained_index in 0..retained_frame_count {
+        let source_frame_index =
+            sampled_lottie_frame_index(retained_index, retained_frame_count, source_frame_count);
+        if source_frame_index != 0 {
+            animation
+                .set_frame(source_frame_index as f32)
+                .map_err(|error| {
+                    format!(
+                        "decode failed: select Lottie frame {}: {error}",
+                        source_frame_index + 1
+                    )
+                })?;
+        }
+
+        // A ThorVG canvas takes ownership of its paint. Duplicating the
+        // animation picture captures the selected frame while keeping the
+        // animation controller available for the remaining samples.
+        let picture = animation
+            .picture()
+            .duplicate()
+            .ok_or_else(|| "decode failed: duplicate Lottie frame".to_owned())?;
+        let pixel_count = usize::try_from(frame_bytes / 4)
+            .map_err(|_| "decode failed: Lottie pixel count overflow".to_owned())?;
+        let mut pixels = vec![0u32; pixel_count];
+        let mut canvas = engine
+            .sw_canvas(EngineOption::Default)
+            .map_err(|error| format!("decode failed: create Lottie canvas: {error}"))?;
+        unsafe { canvas.set_target(&mut pixels, width, width, height, ColorSpace::ABGR8888S) }
+            .map_err(|error| format!("decode failed: set Lottie canvas target: {error}"))?;
+        canvas
+            .add(picture)
+            .map_err(|error| format!("decode failed: add Lottie frame to canvas: {error}"))?;
+        canvas
+            .draw(true)
+            .map_err(|error| format!("decode failed: draw Lottie frame: {error}"))?;
+        canvas
+            .sync()
+            .map_err(|error| format!("decode failed: finish Lottie frame: {error}"))?;
+        drop(canvas);
+
+        let mut rgba = Vec::with_capacity(pixel_count.saturating_mul(4));
+        for pixel in pixels {
+            rgba.extend_from_slice(&pixel.to_le_bytes());
+        }
+        let image = RgbaImage::from_raw(width, height, rgba)
+            .ok_or_else(|| "decode failed: build Lottie frame image".to_owned())?;
+        sampled_frames.push(SampledAnimationFrame {
+            frame: DecodedMediaFrame {
+                delay: frame_delay,
+                image: Arc::new(DynamicImage::ImageRgba8(image)),
+            },
+            representative_offset: frame_delay / 2,
+            decoded_bytes: frame_bytes,
+        });
+    }
+
+    finish_sampled_animation(sampled_frames, source_frame_count)
+}
+
+fn checked_lottie_dimension(value: f32, maximum: u32, label: &str) -> Result<u32, String> {
+    if !value.is_finite() || value <= 0.0 || value > maximum as f32 {
+        return Err(format!("decode failed: Lottie {label} is outside limits"));
+    }
+    Ok(value.ceil() as u32)
+}
+
+fn sampled_lottie_frame_index(
+    retained_index: usize,
+    retained_frame_count: usize,
+    source_frame_count: usize,
+) -> usize {
+    if retained_frame_count <= 1 {
+        return 0;
+    }
+    retained_index.saturating_mul(source_frame_count - 1) / (retained_frame_count - 1)
+}
+
+fn lottie_retained_frame_count(
+    source_frame_count: usize,
+    retained_frame_limit: usize,
+    duration_seconds: f32,
+) -> usize {
+    let playback_frame_limit = if duration_seconds == 0.0 {
+        usize::MAX
+    } else {
+        (duration_seconds / MIN_ANIMATION_FRAME_DELAY.as_secs_f32())
+            .floor()
+            .max(2.0) as usize
+    };
+    source_frame_count
+        .min(retained_frame_limit.max(1))
+        .min(playback_frame_limit)
+}
+
+fn lottie_frame_delay(duration_seconds: f32, retained_frame_count: usize) -> Duration {
+    if duration_seconds == 0.0 {
+        return DEFAULT_UNDERSPECIFIED_FRAME_DELAY;
+    }
+    let maximum_duration_seconds =
+        MAX_ANIMATION_FRAME_DELAY.as_secs_f32() * retained_frame_count as f32;
+    let total_duration = Duration::from_secs_f32(duration_seconds.min(maximum_duration_seconds));
+    (total_duration / u32::try_from(retained_frame_count).unwrap_or(u32::MAX))
+        .clamp(MIN_ANIMATION_FRAME_DELAY, MAX_ANIMATION_FRAME_DELAY)
 }
 
 fn decode_gif_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
@@ -421,6 +600,24 @@ fn decode_webp_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage,
         return decode_image_bytes(bytes).map(DecodedMediaImage::still);
     }
     decode_animation_frames(decoder.into_frames())
+}
+
+fn decode_png_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
+    let mut decoder =
+        PngDecoder::new(Cursor::new(bytes)).map_err(|error| format!("decode failed: {error}"))?;
+    decoder
+        .set_limits(decode_limits())
+        .map_err(|error| format!("decode failed: {error}"))?;
+    if !decoder
+        .is_apng()
+        .map_err(|error| format!("decode failed: {error}"))?
+    {
+        return decode_image_bytes(bytes).map(DecodedMediaImage::still);
+    }
+    let apng = decoder
+        .apng()
+        .map_err(|error| format!("decode failed: {error}"))?;
+    decode_animation_frames(apng.into_frames())
 }
 
 fn decode_animation_frames(

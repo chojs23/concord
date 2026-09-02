@@ -537,6 +537,7 @@ impl ImagePreviewTarget {
             viewer: self.viewer,
             thread_card: self.thread_card,
             message_index: self.message_index,
+            body_line_index: self.body_line_index,
             preview_x_offset_columns: self.preview_x_offset_columns,
             preview_y_offset_rows: self.preview_y_offset_rows,
             preview_width: self.preview_width,

@@ -7,13 +7,20 @@ use crate::discord::commands::ReactionEmoji;
 use crate::discord::ids::{
     Id,
     marker::{
-        AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, RoleMarker, UserMarker,
-        WebhookMarker,
+        AttachmentMarker, ChannelMarker, GuildMarker, MessageMarker, RoleMarker, StickerMarker,
+        UserMarker, WebhookMarker,
     },
 };
 
+const STICKER_MEDIA_PROXY_BASE: &str = "https://media.discordapp.net/stickers";
+const STICKER_CDN_BASE: &str = "https://cdn.discordapp.com/stickers";
+const STICKER_PREVIEW_SIZE: u64 = 160;
+const STICKER_NATIVE_PIXEL_SIZE: u64 = 320;
+
 pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
+pub const MESSAGE_FLAG_IS_COMPONENTS_V2: u64 = 1 << 15;
 const MEDIA_FLAG_IS_ANIMATED: u64 = 1 << 5;
+const UNFURLED_MEDIA_FLAG_IS_ANIMATED: u64 = 1 << 0;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MentionInfo {
@@ -59,6 +66,191 @@ pub enum AttachmentMediaType {
     Audio,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ComponentMediaInfo {
+    pub url: String,
+    pub proxy_url: Option<String>,
+    pub content_type: Option<String>,
+    pub width: Option<u64>,
+    pub height: Option<u64>,
+    pub flags: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComponentMediaItemInfo {
+    pub media: ComponentMediaInfo,
+    pub description: Option<String>,
+    pub spoiler: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ComponentSelectKind {
+    String,
+    User,
+    Role,
+    Mentionable,
+    Channel,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComponentSelectOptionInfo {
+    pub label: String,
+    pub description: Option<String>,
+    pub emoji: Option<String>,
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MessageComponentInfo {
+    ActionRow {
+        components: Vec<Self>,
+    },
+    Button {
+        label: Option<String>,
+        emoji: Option<String>,
+        url: Option<String>,
+        disabled: bool,
+    },
+    Select {
+        kind: ComponentSelectKind,
+        placeholder: Option<String>,
+        options: Vec<ComponentSelectOptionInfo>,
+        disabled: bool,
+    },
+    Section {
+        components: Vec<Self>,
+        accessory: Option<Box<Self>>,
+    },
+    TextDisplay {
+        content: String,
+    },
+    Thumbnail {
+        media: ComponentMediaInfo,
+        description: Option<String>,
+        spoiler: bool,
+    },
+    MediaGallery {
+        items: Vec<ComponentMediaItemInfo>,
+    },
+    File {
+        file: ComponentMediaInfo,
+        name: Option<String>,
+        size: Option<u64>,
+        spoiler: bool,
+    },
+    Separator {
+        divider: bool,
+        spacing: u8,
+    },
+    Container {
+        components: Vec<Self>,
+        accent_color: Option<u32>,
+        spoiler: bool,
+    },
+    Unknown {
+        kind: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StickerFormat {
+    Png,
+    Apng,
+    Lottie,
+    Gif,
+}
+
+impl StickerFormat {
+    pub fn from_discord(value: Option<u64>) -> Self {
+        match value {
+            Some(2) => Self::Apng,
+            Some(3) => Self::Lottie,
+            Some(4) => Self::Gif,
+            _ => Self::Png,
+        }
+    }
+
+    pub fn is_animated(self) -> bool {
+        matches!(self, Self::Apng | Self::Lottie | Self::Gif)
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Png | Self::Apng => "png",
+            Self::Lottie => "json",
+            Self::Gif => "gif",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StickerInfo {
+    pub id: Id<StickerMarker>,
+    pub name: String,
+    pub format: StickerFormat,
+    url: Option<String>,
+    proxy_url: Option<String>,
+}
+
+impl StickerInfo {
+    pub fn new(id: Id<StickerMarker>, name: impl Into<String>, format: StickerFormat) -> Self {
+        let name = name.into();
+        let (url, proxy_url) = sticker_preview_urls(id, format);
+        Self {
+            id,
+            name,
+            format,
+            url,
+            proxy_url,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test(id: u64, name: impl Into<String>) -> Self {
+        Self::new(Id::new(id), name, StickerFormat::Png)
+    }
+
+    pub fn names(stickers: &[Self]) -> Vec<String> {
+        stickers
+            .iter()
+            .map(|sticker| sticker.name.clone())
+            .collect()
+    }
+
+    pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
+        Some(InlinePreviewInfo {
+            url: self.url.as_deref()?,
+            proxy_url: self.proxy_url.as_deref(),
+            filename: self.name.as_str(),
+            width: Some(STICKER_NATIVE_PIXEL_SIZE),
+            height: Some(STICKER_NATIVE_PIXEL_SIZE),
+            accent_color: None,
+            animated: self.format.is_animated(),
+            proxy_preview_only: false,
+            show_play_marker: false,
+        })
+    }
+}
+
+fn sticker_preview_urls(
+    id: Id<StickerMarker>,
+    format: StickerFormat,
+) -> (Option<String>, Option<String>) {
+    let extension = format.extension();
+    if format == StickerFormat::Lottie {
+        return (Some(format!("{STICKER_CDN_BASE}/{id}.{extension}")), None);
+    }
+    let passthrough = if format.is_animated() {
+        "true"
+    } else {
+        "false"
+    };
+    let proxy_url = format!(
+        "{STICKER_MEDIA_PROXY_BASE}/{id}.{extension}?size={STICKER_PREVIEW_SIZE}&passthrough={passthrough}"
+    );
+    (Some(proxy_url.clone()), Some(proxy_url))
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 impl AttachmentInfo {
@@ -82,13 +274,18 @@ impl AttachmentInfo {
 pub struct EmbedFieldInfo {
     pub name: String,
     pub value: String,
+    pub inline: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmbedInfo {
+    pub kind: Option<String>,
+    pub flags: u64,
     pub color: Option<u32>,
     pub provider_name: Option<String>,
+    pub provider_url: Option<String>,
     pub author_name: Option<String>,
+    pub author_url: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub timestamp: Option<String>,
@@ -99,16 +296,28 @@ pub struct EmbedInfo {
     pub thumbnail_proxy_url: Option<String>,
     pub thumbnail_width: Option<u64>,
     pub thumbnail_height: Option<u64>,
+    pub thumbnail_content_type: Option<String>,
+    pub thumbnail_description: Option<String>,
     pub thumbnail_flags: u64,
     pub image_url: Option<String>,
     pub image_proxy_url: Option<String>,
     pub image_width: Option<u64>,
     pub image_height: Option<u64>,
+    pub image_content_type: Option<String>,
+    pub image_description: Option<String>,
     pub image_flags: u64,
-    /// Animated image rendition recovered for a `gifv` embed when its provider
-    /// exposes only a video URL in Discord's payload.
+    /// Animated image rendition selected for a `gifv` embed. Some providers
+    /// require deriving it from the video URL, while others supply it as the
+    /// thumbnail.
     pub gifv_image_url: Option<String>,
+    pub gifv_image_proxy_url: Option<String>,
     pub video_url: Option<String>,
+    pub video_proxy_url: Option<String>,
+    pub video_width: Option<u64>,
+    pub video_height: Option<u64>,
+    pub video_content_type: Option<String>,
+    pub video_description: Option<String>,
+    pub video_flags: u64,
 }
 
 #[cfg(test)]
@@ -116,9 +325,13 @@ pub struct EmbedInfo {
 impl EmbedInfo {
     pub(crate) fn test() -> Self {
         Self {
+            kind: None,
+            flags: 0,
             color: None,
             provider_name: None,
+            provider_url: None,
             author_name: None,
+            author_url: None,
             title: None,
             description: None,
             timestamp: None,
@@ -129,14 +342,25 @@ impl EmbedInfo {
             thumbnail_proxy_url: None,
             thumbnail_width: None,
             thumbnail_height: None,
+            thumbnail_content_type: None,
+            thumbnail_description: None,
             thumbnail_flags: 0,
             image_url: None,
             image_proxy_url: None,
             image_width: None,
             image_height: None,
+            image_content_type: None,
+            image_description: None,
             image_flags: 0,
             gifv_image_url: None,
+            gifv_image_proxy_url: None,
             video_url: None,
+            video_proxy_url: None,
+            video_width: None,
+            video_height: None,
+            video_content_type: None,
+            video_description: None,
+            video_flags: 0,
         }
     }
 }
@@ -248,10 +472,12 @@ impl Default for MessageKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageSnapshotInfo {
     pub content: Option<String>,
-    pub sticker_names: Vec<String>,
+    pub stickers: Vec<StickerInfo>,
     pub mentions: Vec<MentionInfo>,
+    pub flags: u64,
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
+    pub components: Vec<MessageComponentInfo>,
     pub source_channel_id: Option<Id<ChannelMarker>>,
     pub timestamp: Option<String>,
 }
@@ -262,10 +488,12 @@ impl MessageSnapshotInfo {
     pub(crate) fn test() -> Self {
         Self {
             content: None,
-            sticker_names: Vec::new(),
+            stickers: Vec::new(),
             mentions: Vec::new(),
+            flags: 0,
             attachments: Vec::new(),
             embeds: Vec::new(),
+            components: Vec::new(),
             source_channel_id: None,
             timestamp: None,
         }
@@ -277,7 +505,7 @@ pub struct ReplyInfo {
     pub author_id: Option<Id<UserMarker>>,
     pub author: String,
     pub content: Option<String>,
-    pub sticker_names: Vec<String>,
+    pub stickers: Vec<StickerInfo>,
     pub mentions: Vec<MentionInfo>,
 }
 
@@ -289,7 +517,7 @@ impl ReplyInfo {
             author_id: None,
             author: author.into(),
             content: None,
-            sticker_names: Vec::new(),
+            stickers: Vec::new(),
             mentions: Vec::new(),
         }
     }
@@ -434,13 +662,14 @@ pub struct MessageInfo {
     pub pinned: bool,
     pub reactions: Vec<ReactionInfo>,
     pub content: Option<String>,
-    pub sticker_names: Vec<String>,
+    pub stickers: Vec<StickerInfo>,
     pub mentions: Vec<MentionInfo>,
     pub mention_everyone: bool,
     pub mention_roles: Vec<Id<RoleMarker>>,
     pub flags: u64,
     pub attachments: Vec<AttachmentInfo>,
     pub embeds: Vec<EmbedInfo>,
+    pub components: Vec<MessageComponentInfo>,
     pub forwarded_snapshots: Vec<MessageSnapshotInfo>,
     pub edited_timestamp: Option<String>,
 }
@@ -467,15 +696,30 @@ impl Default for MessageInfo {
             pinned: false,
             reactions: Vec::new(),
             content: None,
-            sticker_names: Vec::new(),
+            stickers: Vec::new(),
             mentions: Vec::new(),
             mention_everyone: false,
             mention_roles: Vec::new(),
             flags: 0,
             attachments: Vec::new(),
             embeds: Vec::new(),
+            components: Vec::new(),
             forwarded_snapshots: Vec::new(),
             edited_timestamp: None,
+        }
+    }
+}
+
+impl MessageInfo {
+    pub(crate) fn summary_text(&self) -> Option<&str> {
+        let content = self
+            .content
+            .as_deref()
+            .filter(|content| !content.trim().is_empty());
+        if self.flags & MESSAGE_FLAG_IS_COMPONENTS_V2 != 0 {
+            MessageComponentInfo::first_text(&self.components)
+        } else {
+            content.or_else(|| MessageComponentInfo::first_text(&self.components))
         }
     }
 }
@@ -582,10 +826,14 @@ impl AttachmentInfo {
 
 impl EmbedInfo {
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
+        self.inline_previews().into_iter().next()
+    }
+
+    pub fn inline_previews(&self) -> Vec<InlinePreviewInfo<'_>> {
         if let Some(url) = self.gifv_image_url.as_deref() {
-            return Some(InlinePreviewInfo {
+            return vec![InlinePreviewInfo {
                 url,
-                proxy_url: None,
+                proxy_url: self.gifv_image_proxy_url.as_deref(),
                 filename: "embed-gifv",
                 width: self.image_width.or(self.thumbnail_width),
                 height: self.image_height.or(self.thumbnail_height),
@@ -593,13 +841,72 @@ impl EmbedInfo {
                 animated: true,
                 proxy_preview_only: false,
                 show_play_marker: false,
-            });
+            }];
         }
 
-        let show_play_marker = self.video_url.is_some();
+        let has_video = self.video_url.is_some()
+            || self.video_proxy_url.is_some()
+            || matches!(self.kind.as_deref(), Some("video" | "gifv"));
+        if has_video {
+            if let Some(url) = self.thumbnail_url.as_deref() {
+                return vec![InlinePreviewInfo {
+                    url,
+                    proxy_url: self.thumbnail_proxy_url.as_deref(),
+                    filename: "embed-thumbnail",
+                    width: self.thumbnail_width,
+                    height: self.thumbnail_height,
+                    accent_color: Some(self.color.unwrap_or(0xff0000)),
+                    animated: media_is_animated(self.thumbnail_flags, "", url),
+                    proxy_preview_only: false,
+                    show_play_marker: true,
+                }];
+            }
+            if let Some(url) = self.image_url.as_deref() {
+                return vec![InlinePreviewInfo {
+                    url,
+                    proxy_url: self.image_proxy_url.as_deref(),
+                    filename: "embed-image",
+                    width: self.image_width,
+                    height: self.image_height,
+                    accent_color: Some(self.color.unwrap_or(0xff0000)),
+                    animated: media_is_animated(self.image_flags, "", url),
+                    proxy_preview_only: false,
+                    show_play_marker: true,
+                }];
+            }
+            if let Some(url) = self.video_proxy_url.as_deref() {
+                return vec![InlinePreviewInfo {
+                    url,
+                    proxy_url: Some(url),
+                    filename: "embed-video",
+                    width: self.video_width,
+                    height: self.video_height,
+                    accent_color: Some(self.color.unwrap_or(0xff0000)),
+                    animated: false,
+                    proxy_preview_only: true,
+                    show_play_marker: true,
+                }];
+            }
+        }
 
-        if let Some(url) = self.thumbnail_url.as_deref() {
-            return Some(InlinePreviewInfo {
+        let mut previews = Vec::new();
+        if let Some(url) = self.image_url.as_deref() {
+            previews.push(InlinePreviewInfo {
+                url,
+                proxy_url: self.image_proxy_url.as_deref(),
+                filename: "embed-image",
+                width: self.image_width,
+                height: self.image_height,
+                accent_color: Some(self.color.unwrap_or(0xff0000)),
+                animated: media_is_animated(self.image_flags, "", url),
+                proxy_preview_only: false,
+                show_play_marker: false,
+            });
+        }
+        if let Some(url) = self.thumbnail_url.as_deref()
+            && self.image_url.as_deref() != Some(url)
+        {
+            previews.push(InlinePreviewInfo {
                 url,
                 proxy_url: self.thumbnail_proxy_url.as_deref(),
                 filename: "embed-thumbnail",
@@ -608,28 +915,405 @@ impl EmbedInfo {
                 accent_color: Some(self.color.unwrap_or(0xff0000)),
                 animated: media_is_animated(self.thumbnail_flags, "", url),
                 proxy_preview_only: false,
-                show_play_marker,
+                show_play_marker: false,
             });
         }
+        previews
+    }
+}
 
-        self.image_url.as_deref().map(|url| InlinePreviewInfo {
+impl ComponentMediaInfo {
+    pub(crate) fn attachment_filename(&self) -> Option<&str> {
+        self.url.strip_prefix("attachment://")
+    }
+
+    pub(crate) fn display_filename(&self) -> &str {
+        self.attachment_filename()
+            .or_else(|| {
+                let path = self
+                    .url
+                    .split_once('?')
+                    .map_or(self.url.as_str(), |(path, _)| path);
+                path.rsplit('/').next().filter(|value| !value.is_empty())
+            })
+            .unwrap_or("component-media")
+    }
+
+    pub(crate) fn media_type(&self) -> Option<AttachmentMediaType> {
+        if let Some(content_type) = self.content_type.as_deref() {
+            if content_type.starts_with("image/") {
+                return Some(AttachmentMediaType::Image);
+            } else if content_type.starts_with("video/") {
+                return Some(AttachmentMediaType::Video);
+            } else if content_type.starts_with("audio/") {
+                return Some(AttachmentMediaType::Audio);
+            }
+        }
+
+        let filename = self.display_filename();
+        if filename_has_extension(filename, &["avif", "gif", "jpeg", "jpg", "png", "webp"]) {
+            return Some(AttachmentMediaType::Image);
+        }
+        if filename_has_extension(filename, &["m4v", "mov", "mp4", "webm"]) {
+            return Some(AttachmentMediaType::Video);
+        }
+        if filename_has_extension(
+            filename,
+            &["mp3", "m4a", "opus", "ogg", "flac", "wav", "aiff"],
+        ) {
+            return Some(AttachmentMediaType::Audio);
+        }
+        None
+    }
+
+    fn inline_preview_info<'a>(
+        &'a self,
+        attachments: &'a [AttachmentInfo],
+        accent_color: Option<u32>,
+    ) -> Option<InlinePreviewInfo<'a>> {
+        if let Some(filename) = self.attachment_filename()
+            && let Some(attachment) = attachments
+                .iter()
+                .find(|attachment| attachment.filename == filename)
+        {
+            let mut preview = attachment.inline_preview_info()?;
+            preview.accent_color = accent_color;
+            return Some(preview);
+        }
+
+        let media_type = self.media_type()?;
+        let filename = self.display_filename();
+        let url = (!self.url.is_empty()).then_some(self.url.as_str())?;
+        let proxy_url = self.proxy_url.as_deref();
+        if media_type == AttachmentMediaType::Video {
+            return Some(InlinePreviewInfo {
+                url: proxy_url.unwrap_or(url),
+                proxy_url,
+                filename,
+                width: self.width,
+                height: self.height,
+                accent_color,
+                animated: false,
+                proxy_preview_only: proxy_url.is_some(),
+                show_play_marker: true,
+            });
+        }
+        (media_type == AttachmentMediaType::Image).then(|| InlinePreviewInfo {
             url,
-            proxy_url: self.image_proxy_url.as_deref(),
-            filename: "embed-image",
-            width: self.image_width,
-            height: self.image_height,
-            accent_color: Some(self.color.unwrap_or(0xff0000)),
-            animated: media_is_animated(self.image_flags, "", url),
+            proxy_url,
+            filename,
+            width: self.width,
+            height: self.height,
+            accent_color,
+            animated: component_media_is_animated(self.flags, filename, url),
             proxy_preview_only: false,
-            show_play_marker,
+            show_play_marker: false,
         })
     }
 }
 
+impl MessageComponentInfo {
+    pub(crate) fn first_text(components: &[Self]) -> Option<&str> {
+        components.iter().find_map(Self::first_text_value)
+    }
+
+    fn first_text_value(&self) -> Option<&str> {
+        match self {
+            Self::ActionRow { components } | Self::Container { components, .. } => {
+                Self::first_text(components)
+            }
+            Self::Button { label, emoji, .. } => label
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| emoji.as_deref().filter(|value| !value.trim().is_empty())),
+            Self::Select {
+                placeholder,
+                options,
+                ..
+            } => placeholder
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    options
+                        .iter()
+                        .map(|option| option.label.as_str())
+                        .find(|label| !label.trim().is_empty())
+                }),
+            Self::Section {
+                components,
+                accessory,
+            } => Self::first_text(components)
+                .or_else(|| accessory.as_deref().and_then(Self::first_text_value)),
+            Self::TextDisplay { content } => {
+                (!content.trim().is_empty()).then_some(content.as_str())
+            }
+            Self::Thumbnail {
+                media, description, ..
+            } => description
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| Some(media.display_filename())),
+            Self::MediaGallery { items } => items
+                .iter()
+                .filter_map(|item| item.description.as_deref())
+                .find(|value| !value.trim().is_empty())
+                .or_else(|| items.first().map(|item| item.media.display_filename())),
+            Self::File { name, file, .. } => name
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| Some(file.display_filename())),
+            Self::Separator { .. } | Self::Unknown { .. } => None,
+        }
+    }
+
+    pub(crate) fn text_display_content(components: &[Self]) -> Option<String> {
+        let mut content = Vec::new();
+        Self::collect_text_display_content(components, &mut content);
+        (!content.is_empty()).then(|| content.join("\n"))
+    }
+
+    fn collect_text_display_content<'a>(components: &'a [Self], content: &mut Vec<&'a str>) {
+        for component in components {
+            match component {
+                Self::ActionRow { components } | Self::Container { components, .. } => {
+                    Self::collect_text_display_content(components, content);
+                }
+                Self::Section { components, .. } => {
+                    Self::collect_text_display_content(components, content);
+                }
+                Self::TextDisplay { content: value } if !value.is_empty() => {
+                    content.push(value);
+                }
+                Self::Button { .. }
+                | Self::Select { .. }
+                | Self::TextDisplay { .. }
+                | Self::Thumbnail { .. }
+                | Self::MediaGallery { .. }
+                | Self::File { .. }
+                | Self::Separator { .. }
+                | Self::Unknown { .. } => {}
+            }
+        }
+    }
+
+    pub(crate) fn references_attachment(components: &[Self], filename: &str) -> bool {
+        components
+            .iter()
+            .any(|component| component.references_attachment_value(filename))
+    }
+
+    fn references_attachment_value(&self, filename: &str) -> bool {
+        match self {
+            Self::Thumbnail { media, .. } | Self::File { file: media, .. } => {
+                media.attachment_filename() == Some(filename)
+            }
+            Self::MediaGallery { items } => items
+                .iter()
+                .any(|item| item.media.attachment_filename() == Some(filename)),
+            Self::ActionRow { components } | Self::Container { components, .. } => {
+                Self::references_attachment(components, filename)
+            }
+            Self::Section {
+                components,
+                accessory,
+            } => {
+                Self::references_attachment(components, filename)
+                    || accessory
+                        .as_deref()
+                        .is_some_and(|accessory| accessory.references_attachment_value(filename))
+            }
+            Self::Button { .. }
+            | Self::Select { .. }
+            | Self::TextDisplay { .. }
+            | Self::Separator { .. }
+            | Self::Unknown { .. } => false,
+        }
+    }
+
+    pub(crate) fn inline_previews<'a>(
+        components: &'a [Self],
+        attachments: &'a [AttachmentInfo],
+    ) -> Vec<InlinePreviewInfo<'a>> {
+        let mut previews = Vec::new();
+        Self::collect_inline_previews(components, attachments, None, true, &mut previews);
+        previews
+    }
+
+    pub(crate) fn flow_inline_previews<'a>(
+        components: &'a [Self],
+        attachments: &'a [AttachmentInfo],
+    ) -> Vec<InlinePreviewInfo<'a>> {
+        let mut previews = Vec::new();
+        Self::collect_inline_previews(components, attachments, None, false, &mut previews);
+        previews
+    }
+
+    pub(crate) fn collect_section_thumbnail_previews<'a>(
+        components: &'a [Self],
+        attachments: &'a [AttachmentInfo],
+        next_index: &mut usize,
+        previews: &mut Vec<(usize, InlinePreviewInfo<'a>)>,
+    ) {
+        Self::collect_section_thumbnail_previews_with_accent(
+            components,
+            attachments,
+            None,
+            next_index,
+            previews,
+        );
+    }
+
+    fn collect_section_thumbnail_previews_with_accent<'a>(
+        components: &'a [Self],
+        attachments: &'a [AttachmentInfo],
+        accent_color: Option<u32>,
+        next_index: &mut usize,
+        previews: &mut Vec<(usize, InlinePreviewInfo<'a>)>,
+    ) {
+        for component in components {
+            match component {
+                Self::ActionRow { components } => {
+                    Self::collect_section_thumbnail_previews_with_accent(
+                        components,
+                        attachments,
+                        accent_color,
+                        next_index,
+                        previews,
+                    )
+                }
+                Self::Section {
+                    components,
+                    accessory,
+                } => {
+                    if let Some(Self::Thumbnail { media, .. }) = accessory.as_deref() {
+                        let index = *next_index;
+                        *next_index = (*next_index).saturating_add(1);
+                        if let Some(preview) = media.inline_preview_info(attachments, accent_color)
+                        {
+                            previews.push((index, preview));
+                        }
+                    }
+                    Self::collect_section_thumbnail_previews_with_accent(
+                        components,
+                        attachments,
+                        accent_color,
+                        next_index,
+                        previews,
+                    );
+                }
+                Self::Container {
+                    components,
+                    accent_color: container_accent,
+                    ..
+                } => Self::collect_section_thumbnail_previews_with_accent(
+                    components,
+                    attachments,
+                    container_accent.or(accent_color),
+                    next_index,
+                    previews,
+                ),
+                Self::Button { .. }
+                | Self::Select { .. }
+                | Self::TextDisplay { .. }
+                | Self::Thumbnail { .. }
+                | Self::MediaGallery { .. }
+                | Self::File { .. }
+                | Self::Separator { .. }
+                | Self::Unknown { .. } => {}
+            }
+        }
+    }
+
+    fn collect_inline_previews<'a>(
+        components: &'a [Self],
+        attachments: &'a [AttachmentInfo],
+        accent_color: Option<u32>,
+        include_section_thumbnails: bool,
+        previews: &mut Vec<InlinePreviewInfo<'a>>,
+    ) {
+        for component in components {
+            match component {
+                Self::ActionRow { components } => Self::collect_inline_previews(
+                    components,
+                    attachments,
+                    accent_color,
+                    include_section_thumbnails,
+                    previews,
+                ),
+                Self::Section {
+                    components,
+                    accessory,
+                } => {
+                    Self::collect_inline_previews(
+                        components,
+                        attachments,
+                        accent_color,
+                        include_section_thumbnails,
+                        previews,
+                    );
+                    if let Some(accessory) = accessory
+                        && (include_section_thumbnails
+                            || !matches!(accessory.as_ref(), Self::Thumbnail { .. }))
+                    {
+                        Self::collect_inline_previews(
+                            std::slice::from_ref(accessory.as_ref()),
+                            attachments,
+                            accent_color,
+                            include_section_thumbnails,
+                            previews,
+                        );
+                    }
+                }
+                Self::Thumbnail { media, .. } => {
+                    if let Some(preview) = media.inline_preview_info(attachments, accent_color) {
+                        previews.push(preview);
+                    }
+                }
+                Self::MediaGallery { items } => {
+                    for item in items {
+                        if let Some(preview) =
+                            item.media.inline_preview_info(attachments, accent_color)
+                        {
+                            previews.push(preview);
+                        }
+                    }
+                }
+                Self::Container {
+                    components,
+                    accent_color: container_accent,
+                    ..
+                } => Self::collect_inline_previews(
+                    components,
+                    attachments,
+                    container_accent.or(accent_color),
+                    include_section_thumbnails,
+                    previews,
+                ),
+                Self::Button { .. }
+                | Self::Select { .. }
+                | Self::TextDisplay { .. }
+                | Self::File { .. }
+                | Self::Separator { .. }
+                | Self::Unknown { .. } => {}
+            }
+        }
+    }
+}
+
 fn media_is_animated(flags: u64, filename: &str, url: &str) -> bool {
+    flags & MEDIA_FLAG_IS_ANIMATED != 0 || media_name_is_animated(filename, url)
+}
+
+fn component_media_is_animated(flags: u64, filename: &str, url: &str) -> bool {
+    // Discord's public app docs and user-client payload docs expose different
+    // bit positions for this received field, so accept both representations.
+    flags & (UNFURLED_MEDIA_FLAG_IS_ANIMATED | MEDIA_FLAG_IS_ANIMATED) != 0
+        || media_name_is_animated(filename, url)
+}
+
+fn media_name_is_animated(filename: &str, url: &str) -> bool {
     let url_path = url.split_once('?').map_or(url, |(path, _)| path);
-    flags & MEDIA_FLAG_IS_ANIMATED != 0
-        || filename_has_extension(filename, &["gif"])
+    filename_has_extension(filename, &["gif"])
         || filename_has_extension(url_path, &["gif"])
         || url
             .split_once('?')
@@ -645,4 +1329,59 @@ fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
             .iter()
             .any(|value| extension.eq_ignore_ascii_case(value))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StickerFormat, StickerInfo};
+    use crate::discord::ids::Id;
+
+    #[test]
+    fn raster_guild_sticker_builds_media_proxy_preview_url() {
+        let sticker = StickerInfo::new(Id::new(11), "Laugh", StickerFormat::Png);
+        let preview = sticker
+            .inline_preview_info()
+            .expect("png sticker should have a raster preview");
+
+        assert_eq!(
+            preview.url,
+            "https://media.discordapp.net/stickers/11.png?size=160&passthrough=false"
+        );
+        assert_eq!(
+            preview.proxy_url,
+            Some("https://media.discordapp.net/stickers/11.png?size=160&passthrough=false")
+        );
+        assert!(!preview.animated);
+        assert_eq!(preview.filename, "Laugh");
+    }
+
+    #[test]
+    fn lottie_sticker_uses_json_cdn_and_is_animated() {
+        let sticker = StickerInfo::new(Id::new(12), "Wumpus", StickerFormat::Lottie);
+        let preview = sticker
+            .inline_preview_info()
+            .expect("Lottie sticker should have an inline preview");
+
+        assert_eq!(preview.url, "https://cdn.discordapp.com/stickers/12.json");
+        assert_eq!(preview.proxy_url, None);
+        assert!(preview.animated);
+    }
+
+    #[test]
+    fn gif_sticker_uses_gif_media_and_is_animated() {
+        let sticker = StickerInfo::new(Id::new(13), "Dance", StickerFormat::Gif);
+        let preview = sticker
+            .inline_preview_info()
+            .expect("gif sticker should have a raster preview");
+
+        assert_eq!(
+            preview.url,
+            "https://media.discordapp.net/stickers/13.gif?size=160&passthrough=true"
+        );
+        assert_eq!(
+            preview.proxy_url,
+            Some("https://media.discordapp.net/stickers/13.gif?size=160&passthrough=true")
+        );
+        assert!(preview.animated);
+    }
 }

@@ -177,7 +177,7 @@ Message actions:
 | Action name             | Default config | Action                                           |
 | ----------------------- | -------------- | ------------------------------------------------ |
 | `CopyMessage`           | `"y"`          | Copy selected message content.                   |
-| `ReactMessage`          | `"r"`          | Add or remove a reaction.                        |
+| `ReactMessage`          | `"r"`          | Open the reaction picker.                        |
 | `ReplyMessage`          | `"R"`          | Start a reply.                                   |
 | `DeleteMessage`         | `"d"`          | Open delete confirmation.                        |
 | `EditMessage`           | `"e"`          | Start editing the selected message.              |
@@ -191,6 +191,9 @@ Message actions:
 | `OpenThread`            | none           | Open the selected message's thread.              |
 | `ShowReactionUsers`     | none           | Show users who reacted to the selected message.  |
 | `OpenPollVotePicker`    | none           | Choose poll votes for the selected message.      |
+
+Favorite emojis from `[reactions].favorite_emojis` in `config.toml` are pinned
+at the top of the reaction picker opened by `ReactMessage`.
 
 Pane, options, and voice actions:
 
@@ -359,7 +362,7 @@ OpenPollVotePicker = "c"
 | Scoped action           | Default | Action                                           |
 | ----------------------- | ------- | ------------------------------------------------ |
 | `CopyMessage`           | `y`     | Copy selected message content.                   |
-| `ReactMessage`          | `r`     | Add or remove a reaction.                        |
+| `ReactMessage`          | `r`     | Open the reaction picker.                        |
 | `ReplyMessage`          | `R`     | Start a reply.                                   |
 | `DeleteMessage`         | `d`     | Open delete confirmation.                        |
 | `EditMessage`           | `e`     | Start editing the selected message.              |

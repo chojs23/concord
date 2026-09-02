@@ -9,12 +9,24 @@ use crate::tui::text::{InlineEmojiSlot, TextHighlight};
 
 use super::{MessageContentImageSlot, StyledPrefix};
 
-pub(super) struct WrappedTextLine {
-    pub(super) text: String,
-    pub(super) source_start: usize,
-    pub(super) source_end: usize,
+pub(in crate::tui) struct WrappedTextLine {
+    pub(in crate::tui) text: String,
+    pub(in crate::tui) source_start: usize,
+    pub(in crate::tui) source_end: usize,
     pub(super) mention_highlights: Vec<TextHighlight>,
     pub(super) image_slots: Vec<MessageContentImageSlot>,
+}
+
+impl WrappedTextLine {
+    pub(in crate::tui) fn empty() -> Self {
+        Self {
+            text: String::new(),
+            source_start: 0,
+            source_end: 0,
+            mention_highlights: Vec::new(),
+            image_slots: Vec::new(),
+        }
+    }
 }
 
 struct WrapBoundary {
@@ -132,7 +144,7 @@ fn wrapped_line(
     }
 }
 
-pub(super) fn wrap_text_with_metadata(
+pub(in crate::tui) fn wrap_text_with_metadata(
     value: &str,
     highlights: &[TextHighlight],
     emoji_slots: &[InlineEmojiSlot],

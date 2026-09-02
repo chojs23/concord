@@ -222,7 +222,7 @@ impl DashboardState {
     ) -> MessageRowContentMetrics {
         let (body_lines, reaction_lines) =
             message_format::format_message_content_sections(message, self, content_width);
-        let previews = message.inline_previews();
+        let previews = message.flow_inline_previews();
         let album = media::image_preview_album_layout(&previews, preview_width, max_preview_height);
         MessageRowContentMetrics {
             content_rows: body_lines.len(),

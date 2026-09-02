@@ -29,6 +29,9 @@ pub struct ChannelInfo {
     /// Discord's `member_count` channel field. Discord only defines this for
     /// thread channels and caps the approximate count at 50.
     pub member_count: Option<u64>,
+    /// Discord's `user_limit` voice channel field. Zero means the channel has
+    /// no participant limit.
+    pub user_limit: Option<u64>,
     /// Discord's `total_message_sent` channel field. For thread channels this
     /// is the total number ever sent in that one thread and does not decrement
     /// when messages are deleted.
@@ -124,6 +127,7 @@ impl ChannelInfo {
             kind: kind.into(),
             message_count: None,
             member_count: None,
+            user_limit: None,
             total_message_sent: None,
             thread_metadata: None,
             flags: None,

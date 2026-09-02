@@ -1,6 +1,6 @@
 [package]
 name = "concord"
-version = "2.5.11"
+version = "2.5.15"
 edition = "2024"
 rust-version = "1.90"
 description = "A terminal user interface client for Discord"
@@ -36,7 +36,6 @@ keyring = { version = "3.6.3", default-features = false, features = [
 ] }
 mime_guess = "2.0"
 notify-rust = "4"
-opus = { version = "1.6.1", package = "opusic-c" }
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 ratatui = "0.30.0"
@@ -100,6 +99,10 @@ fast_image_resize = { version = "6.1.0", features = [
   "only_u8x4",
 ], optional = true }
 yuv = { version = "0.8.16", features = ["fast_mode"], optional = true }
+thorvg = { version = "0.5.1", default-features = false, features = [
+  "vendored",
+  "lottie",
+] }
 
 [features]
 default = ["voice-playback", "stream-broadcast"]
@@ -139,6 +142,14 @@ stream-broadcast = [
   "dep:objc2-screen-capture-kit",
   "dep:objc2-video-toolbox",
 ]
+
+[target.'cfg(all(target_arch = "arm", target_os = "linux"))'.dependencies]
+# Generic ARM32 Linux targets do not guarantee NEON, and bundled libopus cannot
+# compile its runtime NEON path without target-specific C flags.
+opus = { version = "1.6.1", package = "opusic-c", features = ["no-simd"] }
+
+[target.'cfg(not(all(target_arch = "arm", target_os = "linux")))'.dependencies]
+opus = { version = "1.6.1", package = "opusic-c" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa = { version = "0.11", optional = true }

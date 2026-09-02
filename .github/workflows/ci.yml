@@ -3,16 +3,24 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "LICENSE"
+    paths:
+      - "**"
+      - "!**/*.md"
+      - "!assets/**"
+      - "!docs/**"
+      - "!LICENSE"
+      - "!.github/**"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "LICENSE"
+    paths:
+      - "**"
+      - "!**/*.md"
+      - "!assets/**"
+      - "!docs/**"
+      - "!LICENSE"
+      - "!.github/**"
+      - ".github/workflows/ci.yml"
 
 concurrency:
   group: ci-${{ github.ref }}

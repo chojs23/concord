@@ -281,6 +281,7 @@ fn loading_image_preview_at_message_offset(preview_y_offset_rows: usize) -> Imag
         viewer: false,
         thread_card: false,
         message_index: 0,
+        body_line_index: None,
         preview_x_offset_columns: 0,
         preview_y_offset_rows,
         preview_width: 72,

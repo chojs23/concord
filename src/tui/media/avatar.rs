@@ -79,12 +79,16 @@ impl AvatarProtocolKey {
         }
     }
 
-    pub(super) fn profile_popup(circular: bool) -> Self {
+    pub(super) fn profile_popup(
+        visible_preview_height: u16,
+        top_clip_rows: u16,
+        circular: bool,
+    ) -> Self {
         Self {
             preview_width: PROFILE_POPUP_AVATAR_WIDTH,
             preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
-            visible_preview_height: PROFILE_POPUP_AVATAR_HEIGHT,
-            top_clip_rows: 0,
+            visible_preview_height: visible_preview_height.min(PROFILE_POPUP_AVATAR_HEIGHT),
+            top_clip_rows: top_clip_rows.min(PROFILE_POPUP_AVATAR_HEIGHT),
             circular,
         }
     }
@@ -166,6 +170,7 @@ impl AvatarImageCache {
         &mut self,
         targets: &[AvatarTarget],
         popup_url: Option<&str>,
+        popup_clip: Option<(u16, u16)>,
         circular: bool,
     ) -> (Vec<AvatarImage<'_>>, Option<AvatarImage<'_>>) {
         for target in targets {
@@ -213,7 +218,8 @@ impl AvatarImageCache {
                 }
             }
 
-            if let Some(url) = popup_cache_url.as_deref()
+            if let (Some(url), Some((visible_height, top_clip_rows))) =
+                (popup_cache_url.as_deref(), popup_clip)
                 && let Some(AvatarImageEntry::Ready {
                     generation,
                     image,
@@ -221,7 +227,7 @@ impl AvatarImageCache {
                     ..
                 }) = self.cache.entries.get_mut(url)
             {
-                let key = AvatarProtocolKey::profile_popup(circular);
+                let key = AvatarProtocolKey::profile_popup(visible_height, top_clip_rows, circular);
                 let frame_key = AvatarFrameProtocolKey {
                     layout: key,
                     frame_index: image.current_frame_index(),
@@ -264,13 +270,14 @@ impl AvatarImageCache {
             })
             .collect();
         let popup_avatar = popup_cache_url.and_then(|url| {
+            let (visible_height, top_clip_rows) = popup_clip?;
             let AvatarImageEntry::Ready {
                 image, protocols, ..
             } = self.cache.entries.get(&url)?
             else {
                 return None;
             };
-            let key = AvatarProtocolKey::profile_popup(circular);
+            let key = AvatarProtocolKey::profile_popup(visible_height, top_clip_rows, circular);
             let frame_key = AvatarFrameProtocolKey {
                 layout: key,
                 frame_index: image.current_frame_index(),
@@ -279,7 +286,7 @@ impl AvatarImageCache {
                 .get_or_last_matching(&frame_key, |candidate| candidate.layout == key)
                 .map(|protocol| AvatarImage {
                     row: 0,
-                    visible_height: PROFILE_POPUP_AVATAR_HEIGHT,
+                    visible_height,
                     protocol,
                 })
         });
