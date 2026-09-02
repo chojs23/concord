@@ -352,19 +352,17 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
     {
         lines.push(line);
     } else if let Some(poll) = message.poll.as_ref() {
-        let content =
-            display_text_with_stickers(message.content.as_deref(), &message.stickers).map(
-                |value| {
-                    let value = render_discord_timestamps(&value);
-                    state.render_user_mentions_with_highlights(
-                        message.guild_id,
-                        &message.mentions,
-                        message.mention_everyone,
-                        &message.mention_roles,
-                        &value,
-                    )
-                },
-            );
+        let content = display_text_with_stickers(message.content.as_deref(), &message.stickers)
+            .map(|value| {
+                let value = render_discord_timestamps(&value);
+                state.render_user_mentions_with_highlights(
+                    message.guild_id,
+                    &message.mentions,
+                    message.mention_everyone,
+                    &message.mention_roles,
+                    &value,
+                )
+            });
         lines.extend(format_poll_lines(
             poll,
             content,
