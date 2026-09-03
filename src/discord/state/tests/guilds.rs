@@ -78,6 +78,27 @@ fn guild_partial_updates_preserve_and_replace_optional_metadata() {
 }
 
 #[test]
+fn guild_update_clears_icon_from_value_to_explicit_null() {
+    let guild_id = Id::new(1);
+    let mut state = DiscordState::default();
+    state.apply_event(&guild_create_event(GuildCreateFixture {
+        guild_id,
+        icon_hash: Some("icon_hash".to_owned()),
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.apply_event(&guild_update_event(GuildUpdateFixture {
+        guild_id,
+        icon_hash: Some(String::new()),
+        ..GuildUpdateFixture::new()
+    }));
+    assert!(
+        state
+            .guild(guild_id)
+            .is_some_and(|guild| guild.icon_hash.is_none())
+    );
+}
+
+#[test]
 fn guild_outage_preserves_cache_and_membership_removal_clears_it() {
     let guild_id = Id::new(1);
     let mut state = DiscordState::default();

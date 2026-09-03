@@ -875,6 +875,7 @@ async fn forum_post_rejects_unmet_guild_verification() {
         .publish_event(AppEvent::GuildUpdate {
             guild_id: Id::new(1),
             name: "guild".to_owned(),
+            icon_hash: None,
             owner_id: Some(Id::new(99)),
             boost_tier: None,
             boost_count: None,
@@ -1582,6 +1583,7 @@ async fn publish_permission_authorization_fixture(
         .publish_event(AppEvent::GuildCreate {
             guild_id: Id::new(1),
             name: "guild".to_owned(),
+            icon_hash: None,
             member_count: Some(1),
             owner_id: Some(Id::new(99)),
             boost_tier: GuildBoostTier::None,
@@ -1627,6 +1629,7 @@ async fn publish_incomplete_community_onboarding(client: &DiscordClient) {
         .publish_event(AppEvent::GuildUpdate {
             guild_id: Id::new(1),
             name: "guild".to_owned(),
+            icon_hash: None,
             owner_id: None,
             boost_tier: None,
             boost_count: None,

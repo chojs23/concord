@@ -268,6 +268,7 @@ impl DiscordState {
             AppEvent::GuildUpdate {
                 guild_id,
                 name,
+                icon_hash,
                 owner_id,
                 boost_tier,
                 boost_count,
@@ -280,6 +281,9 @@ impl DiscordState {
             } => {
                 if let Some(guild) = self.navigation_mut().guilds.get_mut(guild_id) {
                     guild.name = name.clone();
+                    if let Some(icon_hash) = icon_hash {
+                        guild.icon_hash = (!icon_hash.is_empty()).then(|| icon_hash.clone());
+                    }
                     if let Some(owner_id) = owner_id {
                         guild.owner_id = Some(*owner_id);
                     }
@@ -1304,6 +1308,7 @@ impl DiscordState {
         let AppEvent::GuildCreate {
             guild_id,
             name,
+            icon_hash,
             member_count,
             owner_id,
             boost_tier,
@@ -1330,6 +1335,7 @@ impl DiscordState {
             GuildState {
                 id: *guild_id,
                 name: name.clone(),
+                icon_hash: icon_hash.clone(),
                 member_count: *member_count,
                 online_count: None,
                 owner_id: *owner_id,
