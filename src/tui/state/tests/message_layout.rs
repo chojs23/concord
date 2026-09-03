@@ -139,6 +139,19 @@ fn message_row_content_metrics_cache_clears_on_display_option_toggle() {
 }
 
 #[test]
+fn relative_timestamp_refresh_clears_message_row_content_metrics_cache() {
+    let mut state = state_with_single_message_content("<t:0:R>");
+    let message = state.messages()[0];
+
+    let _ = state.message_row_metrics_at_with_selected_bottom(0, message, 5, 16, 3, true);
+    assert_eq!(state.message_row_content_metrics_cache_len(), 1);
+
+    state.clear_message_row_content_metrics_cache();
+
+    assert_eq!(state.message_row_content_metrics_cache_len(), 0);
+}
+
+#[test]
 fn message_row_content_metrics_cache_clears_on_discord_event() {
     let mut state = state_with_single_message_content("abcdefghijkl");
     let message = state.messages()[0];

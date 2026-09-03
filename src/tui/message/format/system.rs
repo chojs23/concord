@@ -12,7 +12,7 @@ use crate::discord::{
 };
 use crate::tui::message::time as message_time;
 use crate::tui::state::{DashboardState, apply_discord_foreground, normal_text_style};
-use crate::tui::text::{render_discord_timestamps, truncate_display_width, truncate_text};
+use crate::tui::text::{truncate_display_width, truncate_text};
 use crate::tui::theme;
 use crate::tui::ui::thread_card::{thread_card_lines, thread_card_width_in_message};
 
@@ -202,40 +202,7 @@ pub(in crate::tui) fn format_message_relative_age(message_id: Id<MessageMarker>)
         .and_then(|duration| u64::try_from(duration.as_millis()).ok())
         .unwrap_or(created);
     let seconds = now.saturating_sub(created) / 1000;
-    format_relative_seconds(seconds)
-}
-
-fn format_relative_seconds(seconds: u64) -> String {
-    if seconds < 60 {
-        return "just now".to_owned();
-    }
-
-    let minutes = seconds / 60;
-    if minutes < 60 {
-        return format_relative_unit(minutes, "minute");
-    }
-
-    let hours = minutes / 60;
-    if hours < 24 {
-        return format_relative_unit(hours, "hour");
-    }
-
-    let days = hours / 24;
-    if days < 30 {
-        return format_relative_unit(days, "day");
-    }
-
-    let months = days / 30;
-    if months < 12 {
-        return format_relative_unit(months, "month");
-    }
-
-    format_relative_unit((days / 365).max(1), "year")
-}
-
-fn format_relative_unit(value: u64, unit: &str) -> String {
-    let suffix = if value == 1 { "" } else { "s" };
-    format!("{value} {unit}{suffix} ago")
+    message_time::format_relative_time_past(seconds)
 }
 
 fn format_thread_starter_lines(
@@ -277,7 +244,7 @@ pub(super) fn format_forwarded_snapshot(
         && let Some(content) =
             display_text_with_stickers(snapshot.content.as_deref(), &snapshot.stickers)
     {
-        let content = render_discord_timestamps(&content);
+        let content = message_time::render_discord_timestamps(&content, state.hour_format_24());
         let content_width = width.saturating_sub(2).max(1);
         let content = state.render_user_mentions_with_highlights(
             state.forwarded_snapshot_mention_guild_id(snapshot),
@@ -365,14 +332,22 @@ mod tests {
 
     #[test]
     fn relative_age_labels_use_expected_boundaries() {
-        assert_eq!(format_relative_seconds(0), "just now");
-        assert_eq!(format_relative_seconds(59), "just now");
-        assert_eq!(format_relative_seconds(60), "1 minute ago");
-        assert_eq!(format_relative_seconds(2 * 60), "2 minutes ago");
-        assert_eq!(format_relative_seconds(59 * 60), "59 minutes ago");
-        assert_eq!(format_relative_seconds(60 * 60), "1 hour ago");
-        assert_eq!(format_relative_seconds(24 * 60 * 60), "1 day ago");
-        assert_eq!(format_relative_seconds(30 * 24 * 60 * 60), "1 month ago");
-        assert_eq!(format_relative_seconds(365 * 24 * 60 * 60), "1 year ago");
+        for (seconds, expected) in [
+            (0, "just now"),
+            (59, "just now"),
+            (60, "1 minute ago"),
+            (2 * 60, "2 minutes ago"),
+            (59 * 60, "59 minutes ago"),
+            (60 * 60, "1 hour ago"),
+            (24 * 60 * 60, "1 day ago"),
+            (30 * 24 * 60 * 60, "1 month ago"),
+            (365 * 24 * 60 * 60, "1 year ago"),
+        ] {
+            assert_eq!(
+                message_time::format_relative_time_past(seconds),
+                expected,
+                "{seconds}"
+            );
+        }
     }
 }

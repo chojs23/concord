@@ -25,7 +25,6 @@ pub struct DisplayOptions {
     pub show_custom_emoji: bool,
     pub circular_avatars: bool,
     pub hour_format_24: bool,
-    pub live_relative_timestamps: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -691,7 +690,6 @@ impl Default for DisplayOptions {
             show_custom_emoji: true,
             circular_avatars: false,
             hour_format_24: true,
-            live_relative_timestamps: false,
         }
     }
 }

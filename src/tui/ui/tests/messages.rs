@@ -450,6 +450,53 @@ fn components_v2_message_renders_text_layout_and_link_fallback() {
 }
 
 #[test]
+fn components_v2_text_renders_discord_timestamp_markup() {
+    let timestamp = 1_735_689_600;
+    let expected = chrono::DateTime::from_timestamp(timestamp, 0)
+        .expect("static timestamp is valid")
+        .with_timezone(&chrono::Local)
+        .format("%H:%M")
+        .to_string();
+    let message = MessageState {
+        flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+        components: vec![MessageComponentInfo::TextDisplay {
+            content: format!("Starts <t:{timestamp}:t>"),
+        }],
+        ..MessageState::default()
+    };
+
+    assert_eq!(
+        line_texts(&format_message_content_lines(
+            &message,
+            &DashboardState::new(),
+            80,
+        )),
+        vec![format!("Starts {expected}")]
+    );
+}
+
+#[test]
+fn message_timestamps_remain_literal_inside_markdown_code() {
+    let timestamp = 1_735_689_600;
+    let message = message_with_content(Some(format!(
+        "outside <t:{timestamp}:d>\ninline `<t:{timestamp}:d>`\n```text\n<t:{timestamp}:d>\n```"
+    )));
+
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    let timestamp_markup = format!("<t:{timestamp}:d>");
+
+    assert_eq!(
+        line_texts(&lines)
+            .iter()
+            .filter(|line| line.contains(&timestamp_markup))
+            .count(),
+        2
+    );
+    assert!(line_texts(&lines)[0].starts_with("outside "));
+    assert!(!line_texts(&lines)[0].contains("<t:"));
+}
+
+#[test]
 fn attachment_summary_uses_own_accent_line_after_text_content() {
     let message = message_with_attachment(Some("look".to_owned()), image_attachment());
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);

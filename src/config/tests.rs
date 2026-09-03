@@ -41,7 +41,6 @@ fn global_disable_overrides_individual_toggles() {
         show_custom_emoji: true,
         circular_avatars: false,
         hour_format_24: true,
-        live_relative_timestamps: false,
     };
 
     assert!(!options.avatars_visible());
@@ -719,7 +718,6 @@ fn options_save_and_load_round_trip() {
             show_custom_emoji: false,
             circular_avatars: true,
             hour_format_24: false,
-            live_relative_timestamps: false,
         },
         composer: ComposerOptions {
             emojis_as_links: true,

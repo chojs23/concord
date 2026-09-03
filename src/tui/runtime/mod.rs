@@ -161,7 +161,8 @@ pub(super) async fn run_dashboard(
         std::time::Duration::from_secs(60);
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut animation_frame_deadline: Option<tokio::time::Instant> = None;
-    let mut relative_timestamp_deadline: Option<tokio::time::Instant> = None;
+    let mut relative_timestamp_deadline =
+        tokio::time::Instant::now() + RELATIVE_TIMESTAMP_REFRESH_INTERVAL;
     #[cfg(feature = "voice-playback")]
     let mut push_to_talk = GlobalPushToTalkRuntime::new(client.clone());
     #[cfg(feature = "voice-playback")]
@@ -247,13 +248,6 @@ pub(super) async fn run_dashboard(
             });
         } else {
             animation_frame_deadline = None;
-        }
-        if state.live_relative_timestamps() {
-            relative_timestamp_deadline.get_or_insert_with(|| {
-                tokio::time::Instant::now() + RELATIVE_TIMESTAMP_REFRESH_INTERVAL
-            });
-        } else {
-            relative_timestamp_deadline = None;
         }
 
         tokio::select! {
@@ -514,15 +508,10 @@ pub(super) async fn run_dashboard(
                 );
                 dirty = true;
             }
-            _ = async {
-                match relative_timestamp_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline).await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
-                relative_timestamp_deadline = Some(
-                    tokio::time::Instant::now() + RELATIVE_TIMESTAMP_REFRESH_INTERVAL,
-                );
+            _ = tokio::time::sleep_until(relative_timestamp_deadline) => {
+                relative_timestamp_deadline =
+                    tokio::time::Instant::now() + RELATIVE_TIMESTAMP_REFRESH_INTERVAL;
+                state.clear_message_row_content_metrics_cache();
                 dirty = true;
             }
             _ = async {

@@ -25,7 +25,7 @@ pub(super) struct LayoutCacheState {
 }
 
 impl DashboardState {
-    pub(super) fn clear_message_row_content_metrics_cache(&mut self) {
+    pub(in crate::tui) fn clear_message_row_content_metrics_cache(&mut self) {
         self.layout_cache
             .message_row_content_metrics_cache
             .get_mut()
