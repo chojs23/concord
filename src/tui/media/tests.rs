@@ -32,7 +32,10 @@ use crate::{
 };
 
 use super::*;
-use super::{decode::MAX_LOTTIE_JSON_BYTES, work::MediaWorkError};
+use super::{
+    decode::{MAX_LOTTIE_JSON_BYTES, decode_gif_animation_with_limits},
+    work::MediaWorkError,
+};
 
 fn layout(list_height: usize) -> ImagePreviewLayout {
     ImagePreviewLayout {
@@ -63,6 +66,31 @@ fn encoded_png(width: u32, height: u32) -> Vec<u8> {
 
 fn encoded_animated_gif() -> Vec<u8> {
     encoded_two_frame_gif(10)
+}
+
+fn encoded_three_frame_gif() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = GifEncoder::new(&mut bytes);
+        encoder
+            .set_repeat(Repeat::Infinite)
+            .expect("test GIF repeat should encode");
+        for color in [
+            Rgba([255, 0, 0, 255]),
+            Rgba([0, 255, 0, 255]),
+            Rgba([0, 0, 255, 255]),
+        ] {
+            encoder
+                .encode_frame(ImageFrame::from_parts(
+                    ImageBuffer::from_pixel(2, 2, color),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(50, 1),
+                ))
+                .expect("test GIF frame should encode");
+        }
+    }
+    bytes
 }
 
 fn encoded_two_frame_gif(delay_ms: u32) -> Vec<u8> {
@@ -1835,7 +1863,7 @@ fn animate_previews_policy_decides_which_previews_keep_moving() {
 }
 
 #[test]
-fn render_protocols_are_evicted_by_size_not_only_by_count() {
+fn render_protocols_keep_the_two_frame_animation_window() {
     let picker = ratatui_image::picker::Picker::halfblocks();
     let image = DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4));
     let build = || {
@@ -1849,19 +1877,96 @@ fn render_protocols_are_evicted_by_size_not_only_by_count() {
     };
 
     let mut protocols = super::cache::RenderProtocolCache::<usize>::new();
-    // Half the budget each: two fit, the third has to evict the oldest even
-    // though the count cap is nowhere near.
-    let half_budget = super::cache::RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY / 2;
+    // Each protocol is larger than half the budget. The cache must still keep
+    // two, then evict the oldest when a third arrives. Keeping only one would
+    // make the current and next animation frames rebuild each other forever.
+    let protocol_bytes = super::cache::RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY * 2 / 3;
     for frame in 0..3 {
         assert!(protocols.request_build(&frame));
         protocols
-            .store_result(frame, Ok(build()), half_budget)
+            .store_result(frame, Ok(build()), protocol_bytes)
             .expect("test protocol should store");
     }
 
     assert_eq!(protocols.len(), 2);
     assert!(protocols.get(&0).is_none(), "the oldest frame should go");
+    assert!(protocols.get(&1).is_some(), "the current frame must stay");
     assert!(protocols.get(&2).is_some(), "the newest frame must stay");
+}
+
+#[test]
+fn attachment_preview_waits_when_protocol_encoding_falls_behind() {
+    let target = image_preview_target(42);
+    let key = target.key();
+    let protocol_spec = target.protocol_render_spec();
+    let mut cache = ImagePreviewCache::new(Some(ratatui_image::picker::Picker::halfblocks()));
+    cache.cache.entries.insert(
+        key.clone(),
+        ImagePreviewEntry::Decoding {
+            filename: target.filename.clone(),
+            generation: 1,
+            protocol_spec,
+            last_used: 1,
+        },
+    );
+    cache.store_decoded(
+        key.clone(),
+        1,
+        decode_media_image_bytes(&encoded_three_frame_gif()).map_err(MediaWorkError::Failed),
+    );
+
+    for _ in 0..2 {
+        let _ = cache.render_state(std::slice::from_ref(&target));
+        for job in cache.take_protocol_jobs() {
+            cache.store_protocol(build_media_protocol(job));
+        }
+    }
+
+    let started_at = Instant::now();
+    cache.sync_animation_visibility(
+        std::slice::from_ref(&target),
+        started_at,
+        AnimatePreviews::Always,
+    );
+    let first_deadline = cache
+        .next_animation_deadline()
+        .expect("prepared preview should start animating");
+    assert!(cache.advance_animations(first_deadline));
+
+    // Rendering frame 1 queues frame 2, but leave that job unfinished to
+    // model a large terminal protocol that takes longer than one frame delay.
+    assert_eq!(cache.render_state(std::slice::from_ref(&target)).len(), 1);
+    let mut delayed_jobs = cache.take_protocol_jobs();
+    assert_eq!(delayed_jobs.len(), 1);
+    let delayed_job = delayed_jobs
+        .pop()
+        .expect("next frame protocol job should exist");
+    let second_deadline = cache
+        .next_animation_deadline()
+        .expect("running preview should schedule its next frame");
+    assert!(!cache.advance_animations(second_deadline));
+    assert!(matches!(
+        cache.cache.entries.get(&key),
+        Some(ImagePreviewEntry::Ready { image, .. })
+            if image.current_frame_index() == 1 && image.next_frame_deadline().is_none()
+    ));
+
+    cache.store_protocol(build_media_protocol(delayed_job));
+    assert_eq!(cache.render_state(std::slice::from_ref(&target)).len(), 1);
+    cache.sync_animation_visibility(
+        std::slice::from_ref(&target),
+        second_deadline,
+        AnimatePreviews::Always,
+    );
+    let resumed_deadline = cache
+        .next_animation_deadline()
+        .expect("completed protocol should resume animation");
+    assert!(cache.advance_animations(resumed_deadline));
+    assert!(matches!(
+        cache.cache.entries.get(&key),
+        Some(ImagePreviewEntry::Ready { image, .. })
+            if image.current_frame_index() == 2
+    ));
 }
 
 #[test]
@@ -2046,7 +2151,7 @@ fn media_decoder_keeps_static_png_still() {
 }
 
 #[test]
-fn media_decoder_samples_long_animations_across_the_full_timeline() {
+fn media_decoder_samples_complete_timelines_and_avoids_partial_loops_at_limits() {
     let mut image = decode_media_image_bytes(&encoded_long_animated_gif())
         .expect("long GIF animation should decode");
     assert_eq!(image.frame_count(), MAX_RETAINED_ANIMATION_FRAMES);
@@ -2081,6 +2186,24 @@ fn media_decoder_samples_long_animations_across_the_full_timeline() {
             >= 16,
         "longer source delays should retain more representatives"
     );
+
+    let encoded = encoded_three_frame_gif();
+    for (label, max_source_frames, max_decode_work_bytes) in [
+        ("source frame limit", 2, u64::MAX),
+        ("decode work limit", usize::MAX, 32),
+    ] {
+        let image =
+            decode_gif_animation_with_limits(&encoded, max_source_frames, max_decode_work_bytes)
+                .unwrap_or_else(|error| panic!("{label} should keep a static fallback: {error}"));
+
+        assert_eq!(image.frame_count(), 1, "{label}");
+        assert!(!image.is_animated(), "{label}");
+        assert_eq!(
+            image.current_frame().to_rgba8().get_pixel(0, 0),
+            &Rgba([255, 0, 0, 255]),
+            "{label}",
+        );
+    }
 }
 
 #[test]

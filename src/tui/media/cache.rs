@@ -15,6 +15,7 @@ use super::{
 };
 
 const MAX_RENDER_PROTOCOLS_PER_MEDIA_ENTRY: usize = MAX_RETAINED_ANIMATION_FRAMES;
+const MIN_RENDER_PROTOCOLS_PER_MEDIA_ENTRY: usize = 2;
 const MAX_RENDER_PROTOCOL_BUILD_ATTEMPTS: u8 = 2;
 /// A terminal graphics protocol holds the whole frame as an encoded payload:
 /// one kitty protocol for a 60x30 preview measures ~1.3MB. Keeping an
@@ -139,10 +140,12 @@ where
             return;
         }
 
-        // Always keep the frame just stored, however large it is: rendering
-        // needs one protocol and an empty cache would rebuild it every frame.
+        // An animation needs its current and next protocols at the same time.
+        // Keep that two-frame window even when a large preview exceeds the
+        // soft byte budget, otherwise the two frames evict and rebuild each
+        // other forever before playback can start.
         while self.entries.len() >= MAX_RENDER_PROTOCOLS_PER_MEDIA_ENTRY
-            || (!self.entries.is_empty()
+            || (self.entries.len() >= MIN_RENDER_PROTOCOLS_PER_MEDIA_ENTRY
                 && self.retained_bytes.saturating_add(bytes)
                     > RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY)
         {

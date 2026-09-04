@@ -358,7 +358,7 @@ attachment_viewer_quality = "original"
 # Each animated frame rebuilds a terminal graphics protocol, so "always" costs
 # roughly 8% of a CPU core per animated preview on screen. Custom emoji animate
 # regardless; theirs are small enough not to matter.
-animate_previews = "selected"
+animate_previews = "always"
 
 # Render custom Discord emoji as images when possible.
 show_custom_emoji = true

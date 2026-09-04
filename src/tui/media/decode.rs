@@ -30,10 +30,11 @@ pub(super) const MAX_DECODED_IMAGE_HEIGHT: u32 = 4096;
 const MAX_DECODED_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ANIMATION_SOURCE_FRAMES: usize = 4096;
 pub(super) const MAX_RETAINED_ANIMATION_FRAMES: usize = 32;
-/// Peak allocation while one animation is decoding, before compaction trims it
-/// back. Transient, but it still shows up as resident memory and the allocator
-/// is in no hurry to return it.
-const MAX_ANIMATION_DECODE_WORK_BYTES: u64 = 64 * 1024 * 1024;
+/// Total decoded pixel work accepted from one raster animation. This is larger
+/// than the retained-frame budget because decoded frames are compacted as they
+/// arrive. Animations that exceed this work budget fall back to their first
+/// frame instead of presenting an incomplete prefix as a valid loop.
+const MAX_ANIMATION_DECODE_WORK_BYTES: u64 = 256 * 1024 * 1024;
 pub(super) const MAX_LOTTIE_JSON_BYTES: usize = 1024 * 1024;
 const MIN_ANIMATION_FRAME_DELAY: Duration = Duration::from_millis(50);
 const MAX_UNDERSPECIFIED_FRAME_DELAY: Duration = Duration::from_millis(10);
@@ -603,12 +604,28 @@ fn lottie_frame_delay(duration_seconds: f32, retained_frame_count: usize) -> Dur
 }
 
 fn decode_gif_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
+    decode_gif_animation_with_limits(
+        bytes,
+        MAX_ANIMATION_SOURCE_FRAMES,
+        MAX_ANIMATION_DECODE_WORK_BYTES,
+    )
+}
+
+pub(super) fn decode_gif_animation_with_limits(
+    bytes: &[u8],
+    max_source_frames: usize,
+    max_decode_work_bytes: u64,
+) -> std::result::Result<DecodedMediaImage, String> {
     let mut decoder =
         GifDecoder::new(Cursor::new(bytes)).map_err(|error| format!("decode failed: {error}"))?;
     decoder
         .set_limits(decode_limits())
         .map_err(|error| format!("decode failed: {error}"))?;
-    decode_animation_frames(decoder.into_frames())
+    decode_animation_frames_with_limits(
+        decoder.into_frames(),
+        max_source_frames,
+        max_decode_work_bytes,
+    )
 }
 
 fn decode_webp_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
@@ -644,12 +661,29 @@ fn decode_png_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, 
 fn decode_animation_frames(
     frames: impl Iterator<Item = image::ImageResult<Frame>>,
 ) -> std::result::Result<DecodedMediaImage, String> {
+    decode_animation_frames_with_limits(
+        frames,
+        MAX_ANIMATION_SOURCE_FRAMES,
+        MAX_ANIMATION_DECODE_WORK_BYTES,
+    )
+}
+
+fn decode_animation_frames_with_limits(
+    frames: impl Iterator<Item = image::ImageResult<Frame>>,
+    max_source_frames: usize,
+    max_decode_work_bytes: u64,
+) -> std::result::Result<DecodedMediaImage, String> {
     let mut sampled_frames = Vec::new();
     let mut retained_bytes = 0u64;
     let mut decode_work_bytes = 0u64;
     let mut source_frame_count = 0usize;
 
-    for (frame_index, result) in frames.take(MAX_ANIMATION_SOURCE_FRAMES).enumerate() {
+    // Read one frame past the source limit so an oversized animation cannot be
+    // mistaken for a complete animation that happens to end at the limit.
+    for (frame_index, result) in frames.take(max_source_frames.saturating_add(1)).enumerate() {
+        if frame_index >= max_source_frames {
+            return first_sampled_frame_fallback(sampled_frames);
+        }
         let frame = result.map_err(|error| {
             format!(
                 "decode failed at animation frame {}: {error}",
@@ -660,9 +694,9 @@ fn decode_animation_frames(
 
         let frame_bytes = u64::try_from(frame.buffer().as_raw().len()).unwrap_or(u64::MAX);
         if frame_bytes > MAX_DECODED_IMAGE_BYTES
-            || decode_work_bytes.saturating_add(frame_bytes) > MAX_ANIMATION_DECODE_WORK_BYTES
+            || decode_work_bytes.saturating_add(frame_bytes) > max_decode_work_bytes
         {
-            return finish_sampled_animation(sampled_frames, source_frame_count);
+            return first_sampled_frame_fallback(sampled_frames);
         }
 
         decode_work_bytes = decode_work_bytes.saturating_add(frame_bytes);
@@ -681,6 +715,12 @@ fn decode_animation_frames(
     }
 
     finish_sampled_animation(sampled_frames, source_frame_count)
+}
+
+fn first_sampled_frame_fallback(
+    frames: Vec<SampledAnimationFrame>,
+) -> std::result::Result<DecodedMediaImage, String> {
+    first_frame_fallback(frames.into_iter().map(|sample| sample.frame).collect())
 }
 
 fn finish_sampled_animation(

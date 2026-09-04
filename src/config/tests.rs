@@ -26,6 +26,7 @@ fn display_options_default_to_all_media_enabled() {
         ImagePreviewQualityPreset::Balanced
     );
     assert_eq!(options.image_protocol, ImageProtocolPreference::Auto);
+    assert_eq!(options.animate_previews, AnimatePreviews::Always);
 }
 
 #[test]

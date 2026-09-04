@@ -635,8 +635,8 @@ pub enum ImagePreviewQualityPreset {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AnimatePreviews {
-    Always,
     #[default]
+    Always,
     Selected,
     Never,
 }

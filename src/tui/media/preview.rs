@@ -425,7 +425,32 @@ impl ImagePreviewCache {
     }
 
     pub(in crate::tui) fn advance_animations(&mut self, now: Instant) -> bool {
-        self.cache.advance_animations(now)
+        let mut advanced = false;
+        for entry in self.cache.entries.values_mut() {
+            let ImagePreviewEntry::Ready {
+                image, protocols, ..
+            } = entry
+            else {
+                continue;
+            };
+            let next_frame_index = image.frame_index_with_offset(1);
+            let next_frame_ready = protocols.get(&next_frame_index).is_some()
+                || protocols.is_terminally_failed(&next_frame_index);
+            if image
+                .next_frame_deadline()
+                .is_some_and(|deadline| deadline <= now)
+                && !next_frame_ready
+            {
+                // Protocol encoding can be slower than the source frame delay
+                // for a large preview. Hold the current image until the worker
+                // finishes instead of advancing into missing frames and
+                // repeatedly drawing the last protocol as a fallback.
+                image.pause_animation();
+                continue;
+            }
+            advanced |= image.advance_frame(now);
+        }
+        advanced
     }
 
     pub(in crate::tui) fn take_protocol_jobs(&mut self) -> Vec<MediaProtocolBuildJob> {
