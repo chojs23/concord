@@ -1013,6 +1013,32 @@ fn starting_reply_preserves_existing_composer_draft() {
 }
 
 #[test]
+fn starting_reply_preserves_existing_composer_attachments() {
+    let attachment = temp_upload_file("reply draft.png", &[1, 2, 3]);
+    let mut state = state_with_messages(1);
+    state.start_composer();
+    assert!(handle_paste(
+        &mut state,
+        attachment.to_str().expect("temp path is valid unicode"),
+    ));
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert_eq!(state.pending_composer_preview_attachment_count(), 1);
+    state.close_composer();
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, char_key('R'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert_eq!(
+        state.pending_composer_attachments()[0].filename,
+        "reply draft.png"
+    );
+    assert_eq!(state.pending_composer_preview_attachment_count(), 1);
+    remove_temp_upload_file(&attachment);
+}
+
+#[test]
 fn canceling_reply_composer_preserves_draft_and_clears_reply_target() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);

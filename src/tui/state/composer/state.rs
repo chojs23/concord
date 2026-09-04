@@ -192,8 +192,6 @@ impl DashboardState {
         if !self.can_reply_to_selected_message() {
             return;
         }
-        self.composer.pending_composer_attachments.clear();
-        self.composer.pending_composer_attachment_previews.clear();
         self.runtime.clipboard_paste_pending = false;
         self.composer.reply_target_message_id = Some(message_id);
         self.composer.edit_target_message = None;
