@@ -266,6 +266,11 @@ objc2-video-toolbox = { version = "0.3.2", default-features = false, features = 
   "objc2-core-video",
 ], optional = true }
 
+# Keep bindgen on the ARM Linux ABI until the upstream fix is released.
+# https://github.com/goyox86/thorvg-rs/pull/8
+[patch.crates-io]
+thorvg-sys = { git = "https://github.com/chojs23/thorvg-rs.git", rev = "2548bdbb1487cf473d2c1fe580891b57d973f0dc" }
+
 [profile.dist]
 inherits = "release"
 lto = true
