@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.17] - 2026-09-08
+
+### Bug Fixes
+
+- _(media)_ Reuse loaded media during scroll redraws by @chojs23
+- _(media)_ Stabilize preview retries and avatar redraws by @chojs23
+- Raise image preview download limit to 16 MB by @chojs23
+
+### Features
+
+- Improve debug panel by @chojs23
+
 ## [2.5.16] - 2026-09-04
 
 ### Bug Fixes
