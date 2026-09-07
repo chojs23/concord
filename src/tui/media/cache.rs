@@ -25,6 +25,22 @@ const MAX_RENDER_PROTOCOL_BUILD_ATTEMPTS: u8 = 2;
 /// by count; the count alone cannot tell a 2-cell emoji from a 30-row preview.
 pub(super) const RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY: u64 = 6 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::tui) struct MediaCacheStats {
+    pub(in crate::tui) entries: usize,
+    pub(in crate::tui) entry_limit: usize,
+    pub(in crate::tui) loading: usize,
+    pub(in crate::tui) decoding: usize,
+    pub(in crate::tui) ready: usize,
+    pub(in crate::tui) failed: usize,
+    /// These decoded pixels share frame storage with the shared decode cache.
+    /// Do not add both values when estimating process memory.
+    pub(in crate::tui) decoded_bytes: u64,
+    pub(in crate::tui) decoded_byte_budget: u64,
+    pub(in crate::tui) render_protocol_bytes: u64,
+    pub(in crate::tui) retryable: usize,
+}
+
 pub(super) struct RenderProtocolCache<K> {
     entries: HashMap<K, Protocol>,
     insertion_order: VecDeque<K>,
@@ -296,6 +312,45 @@ where
                 )
             },
         )
+    }
+
+    pub(super) fn diagnostics(
+        &self,
+        entry_limit: usize,
+        decoded_byte_budget: u64,
+    ) -> MediaCacheStats {
+        let mut stats = MediaCacheStats {
+            entries: self.entries.len(),
+            entry_limit,
+            decoded_byte_budget,
+            ..MediaCacheStats::default()
+        };
+        for (key, entry) in &self.entries {
+            if entry.is_loading() {
+                stats.loading += 1;
+            } else if entry.decoding_generation().is_some() {
+                stats.decoding += 1;
+            } else if entry.decoded_image().is_some() {
+                stats.ready += 1;
+            } else if entry.is_failed() {
+                stats.failed += 1;
+                if self
+                    .failed
+                    .get(key)
+                    .and_then(|failure| failure.retry_at)
+                    .is_some()
+                {
+                    stats.retryable += 1;
+                }
+            }
+            stats.decoded_bytes = stats
+                .decoded_bytes
+                .saturating_add(entry.retained_decoded_bytes());
+            stats.render_protocol_bytes = stats
+                .render_protocol_bytes
+                .saturating_add(entry.retained_protocol_bytes());
+        }
+        stats
     }
 
     pub(super) fn next_tick(&mut self) -> u64 {

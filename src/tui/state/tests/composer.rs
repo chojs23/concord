@@ -1317,21 +1317,6 @@ fn active_channel_is_cleared_when_view_permission_is_revoked() {
 }
 
 #[test]
-fn debug_channel_visibility_reports_active_guild_counts() {
-    // The fixture's channel denies VIEW_CHANNEL on @everyone, so it
-    // shows up in the hidden bucket.
-    let state = state_with_view_denied_channel();
-    let stats = state.debug_channel_visibility();
-    assert_eq!(
-        stats,
-        ChannelVisibilityStats {
-            visible: 0,
-            hidden: 1,
-        }
-    );
-}
-
-#[test]
 fn submit_builtin_text_slash_commands_as_messages() {
     for (input, expected) in [
         ("/me waves", "_waves_"),

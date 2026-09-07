@@ -24,9 +24,11 @@ use crate::tui::text_input::TextInputState;
 mod attachment_viewer;
 mod channel_actions;
 mod channel_switcher;
-mod diagnostics;
+mod debug_panel;
+pub(in crate::tui) use debug_panel::{DebugLogLine, DebugLogPopupState, DebugMediaSnapshot};
 mod forum_post;
 mod guild_actions;
+mod keymap;
 mod message_actions;
 mod notification_inbox;
 mod options;
@@ -126,7 +128,7 @@ define_modal_popups! {
     EmojiReactionPicker(EmojiReactionPickerState),
     PollVotePicker(PollVotePickerState),
     ReactionUsers(ReactionUsersPopupState),
-    DebugLog,
+    DebugLog(DebugLogPopupState),
     KeymapHelp(KeymapPopupState),
     ChannelSwitcher(ChannelSwitcherState),
     NotificationInbox(NotificationInboxState),
@@ -260,6 +262,9 @@ impl PopupKeymapContext {
     pub(in crate::tui) const fn scope(self) -> PopupKeymapScope {
         match self {
             Self::Selectable(_) => PopupKeymapScope::Selectable,
+            Self::Scrollable(ScrollablePopupTarget::DebugLog) => {
+                PopupKeymapScope::FilterableScrollable
+            }
             Self::Scrollable(_) => PopupKeymapScope::Scrollable,
             Self::Confirmation => PopupKeymapScope::Confirmation,
         }
@@ -293,6 +298,7 @@ pub(in crate::tui) struct SelectablePopupSnapshot {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum ScrollablePopupTarget {
+    DebugLog,
     KeymapHelp,
     ReactionUsers,
     UserProfile,
@@ -1451,6 +1457,13 @@ impl PopupUiState {
         popup
     );
     modal_popup_accessors!(
+        debug_log_popup,
+        debug_log_popup_mut,
+        DebugLog,
+        DebugLogPopupState,
+        popup
+    );
+    modal_popup_accessors!(
         keymap_popup,
         keymap_popup_mut,
         KeymapHelp,
@@ -1766,6 +1779,10 @@ impl DashboardState {
         }
 
         match action {
+            PopupAction::OpenFilter => {
+                self.open_debug_log_filter();
+                None
+            }
             PopupAction::SelectNext | PopupAction::SelectPrevious => match context {
                 PopupKeymapContext::Selectable(target) => {
                     let action = if action == PopupAction::SelectNext {
@@ -1798,10 +1815,15 @@ impl DashboardState {
                 None
             }
             PopupAction::JumpTop | PopupAction::JumpBottom => {
-                let PopupKeymapContext::Selectable(target) = context else {
-                    return None;
-                };
-                self.jump_selectable_popup(target, action.ui_action());
+                match context {
+                    PopupKeymapContext::Selectable(target) => {
+                        self.jump_selectable_popup(target, action.ui_action());
+                    }
+                    PopupKeymapContext::Scrollable(ScrollablePopupTarget::DebugLog) => {
+                        self.jump_debug_log(action == PopupAction::JumpBottom);
+                    }
+                    PopupKeymapContext::Scrollable(_) | PopupKeymapContext::Confirmation => {}
+                }
                 None
             }
         }
@@ -1877,6 +1899,10 @@ impl DashboardState {
         action: SelectionAction,
     ) -> Option<AppCommand> {
         match target {
+            ScrollablePopupTarget::DebugLog => {
+                self.scroll_popup_document(target, action);
+                None
+            }
             ScrollablePopupTarget::KeymapHelp => {
                 self.scroll_keymap_popup(action);
                 None
@@ -1972,6 +1998,15 @@ impl DashboardState {
             ModalPopup::ReactionUsers(_) => {
                 ActivePopupPolicy::selectable(kind, SelectablePopupTarget::ReactionList)
             }
+            ModalPopup::DebugLog(_) if self.debug_log_filter_cursor().is_some() => {
+                ActivePopupPolicy::text_entry(
+                    kind,
+                    ActivePopupInteraction::ScrollableDocument(ScrollablePopupTarget::DebugLog),
+                )
+            }
+            ModalPopup::DebugLog(_) => {
+                ActivePopupPolicy::scrollable(kind, ScrollablePopupTarget::DebugLog)
+            }
             ModalPopup::KeymapHelp(_) => {
                 ActivePopupPolicy::scrollable(kind, ScrollablePopupTarget::KeymapHelp)
             }
@@ -2024,7 +2059,7 @@ impl DashboardState {
             | ModalPopup::QuitConfirmation
             | ModalPopup::GuildLeaveConfirmation(_)
             | ModalPopup::ThreadDeleteConfirmation(_) => ActivePopupPolicy::confirmation(kind),
-            ModalPopup::AttachmentViewer(_) | ModalPopup::DebugLog => {
+            ModalPopup::AttachmentViewer(_) => {
                 ActivePopupPolicy::routed(kind, ActivePopupInteraction::NoNavigation)
             }
             ModalPopup::VoiceParticipantAudio(_) => {
@@ -2440,6 +2475,7 @@ impl DashboardState {
         if let Some(scroll) = self.scrollable_popup_state_mut(target) {
             scroll.page(action);
         }
+        self.update_debug_log_following();
     }
 
     fn scroll_popup_document(&mut self, target: ScrollablePopupTarget, action: SelectionAction) {
@@ -2449,6 +2485,7 @@ impl DashboardState {
                 SelectionAction::Previous => scroll.scroll_up(),
             }
         }
+        self.update_debug_log_following();
     }
 
     fn scrollable_popup_state_mut(
@@ -2456,6 +2493,10 @@ impl DashboardState {
         target: ScrollablePopupTarget,
     ) -> Option<&mut ScrollablePopupState> {
         match target {
+            ScrollablePopupTarget::DebugLog => self
+                .popups
+                .debug_log_popup_mut()
+                .map(|popup| &mut popup.scroll),
             ScrollablePopupTarget::KeymapHelp => self
                 .popups
                 .keymap_popup_mut()

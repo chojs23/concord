@@ -60,7 +60,7 @@ impl KeyBindings {
         summaries
     }
 
-    fn binding_label(&self, action: UiAction) -> String {
+    pub(in crate::tui) fn binding_label(&self, action: UiAction) -> String {
         self.keymap.first_sequence_label(action)
     }
 
@@ -468,6 +468,8 @@ impl KeyBindings {
             KeyCode::Backspace => Some(PaneFilterAction::DeleteChar),
             KeyCode::Left => Some(PaneFilterAction::MoveCursorLeft),
             KeyCode::Right => Some(PaneFilterAction::MoveCursorRight),
+            KeyCode::Home => Some(PaneFilterAction::MoveCursorHome),
+            KeyCode::End => Some(PaneFilterAction::MoveCursorEnd),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(PaneFilterAction::Ignore)
             }
@@ -702,7 +704,9 @@ impl KeyBindings {
             KeyCode::Up => Some(SelectionAction::Previous),
             KeyCode::Char('n') if ctrl => Some(SelectionAction::Next),
             KeyCode::Char('p') if ctrl => Some(SelectionAction::Previous),
-            _ if key_set == SelectionKeySet::Navigation => self.keymap_selection_action(key),
+            _ if key_set == SelectionKeySet::Navigation || !is_text_entry_character(key) => {
+                self.keymap_selection_action(key)
+            }
             _ => None,
         }
     }

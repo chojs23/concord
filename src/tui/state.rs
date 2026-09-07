@@ -87,8 +87,9 @@ pub use model::{
 };
 pub use options::{DisplayOptionGauge, DisplayOptionItem};
 pub(in crate::tui) use popups::{
-    ActiveModalPopupKind, ConfirmationButton, MessageConfirmationKind, PopupInputMode,
-    PopupKeymapContext, SelectablePopupSnapshot, SelectablePopupTarget, VoiceParticipantAudioField,
+    ActiveModalPopupKind, ConfirmationButton, DebugLogLine, DebugMediaSnapshot,
+    MessageConfirmationKind, PopupInputMode, PopupKeymapContext, SelectablePopupSnapshot,
+    SelectablePopupTarget, VoiceParticipantAudioField,
 };
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,

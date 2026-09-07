@@ -537,8 +537,7 @@ impl KeyMap {
         self.specs
             .get(&action)
             .and_then(|spec| spec.sequences.first())
-            .and_then(|sequence| sequence.last())
-            .map(|chord| chord.label())
+            .map(|sequence| keymap_sequence_label(sequence, Some(self.leader)))
             .unwrap_or_default()
     }
 

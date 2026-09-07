@@ -2156,62 +2156,6 @@ fn focused_pane_actions_on_empty_panes_open_nothing() {
 }
 
 #[test]
-fn debug_log_popup_shows_recent_errors() {
-    let lines = debug_log_popup_lines(
-        vec![
-            "1 [ERROR] first: old".to_owned(),
-            "2 [ERROR] second: recent".to_owned(),
-        ],
-        ChannelVisibilityStats {
-            visible: 12,
-            hidden: 3,
-        },
-        1,
-        80,
-    );
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec![
-            "Channels: 12 visible · 3 hidden by permissions",
-            "",
-            "2 [ERROR] second: recent",
-        ]
-    );
-}
-
-#[test]
-fn debug_log_popup_has_empty_state() {
-    let lines = debug_log_popup_lines(Vec::new(), ChannelVisibilityStats::default(), 5, 80);
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec![
-            "Channels: 0 visible · 0 hidden by permissions",
-            "",
-            "No errors recorded in this process.",
-        ]
-    );
-}
-
-#[test]
-fn debug_log_popup_wraps_long_detail_lines() {
-    let lines = debug_log_popup_lines(
-            vec!["42 [ERROR] history: load message history failed: Discord HTTP request failed; detail=Discord returned HTTP 403; api_error=Missing Access; response_body_bytes=99".to_owned()],
-            ChannelVisibilityStats::default(),
-            4,
-            44,
-        );
-    let texts = line_texts_from_ratatui(&lines);
-    let joined = texts.join("");
-
-    assert!(
-        joined.contains("detail=Discord returned HTTP 403"),
-        "expected wrapped debug popup line to preserve HTTP detail: {texts:?}"
-    );
-}
-
-#[test]
 fn keymap_popup_lines_show_help_content() {
     let summaries = vec![
         KeymapBindingSummary {

@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     EmojiImageTarget,
-    cache::{MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
+    cache::{MediaCacheStats, MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
     decode::{DecodedMediaImage, MediaImageDecodeKey, MediaImageDecodeRequest},
     estimated_media_protocol_bytes, fixed_media_protocol_render_spec, picker_font_size,
     protocol_job::{MediaProtocolBuildJob, MediaProtocolBuildResult, MediaProtocolBuildTarget},
@@ -364,6 +364,13 @@ impl EmojiImageCache {
 
     pub(in crate::tui) fn retained_stats(&self) -> (usize, u64, u64) {
         self.cache.retained_stats()
+    }
+
+    pub(in crate::tui) fn diagnostics(&self) -> MediaCacheStats {
+        self.cache.diagnostics(
+            MAX_EMOJI_IMAGE_CACHE_ENTRIES,
+            EMOJI_IMAGE_CACHE_DECODED_BYTE_BUDGET,
+        )
     }
 
     pub(in crate::tui) fn next_retry_deadline(

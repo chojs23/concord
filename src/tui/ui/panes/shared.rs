@@ -5,7 +5,7 @@ pub(super) fn notification_count_badge(unread: ChannelUnreadState) -> Span<'stat
     badge.expect("numeric unread state always renders a badge")
 }
 
-pub(super) fn split_pane_filter_area(area: Rect, active: bool) -> (Rect, Option<Rect>) {
+pub(in crate::tui::ui) fn split_pane_filter_area(area: Rect, active: bool) -> (Rect, Option<Rect>) {
     if active && area.height >= 2 {
         let list_h = area.height.saturating_sub(1);
         let list_rect = Rect {
@@ -23,20 +23,20 @@ pub(super) fn split_pane_filter_area(area: Rect, active: bool) -> (Rect, Option<
     }
 }
 
-pub(super) fn render_pane_filter_bar_with_cursor(
+pub(in crate::tui::ui) fn render_pane_filter_bar_with_cursor(
     frame: &mut Frame,
     area: Option<Rect>,
     query: Option<&str>,
     cursor: Option<usize>,
     focused: bool,
 ) {
-    let Some(area) = area else {
+    let Some(area) = area.filter(|area| !area.is_empty()) else {
         return;
     };
     let cursor_x = render_pane_filter_bar(frame, area, query.unwrap_or_default(), cursor, focused);
     if focused && cursor.is_some() {
         frame.set_cursor_position(Position {
-            x: area.x.saturating_add(cursor_x as u16),
+            x: area.x.saturating_add(cursor_x as u16).min(area.right() - 1),
             y: area.y,
         });
     }
@@ -53,7 +53,7 @@ fn render_pane_filter_bar(
 ) -> usize {
     let prompt = "/ ";
     let prompt_width = prompt.width();
-    let available = (area.width as usize).saturating_sub(prompt_width).max(1);
+    let available = (area.width as usize).saturating_sub(prompt_width + 1);
 
     // Scroll the visible window so the cursor is always in view.
     let cursor_byte = cursor_byte.unwrap_or(query.len()).min(query.len());

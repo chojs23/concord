@@ -1786,6 +1786,15 @@ fn image_preview_cache_evicts_least_recently_used_entries() {
     assert_eq!(decoded_cache.cache.retained_decoded_bytes(), 16);
     assert!(!decoded_cache.cache.entries.contains_key(&first.key()));
     assert!(decoded_cache.cache.entries.contains_key(&second.key()));
+
+    let diagnostics = decoded_cache.diagnostics();
+    assert_eq!(diagnostics.entries, 1);
+    assert_eq!(diagnostics.entry_limit, MAX_IMAGE_PREVIEW_CACHE_ENTRIES);
+    assert_eq!(diagnostics.ready, 1);
+    assert_eq!(diagnostics.decoded_bytes, 16);
+    assert_eq!(diagnostics.decoded_byte_budget, 64 * 1024 * 1024);
+    assert_eq!(diagnostics.render_protocol_bytes, 0);
+    assert_eq!(decoded_cache.diagnostics(), diagnostics);
 }
 
 #[test]
@@ -1937,6 +1946,10 @@ fn a_failed_media_fetch_retries_with_backoff_then_waits_for_a_refresh() {
     for attempt in 1..=4 {
         cache.store_failed(&target.url, "download failed".to_owned());
         let retry_at = cache.cache.retry_deadline(&key);
+        let diagnostics = cache.diagnostics();
+        assert_eq!(diagnostics.failed, 1);
+        assert_eq!(diagnostics.loading, 0);
+        assert_eq!(diagnostics.retryable, usize::from(attempt < 4));
         if let Some(seconds) = [3, 15, 60].get(attempt - 1) {
             let backoff = Duration::from_secs(*seconds);
             assert!(retry_at.is_some_and(|deadline| deadline >= now + backoff));
@@ -2139,6 +2152,14 @@ fn media_decode_busy_retains_bytes_and_all_consumers_for_retry() {
         initial.job.as_ref().map(|job| job.bytes.as_ref()),
         Some(encoded.as_slice())
     );
+    let diagnostics = decoded.diagnostics();
+    assert_eq!(diagnostics.decoding, 1);
+    assert_eq!(diagnostics.pending_requests, 2);
+    assert_eq!(diagnostics.retry_pending, 0);
+    assert_eq!(diagnostics.retained_source_bytes, encoded.len() as u64);
+    assert_eq!(diagnostics.ready_limit, 32);
+    assert_eq!(diagnostics.decoded_byte_budget, 128 * 1024 * 1024);
+    assert_eq!(decoded.diagnostics(), diagnostics);
 
     let busy = decoded.complete(MediaImageDecodeResult {
         url: preview_target.url.clone(),
@@ -2146,15 +2167,23 @@ fn media_decode_busy_retains_bytes_and_all_consumers_for_retry() {
     });
     assert!(busy.deliveries.is_empty());
     assert!(decoded.is_decoding(&preview_target.url));
+    assert_eq!(decoded.diagnostics().retry_pending, 1);
     let retries = decoded.take_retry_jobs(std::slice::from_ref(&preview_target.url), 1);
     assert_eq!(retries.len(), 1);
     assert_eq!(retries[0].bytes.as_ref(), encoded.as_slice());
+    assert_eq!(decoded.diagnostics().retry_pending, 0);
 
     let completed = decoded.complete(MediaImageDecodeResult {
         url: preview_target.url,
         result: decode_media_image_bytes(&encoded).map_err(MediaWorkError::Failed),
     });
     assert_eq!(completed.deliveries.len(), 2);
+    let diagnostics = decoded.diagnostics();
+    assert_eq!(diagnostics.ready, 1);
+    assert_eq!(diagnostics.ready_decoded_bytes, 16);
+    assert_eq!(diagnostics.decoding, 0);
+    assert_eq!(diagnostics.pending_requests, 0);
+    assert_eq!(diagnostics.retained_source_bytes, 0);
 }
 
 #[test]

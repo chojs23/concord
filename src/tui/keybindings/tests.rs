@@ -230,7 +230,7 @@ fn popup_close_and_dashboard_sequences_remain_independent() {
     }
 
     let options = KeymapOptions {
-        mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("q d"))]
+        mappings: [("OpenDebugPanel".to_owned(), KeymapBinding::one("q d"))]
             .into_iter()
             .collect(),
         ..Default::default()
@@ -248,7 +248,7 @@ fn popup_close_and_dashboard_sequences_remain_independent() {
         );
         assert_eq!(
             key_bindings.keymap_lookup_with_key(&[key_bindings.keymap_chord_for_event(q)], d),
-            Some(KeyMapLookup::Action(UiAction::OpenDebugLog))
+            Some(KeyMapLookup::Action(UiAction::OpenDebugPanel))
         );
     }
 }
@@ -1123,6 +1123,30 @@ fn keymap_can_remap_navigation_selection_actions() {
         ),
         Some(SelectionAction::Previous)
     );
+
+    let keymap = KeymapOptions {
+        mappings: [
+            ("SelectNext".to_owned(), KeymapBinding::one("<C-j>")),
+            ("SelectPrevious".to_owned(), KeymapBinding::one("<C-k>")),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let key_bindings = KeyBindings::try_from_options(&keymap).expect("selection keys should parse");
+    for (ch, action) in [
+        ('j', SelectionAction::Next),
+        ('k', SelectionAction::Previous),
+    ] {
+        let key = KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL);
+        for key_set in [SelectionKeySet::Navigation, SelectionKeySet::TextSafe] {
+            assert_eq!(key_bindings.selection_action(key, key_set), Some(action));
+        }
+        assert_eq!(
+            key_bindings.pane_filter_action(key),
+            Some(PaneFilterAction::Select(action))
+        );
+    }
 }
 
 #[test]

@@ -33,8 +33,8 @@ use super::{
     text::{EmojiImageSize, sanitize_for_display_width, truncate_display_width},
 };
 use crate::discord::{
-    ActivityInfo, ChannelState, ChannelUnreadState, ChannelVisibilityStats, FriendStatus,
-    MessageState, PresenceStatus, ReactionInfo, RoleState, UserProfileInfo, is_thread_kind,
+    ActivityInfo, ChannelState, ChannelUnreadState, FriendStatus, MessageState, PresenceStatus,
+    ReactionInfo, RoleState, UserProfileInfo, is_thread_kind,
 };
 
 pub(in crate::tui) const LOCAL_UPLOAD_PREVIEW_HEIGHT: u16 = 6;
@@ -78,7 +78,7 @@ use self::popups::user_profile_popup_text;
 use self::popups::{
     active_selectable_popup_layout, forum_post_composer_metrics, forum_post_composer_popup_area,
     keymap_popup_text_area, keymap_popup_total_lines, popup_form_areas, render_attachment_viewer,
-    render_channel_action_menu, render_channel_switcher_popup, render_debug_log_popup,
+    render_channel_action_menu, render_channel_switcher_popup, render_debug_panel,
     render_downloads_popup, render_emoji_reaction_picker, render_folder_settings_popup,
     render_forum_post_composer, render_forum_post_tag_picker, render_guild_action_menu,
     render_guild_leave_confirmation, render_key_sequence_hint, render_keymap_help_popup,
@@ -89,8 +89,9 @@ use self::popups::{
     render_reaction_users_popup, render_search_popup, render_stream_info,
     render_thread_action_menu, render_thread_delete_confirmation, render_thread_edit,
     render_thread_edit_tag_picker, render_toast, render_user_profile_popup,
-    render_voice_participant_audio_popup, thread_edit_metrics, thread_edit_popup_area,
-    user_profile_popup_has_avatar, user_profile_popup_metrics, user_profile_popup_text_geometry,
+    render_voice_participant_audio_popup, sync_debug_panel, thread_edit_metrics,
+    thread_edit_popup_area, user_profile_popup_has_avatar, user_profile_popup_metrics,
+    user_profile_popup_text_geometry,
 };
 pub(crate) use self::types::MouseTarget;
 pub use self::types::{
@@ -110,17 +111,17 @@ use self::{
     },
     popups::{
         centered_viewer_preview_area, channel_action_menu_lines_for_test,
-        channel_switcher_cursor_position, channel_switcher_lines, debug_log_popup_lines,
-        emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-        emoji_reaction_picker_lines_with_own_reactions, filtered_emoji_reaction_picker_lines,
-        folder_settings_input_line_for_test, keymap_help_popup_lines,
-        long_message_confirmation_lines_for_test, message_action_menu_lines,
-        message_action_menu_lines_with_keymap_options, message_delete_confirmation_lines,
-        message_pin_confirmation_lines, message_remove_embeds_confirmation_lines,
-        message_url_picker_lines_for_width, options_popup_lines, poll_vote_picker_lines,
-        quit_confirmation_lines, reaction_list_lines_with_ready_urls, reaction_users_popup_lines,
-        stream_info_area, stream_info_lines, stream_info_lines_for_width, toast_line,
-        user_profile_popup_lines, user_profile_popup_lines_with_activities,
+        channel_switcher_cursor_position, channel_switcher_lines, emoji_reaction_picker_lines,
+        emoji_reaction_picker_lines_for_width, emoji_reaction_picker_lines_with_own_reactions,
+        filtered_emoji_reaction_picker_lines, folder_settings_input_line_for_test,
+        keymap_help_popup_lines, long_message_confirmation_lines_for_test,
+        message_action_menu_lines, message_action_menu_lines_with_keymap_options,
+        message_delete_confirmation_lines, message_pin_confirmation_lines,
+        message_remove_embeds_confirmation_lines, message_url_picker_lines_for_width,
+        options_popup_lines, poll_vote_picker_lines, quit_confirmation_lines,
+        reaction_list_lines_with_ready_urls, reaction_users_popup_lines, stream_info_area,
+        stream_info_lines, stream_info_lines_for_width, toast_line, user_profile_popup_lines,
+        user_profile_popup_lines_with_activities,
     },
     thread_card::{
         thread_card_reaction_summary, thread_card_tag_rows_for_test, thread_card_viewport_lines,
@@ -189,6 +190,7 @@ pub fn sync_view_heights(area: Rect, state: &mut DashboardState) {
             state.reveal_user_profile_popup_row(row);
         }
     }
+    sync_debug_panel(area, state);
     if state.is_active_modal_popup(ActiveModalPopupKind::KeymapHelp) {
         let inner = keymap_popup_text_area(area);
         let total_lines = keymap_popup_total_lines(state);
@@ -379,7 +381,7 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     render_emoji_reaction_picker(frame, popup_area, state, &emoji_images);
     render_reaction_users_popup(frame, popup_area, state, &emoji_images);
     render_attachment_viewer(frame, frame.area(), state, viewer_image_preview);
-    render_debug_log_popup(frame, popup_area, state);
+    render_debug_panel(frame, popup_area, state);
     render_keymap_help_popup(frame, popup_area, state);
     render_search_popup(frame, popup_area, state);
     render_forum_post_composer(frame, popup_area, state);

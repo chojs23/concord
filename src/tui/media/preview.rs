@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     ImagePreviewTarget, MediaProtocolRenderSpec,
-    cache::{MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
+    cache::{MediaCacheStats, MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
     decode::{
         DecodedMediaImage, MediaImageDecodeCache, MediaImageDecodeKey, MediaImageDecodeRequest,
     },
@@ -557,6 +557,13 @@ impl ImagePreviewCache {
 
     pub(in crate::tui) fn retained_stats(&self) -> (usize, u64, u64) {
         self.cache.retained_stats()
+    }
+
+    pub(in crate::tui) fn diagnostics(&self) -> MediaCacheStats {
+        self.cache.diagnostics(
+            MAX_IMAGE_PREVIEW_CACHE_ENTRIES,
+            IMAGE_PREVIEW_CACHE_DECODED_BYTE_BUDGET,
+        )
     }
 
     pub(in crate::tui) fn forget_failures(&mut self) {

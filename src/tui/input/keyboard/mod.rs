@@ -226,6 +226,14 @@ fn handle_pane_filter_key(
             state.move_pane_filter_cursor_right(focus);
             Some(None)
         }
+        Some(PaneFilterAction::MoveCursorHome) => {
+            state.move_pane_filter_cursor_home(focus);
+            Some(None)
+        }
+        Some(PaneFilterAction::MoveCursorEnd) => {
+            state.move_pane_filter_cursor_end(focus);
+            Some(None)
+        }
         Some(PaneFilterAction::Ignore) => Some(None),
         Some(PaneFilterAction::InsertChar(value)) => {
             state.push_pane_filter_char(focus, value);

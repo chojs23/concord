@@ -281,17 +281,6 @@ pub(super) fn state_with_read_only_channel() -> DashboardState {
     )
 }
 
-/// Build a guild with a single hidden channel to verify visibility stats.
-pub(super) fn state_with_view_denied_channel() -> DashboardState {
-    guild_state_with_overwrites(
-        vec![PermissionOverwriteInfo {
-            deny: 0x400,
-            ..PermissionOverwriteInfo::test(1, PermissionOverwriteKind::Role)
-        }],
-        Some(Id::new(1)),
-    )
-}
-
 /// Build a guild with a single channel where @everyone has the standard
 /// message and attachment permissions used by composer tests.
 pub(super) fn state_with_writable_channel() -> DashboardState {

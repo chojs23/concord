@@ -41,6 +41,20 @@ const MAX_UNDERSPECIFIED_FRAME_DELAY: Duration = Duration::from_millis(10);
 const DEFAULT_UNDERSPECIFIED_FRAME_DELAY: Duration = Duration::from_millis(100);
 const MAX_ANIMATION_FRAME_DELAY: Duration = Duration::from_secs(10);
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::tui) struct SharedMediaCacheStats {
+    pub(in crate::tui) ready: usize,
+    pub(in crate::tui) ready_limit: usize,
+    pub(in crate::tui) ready_decoded_bytes: u64,
+    pub(in crate::tui) decoded_byte_budget: u64,
+    pub(in crate::tui) decoding: usize,
+    pub(in crate::tui) pending_requests: usize,
+    pub(in crate::tui) retry_pending: usize,
+    /// Source bytes held while decoding. Worker jobs can share the same `Arc`,
+    /// so this value is cache ownership rather than additive process memory.
+    pub(in crate::tui) retained_source_bytes: u64,
+}
+
 struct DecodedMediaFrame {
     image: Arc<DynamicImage>,
     delay: Duration,
@@ -404,6 +418,37 @@ impl MediaImageDecodeCache {
                 }
                 SharedDecodeEntry::Decoding { .. } => (count, bytes),
             })
+    }
+
+    pub(in crate::tui) fn diagnostics(&self) -> SharedMediaCacheStats {
+        let mut stats = SharedMediaCacheStats {
+            ready_limit: MAX_SHARED_DECODED_MEDIA_IMAGES,
+            decoded_byte_budget: MAX_SHARED_DECODED_MEDIA_BYTES,
+            ..SharedMediaCacheStats::default()
+        };
+        for entry in self.entries.values() {
+            match entry {
+                SharedDecodeEntry::Ready { image, .. } => {
+                    stats.ready += 1;
+                    stats.ready_decoded_bytes = stats
+                        .ready_decoded_bytes
+                        .saturating_add(image.retained_bytes());
+                }
+                SharedDecodeEntry::Decoding {
+                    bytes,
+                    requests,
+                    retry_pending,
+                } => {
+                    stats.decoding += 1;
+                    stats.pending_requests = stats.pending_requests.saturating_add(requests.len());
+                    stats.retry_pending += usize::from(*retry_pending);
+                    stats.retained_source_bytes = stats
+                        .retained_source_bytes
+                        .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+                }
+            }
+        }
+        stats
     }
 
     fn next_tick(&mut self) -> u64 {

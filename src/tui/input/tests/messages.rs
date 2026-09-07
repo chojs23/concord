@@ -115,46 +115,6 @@ fn message_viewport_scroll_uses_configured_keys() {
 }
 
 #[test]
-fn debug_log_uses_the_configured_open_action() {
-    let mut state = DashboardState::new();
-
-    handle_key(&mut state, char_key('`'));
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-
-    handle_key(&mut state, char_key('q'));
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-
-    let mut state = state_with_keymap(KeymapOptions {
-        mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("z d"))]
-            .into_iter()
-            .collect(),
-        ..Default::default()
-    });
-
-    handle_key(&mut state, char_key('`'));
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-
-    handle_key(&mut state, char_key('z'));
-    handle_key(&mut state, char_key('d'));
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-
-    handle_key(&mut state, char_key('q'));
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-}
-
-#[test]
-fn esc_closes_debug_log_popup_modally() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-    state.open_debug_log_popup();
-
-    handle_key(&mut state, key(KeyCode::Esc));
-
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-    assert_eq!(state.focus(), FocusPane::Messages);
-}
-
-#[test]
 fn enter_opens_selected_forum_post_from_message_pane() {
     let mut state = state_with_forum_channel_posts();
     state.focus_pane(FocusPane::Messages);
@@ -484,7 +444,7 @@ fn close_popup_bindings_remain_scoped_from_dashboard_sequences() {
 
     {
         let mut state = state_with_keymap(KeymapOptions {
-            mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("q d"))]
+            mappings: [("OpenDebugPanel".to_owned(), KeymapBinding::one("q d"))]
                 .into_iter()
                 .collect(),
             ..Default::default()

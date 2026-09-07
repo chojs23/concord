@@ -12,9 +12,10 @@ mod work;
 pub(in crate::tui) use work::MediaWorkError;
 
 pub(super) use avatar::AvatarImageCache;
+pub(super) use cache::MediaCacheStats;
 pub(super) use decode::{
     MediaImageDecodeCache, MediaImageDecodeDelivery, MediaImageDecodeKey, MediaImageDecodeRequest,
-    MediaImageDecodeResult, spawn_media_image_decode,
+    MediaImageDecodeResult, SharedMediaCacheStats, spawn_media_image_decode,
 };
 pub(super) use emoji::EmojiImageCache;
 pub(super) use preview::ImagePreviewCache;

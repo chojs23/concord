@@ -123,6 +123,18 @@ impl DashboardState {
         }
     }
 
+    pub(in crate::tui) fn move_pane_filter_cursor_home(&mut self, pane: FocusPane) {
+        if let Some(f) = self.pane_filter_mut(pane) {
+            f.cursor_home();
+        }
+    }
+
+    pub(in crate::tui) fn move_pane_filter_cursor_end(&mut self, pane: FocusPane) {
+        if let Some(f) = self.pane_filter_mut(pane) {
+            f.cursor_end();
+        }
+    }
+
     fn pane_filter(&self, pane: FocusPane) -> Option<&PaneFilterState> {
         match pane {
             FocusPane::Guilds => self.navigation.guilds.filter.as_ref(),
@@ -204,6 +216,10 @@ impl PaneFilterState {
         self.editing = false;
     }
 
+    pub(super) fn start_editing(&mut self) {
+        self.editing = true;
+    }
+
     pub(super) fn query(&self) -> &str {
         self.query.value()
     }
@@ -226,5 +242,13 @@ impl PaneFilterState {
 
     pub(super) fn cursor_right(&mut self) {
         self.query.move_right();
+    }
+
+    pub(super) fn cursor_home(&mut self) {
+        self.query.move_home();
+    }
+
+    pub(super) fn cursor_end(&mut self) {
+        self.query.move_end();
     }
 }

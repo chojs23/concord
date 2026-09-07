@@ -10,7 +10,7 @@ use crate::{
 use super::{
     AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, AvatarTarget, MediaProtocolRenderSpec,
     PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH, avatar_preview_url,
-    cache::{MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
+    cache::{MediaCacheStats, MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
     decode::{DecodedMediaImage, MediaImageDecodeKey, MediaImageDecodeRequest},
     estimated_media_protocol_bytes, picker_font_size,
     protocol_job::{MediaProtocolBuildJob, MediaProtocolBuildResult, MediaProtocolBuildTarget},
@@ -495,6 +495,13 @@ impl AvatarImageCache {
 
     pub(in crate::tui) fn retained_stats(&self) -> (usize, u64, u64) {
         self.cache.retained_stats()
+    }
+
+    pub(in crate::tui) fn diagnostics(&self) -> MediaCacheStats {
+        self.cache.diagnostics(
+            MAX_AVATAR_IMAGE_CACHE_ENTRIES,
+            AVATAR_IMAGE_CACHE_DECODED_BYTE_BUDGET,
+        )
     }
 
     pub(in crate::tui) fn next_retry_deadline(

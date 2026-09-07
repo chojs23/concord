@@ -24,7 +24,7 @@ use crate::{
             visible_emoji_image_targets, visible_image_preview_targets_from_plan,
         },
         message::layout::MessageViewportPlan,
-        state::DashboardState,
+        state::{DashboardState, DebugMediaSnapshot},
         ui::{self, ImagePreviewLayout, LOCAL_UPLOAD_PREVIEW_HEIGHT, LOCAL_UPLOAD_PREVIEW_WIDTH},
     },
 };
@@ -333,6 +333,9 @@ impl DashboardMediaRuntime {
     /// drive target computation and is not stored; the draw closures rebuild
     /// their own plan and reuse the stored owned targets.
     pub(super) fn prepare_frame(&mut self, state: &mut DashboardState, area: Rect) {
+        if state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog) {
+            state.set_debug_media_snapshot(self.diagnostics());
+        }
         ui::sync_view_heights(area, state);
         let preview_layout = self.preview_layout_for_draw(state, area);
         let messages = state.visible_messages();
@@ -496,6 +499,21 @@ impl DashboardMediaRuntime {
         self.image_previews.pause_animations();
         self.avatar_images.pause_animations();
         self.emoji_images.pause_animations();
+    }
+
+    pub(super) fn diagnostics(&self) -> DebugMediaSnapshot {
+        DebugMediaSnapshot {
+            previews: self.image_previews.diagnostics(),
+            avatars: self.avatar_images.diagnostics(),
+            emojis: self.emoji_images.diagnostics(),
+            shared: self.decoded_images.diagnostics(),
+            active_sources: self.active_sources.len(),
+            source_limit: MAX_ACTIVE_MEDIA_SOURCES,
+            protocol: self
+                .picker
+                .as_ref()
+                .map(|picker| format!("{:?}", picker.protocol_type())),
+        }
     }
 
     /// Reports what the media caches are actually holding, next to the
@@ -1172,6 +1190,53 @@ mod tests {
             assert!(runtime.active_sources.is_empty());
             assert!(!runtime.decoded_images.is_decoding(&target.url));
         }
+    }
+
+    #[test]
+    fn debug_snapshot_tracks_shared_work_and_is_only_stored_in_an_open_panel() {
+        let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+        let target = image_preview_target();
+        assert_eq!(
+            preview_commands(&mut runtime, std::slice::from_ref(&target)).len(),
+            1
+        );
+        let loading = runtime.diagnostics();
+        assert_eq!(loading.active_sources, 1);
+        assert_eq!(loading.source_limit, MAX_ACTIVE_MEDIA_SOURCES);
+        assert_eq!(loading.previews.loading, 1);
+        assert_eq!(loading.shared.ready, 0);
+        assert_eq!(
+            loading,
+            runtime.diagnostics(),
+            "sampling has no cache side effects"
+        );
+
+        start_source_decode(&mut runtime, &target.url);
+        let decoding = runtime.diagnostics();
+        assert_eq!(decoding.previews.decoding, 1);
+        assert_eq!(decoding.shared.decoding, 1);
+        assert_eq!(decoding.shared.pending_requests, 1);
+        assert!(decoding.shared.retained_source_bytes > 0);
+        finish_source_decode(&mut runtime, &target.url);
+        let ready = runtime.diagnostics();
+        assert_eq!(ready.active_sources, 0);
+        assert_eq!(ready.previews.ready, 1);
+        assert_eq!(ready.shared.ready, 1);
+        assert!(ready.shared.ready_decoded_bytes > 0);
+        assert_eq!(ready.shared.retained_source_bytes, 0);
+
+        let mut state = DashboardState::default();
+        assert!(!state.set_debug_media_snapshot(ready.clone()));
+        assert!(state.debug_media_snapshot().is_none());
+        state.open_debug_log_popup();
+        runtime.prepare_frame(&mut state, Rect::new(0, 0, 120, 40));
+        assert_eq!(state.debug_media_snapshot(), Some(&ready));
+        assert!(
+            !state.set_debug_media_snapshot(ready),
+            "unchanged samples need no redraw"
+        );
+        state.close_debug_log_popup();
+        assert!(state.debug_media_snapshot().is_none());
     }
 
     #[test]

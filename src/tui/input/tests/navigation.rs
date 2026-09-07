@@ -224,7 +224,7 @@ fn tab_and_shift_tab_cycle_focus() {
 }
 
 #[test]
-fn pane_filters_treat_vim_keys_as_text() {
+fn pane_filters_keep_text_editing_separate_from_navigation() {
     let mut guild_state = state_with_folder();
     guild_state.focus_pane(FocusPane::Guilds);
     handle_key(&mut guild_state, char_key('/'));
@@ -233,6 +233,11 @@ fn pane_filters_treat_vim_keys_as_text() {
     handle_key(&mut guild_state, char_key('k'));
 
     assert_eq!(guild_state.guild_pane_filter_query(), Some("jk"));
+    for (code, cursor) in [(KeyCode::Home, 0), (KeyCode::End, 2)] {
+        handle_key(&mut guild_state, key(code));
+        assert_eq!(guild_state.guild_pane_filter_cursor(), Some(cursor));
+        assert_eq!(guild_state.guild_pane_filter_query(), Some("jk"));
+    }
 
     let mut guild_state = state_with_folder();
     guild_state.focus_pane(FocusPane::Guilds);
@@ -259,6 +264,11 @@ fn pane_filters_treat_vim_keys_as_text() {
     handle_key(&mut channel_state, char_key('k'));
 
     assert_eq!(channel_state.channel_pane_filter_query(), Some("jk"));
+    for (code, cursor) in [(KeyCode::Home, 0), (KeyCode::End, 2)] {
+        handle_key(&mut channel_state, key(code));
+        assert_eq!(channel_state.channel_pane_filter_cursor(), Some(cursor));
+        assert_eq!(channel_state.channel_pane_filter_query(), Some("jk"));
+    }
 
     let mut channel_state = state_with_channel_tree();
     channel_state.focus_pane(FocusPane::Channels);

@@ -120,7 +120,9 @@ fn dispatch_popup_key(
         ActiveModalPopupKind::KeymapHelp => {
             route_fallback_key(state, key, stage, handle_keymap_popup_key)
         }
-        ActiveModalPopupKind::DebugLog => route_fallback_key(state, key, stage, ignore_popup_key),
+        ActiveModalPopupKind::DebugLog => {
+            route_fallback_key(state, key, stage, handle_debug_log_key)
+        }
         ActiveModalPopupKind::QuitConfirmation => route_confirmation_key(
             state,
             key,
@@ -1287,6 +1289,25 @@ fn handle_reaction_users_popup_key(
         }
         None => None,
     }
+}
+
+fn handle_debug_log_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    if state.debug_log_filter_cursor().is_some() {
+        if let Some(action) = state.key_bindings().pane_filter_action(key) {
+            state.apply_debug_log_filter_action(action);
+        }
+        return None;
+    }
+    if let Some(action) = state
+        .key_bindings()
+        .selection_action(key, SelectionKeySet::Navigation)
+    {
+        return match action {
+            SelectionAction::Next => state.move_active_popup_down(),
+            SelectionAction::Previous => state.move_active_popup_up(),
+        };
+    }
+    None
 }
 
 fn handle_keymap_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
