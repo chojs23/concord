@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use openh264::{
     OpenH264API,
     encoder::{
@@ -160,7 +162,10 @@ impl StreamEncoder {
         force_keyframe: bool,
     ) -> Result<Option<EncodedH264Frame>, String> {
         let hardware_name = self.backend.hardware_name();
+        let started_at = Instant::now();
         let initial_result = self.backend.encode(frame, force_keyframe);
+        let initial_result =
+            enforce_hardware_encode_budget(hardware_name, started_at.elapsed(), initial_result);
         let keyframe_interval_frames = self.keyframe_interval_frames;
         match recover_runtime_hardware_failure(hardware_name, initial_result, |force_keyframe| {
             let mut encoder = Box::new(OpenH264Encoder::new(keyframe_interval_frames)?);
@@ -175,7 +180,7 @@ impl StreamEncoder {
                 hardware_name,
                 hardware_error,
             } => {
-                logging::debug(
+                logging::file_error(
                     "stream",
                     format!(
                         "{hardware_name} H264 encoder failed during broadcast; switched to OpenH264: {hardware_error}"
@@ -227,6 +232,29 @@ impl StreamEncoderBackend {
             #[cfg(target_os = "windows")]
             Self::MediaFoundation(encoder) => encoder.encode(frame, force_keyframe),
         }
+    }
+}
+
+// A hardware encoder that needs longer than this for one 720p frame is already
+// pacing the whole broadcast; treating the overrun as a failure hands the stream
+// to OpenH264 instead of waiting on it again every frame.
+// ponytail: a blocking driver call cannot be cancelled from here, so the frame
+// that overruns still costs its full time. Move the encode onto its own thread
+// if a driver is ever seen hanging outright rather than merely running slow.
+const HARDWARE_ENCODE_BUDGET: Duration = Duration::from_millis(250);
+
+fn enforce_hardware_encode_budget(
+    hardware_name: Option<&str>,
+    elapsed: Duration,
+    result: Result<Option<EncodedH264Frame>, String>,
+) -> Result<Option<EncodedH264Frame>, String> {
+    match (hardware_name, result) {
+        (Some(hardware_name), Ok(_)) if elapsed > HARDWARE_ENCODE_BUDGET => Err(format!(
+            "{hardware_name} H264 encoder took {}ms for one frame, over the {}ms budget",
+            elapsed.as_millis(),
+            HARDWARE_ENCODE_BUDGET.as_millis(),
+        )),
+        (_, result) => result,
     }
 }
 
@@ -399,6 +427,7 @@ mod vaapi {
         borrow::Borrow,
         path::{Path, PathBuf},
         sync::Arc,
+        time::{Duration, Instant},
     };
 
     use cros_codecs::{
@@ -420,10 +449,14 @@ mod vaapi {
     use super::{
         EncodedH264Frame, I420Frame, STREAM_CAPTURE_FPS, STREAM_CAPTURE_HEIGHT,
         STREAM_CAPTURE_WIDTH, STREAM_ENCODER_BITRATE, annex_b_contains_idr, copy_i420_to_nv12,
-        split_nv12_image_planes, validate_parameterized_h264_idr,
+        logging, split_nv12_image_planes, validate_parameterized_h264_idr,
     };
 
     const VA_INPUT_FRAME_COUNT: usize = 3;
+    // Timing every frame would be thirty log lines a second. The first frame
+    // records what a healthy submission looks like; after that only the frames
+    // that overrun say anything, so a stall stands out on its own in the log.
+    const VA_ENCODE_LOG_BUDGET: Duration = Duration::from_millis(50);
 
     type HardwareEncoder =
         H264StatelessEncoder<PooledVaSurface<()>, VaapiBackend<(), PooledVaSurface<()>>>;
@@ -563,11 +596,14 @@ mod vaapi {
             input: I420Frame<'_>,
             force_keyframe: bool,
         ) -> Result<Option<EncodedH264Frame>, String> {
-            let mut frame = self
-                .frames
-                .get_surface()
-                .ok_or_else(|| "VA API input surface pool is exhausted".to_owned())?;
-            upload_i420_frame(&mut frame, self.image_format, input)?;
+            let index = self.frame_index;
+            let upload_started_at = Instant::now();
+            let mut frame = self.frames.get_surface().ok_or_else(|| {
+                format!("VA API input surface pool is exhausted: stage=surface frame={index}")
+            })?;
+            upload_i420_frame(&mut frame, self.image_format, input)
+                .map_err(|error| format!("{error}: stage=upload frame={index}"))?;
+            let upload = upload_started_at.elapsed();
 
             // Keep Linux consistent with the other native encoders. The first
             // submitted frame must be independently decodable even before
@@ -580,13 +616,38 @@ mod vaapi {
                 force_idr: force_keyframe,
             };
             self.frame_index = self.frame_index.wrapping_add(1);
-            self.encoder
-                .encode(metadata, frame)
-                .map_err(|error| format!("VA API H264 frame submission failed: {error}"))?;
-            let coded = self
-                .encoder
-                .poll()
-                .map_err(|error| format!("VA API H264 frame completion failed: {error}"))?;
+            let submit_started_at = Instant::now();
+            self.encoder.encode(metadata, frame).map_err(|error| {
+                format!(
+                    "VA API H264 frame submission failed: stage=submit frame={index} keyframe={force_keyframe} upload_ms={} error={error}",
+                    upload.as_millis()
+                )
+            })?;
+            let submit = submit_started_at.elapsed();
+            // Blocking mode means this is where a stalled GPU is actually
+            // waited on, so it gets its own timing rather than one total.
+            let poll_started_at = Instant::now();
+            let coded = self.encoder.poll().map_err(|error| {
+                format!(
+                    "VA API H264 frame completion failed: stage=poll frame={index} keyframe={force_keyframe} upload_ms={} submit_ms={} poll_ms={} error={error}",
+                    upload.as_millis(),
+                    submit.as_millis(),
+                    poll_started_at.elapsed().as_millis(),
+                )
+            })?;
+            let poll = poll_started_at.elapsed();
+            if index == 0 || upload + submit + poll > VA_ENCODE_LOG_BUDGET {
+                logging::debug(
+                    "stream",
+                    format!(
+                        "VA API H264 frame encoded: frame={index} keyframe={force_keyframe} upload_ms={} submit_ms={} poll_ms={} bytes={}",
+                        upload.as_millis(),
+                        submit.as_millis(),
+                        poll.as_millis(),
+                        coded.as_ref().map_or(0, |coded| coded.bitstream.len()),
+                    ),
+                );
+            }
             let Some(coded) = coded else {
                 return Ok(None);
             };
@@ -971,6 +1032,35 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    #[test]
+    fn an_overrunning_hardware_encode_becomes_a_runtime_failure() {
+        let encoded = || {
+            Ok(Some(EncodedH264Frame {
+                annex_b: vec![0, 0, 0, 1, 0x65],
+                is_keyframe: true,
+            }))
+        };
+        let over = HARDWARE_ENCODE_BUDGET + Duration::from_millis(1);
+
+        assert!(
+            enforce_hardware_encode_budget(Some("VA API"), over, encoded())
+                .err()
+                .is_some_and(|error| error.contains("VA API")),
+            "an overrunning hardware encode should fall back"
+        );
+        assert!(
+            enforce_hardware_encode_budget(Some("VA API"), HARDWARE_ENCODE_BUDGET, encoded())
+                .is_ok()
+        );
+        // OpenH264 is the fallback itself, so a slow frame has nowhere to go.
+        assert!(enforce_hardware_encode_budget(None, over, encoded()).is_ok());
+        assert_eq!(
+            enforce_hardware_encode_budget(Some("VA API"), over, Err("driver failed".to_owned()))
+                .err(),
+            Some("driver failed".to_owned())
+        );
+    }
 
     #[test]
     fn screen_content_encoder_configuration_initializes_cleanly() {

@@ -125,8 +125,8 @@ pub fn error(target: &str, message: impl AsRef<str>) {
 /// Records a native library failure without presenting it as an application
 /// error in the TUI. Native backends often report a recoverable hardware
 /// failure before Concord falls back to another backend.
-#[cfg(any(all(target_os = "linux", feature = "stream-broadcast"), test))]
-fn file_error(target: &str, message: impl AsRef<str>) {
+#[cfg(any(feature = "stream-broadcast", test))]
+pub fn file_error(target: &str, message: impl AsRef<str>) {
     logger().write(Level::Error, target, message.as_ref());
 }
 
