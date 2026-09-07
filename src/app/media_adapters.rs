@@ -18,7 +18,7 @@ use crate::{
 
 pub(super) const ATTACHMENT_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
 
-const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 16 * 1024 * 1024;
 const ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const ATTACHMENT_DOWNLOAD_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 const MEDIA_PLAYER_READY_TIMEOUT: Duration = Duration::from_secs(300);
