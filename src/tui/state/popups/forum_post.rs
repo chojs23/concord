@@ -728,6 +728,7 @@ impl DashboardState {
 
     fn refresh_forum_post_attachment_previews(&mut self) {
         let show_images = self.show_images();
+        let mut generation = self.popups.forum_attachment_preview_generation;
         let Some(popup) = self.popups.forum_post_composer_mut() else {
             return;
         };
@@ -751,16 +752,16 @@ impl DashboardState {
                 previews.push(previous.remove(previous_index));
                 continue;
             }
-            popup.attachment_preview_generation =
-                popup.attachment_preview_generation.saturating_add(1);
+            generation = generation.saturating_add(1);
             previews.push(LocalUploadPreviewState {
                 attachment_index: index,
-                generation: popup.attachment_preview_generation,
+                generation,
                 filename: attachment.filename.clone(),
                 state: LocalUploadPreviewStatus::Pending,
             });
         }
         popup.attachment_previews = previews;
+        self.popups.forum_attachment_preview_generation = generation;
     }
 
     fn commit_forum_post_edit(&mut self) {

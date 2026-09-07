@@ -532,6 +532,11 @@ pub(super) async fn run_dashboard(
                 state.clear_message_row_content_metrics_cache();
                 dirty = true;
             }
+            _ = media_runtime.wait_for_fetch_retry() => {
+                // Retry through the normal draw and source admission path,
+                // even when the user and Discord have produced no events.
+                dirty = true;
+            }
             _ = async {
                 match pending_media_animation_deadline {
                     Some(deadline) => tokio::time::sleep_until(

@@ -62,6 +62,8 @@ pub(super) struct PopupUiState {
     key_sequence: Option<KeySequenceState>,
     /// Bumped per inbox open so a previous open's late responses are ignored.
     pub(super) inbox_request_generation: u64,
+    /// Lives beyond a forum composer so closed popups cannot deliver current previews.
+    forum_attachment_preview_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -348,7 +350,6 @@ pub(super) struct ForumPostComposerState {
     /// body, mirroring the main message composer.
     pub(super) attachments: Vec<MessageAttachmentUpload>,
     pub(super) attachment_previews: Vec<super::local_upload_preview::LocalUploadPreviewState>,
-    pub(super) attachment_preview_generation: u64,
     pub(super) status: Option<PopupFormStatus<ForumPostComposerFieldState>>,
     /// Scroll for the whole form. The body owns a separate viewport so a long
     /// draft cannot push the other fields out of the form document.
@@ -371,7 +372,6 @@ impl ForumPostComposerState {
             selected_tag_ids: Vec::new(),
             attachments: Vec::new(),
             attachment_previews: Vec::new(),
-            attachment_preview_generation: 0,
             status: None,
             scroll: ScrollablePopupState::default(),
             pending_scroll_reveal: true,

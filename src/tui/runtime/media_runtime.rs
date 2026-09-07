@@ -447,9 +447,9 @@ impl DashboardMediaRuntime {
                 target.url().to_owned(),
                 target.row(),
                 (
-                    target.row(),
                     target.visible_height(),
                     target.top_clip_rows(),
+                    state.circular_avatars(),
                 ),
             );
         }
@@ -540,6 +540,32 @@ impl DashboardMediaRuntime {
         .into_iter()
         .flatten()
         .min()
+    }
+
+    fn next_retry_deadline(&self) -> Option<Instant> {
+        // A completion will wake the dashboard when capacity is available.
+        // Waiting on an already-due retry while all slots are full would spin.
+        if self.active_sources.len() >= MAX_ACTIVE_MEDIA_SOURCES {
+            return None;
+        }
+        [
+            self.image_previews.next_retry_deadline(&self.image_targets),
+            self.avatar_images
+                .next_retry_deadline(&self.avatar_targets, self.popup_avatar_url.as_deref()),
+            self.emoji_images.next_retry_deadline(&self.emoji_targets),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    pub(super) async fn wait_for_fetch_retry(&self) {
+        match self.next_retry_deadline() {
+            Some(deadline) => {
+                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+            }
+            None => std::future::pending::<()>().await,
+        }
     }
 
     pub(super) fn advance_animations(&mut self, now: Instant) -> bool {
@@ -1253,6 +1279,153 @@ mod tests {
         let diff = current.diff(&previous);
         assert!(diff.need_clear);
         assert!(!diff.unchanged_previews.contains(&target.fragment_key()));
+    }
+
+    #[tokio::test]
+    async fn idle_failed_media_fetch_retries_at_its_deadline_without_input() {
+        for profile_upload in [false, true] {
+            let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+            let mut state = DashboardState::default();
+            let url = if profile_upload {
+                state.push_event(AppEvent::Ready {
+                    user: "tester".to_owned(),
+                    user_id: Some(Id::new(10)),
+                });
+                state.open_current_user_profile_popup();
+                state.next_user_profile_settings_field();
+                state.next_user_profile_settings_field();
+                assert!(state.set_user_profile_avatar_from_attachment(
+                    MessageAttachmentUpload::from_bytes(
+                        "avatar.png".to_owned(),
+                        source_image_bytes()
+                    ),
+                ));
+                runtime.popup_avatar_url = resolve_popup_avatar_url(&state);
+                runtime
+                    .popup_avatar_url
+                    .clone()
+                    .expect("pending avatar has a key")
+            } else {
+                let target = image_preview_target();
+                let url = target.url.clone();
+                runtime.image_targets = vec![target];
+                url
+            };
+            let (commands, mut command_rx) = mpsc::channel(4);
+            let (upload_tx, _upload_rx) = mpsc::unbounded_channel();
+            let (protocol_tx, _protocol_rx) = mpsc::unbounded_channel();
+            let (decode_tx, _decode_rx) = mpsc::unbounded_channel();
+            assert!(
+                schedule_media_loads_after_draw(
+                    &mut state,
+                    &mut runtime,
+                    &commands,
+                    &upload_tx,
+                    &protocol_tx,
+                    &decode_tx,
+                )
+                .await
+            );
+            let initial_request = command_rx.try_recv().expect("initial preview is requested");
+            assert_eq!(
+                matches!(initial_request, AppCommand::LoadProfileAvatarPreview { .. }),
+                profile_upload
+            );
+
+            let failed_at = Instant::now();
+            runtime.record_event(
+                &AppEvent::AttachmentPreviewLoadFailed {
+                    url,
+                    message: "preview load failed".to_owned(),
+                },
+                &decode_tx,
+            );
+            let deadline = runtime
+                .next_retry_deadline()
+                .expect("visible fetch retries");
+            assert!(deadline >= failed_at + std::time::Duration::from_secs(3));
+            assert!(deadline <= Instant::now() + std::time::Duration::from_secs(3));
+
+            // This is the same future used by the idle dashboard select loop.
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                runtime.wait_for_fetch_retry(),
+            )
+            .await
+            .expect("retry wakes without terminal or Discord events");
+            assert!(Instant::now() >= deadline);
+            assert!(
+                schedule_media_loads_after_draw(
+                    &mut state,
+                    &mut runtime,
+                    &commands,
+                    &upload_tx,
+                    &protocol_tx,
+                    &decode_tx,
+                )
+                .await,
+                "due preview is reissued, profile_upload={profile_upload}"
+            );
+            assert_eq!(
+                command_rx.try_recv().expect("retry command is sent"),
+                initial_request
+            );
+            assert!(
+                runtime.next_retry_deadline().is_none(),
+                "loading work has no retry timer"
+            );
+
+            assert!(
+                !schedule_media_loads_after_draw(
+                    &mut state,
+                    &mut runtime,
+                    &commands,
+                    &upload_tx,
+                    &protocol_tx,
+                    &decode_tx,
+                )
+                .await
+            );
+            assert!(
+                command_rx.try_recv().is_err(),
+                "one retry is enough while loading"
+            );
+        }
+    }
+
+    #[test]
+    fn fetch_retry_deadlines_wait_for_visible_targets_and_source_capacity() {
+        let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+        let target = image_preview_target();
+        assert_eq!(
+            preview_commands(&mut runtime, std::slice::from_ref(&target)).len(),
+            1
+        );
+        let (tx, _rx) = mpsc::unbounded_channel();
+        runtime.record_event(
+            &AppEvent::AttachmentPreviewLoadFailed {
+                url: target.url.clone(),
+                message: "download failed".to_owned(),
+            },
+            &tx,
+        );
+        assert!(
+            runtime.next_retry_deadline().is_none(),
+            "offscreen failures stay idle"
+        );
+        runtime.image_targets = vec![target];
+        let deadline = runtime
+            .next_retry_deadline()
+            .expect("visible failure retries");
+        runtime.active_sources = (0..MAX_ACTIVE_MEDIA_SOURCES)
+            .map(|i| format!("active-{i}"))
+            .collect();
+        assert!(
+            runtime.next_retry_deadline().is_none(),
+            "full source capacity must not spin on a due timer"
+        );
+        runtime.active_sources.remove("active-0");
+        assert_eq!(runtime.next_retry_deadline(), Some(deadline));
     }
 
     fn preview_commands(

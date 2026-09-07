@@ -366,8 +366,26 @@ impl EmojiImageCache {
         self.cache.retained_stats()
     }
 
+    pub(in crate::tui) fn next_retry_deadline(
+        &self,
+        targets: &[EmojiImageTarget],
+    ) -> Option<Instant> {
+        self.picker.as_ref()?;
+        targets
+            .iter()
+            .take(MAX_EMOJI_IMAGE_CACHE_ENTRIES)
+            .filter_map(|target| self.cache.retry_deadline(&target.url))
+            .min()
+    }
+
     pub(in crate::tui) fn forget_failures(&mut self) {
         self.cache.forget_failures();
+        for entry in self.cache.entries.values_mut() {
+            if let EmojiImageEntry::Ready { protocols, .. } = entry {
+                protocols.compact.forget_failures();
+                protocols.standalone.forget_failures();
+            }
+        }
     }
 
     pub(in crate::tui) fn pause_animations(&mut self) {
@@ -401,33 +419,27 @@ impl EmojiImageCache {
             fixed_media_protocol_render_spec(image_size.width(), image_size.height()),
             font_size,
         );
-        let failed = match self.cache.entries.get_mut(&url) {
-            Some(EmojiImageEntry::Ready {
-                generation,
-                protocols,
-                ..
-            }) if *generation == completed.generation => {
-                let result = match image_size {
-                    EmojiImageSize::Compact => protocols.compact.store_result(
-                        frame_index,
-                        completed.result,
-                        protocol_bytes,
-                    ),
-                    EmojiImageSize::Standalone => protocols.standalone.store_result(
-                        frame_index,
-                        completed.result,
-                        protocol_bytes,
-                    ),
-                };
-                image_size == EmojiImageSize::Compact && result.is_err()
-            }
-            _ => false,
-        };
-        if failed {
-            let last_used = self.cache.next_tick();
-            self.cache
-                .entries
-                .insert(url, EmojiImageEntry::Failed { last_used });
+        if let Some(EmojiImageEntry::Ready {
+            generation,
+            protocols,
+            ..
+        }) = self.cache.entries.get_mut(&url)
+            && *generation == completed.generation
+        {
+            // Compact and standalone renders fail independently. Neither can
+            // invalidate the decoded source or the other size's protocols.
+            match image_size {
+                EmojiImageSize::Compact => {
+                    protocols
+                        .compact
+                        .store_result(frame_index, completed.result, protocol_bytes)
+                }
+                EmojiImageSize::Standalone => {
+                    protocols
+                        .standalone
+                        .store_result(frame_index, completed.result, protocol_bytes)
+                }
+            };
         }
     }
 }

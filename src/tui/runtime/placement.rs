@@ -30,9 +30,9 @@ pub(super) struct FramePlacements {
     /// resolved post-clip screen rect (inline) or the centered viewer rect.
     previews: HashMap<ImagePreviewFragmentKey, Rect>,
     /// Message-pane avatars, keyed by (url, absolute row). The value is the
-    /// vertical fingerprint (row, visible_height, top_clip_rows); avatar x and
-    /// width are constant.
-    avatars: HashMap<(String, isize), (isize, u16, u16)>,
+    /// render fingerprint (visible_height, top_clip_rows, circular). The row
+    /// is already part of the key, and avatar x and width are constant.
+    avatars: HashMap<(String, isize), (u16, u16, bool)>,
     /// Profile popup avatar, when shown: (url, circular, area).
     popup_avatar: Option<(String, bool, Rect)>,
 }
@@ -54,12 +54,7 @@ impl FramePlacements {
         self.previews.insert(target.fragment_key(), area);
     }
 
-    pub(super) fn insert_avatar(
-        &mut self,
-        url: String,
-        row: isize,
-        fingerprint: (isize, u16, u16),
-    ) {
+    pub(super) fn insert_avatar(&mut self, url: String, row: isize, fingerprint: (u16, u16, bool)) {
         self.avatars.insert((url, row), fingerprint);
     }
 
@@ -142,24 +137,23 @@ mod tests {
     }
 
     #[test]
-    fn member_pane_only_change_keeps_message_preview_unchanged() {
-        // A message preview at a fixed screen rect, with one avatar that moves.
+    fn avatar_change_keeps_message_preview_unchanged() {
         let target = preview_target(1, 0);
         let mut previous = FramePlacements::default();
         previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
-        previous.insert_avatar("avatar".to_owned(), 4, (4, 3, 0));
+        previous.insert_avatar("avatar".to_owned(), 4, (3, 0, false));
 
-        let mut current = FramePlacements::default();
-        current.insert_preview(&target, Rect::new(10, 5, 20, 10));
-        // The member-pane scroll moved the avatar by one row.
-        current.insert_avatar("avatar".to_owned(), 3, (3, 3, 0));
+        // Either scrolling or changing the mask requires clearing only the avatar.
+        for (row, circular) in [(3, false), (4, true)] {
+            let mut current = FramePlacements::default();
+            current.insert_preview(&target, Rect::new(10, 5, 20, 10));
+            current.insert_avatar("avatar".to_owned(), row, (3, 0, circular));
 
-        let diff = current.diff(&previous);
-        // The preview never moved, so it stays drawn in the clear frame and never
-        // re-emits. The avatar moved, so a clear pass runs.
-        assert!(diff.need_clear);
-        assert!(diff.unchanged_previews.contains(&target.fragment_key()));
-        assert!(!diff.unchanged_avatars.contains(&("avatar".to_owned(), 3)));
+            let diff = current.diff(&previous);
+            assert!(diff.need_clear);
+            assert!(diff.unchanged_previews.contains(&target.fragment_key()));
+            assert!(!diff.unchanged_avatars.contains(&("avatar".to_owned(), row)));
+        }
     }
 
     #[test]
@@ -182,11 +176,11 @@ mod tests {
         let target = preview_target(1, 0);
         let mut previous = FramePlacements::default();
         previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
-        previous.insert_avatar("avatar".to_owned(), 4, (4, 3, 0));
+        previous.insert_avatar("avatar".to_owned(), 4, (3, 0, false));
 
         let mut current = FramePlacements::default();
         current.insert_preview(&target, Rect::new(10, 5, 20, 10));
-        current.insert_avatar("avatar".to_owned(), 4, (4, 3, 0));
+        current.insert_avatar("avatar".to_owned(), 4, (3, 0, false));
 
         let diff = current.diff(&previous);
         assert!(!diff.need_clear);

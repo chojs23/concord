@@ -12,6 +12,7 @@ use image::{
     Delay, DynamicImage, Frame as ImageFrame, ImageBuffer, ImageFormat, Rgba,
     codecs::gif::{GifEncoder, Repeat},
 };
+use ratatui_image::picker::Picker;
 
 use crate::{
     config::{AnimatePreviews, DisplayOptions, ImagePreviewQualityPreset},
@@ -1061,6 +1062,20 @@ fn avatar_popup_upload_request_uses_local_preview_command() {
         })
     );
     assert!(cache.cache.entries.contains_key("pending-avatar"));
+
+    assert!(
+        cache
+            .next_request_for_profile_upload("pending-avatar", || {
+                panic!("loading previews must not clone the upload again")
+            })
+            .is_none()
+    );
+    assert!(
+        cache
+            .next_request_for_profile_upload("missing-avatar", || None)
+            .is_none()
+    );
+    assert!(!cache.cache.entries.contains_key("missing-avatar"));
 }
 
 #[test]
@@ -1891,6 +1906,23 @@ fn image_preview_request_limit_counts_distinct_previews_not_fragments() {
 }
 
 #[test]
+fn preview_retry_deadlines_follow_visible_request_admission() {
+    let targets = (1..=MAX_IMAGE_PREVIEW_CACHE_ENTRIES as u64 + 1)
+        .map(image_preview_target)
+        .collect::<Vec<_>>();
+    let deferred = targets.last().expect("one target exceeds admission");
+    let mut cache = ImagePreviewCache::new(Some(Picker::halfblocks()));
+    assert_eq!(cache.next_requests(std::slice::from_ref(deferred)).len(), 1);
+    cache.store_failed(&deferred.url, "download failed".to_owned());
+
+    assert!(cache.next_retry_deadline(&[]).is_none());
+    assert!(cache.next_retry_deadline(&targets).is_none());
+    assert!(cache.next_retry_deadline(&targets[1..]).is_some());
+    cache.picker = None;
+    assert!(cache.next_retry_deadline(&targets[1..]).is_none());
+}
+
+#[test]
 fn a_failed_media_fetch_retries_with_backoff_then_waits_for_a_refresh() {
     let mut cache = ImagePreviewCache::new(None);
     let target = image_preview_target(1);
@@ -1904,12 +1936,24 @@ fn a_failed_media_fetch_retries_with_backoff_then_waits_for_a_refresh() {
     // Three tries, each gated by its backoff, then the retries are spent.
     for attempt in 1..=4 {
         cache.store_failed(&target.url, "download failed".to_owned());
+        let retry_at = cache.cache.retry_deadline(&key);
+        if let Some(seconds) = [3, 15, 60].get(attempt - 1) {
+            let backoff = Duration::from_secs(*seconds);
+            assert!(retry_at.is_some_and(|deadline| deadline >= now + backoff));
+            assert!(retry_at.is_some_and(|deadline| deadline <= Instant::now() + backoff));
+        } else {
+            assert!(
+                retry_at.is_none(),
+                "spent retries must not wake the dashboard"
+            );
+        }
         assert!(
             !cache.cache.take_due_retry(&key, now),
             "attempt {attempt} must wait out its backoff"
         );
         let due = cache.cache.take_due_retry(&key, past_every_backoff);
         assert_eq!(due, attempt < 4, "attempt {attempt} retry availability");
+        assert!(cache.cache.retry_deadline(&key).is_none());
         if !due {
             break;
         }
@@ -2191,9 +2235,7 @@ fn render_protocols_keep_the_two_frame_animation_window() {
     let protocol_bytes = super::cache::RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY * 2 / 3;
     for frame in 0..3 {
         assert!(protocols.request_build(&frame));
-        protocols
-            .store_result(frame, Ok(build()), protocol_bytes)
-            .expect("test protocol should store");
+        protocols.store_result(frame, Ok(build()), protocol_bytes);
     }
 
     assert_eq!(protocols.len(), 2);
@@ -2284,38 +2326,25 @@ fn protocol_queue_pressure_does_not_consume_failure_attempts() {
 
     for _ in 0..3 {
         assert!(protocols.request_build(&0));
-        assert_eq!(
-            protocols.store_result(0, Err(MediaWorkError::Busy), 0),
-            Ok(())
-        );
+        protocols.store_result(0, Err(MediaWorkError::Busy), 0);
         assert!(!protocols.is_terminally_failed(&0));
     }
 
-    assert!(protocols.request_build(&0));
-    assert_eq!(
+    for attempt in 1..=2 {
+        assert!(protocols.request_build(&0));
+        // A result for another key must not consume the pending job or a retry.
+        protocols.store_result(1, Err(MediaWorkError::Failed("stale".to_owned())), 0);
+        assert!(!protocols.request_build(&1));
+        assert!(!protocols.is_terminally_failed(&1));
         protocols.store_result(
             0,
-            Err(MediaWorkError::Failed(
-                "temporary protocol failure".to_owned(),
-            )),
+            Err(MediaWorkError::Failed("protocol failure".to_owned())),
             0,
-        ),
-        Ok(())
-    );
-    assert!(!protocols.is_terminally_failed(&0));
-
-    assert!(protocols.request_build(&0));
-    assert_eq!(
-        protocols.store_result(
-            0,
-            Err(MediaWorkError::Failed(
-                "terminal protocol failure".to_owned(),
-            )),
-            0,
-        ),
-        Err("terminal protocol failure".to_owned())
-    );
-    assert!(protocols.is_terminally_failed(&0));
+        );
+        assert_eq!(protocols.is_terminally_failed(&0), attempt == 2);
+    }
+    assert!(!protocols.request_build(&0));
+    assert!(protocols.request_build(&1));
 }
 
 #[test]

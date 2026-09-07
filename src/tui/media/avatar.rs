@@ -320,14 +320,9 @@ impl AvatarImageCache {
     }
 
     pub(in crate::tui) fn next_requests(&mut self, targets: &[AvatarTarget]) -> Vec<AppCommand> {
-        let intents = targets
-            .iter()
-            .take(MAX_AVATAR_IMAGE_CACHE_ENTRIES)
-            .filter_map(|target| {
-                let url =
-                    avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
-                self.next_request_for_cache_url(&url)
-            })
+        let intents = admitted_avatar_urls(targets)
+            .into_iter()
+            .filter_map(|url| self.next_request_for_cache_url(&url))
             .collect();
         self.prune_to_limit(targets);
         intents
@@ -345,19 +340,21 @@ impl AvatarImageCache {
         key: &str,
         upload: impl FnOnce() -> Option<ProfileAvatarUpload>,
     ) -> Option<AppCommand> {
-        if self.cache.entries.contains_key(key) {
+        let key = key.to_owned();
+        if !self.cache.can_insert_loading(&key, Instant::now()) {
             return None;
         }
         let upload = upload()?;
-        let last_used = self.cache.next_tick();
-        self.cache
-            .entries
-            .insert(key.to_owned(), AvatarImageEntry::Loading { last_used });
+        if !self
+            .cache
+            .insert_loading(key.clone(), |last_used| AvatarImageEntry::Loading {
+                last_used,
+            })
+        {
+            return None;
+        }
         self.prune_to_limit(&[]);
-        Some(AppCommand::LoadProfileAvatarPreview {
-            key: key.to_owned(),
-            upload,
-        })
+        Some(AppCommand::LoadProfileAvatarPreview { key, upload })
     }
 
     fn next_request_for_cache_url(&mut self, url: &str) -> Option<AppCommand> {
@@ -500,8 +497,28 @@ impl AvatarImageCache {
         self.cache.retained_stats()
     }
 
+    pub(in crate::tui) fn next_retry_deadline(
+        &self,
+        targets: &[AvatarTarget],
+        popup_url: Option<&str>,
+    ) -> Option<Instant> {
+        self.picker.as_ref()?;
+        admitted_avatar_urls(targets)
+            .into_iter()
+            .chain(popup_url.map(|url| {
+                avatar_preview_url(url, PROFILE_POPUP_AVATAR_WIDTH, PROFILE_POPUP_AVATAR_HEIGHT)
+            }))
+            .filter_map(|url| self.cache.retry_deadline(&url))
+            .min()
+    }
+
     pub(in crate::tui) fn forget_failures(&mut self) {
         self.cache.forget_failures();
+        for entry in self.cache.entries.values_mut() {
+            if let AvatarImageEntry::Ready { protocols, .. } = entry {
+                protocols.forget_failures();
+            }
+        }
     }
 
     pub(in crate::tui) fn pause_animations(&mut self) {
@@ -526,31 +543,22 @@ impl AvatarImageCache {
         };
         let font_size = self.picker.as_ref().map_or((10, 20), picker_font_size);
         let protocol_bytes = estimated_media_protocol_bytes(key.render_spec(), font_size);
-        let failed = match self.cache.entries.get_mut(&url) {
-            Some(AvatarImageEntry::Ready {
-                generation,
-                protocols,
-                ..
-            }) if *generation == completed.generation => protocols
-                .store_result(key, completed.result, protocol_bytes)
-                .is_err(),
-            _ => false,
-        };
-        if failed {
-            let last_used = self.cache.next_tick();
-            self.cache
-                .entries
-                .insert(url, AvatarImageEntry::Failed { last_used });
+        if let Some(AvatarImageEntry::Ready {
+            generation,
+            protocols,
+            ..
+        }) = self.cache.entries.get_mut(&url)
+            && *generation == completed.generation
+        {
+            // A render failure belongs to this exact layout and frame. The
+            // decoded source and protocols for other layouts remain valid.
+            protocols.store_result(key, completed.result, protocol_bytes);
         }
     }
 
     pub(super) fn prune_to_limit(&mut self, targets: &[AvatarTarget]) {
-        let protected = targets
-            .iter()
-            .take(MAX_AVATAR_IMAGE_CACHE_ENTRIES)
-            .map(|target| {
-                avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT)
-            })
+        let protected = admitted_avatar_urls(targets)
+            .into_iter()
             .chain(self.active_popup_avatar_url.iter().cloned())
             .collect::<HashSet<_>>();
         self.cache.prune_to_limits(
@@ -559,6 +567,16 @@ impl AvatarImageCache {
             |url| protected.contains(url.as_str()),
         );
     }
+}
+
+fn admitted_avatar_urls(targets: &[AvatarTarget]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    targets
+        .iter()
+        .map(|target| avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT))
+        .filter(|url| seen.insert(url.clone()))
+        .take(MAX_AVATAR_IMAGE_CACHE_ENTRIES)
+        .collect()
 }
 
 #[cfg(test)]

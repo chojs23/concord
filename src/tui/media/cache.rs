@@ -102,36 +102,21 @@ where
         self.failed_attempts.clear();
     }
 
-    /// Returns an error only when retries are exhausted and no prior protocol
-    /// can remain on screen as a fallback.
-    pub(super) fn store_result(
-        &mut self,
-        key: K,
-        result: MediaWorkResult<Protocol>,
-        bytes: u64,
-    ) -> Result<(), String> {
+    /// Record only the matching job. Layout-specific fallback belongs to the caller.
+    pub(super) fn store_result(&mut self, key: K, result: MediaWorkResult<Protocol>, bytes: u64) {
         if self.pending.as_ref() != Some(&key) {
-            return Ok(());
+            return;
         }
         self.pending = None;
         match result {
             Ok(protocol) => {
                 self.failed_attempts.remove(&key);
                 self.insert(key, protocol, bytes);
-                Ok(())
             }
-            Err(MediaWorkError::Busy) => Ok(()),
-            Err(MediaWorkError::Failed(error)) => {
+            Err(MediaWorkError::Busy) => {}
+            Err(MediaWorkError::Failed(_)) => {
                 let attempts = self.failed_attempts.entry(key).or_default();
                 *attempts = attempts.saturating_add(1);
-                if *attempts < MAX_RENDER_PROTOCOL_BUILD_ATTEMPTS {
-                    return Ok(());
-                }
-                if self.entries.is_empty() {
-                    Err(error)
-                } else {
-                    Ok(())
-                }
             }
         }
     }
@@ -270,6 +255,13 @@ where
         false
     }
 
+    pub(super) fn retry_deadline(&self, key: &K) -> Option<Instant> {
+        if !self.entries.get(key).is_some_and(E::is_failed) {
+            return None;
+        }
+        self.failed.get(key)?.retry_at
+    }
+
     /// Forgets every failure so the next request pass retries all of them,
     /// however many times they already failed.
     pub(super) fn forget_failures(&mut self) {
@@ -349,12 +341,22 @@ where
     }
 
     pub(super) fn insert_loading(&mut self, key: K, make_loading: impl FnOnce(u64) -> E) -> bool {
-        if self.entries.contains_key(&key) && !self.take_due_retry(&key, Instant::now()) {
+        let now = Instant::now();
+        if !self.can_insert_loading(&key, now) {
             return false;
         }
+        self.take_due_retry(&key, now);
         let last_used = self.next_tick();
         self.entries.insert(key, make_loading(last_used));
         true
+    }
+
+    /// Check eligibility before copying a local upload, without spending its retry.
+    pub(super) fn can_insert_loading(&self, key: &K, now: Instant) -> bool {
+        !self.entries.contains_key(key)
+            || self
+                .retry_deadline(key)
+                .is_some_and(|deadline| deadline <= now)
     }
 
     pub(super) fn start_decode_request(

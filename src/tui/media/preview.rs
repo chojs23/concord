@@ -577,6 +577,17 @@ impl ImagePreviewCache {
         self.cache.next_animation_deadline()
     }
 
+    pub(in crate::tui) fn next_retry_deadline(
+        &self,
+        targets: &[ImagePreviewTarget],
+    ) -> Option<Instant> {
+        self.picker.as_ref()?;
+        admitted_preview_keys(targets)
+            .iter()
+            .filter_map(|key| self.cache.retry_deadline(key))
+            .min()
+    }
+
     pub(in crate::tui) fn advance_animations(&mut self, now: Instant) -> bool {
         let mut advanced = false;
         for (key, entry) in &mut self.cache.entries {
@@ -647,7 +658,7 @@ impl ImagePreviewCache {
                 protocols,
                 ..
             }) if *generation == completed.generation => {
-                let _ = protocols.store_result(protocol_key, completed.result, protocol_bytes);
+                protocols.store_result(protocol_key, completed.result, protocol_bytes);
                 Some((
                     protocols
                         .get_or_last_matching(&protocol_key, |candidate| {

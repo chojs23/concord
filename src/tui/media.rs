@@ -60,4 +60,6 @@ use emoji::EmojiImageEntry;
 use preview::{ImagePreviewEntry, MAX_IMAGE_PREVIEW_CACHE_ENTRIES};
 
 #[cfg(test)]
+mod regression_tests;
+#[cfg(test)]
 mod tests;
