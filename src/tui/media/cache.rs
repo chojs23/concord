@@ -94,6 +94,14 @@ where
             .is_some_and(|attempts| *attempts >= MAX_RENDER_PROTOCOL_BUILD_ATTEMPTS)
     }
 
+    pub(super) fn retain_failures(&mut self, mut retain: impl FnMut(&K) -> bool) {
+        self.failed_attempts.retain(|key, _| retain(key));
+    }
+
+    pub(super) fn forget_failures(&mut self) {
+        self.failed_attempts.clear();
+    }
+
     /// Returns an error only when retries are exhausted and no prior protocol
     /// can remain on screen as a fallback.
     pub(super) fn store_result(

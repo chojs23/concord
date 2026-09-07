@@ -8,16 +8,19 @@ mod protocol_job;
 mod targets;
 mod work;
 
+#[cfg(test)]
+pub(in crate::tui) use work::MediaWorkError;
+
 pub(super) use avatar::AvatarImageCache;
 pub(super) use decode::{
-    MediaImageDecodeCache, MediaImageDecodeDelivery, MediaImageDecodeKey, MediaImageDecodeResult,
-    spawn_media_image_decode,
+    MediaImageDecodeCache, MediaImageDecodeDelivery, MediaImageDecodeKey, MediaImageDecodeRequest,
+    MediaImageDecodeResult, spawn_media_image_decode,
 };
 pub(super) use emoji::EmojiImageCache;
 pub(super) use preview::ImagePreviewCache;
-pub(in crate::tui) use preview::ImagePreviewKey;
+pub(in crate::tui) use preview::ImagePreviewFragmentKey;
 #[cfg(test)]
-use protocol_job::build_media_protocol;
+pub(in crate::tui) use protocol_job::build_media_protocol;
 pub(super) use protocol_job::{
     MediaProtocolBuildResult, MediaProtocolBuildTarget, spawn_media_protocol_build,
 };
@@ -30,6 +33,7 @@ pub(super) use targets::{
 };
 #[cfg(test)]
 pub(super) use targets::{visible_avatar_targets, visible_image_preview_targets};
+pub(in crate::tui) use work::media_image_job_permits;
 
 pub(in crate::tui) use decode::decode_image_bytes;
 #[cfg(test)]
@@ -47,10 +51,9 @@ pub(super) use protocol::{PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDT
 #[cfg(test)]
 use avatar::{AvatarImageEntry, AvatarProtocolKey, MAX_AVATAR_IMAGE_CACHE_ENTRIES};
 #[cfg(test)]
-use decode::{
-    MAX_DECODED_IMAGE_HEIGHT, MAX_DECODED_IMAGE_WIDTH, MAX_RETAINED_ANIMATION_FRAMES,
-    decode_media_image_bytes,
-};
+pub(in crate::tui) use decode::decode_media_image_bytes;
+#[cfg(test)]
+use decode::{MAX_DECODED_IMAGE_HEIGHT, MAX_DECODED_IMAGE_WIDTH, MAX_RETAINED_ANIMATION_FRAMES};
 #[cfg(test)]
 use emoji::EmojiImageEntry;
 #[cfg(test)]

@@ -107,6 +107,12 @@ pub(in crate::tui) struct EmojiImageTarget {
     pub(super) image_size: EmojiImageSize,
 }
 
+impl EmojiImageTarget {
+    pub(in crate::tui) fn url(&self) -> &str {
+        &self.url
+    }
+}
+
 const MAX_ALBUM_PREVIEW_TILES: usize = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

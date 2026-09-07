@@ -258,6 +258,19 @@ fn sync_composer_viewport(area: Rect, state: &mut DashboardState) {
     state.sync_composer_scroll(view_height, total_lines, cursor_row);
 }
 
+pub(in crate::tui) fn attachment_viewer_preview_screen_area(
+    area: Rect,
+    state: &DashboardState,
+    preview_width: u16,
+    preview_height: u16,
+) -> Rect {
+    popups::centered_viewer_preview_area(
+        attachment_viewer_image_area(area, state.attachment_viewer_zoom()),
+        preview_width,
+        preview_height,
+    )
+}
+
 pub fn image_preview_layout(area: Rect, state: &DashboardState) -> ImagePreviewLayout {
     let areas = dashboard_areas(area, state);
     let list = message_list_area(areas.messages, state);

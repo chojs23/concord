@@ -178,13 +178,14 @@ impl AvatarImageCache {
         }
     }
 
-    pub(in crate::tui) fn render_state_with_popup(
+    /// Protect the final frame's avatars and queue work before either draw pass.
+    pub(in crate::tui) fn prepare(
         &mut self,
         targets: &[AvatarTarget],
         popup_url: Option<&str>,
         popup_clip: Option<(u16, u16)>,
         circular: bool,
-    ) -> (Vec<AvatarImage<'_>>, Option<AvatarImage<'_>>) {
+    ) {
         for target in targets {
             let url = avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
             self.cache.touch(&url);
@@ -196,10 +197,11 @@ impl AvatarImageCache {
         if let Some(url) = popup_cache_url.as_deref() {
             self.cache.touch(&url.to_owned());
         }
+        self.prune_to_limit(targets);
 
         {
             let Some(picker) = self.picker.as_ref() else {
-                return (Vec::new(), None);
+                return;
             };
 
             for target in targets {
@@ -255,7 +257,18 @@ impl AvatarImageCache {
                 }
             }
         }
+    }
 
+    pub(in crate::tui) fn render_state_with_popup(
+        &self,
+        targets: &[AvatarTarget],
+        popup_url: Option<&str>,
+        popup_clip: Option<(u16, u16)>,
+        circular: bool,
+    ) -> (Vec<AvatarImage<'_>>, Option<AvatarImage<'_>>) {
+        let popup_cache_url = popup_url.map(|url| {
+            avatar_preview_url(url, PROFILE_POPUP_AVATAR_WIDTH, PROFILE_POPUP_AVATAR_HEIGHT)
+        });
         let avatars = targets
             .iter()
             .filter_map(|target| {
@@ -354,7 +367,6 @@ impl AvatarImageCache {
                 last_used,
             })
         {
-            self.prune_to_limit(&[]);
             return Some(AppCommand::LoadAttachmentPreview {
                 url: url.to_owned(),
             });
@@ -376,7 +388,33 @@ impl AvatarImageCache {
         }
     }
 
-    fn store_loaded(&mut self, url: &str) -> Option<MediaImageDecodeRequest> {
+    pub(in crate::tui) fn accepts_decode_request(&self, url: &str, generation: u64) -> bool {
+        self.cache
+            .decoded_generation_matches(&url.to_owned(), generation)
+    }
+
+    pub(in crate::tui) fn defer_loading(&mut self, url: &str) {
+        if self
+            .cache
+            .entries
+            .get(url)
+            .is_some_and(MediaImageCacheEntry::is_loading)
+        {
+            self.cache.entries.remove(url);
+        }
+    }
+
+    pub(in crate::tui) fn visible_source_urls(&self, targets: &[AvatarTarget]) -> Vec<String> {
+        targets
+            .iter()
+            .map(|target| {
+                avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT)
+            })
+            .chain(self.active_popup_avatar_url.iter().cloned())
+            .collect()
+    }
+
+    pub(in crate::tui) fn store_loaded(&mut self, url: &str) -> Option<MediaImageDecodeRequest> {
         self.cache.start_decode_request(
             url.to_owned(),
             self.picker.is_some(),
@@ -415,9 +453,7 @@ impl AvatarImageCache {
                     },
                 );
             }
-            Err(MediaWorkError::Busy) => {
-                self.cache.entries.remove(&key);
-            }
+            Err(MediaWorkError::Busy) => {}
             Err(MediaWorkError::Failed(_)) => {
                 self.cache
                     .entries
@@ -522,5 +558,26 @@ impl AvatarImageCache {
             AVATAR_IMAGE_CACHE_DECODED_BYTE_BUDGET,
             |url| protected.contains(url.as_str()),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn avatar_draw_does_not_change_final_frame_cache_protection() {
+        let mut cache = AvatarImageCache::new(Some(Picker::halfblocks()));
+        cache.active_popup_avatar_url = Some("popup-avatar".to_owned());
+        let tick = cache.cache.tick;
+
+        let _ = cache.render_state_with_popup(&[], None, None, false);
+
+        assert_eq!(
+            cache.active_popup_avatar_url.as_deref(),
+            Some("popup-avatar")
+        );
+        assert_eq!(cache.cache.tick, tick);
+        assert!(cache.take_protocol_jobs().is_empty());
     }
 }

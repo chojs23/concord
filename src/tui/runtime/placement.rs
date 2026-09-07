@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 
 use ratatui::layout::Rect;
 
-use crate::tui::media::ImagePreviewKey;
+use crate::tui::media::{ImagePreviewFragmentKey, ImagePreviewTarget};
 
 /// Fingerprint of every overlay image's on-screen geometry for one frame.
 ///
@@ -28,7 +28,7 @@ use crate::tui::media::ImagePreviewKey;
 pub(super) struct FramePlacements {
     /// Inline message-pane previews, keyed by their cache key. The value is the
     /// resolved post-clip screen rect (inline) or the centered viewer rect.
-    previews: HashMap<ImagePreviewKey, Rect>,
+    previews: HashMap<ImagePreviewFragmentKey, Rect>,
     /// Message-pane avatars, keyed by (url, absolute row). The value is the
     /// vertical fingerprint (row, visible_height, top_clip_rows); avatar x and
     /// width are constant.
@@ -44,14 +44,14 @@ pub(super) struct FramePlacements {
 #[derive(Default)]
 pub(super) struct PlacementDiff {
     pub(super) need_clear: bool,
-    pub(super) unchanged_previews: HashSet<ImagePreviewKey>,
+    pub(super) unchanged_previews: HashSet<ImagePreviewFragmentKey>,
     pub(super) unchanged_avatars: HashSet<(String, isize)>,
     pub(super) popup_avatar_unchanged: bool,
 }
 
 impl FramePlacements {
-    pub(super) fn insert_preview(&mut self, key: ImagePreviewKey, area: Rect) {
-        self.previews.insert(key, area);
+    pub(super) fn insert_preview(&mut self, target: &ImagePreviewTarget, area: Rect) {
+        self.previews.insert(target.fragment_key(), area);
     }
 
     pub(super) fn insert_avatar(
@@ -146,11 +146,11 @@ mod tests {
         // A message preview at a fixed screen rect, with one avatar that moves.
         let target = preview_target(1, 0);
         let mut previous = FramePlacements::default();
-        previous.insert_preview(target.key(), Rect::new(10, 5, 20, 10));
+        previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
         previous.insert_avatar("avatar".to_owned(), 4, (4, 3, 0));
 
         let mut current = FramePlacements::default();
-        current.insert_preview(target.key(), Rect::new(10, 5, 20, 10));
+        current.insert_preview(&target, Rect::new(10, 5, 20, 10));
         // The member-pane scroll moved the avatar by one row.
         current.insert_avatar("avatar".to_owned(), 3, (3, 3, 0));
 
@@ -158,7 +158,7 @@ mod tests {
         // The preview never moved, so it stays drawn in the clear frame and never
         // re-emits. The avatar moved, so a clear pass runs.
         assert!(diff.need_clear);
-        assert!(diff.unchanged_previews.contains(&target.key()));
+        assert!(diff.unchanged_previews.contains(&target.fragment_key()));
         assert!(!diff.unchanged_avatars.contains(&("avatar".to_owned(), 3)));
     }
 
@@ -166,31 +166,31 @@ mod tests {
     fn vertical_scroll_changes_preview_placement() {
         let target = preview_target(1, 0);
         let mut previous = FramePlacements::default();
-        previous.insert_preview(target.key(), Rect::new(10, 5, 20, 10));
+        previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
 
         let mut current = FramePlacements::default();
         // Same image, same key, but a vertical scroll moved its screen rect.
-        current.insert_preview(target.key(), Rect::new(10, 3, 20, 10));
+        current.insert_preview(&target, Rect::new(10, 3, 20, 10));
 
         let diff = current.diff(&previous);
         assert!(diff.need_clear);
-        assert!(!diff.unchanged_previews.contains(&target.key()));
+        assert!(!diff.unchanged_previews.contains(&target.fragment_key()));
     }
 
     #[test]
     fn identical_frame_needs_no_clear() {
         let target = preview_target(1, 0);
         let mut previous = FramePlacements::default();
-        previous.insert_preview(target.key(), Rect::new(10, 5, 20, 10));
+        previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
         previous.insert_avatar("avatar".to_owned(), 4, (4, 3, 0));
 
         let mut current = FramePlacements::default();
-        current.insert_preview(target.key(), Rect::new(10, 5, 20, 10));
+        current.insert_preview(&target, Rect::new(10, 5, 20, 10));
         current.insert_avatar("avatar".to_owned(), 4, (4, 3, 0));
 
         let diff = current.diff(&previous);
         assert!(!diff.need_clear);
-        assert!(diff.unchanged_previews.contains(&target.key()));
+        assert!(diff.unchanged_previews.contains(&target.fragment_key()));
         assert!(diff.unchanged_avatars.contains(&("avatar".to_owned(), 4)));
         assert!(diff.popup_avatar_unchanged);
     }
@@ -199,11 +199,40 @@ mod tests {
     fn removed_preview_forces_clear() {
         let target = preview_target(1, 0);
         let mut previous = FramePlacements::default();
-        previous.insert_preview(target.key(), Rect::new(10, 5, 20, 10));
+        previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
 
         let current = FramePlacements::default();
         let diff = current.diff(&previous);
         assert!(diff.need_clear);
         assert!(diff.unchanged_previews.is_empty());
+    }
+
+    #[test]
+    fn split_preview_fragments_are_tracked_independently() {
+        let top = ImagePreviewTarget {
+            visible_preview_height: 3,
+            ..preview_target(1, 0)
+        };
+        let bottom = ImagePreviewTarget {
+            preview_y_offset_rows: 6,
+            visible_preview_height: 4,
+            top_clip_rows: 6,
+            ..preview_target(1, 0)
+        };
+        assert_eq!(top.key(), bottom.key());
+        assert_ne!(top.fragment_key(), bottom.fragment_key());
+
+        let mut previous = FramePlacements::default();
+        previous.insert_preview(&top, Rect::new(10, 5, 20, 3));
+        previous.insert_preview(&bottom, Rect::new(10, 11, 20, 4));
+
+        let mut current = FramePlacements::default();
+        current.insert_preview(&top, Rect::new(10, 5, 20, 3));
+        current.insert_preview(&bottom, Rect::new(10, 10, 20, 4));
+
+        let diff = current.diff(&previous);
+        assert!(diff.need_clear);
+        assert!(diff.unchanged_previews.contains(&top.fragment_key()));
+        assert!(!diff.unchanged_previews.contains(&bottom.fragment_key()));
     }
 }

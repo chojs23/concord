@@ -138,12 +138,8 @@ impl EmojiImageCache {
         }
     }
 
-    /// Returns decoded protocols for visible targets and refreshes their
-    /// LRU timestamps so they survive the next pruning pass.
-    pub(in crate::tui) fn render_state(
-        &mut self,
-        targets: &[EmojiImageTarget],
-    ) -> Vec<EmojiImage<'_>> {
+    pub(in crate::tui) fn prepare(&mut self, targets: &[EmojiImageTarget]) {
+        self.prune_to_limit(targets);
         for target in targets {
             let touch_tick = self.cache.next_tick();
             if let Some(entry) = self.cache.entries.get_mut(&target.url) {
@@ -182,6 +178,9 @@ impl EmojiImageCache {
                 }
             }
         }
+    }
+
+    pub(in crate::tui) fn render_state(&self, targets: &[EmojiImageTarget]) -> Vec<EmojiImage<'_>> {
         targets
             .iter()
             .filter_map(|target| {
@@ -262,7 +261,23 @@ impl EmojiImageCache {
         );
     }
 
-    fn store_loaded(&mut self, url: &str) -> Option<MediaImageDecodeRequest> {
+    pub(in crate::tui) fn accepts_decode_request(&self, url: &str, generation: u64) -> bool {
+        self.cache
+            .decoded_generation_matches(&url.to_owned(), generation)
+    }
+
+    pub(in crate::tui) fn defer_loading(&mut self, url: &str) {
+        if self
+            .cache
+            .entries
+            .get(url)
+            .is_some_and(MediaImageCacheEntry::is_loading)
+        {
+            self.cache.entries.remove(url);
+        }
+    }
+
+    pub(in crate::tui) fn store_loaded(&mut self, url: &str) -> Option<MediaImageDecodeRequest> {
         self.cache.start_decode_request(
             url.to_owned(),
             self.picker.is_some(),
@@ -307,9 +322,7 @@ impl EmojiImageCache {
                     },
                 );
             }
-            Err(MediaWorkError::Busy) => {
-                self.cache.entries.remove(&url);
-            }
+            Err(MediaWorkError::Busy) => {}
             Err(MediaWorkError::Failed(_)) => {
                 self.cache
                     .entries
@@ -416,5 +429,28 @@ impl EmojiImageCache {
                 .entries
                 .insert(url, EmojiImageEntry::Failed { last_used });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emoji_draw_does_not_change_cache_recency() {
+        let mut cache = EmojiImageCache::new(Some(Picker::halfblocks()));
+        let target = EmojiImageTarget {
+            url: "emoji".to_owned(),
+            image_size: EmojiImageSize::Compact,
+        };
+        cache.cache.entries.insert(
+            target.url.clone(),
+            EmojiImageEntry::Loading { last_used: 0 },
+        );
+
+        let _ = cache.render_state(std::slice::from_ref(&target));
+
+        assert_eq!(cache.cache.tick, 0);
+        assert!(cache.take_protocol_jobs().is_empty());
     }
 }

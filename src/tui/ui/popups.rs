@@ -215,7 +215,6 @@ pub(super) use action_menu::{
     channel_action_menu_lines_for_test, message_action_menu_lines,
     message_action_menu_lines_with_keymap_options,
 };
-#[cfg(test)]
 pub(super) use attachment_viewer::centered_viewer_preview_area;
 pub(super) use attachment_viewer::render_attachment_viewer;
 #[cfg(test)]

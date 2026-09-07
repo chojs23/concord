@@ -1,4 +1,4 @@
-use std::{io::Read, time::Instant};
+use std::{collections::HashSet, io::Read, time::Instant};
 
 use ratatui::layout::Rect;
 use ratatui_image::{
@@ -16,10 +16,11 @@ use crate::{
         media::{
             AvatarImageCache, AvatarTarget, EmojiImageCache, EmojiImageTarget, ImagePreviewCache,
             ImagePreviewTarget, MediaImageDecodeCache, MediaImageDecodeDelivery,
-            MediaImageDecodeKey, MediaImageDecodeResult, MediaProtocolBuildResult,
-            MediaProtocolBuildTarget, clipped_media_protocol, decode_image_bytes,
-            fixed_media_protocol_render_spec, picker_font_size, query_image_picker,
-            spawn_media_image_decode, spawn_media_protocol_build, visible_avatar_targets_from_plan,
+            MediaImageDecodeKey, MediaImageDecodeRequest, MediaImageDecodeResult,
+            MediaProtocolBuildResult, MediaProtocolBuildTarget, clipped_media_protocol,
+            decode_image_bytes, fixed_media_protocol_render_spec, media_image_job_permits,
+            picker_font_size, query_image_picker, spawn_media_image_decode,
+            spawn_media_protocol_build, visible_avatar_targets_from_plan,
             visible_emoji_image_targets, visible_image_preview_targets_from_plan,
         },
         message::layout::MessageViewportPlan,
@@ -29,6 +30,8 @@ use crate::{
 };
 
 use super::placement::{FramePlacements, PlacementDiff};
+
+const MAX_ACTIVE_MEDIA_SOURCES: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LocalUploadPreviewOwner {
@@ -49,6 +52,9 @@ pub(super) struct DashboardMediaRuntime {
     avatar_images: AvatarImageCache,
     emoji_images: EmojiImageCache,
     decoded_images: MediaImageDecodeCache,
+    // Keep the slot until decoding finishes, including retries. This bounds
+    // downloaded bytes as well as work waiting on the shared image workers.
+    active_sources: HashSet<String>,
     picker: Option<Picker>,
     image_targets: Vec<ImagePreviewTarget>,
     avatar_targets: Vec<AvatarTarget>,
@@ -66,11 +72,16 @@ pub(super) struct DashboardMediaRuntime {
 impl DashboardMediaRuntime {
     pub(super) fn new(protocol_preference: ImageProtocolPreference) -> Self {
         let picker = query_image_picker(protocol_preference);
+        Self::with_picker(picker)
+    }
+
+    fn with_picker(picker: Option<Picker>) -> Self {
         Self {
             image_previews: ImagePreviewCache::new(picker.clone()),
             avatar_images: AvatarImageCache::new(picker.clone()),
             emoji_images: EmojiImageCache::new(picker.clone()),
             decoded_images: MediaImageDecodeCache::new(),
+            active_sources: HashSet::new(),
             picker,
             image_targets: Vec::new(),
             avatar_targets: Vec::new(),
@@ -152,6 +163,9 @@ impl DashboardMediaRuntime {
             .chain(self.emoji_images.record_event(event))
             .collect::<Vec<_>>();
         let AppEvent::AttachmentPreviewLoaded { url, bytes } = event else {
+            if let AppEvent::AttachmentPreviewLoadFailed { url, .. } = event {
+                self.active_sources.remove(url);
+            }
             return;
         };
 
@@ -162,12 +176,74 @@ impl DashboardMediaRuntime {
         if let Some(job) = outcome.job {
             spawn_media_image_decode(job, media_decode_tx.clone());
         }
+        if !self.decoded_images.is_decoding(url) {
+            self.active_sources.remove(url);
+        }
     }
 
     pub(super) fn store_media_decode(&mut self, result: MediaImageDecodeResult) {
-        for delivery in self.decoded_images.complete(result) {
+        let url = result.url.clone();
+        let outcome = self.decoded_images.complete(result);
+        for delivery in outcome.deliveries {
             self.store_media_decode_delivery(delivery);
         }
+        if !self.decoded_images.is_decoding(&url) {
+            self.active_sources.remove(&url);
+        }
+    }
+
+    fn decode_requests_for_url(&mut self, url: &str) -> Vec<MediaImageDecodeRequest> {
+        self.image_previews
+            .store_loaded(url)
+            .into_iter()
+            .chain(self.avatar_images.store_loaded(url))
+            .chain(self.emoji_images.store_loaded(url))
+            .collect()
+    }
+
+    /// Resolve data before admitting network work. Loading placeholders for a
+    /// deferred URL are removed rather than kept in an off-screen work queue.
+    fn resolve_source_command(&mut self, command: AppCommand) -> (Option<AppCommand>, bool) {
+        let url = match &command {
+            AppCommand::LoadAttachmentPreview { url } => url,
+            AppCommand::LoadProfileAvatarPreview { key, .. } => key,
+            _ => return (Some(command), false),
+        };
+        let image = self
+            .decoded_images
+            .get(url)
+            .or_else(|| self.image_previews.ready_image_for_url(url));
+        if let Some(image) = image {
+            let requests = self.decode_requests_for_url(url);
+            let reused = !requests.is_empty();
+            for request in requests {
+                self.store_media_decode_delivery(MediaImageDecodeDelivery {
+                    key: request.key,
+                    generation: request.generation,
+                    result: Ok(image.clone()),
+                });
+            }
+            return (None, reused);
+        }
+
+        if self.decoded_images.is_decoding(url) {
+            let requests = self.decode_requests_for_url(url);
+            let outcome = self.decoded_images.request(url, &[], requests);
+            debug_assert!(outcome.job.is_none(), "existing decode only adds consumers");
+            return (None, false);
+        }
+        if self.active_sources.contains(url) {
+            return (None, false);
+        }
+        if self.active_sources.len() < MAX_ACTIVE_MEDIA_SOURCES {
+            self.active_sources.insert(url.clone());
+            return (Some(command), false);
+        }
+
+        self.image_previews.defer_loading(url);
+        self.avatar_images.defer_loading(url);
+        self.emoji_images.defer_loading(url);
+        (None, false)
     }
 
     fn store_media_decode_delivery(&mut self, delivery: MediaImageDecodeDelivery) {
@@ -275,12 +351,40 @@ impl DashboardMediaRuntime {
         let current = self.resolve_placements(state, &plan, area);
         self.placement_diff = current.diff(&self.last_placements);
         self.current_placements = current;
+
+        // The clear pass sees only unchanged placements, not the full set of
+        // images we need. Protect and prepare from the final targets once so
+        // that drawing that temporary subset cannot evict moving images.
+        self.image_previews
+            .reuse_cached_sources(&self.image_targets, &mut self.decoded_images);
+        self.image_previews.prepare(&self.image_targets);
+        let popup_avatar_clip = ui::user_profile_popup_avatar_viewport(area, state)
+            .map(|(avatar_area, top_clip_rows)| (avatar_area.height, top_clip_rows));
+        self.avatar_images.prepare(
+            &self.avatar_targets,
+            self.popup_avatar_url.as_deref(),
+            popup_avatar_clip,
+            state.circular_avatars(),
+        );
+        self.emoji_images.prepare(&self.emoji_targets);
+        self.decoded_images
+            .retain_requests(|request| match &request.key {
+                MediaImageDecodeKey::Preview(key) => self
+                    .image_previews
+                    .accepts_decode_request(key, request.generation),
+                MediaImageDecodeKey::Avatar(url) => self
+                    .avatar_images
+                    .accepts_decode_request(url, request.generation),
+                MediaImageDecodeKey::Emoji(url) => self
+                    .emoji_images
+                    .accepts_decode_request(url, request.generation),
+            });
     }
 
     /// Resolve the absolute screen geometry of every overlay image this frame.
     /// Inline previews reuse the exact renderer path (`plan.row` +
-    /// `inline_image_preview_screen_area`), the viewer uses a coarse size-based
-    /// fingerprint (it is a single centered image), avatars use their absolute
+    /// `inline_image_preview_screen_area`), the viewer uses its centered screen
+    /// rect, avatars use their absolute
     /// row, and the popup avatar uses its cropped visible area.
     fn resolve_placements(
         &self,
@@ -293,11 +397,14 @@ impl DashboardMediaRuntime {
 
         for target in &self.image_targets {
             if target.viewer {
-                // A single centered image. Its rect changes only on resize or
-                // zoom, both of which move width/height, so size alone is enough.
                 placements.insert_preview(
-                    target.key(),
-                    Rect::new(0, 0, target.preview_width, target.preview_height),
+                    target,
+                    ui::attachment_viewer_preview_screen_area(
+                        area,
+                        state,
+                        target.preview_width,
+                        target.preview_height,
+                    ),
                 );
                 continue;
             }
@@ -312,7 +419,7 @@ impl DashboardMediaRuntime {
                     continue;
                 };
                 preview_area.height = preview_area.height.min(target.visible_preview_height);
-                placements.insert_preview(target.key(), preview_area);
+                placements.insert_preview(target, preview_area);
                 continue;
             }
             let Some(row_plan) = plan.row(target.message_index) else {
@@ -332,7 +439,7 @@ impl DashboardMediaRuntime {
                 continue;
             };
             preview_area.height = preview_area.height.min(target.visible_preview_height);
-            placements.insert_preview(target.key(), preview_area);
+            placements.insert_preview(target, preview_area);
         }
 
         for target in &self.avatar_targets {
@@ -651,7 +758,7 @@ pub(super) fn store_local_upload_preview_result(
 pub(super) fn draw_dashboard_frame(
     frame: &mut ratatui::Frame<'_>,
     state: &mut DashboardState,
-    media_runtime: &mut DashboardMediaRuntime,
+    media_runtime: &DashboardMediaRuntime,
 ) -> Rect {
     let area = frame.area();
     // The plan borrows `state`, so it cannot be carried out of `prepare_frame`;
@@ -708,7 +815,7 @@ pub(super) fn draw_dashboard_frame(
 pub(super) fn clear_image_surfaces_frame(
     frame: &mut ratatui::Frame<'_>,
     state: &mut DashboardState,
-    media_runtime: &mut DashboardMediaRuntime,
+    media_runtime: &DashboardMediaRuntime,
 ) -> Rect {
     let area = frame.area();
     ui::sync_view_heights(area, state);
@@ -732,7 +839,7 @@ pub(super) fn clear_image_surfaces_frame(
             media_runtime
                 .placement_diff
                 .unchanged_previews
-                .contains(&target.key())
+                .contains(&target.fragment_key())
         })
         .cloned()
         .collect();
@@ -795,28 +902,44 @@ pub(super) async fn schedule_media_loads_after_draw(
     commands: &mpsc::Sender<AppCommand>,
     local_upload_preview_tx: &mpsc::UnboundedSender<LocalUploadPreviewResult>,
     media_protocol_tx: &mpsc::UnboundedSender<MediaProtocolBuildResult>,
+    media_decode_tx: &mpsc::UnboundedSender<MediaImageDecodeResult>,
 ) -> bool {
     let mut dirty = false;
     dirty |= media_runtime.schedule_local_upload_previews(state, local_upload_preview_tx);
+    let visible_urls = media_runtime
+        .image_targets
+        .iter()
+        .map(|target| target.url.clone())
+        .chain(
+            media_runtime
+                .avatar_images
+                .visible_source_urls(&media_runtime.avatar_targets),
+        )
+        .chain(
+            media_runtime
+                .emoji_targets
+                .iter()
+                .map(|target| target.url().to_owned()),
+        )
+        .collect::<Vec<_>>();
+    // Busy completions already trigger a redraw. Wait for a worker slot rather
+    // than turn that redraw into another immediate Busy completion loop.
+    let available_jobs = media_image_job_permits().available_permits();
+    for job in media_runtime
+        .decoded_images
+        .take_retry_jobs(&visible_urls, available_jobs)
+    {
+        spawn_media_image_decode(job, media_decode_tx.clone());
+    }
     media_runtime.schedule_protocol_builds(media_protocol_tx);
-    send_media_request_commands(
-        state,
-        commands,
-        media_runtime
-            .image_previews
-            .next_requests(&media_runtime.image_targets),
-        &mut dirty,
-    )
-    .await;
-    send_media_request_commands(
-        state,
-        commands,
-        media_runtime
-            .avatar_images
-            .next_requests(&media_runtime.avatar_targets),
-        &mut dirty,
-    )
-    .await;
+    let preview_commands = media_runtime
+        .image_previews
+        .next_requests(&media_runtime.image_targets);
+    send_media_request_commands(state, media_runtime, commands, preview_commands, &mut dirty).await;
+    let avatar_commands = media_runtime
+        .avatar_images
+        .next_requests(&media_runtime.avatar_targets);
+    send_media_request_commands(state, media_runtime, commands, avatar_commands, &mut dirty).await;
 
     // Profile popup avatar isn't part of the message-pane targets, so schedule
     // its fetch separately. It uses a larger avatar CDN size than message-pane
@@ -834,29 +957,31 @@ pub(super) async fn schedule_media_loads_after_draw(
             None
         };
         if let Some(command) = command {
-            send_media_request_commands(state, commands, [command], &mut dirty).await;
+            send_media_request_commands(state, media_runtime, commands, [command], &mut dirty)
+                .await;
         }
     }
 
-    send_media_request_commands(
-        state,
-        commands,
-        media_runtime
-            .emoji_images
-            .next_requests(&media_runtime.emoji_targets),
-        &mut dirty,
-    )
-    .await;
+    let emoji_commands = media_runtime
+        .emoji_images
+        .next_requests(&media_runtime.emoji_targets);
+    send_media_request_commands(state, media_runtime, commands, emoji_commands, &mut dirty).await;
     dirty
 }
 
 async fn send_media_request_commands(
     state: &mut DashboardState,
+    media_runtime: &mut DashboardMediaRuntime,
     commands: &mpsc::Sender<AppCommand>,
     media_commands: impl IntoIterator<Item = AppCommand>,
     dirty: &mut bool,
 ) {
     for command in media_commands {
+        let (command, reused) = media_runtime.resolve_source_command(command);
+        *dirty |= reused;
+        let Some(command) = command else {
+            continue;
+        };
         *dirty = true;
         if command_helpers::send_or_record_closed(state, commands, command)
             .await
@@ -893,10 +1018,297 @@ fn resident_kib() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::visible_image_target_slices;
+    use super::*;
     use crate::discord::ids::{Id, marker::MessageMarker};
-    use crate::tui::media::ImagePreviewTarget;
-    use ratatui::layout::Rect;
+    use crate::tui::media::{MediaWorkError, build_media_protocol, decode_media_image_bytes};
+    use crate::tui::ui::ImagePreviewState;
+    use image::{DynamicImage, ImageFormat};
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::io::Cursor;
+
+    #[test]
+    fn scrolling_loaded_previews_reuses_sources_and_keeps_draw_passes_read_only() {
+        let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+        let target = image_preview_target();
+        assert_eq!(
+            preview_commands(&mut runtime, std::slice::from_ref(&target)).len(),
+            1
+        );
+        start_source_decode(&mut runtime, &target.url);
+        finish_source_decode(&mut runtime, &target.url);
+        let original = runtime
+            .image_previews
+            .ready_image_for_url(&target.url)
+            .expect("loaded source remains cached");
+
+        for (offset, clip) in [(0, 0), (2, 0), (2, 3), (0, 0)] {
+            let scrolled = ImagePreviewTarget {
+                preview_y_offset_rows: offset,
+                top_clip_rows: clip,
+                visible_preview_height: target.preview_height - clip,
+                ..target.clone()
+            };
+            runtime.image_targets = vec![scrolled.clone()];
+            prepare_preview_protocols(&mut runtime, std::slice::from_ref(&scrolled));
+            let stats = runtime.image_previews.retained_stats();
+            let mut state = DashboardState::default();
+            let mut terminal =
+                Terminal::new(TestBackend::new(80, 30)).expect("test terminal initializes");
+            terminal
+                .draw(|frame| {
+                    clear_image_surfaces_frame(frame, &mut state, &runtime);
+                })
+                .expect("clear frame renders");
+            terminal
+                .draw(|frame| {
+                    draw_dashboard_frame(frame, &mut state, &runtime);
+                })
+                .expect("final frame renders");
+
+            assert_eq!(runtime.image_previews.retained_stats(), stats);
+            assert!(runtime.image_previews.take_protocol_jobs().is_empty());
+            assert!(preview_commands(&mut runtime, std::slice::from_ref(&scrolled)).is_empty());
+            assert!(runtime.active_sources.is_empty());
+            assert!(
+                runtime
+                    .decoded_images
+                    .take_retry_jobs(&[], MAX_ACTIVE_MEDIA_SOURCES)
+                    .is_empty()
+            );
+            assert!(
+                runtime
+                    .image_previews
+                    .ready_image_for_url(&target.url)
+                    .expect("scroll retains source")
+                    .shares_frames_with(&original)
+            );
+        }
+    }
+
+    #[test]
+    fn new_previews_share_downloads_and_join_decodes_already_in_progress() {
+        let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+        let first = image_preview_target();
+        let second = ImagePreviewTarget {
+            message_id: Id::new(2),
+            ..first.clone()
+        };
+        let third = ImagePreviewTarget {
+            message_id: Id::new(3),
+            ..first.clone()
+        };
+        assert_eq!(
+            preview_commands(&mut runtime, std::slice::from_ref(&first)).len(),
+            1
+        );
+        assert!(preview_commands(&mut runtime, std::slice::from_ref(&second)).is_empty());
+        assert_eq!(runtime.active_sources.len(), 1);
+
+        start_source_decode(&mut runtime, &first.url);
+        assert!(preview_commands(&mut runtime, std::slice::from_ref(&third)).is_empty());
+        assert_eq!(runtime.active_sources.len(), 1);
+        finish_source_decode(&mut runtime, &first.url);
+        prepare_preview_protocols(&mut runtime, &[first, second, third]);
+        assert!(runtime.active_sources.is_empty());
+    }
+
+    #[test]
+    fn cache_hits_request_redraw_without_new_downloads_or_decodes() {
+        let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+        let first = image_preview_target();
+        assert_eq!(
+            preview_commands(&mut runtime, std::slice::from_ref(&first)).len(),
+            1
+        );
+        start_source_decode(&mut runtime, &first.url);
+        finish_source_decode(&mut runtime, &first.url);
+
+        // First hit the shared source, then drop that cache to model its eviction.
+        // The message preview must still be a valid source for another consumer.
+        for message_id in [2, 3] {
+            if message_id == 3 {
+                runtime.decoded_images = MediaImageDecodeCache::new();
+            }
+            let target = ImagePreviewTarget {
+                message_id: Id::new(message_id),
+                ..first.clone()
+            };
+            let commands = runtime
+                .image_previews
+                .next_requests(std::slice::from_ref(&target));
+            assert_eq!(commands.len(), 1);
+            for command in commands {
+                let (download, reused) = runtime.resolve_source_command(command);
+                assert!(download.is_none());
+                assert!(reused, "cache hits need a frame to prepare their protocols");
+            }
+            prepare_preview_protocols(&mut runtime, std::slice::from_ref(&target));
+            assert!(runtime.active_sources.is_empty());
+            assert!(!runtime.decoded_images.is_decoding(&target.url));
+        }
+    }
+
+    #[test]
+    fn source_limit_covers_downloads_and_busy_decodes_without_queuing_hidden_work() {
+        let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+        let targets = (1..=10)
+            .map(|id| ImagePreviewTarget {
+                message_id: Id::new(id),
+                url: format!("https://cdn.discordapp.com/{id}.png"),
+                ..image_preview_target()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            preview_commands(&mut runtime, &targets).len(),
+            MAX_ACTIVE_MEDIA_SOURCES
+        );
+        let url = &targets[0].url;
+        start_source_decode(&mut runtime, url);
+        runtime.store_media_decode(MediaImageDecodeResult {
+            url: url.clone(),
+            result: Err(MediaWorkError::Busy),
+        });
+        assert_eq!(runtime.active_sources.len(), MAX_ACTIVE_MEDIA_SOURCES);
+        assert!(preview_commands(&mut runtime, &targets).is_empty());
+        assert_eq!(
+            runtime
+                .decoded_images
+                .take_retry_jobs(std::slice::from_ref(url), MAX_ACTIVE_MEDIA_SOURCES)
+                .len(),
+            1
+        );
+        assert!(
+            runtime
+                .decoded_images
+                .take_retry_jobs(&[], MAX_ACTIVE_MEDIA_SOURCES)
+                .is_empty()
+        );
+
+        finish_source_decode(&mut runtime, url);
+        let newly_visible = ImagePreviewTarget {
+            message_id: Id::new(11),
+            url: "https://cdn.discordapp.com/11.png".to_owned(),
+            ..image_preview_target()
+        };
+        assert_eq!(
+            preview_commands(&mut runtime, std::slice::from_ref(&newly_visible)).len(),
+            1
+        );
+        assert!(runtime.active_sources.contains(&newly_visible.url));
+        assert!(!runtime.active_sources.contains(&targets[8].url));
+        assert!(!runtime.active_sources.contains(&targets[9].url));
+    }
+
+    #[test]
+    fn failed_sources_release_their_work_slot() {
+        for decode_failed in [false, true] {
+            let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+            let target = image_preview_target();
+            assert_eq!(
+                preview_commands(&mut runtime, std::slice::from_ref(&target)).len(),
+                1
+            );
+            if decode_failed {
+                start_source_decode(&mut runtime, &target.url);
+                runtime.store_media_decode(MediaImageDecodeResult {
+                    url: target.url.clone(),
+                    result: Err(MediaWorkError::Failed("invalid image".to_owned())),
+                });
+            } else {
+                let (tx, _rx) = mpsc::unbounded_channel();
+                runtime.record_event(
+                    &AppEvent::AttachmentPreviewLoadFailed {
+                        url: target.url.clone(),
+                        message: "download failed".to_owned(),
+                    },
+                    &tx,
+                );
+            }
+            assert!(runtime.active_sources.is_empty());
+            assert!(!runtime.decoded_images.is_decoding(&target.url));
+        }
+    }
+
+    #[test]
+    fn viewer_resize_clears_old_position_even_when_preview_size_stays_the_same() {
+        let state = DashboardState::default();
+        let mut runtime = DashboardMediaRuntime::with_picker(None);
+        let target = ImagePreviewTarget {
+            viewer: true,
+            ..image_preview_target()
+        };
+        runtime.image_targets = vec![target.clone()];
+        let messages = state.visible_messages();
+        let plan = MessageViewportPlan::new(
+            &messages,
+            state.focused_message_selection(),
+            &state,
+            40,
+            20,
+            10,
+        );
+        let previous = runtime.resolve_placements(&state, &plan, Rect::new(0, 0, 80, 30));
+        let current = runtime.resolve_placements(&state, &plan, Rect::new(0, 0, 100, 30));
+
+        let diff = current.diff(&previous);
+        assert!(diff.need_clear);
+        assert!(!diff.unchanged_previews.contains(&target.fragment_key()));
+    }
+
+    fn preview_commands(
+        runtime: &mut DashboardMediaRuntime,
+        targets: &[ImagePreviewTarget],
+    ) -> Vec<AppCommand> {
+        runtime
+            .image_previews
+            .next_requests(targets)
+            .into_iter()
+            .filter_map(|command| runtime.resolve_source_command(command).0)
+            .collect()
+    }
+
+    fn source_image_bytes() -> Vec<u8> {
+        let mut bytes = Cursor::new(Vec::new());
+        DynamicImage::new_rgba8(4, 4)
+            .write_to(&mut bytes, ImageFormat::Png)
+            .expect("test image encodes");
+        bytes.into_inner()
+    }
+
+    fn start_source_decode(runtime: &mut DashboardMediaRuntime, url: &str) {
+        let requests = runtime.decode_requests_for_url(url);
+        let outcome = runtime
+            .decoded_images
+            .request(url, &source_image_bytes(), requests);
+        assert!(outcome.job.is_some(), "one decode starts for the source");
+        assert!(outcome.deliveries.is_empty());
+    }
+
+    fn finish_source_decode(runtime: &mut DashboardMediaRuntime, url: &str) {
+        runtime.store_media_decode(MediaImageDecodeResult {
+            url: url.to_owned(),
+            result: Ok(decode_media_image_bytes(&source_image_bytes()).expect("test image decodes")),
+        });
+    }
+
+    fn prepare_preview_protocols(
+        runtime: &mut DashboardMediaRuntime,
+        targets: &[ImagePreviewTarget],
+    ) {
+        for _ in 0..targets.len() + 1 {
+            runtime.image_previews.prepare(targets);
+            for job in runtime.image_previews.take_protocol_jobs() {
+                runtime.store_media_protocol(build_media_protocol(job));
+            }
+        }
+        assert!(
+            runtime
+                .image_previews
+                .render_state(targets)
+                .iter()
+                .all(|preview| matches!(preview.state, ImagePreviewState::Ready { .. }))
+        );
+    }
 
     #[test]
     fn image_target_slices_keep_visible_rows_above_bottom_overlay() {

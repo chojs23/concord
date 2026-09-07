@@ -15,14 +15,16 @@ use crate::{
 use super::{
     ImagePreviewTarget, MediaProtocolRenderSpec,
     cache::{MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
-    decode::{DecodedMediaImage, MediaImageDecodeKey, MediaImageDecodeRequest},
+    decode::{
+        DecodedMediaImage, MediaImageDecodeCache, MediaImageDecodeKey, MediaImageDecodeRequest,
+    },
     estimated_media_protocol_bytes, picker_font_size,
     protocol_job::{MediaProtocolBuildJob, MediaProtocolBuildResult},
     work::{MediaWorkError, MediaWorkResult},
 };
 
 pub(super) const MAX_IMAGE_PREVIEW_CACHE_ENTRIES: usize = 16;
-const IMAGE_PREVIEW_CACHE_DECODED_BYTE_BUDGET: u64 = 48 * 1024 * 1024;
+const IMAGE_PREVIEW_CACHE_DECODED_BYTE_BUDGET: u64 = 64 * 1024 * 1024;
 const ANIMATION_PROTOCOL_WINDOW_FRAMES: usize = 2;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -30,36 +32,44 @@ pub(in crate::tui) struct ImagePreviewKey {
     viewer: bool,
     message_id: Id<MessageMarker>,
     preview_index: usize,
-    preview_y_offset_rows: usize,
-    visible_preview_height: u16,
-    top_clip_rows: u16,
     pub(super) url: String,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(in crate::tui) struct ImagePreviewFragmentKey {
+    preview: ImagePreviewKey,
+    render_spec: MediaProtocolRenderSpec,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(super) struct PreviewFrameProtocolKey {
+    render_spec: MediaProtocolRenderSpec,
+    frame_index: usize,
 }
 
 pub(in crate::tui) struct ImagePreviewCache {
     pub(super) picker: Option<Picker>,
     pub(super) cache: MediaImageCacheCore<ImagePreviewKey, ImagePreviewEntry>,
     pub(super) protocol_jobs: Vec<MediaProtocolBuildJob>,
+    prepared_specs: HashMap<ImagePreviewKey, HashSet<MediaProtocolRenderSpec>>,
+    protocol_failures: HashMap<(ImagePreviewKey, MediaProtocolRenderSpec), String>,
 }
 
 pub(super) enum ImagePreviewEntry {
     Loading {
         filename: String,
-        protocol_spec: MediaProtocolRenderSpec,
         last_used: u64,
     },
     Decoding {
         filename: String,
         generation: u64,
-        protocol_spec: MediaProtocolRenderSpec,
         last_used: u64,
     },
     Ready {
         filename: String,
         generation: u64,
         image: DecodedMediaImage,
-        protocol_spec: MediaProtocolRenderSpec,
-        protocols: Box<RenderProtocolCache<usize>>,
+        protocols: Box<RenderProtocolCache<PreviewFrameProtocolKey>>,
         last_used: u64,
     },
     Failed {
@@ -75,105 +85,227 @@ impl ImagePreviewCache {
             picker,
             cache: MediaImageCacheCore::new(),
             protocol_jobs: Vec::new(),
+            prepared_specs: HashMap::new(),
+            protocol_failures: HashMap::new(),
         }
     }
 
-    pub(in crate::tui) fn render_state(
-        &mut self,
-        targets: &[ImagePreviewTarget],
-    ) -> Vec<ImagePreview<'_>> {
-        self.prune_to_limit(targets);
+    pub(in crate::tui) fn prepare(&mut self, targets: &[ImagePreviewTarget]) {
         let picker = self.picker.clone();
-        let target_by_key = targets
+        let font_size = picker.as_ref().map_or((10, 20), picker_font_size);
+        self.prepared_specs.clear();
+        let admitted = admitted_preview_keys(targets);
+        for target in targets
             .iter()
-            .enumerate()
-            .map(|(index, target)| (target.key(), (index, target)))
-            .collect::<HashMap<_, _>>();
-        let mut rendered_keys = HashSet::new();
-        let mut previews = Vec::new();
-
-        let mut tick = self.cache.tick;
+            .filter(|target| admitted.contains(&target.key()))
+        {
+            let key = target.key();
+            let render_spec = target.protocol_render_spec();
+            self.prepared_specs
+                .entry(key.clone())
+                .or_default()
+                .insert(render_spec);
+            self.cache.touch(&key);
+        }
+        self.protocol_failures.retain(|(key, render_spec), _| {
+            self.prepared_specs
+                .get(key)
+                .is_some_and(|specs| specs.contains(render_spec))
+        });
         for (key, entry) in &mut self.cache.entries {
-            let Some((order, target)) = target_by_key.get(key).copied() else {
+            let ImagePreviewEntry::Ready { protocols, .. } = entry else {
                 continue;
             };
-            let render_spec = target.protocol_render_spec();
-            rendered_keys.insert(key.clone());
-            tick = tick.saturating_add(1);
-            entry.touch(tick);
-            let state = match entry {
-                ImagePreviewEntry::Loading { filename, .. }
-                | ImagePreviewEntry::Decoding { filename, .. } => ImagePreviewState::Loading {
-                    filename: filename.clone(),
-                },
-                ImagePreviewEntry::Ready {
-                    filename,
-                    generation,
-                    image,
-                    protocol_spec,
-                    protocols,
-                    ..
-                } => {
-                    let current_frame_index = image.current_frame_index();
-                    if *protocol_spec != render_spec {
-                        **protocols = RenderProtocolCache::new();
-                        *protocol_spec = render_spec;
-                        image.pause_animation();
-                    }
-                    if let Some(picker) = picker.as_ref() {
-                        // Build the current frame first, then keep one frame ahead.
-                        // The existing single pending job bounds work when several
-                        // animated previews are visible at once.
-                        for frame_index in protocol_window_frame_indices(image) {
-                            if protocols.get(&frame_index).is_some()
-                                || protocols.is_terminally_failed(&frame_index)
-                            {
-                                continue;
-                            }
-                            if protocols.request_build(&frame_index) {
-                                self.protocol_jobs.push(MediaProtocolBuildJob::preview(
-                                    key.clone(),
-                                    *generation,
-                                    render_spec,
-                                    frame_index,
-                                    picker.clone(),
-                                    image.frame_shared(frame_index),
-                                ));
-                            }
-                            break;
-                        }
-                    }
-                    match protocols.get_or_last(&current_frame_index) {
-                        Some(protocol) => ImagePreviewState::Ready { protocol },
-                        None => ImagePreviewState::Loading {
-                            filename: filename.clone(),
-                        },
-                    }
-                }
-                ImagePreviewEntry::Failed {
-                    filename, message, ..
-                } => ImagePreviewState::Failed {
-                    filename: filename.clone(),
-                    message: message.clone(),
-                },
-            };
-            previews.push((order, target.render(state)));
+            let prepared_specs = self.prepared_specs.get(key);
+            protocols.retain_failures(|protocol_key| {
+                prepared_specs.is_some_and(|specs| specs.contains(&protocol_key.render_spec))
+            });
         }
-        self.cache.tick = tick;
 
-        for (order, target) in targets.iter().enumerate() {
-            if !rendered_keys.contains(&target.key()) {
-                previews.push((
-                    order,
-                    target.render(ImagePreviewState::Loading {
-                        filename: target.filename.clone(),
-                    }),
-                ));
+        let prepared_keys = self.prepared_specs.keys().cloned().collect::<Vec<_>>();
+        for key in prepared_keys {
+            let Some(ImagePreviewEntry::Ready {
+                generation,
+                image,
+                protocols,
+                ..
+            }) = self.cache.entries.get_mut(&key)
+            else {
+                continue;
+            };
+            let Some(picker) = picker.as_ref() else {
+                continue;
+            };
+            let specs = self
+                .prepared_specs
+                .get(&key)
+                .expect("prepared preview key has render specs");
+            let current_frame_index = image.current_frame_index();
+            let mut current_missing = false;
+            for render_spec in specs {
+                let protocol_key = PreviewFrameProtocolKey {
+                    render_spec: *render_spec,
+                    frame_index: current_frame_index,
+                };
+                if protocols.get(&protocol_key).is_some()
+                    || protocols.is_terminally_failed(&protocol_key)
+                {
+                    continue;
+                }
+                current_missing = true;
+                if protocols.request_build(&protocol_key) {
+                    self.protocol_jobs.push(MediaProtocolBuildJob::preview(
+                        key.clone(),
+                        *generation,
+                        *render_spec,
+                        current_frame_index,
+                        picker.clone(),
+                        image.frame_shared(current_frame_index),
+                    ));
+                }
+                break;
+            }
+            if current_missing || image.frame_count() < ANIMATION_PROTOCOL_WINDOW_FRAMES {
+                continue;
+            }
+
+            let window_bytes = specs.iter().fold(0u64, |bytes, render_spec| {
+                bytes.saturating_add(
+                    estimated_preview_protocol_bytes(*render_spec, font_size)
+                        .saturating_mul(ANIMATION_PROTOCOL_WINDOW_FRAMES as u64),
+                )
+            });
+            if specs.len().saturating_mul(ANIMATION_PROTOCOL_WINDOW_FRAMES) > 2
+                && window_bytes > super::cache::RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY
+            {
+                // Every visible crop must remain available together. Prefetching
+                // an oversized second-frame window would evict those current
+                // crops and rebuild them forever, so hold only this oversized
+                // split animation still until a smaller window becomes visible.
+                image.pause_animation();
+                continue;
+            }
+
+            let next_frame_index = image.frame_index_with_offset(1);
+            for render_spec in specs {
+                let protocol_key = PreviewFrameProtocolKey {
+                    render_spec: *render_spec,
+                    frame_index: next_frame_index,
+                };
+                if protocols.get(&protocol_key).is_some()
+                    || protocols.is_terminally_failed(&protocol_key)
+                {
+                    continue;
+                }
+                if protocols.request_build(&protocol_key) {
+                    self.protocol_jobs.push(MediaProtocolBuildJob::preview(
+                        key.clone(),
+                        *generation,
+                        *render_spec,
+                        next_frame_index,
+                        picker.clone(),
+                        image.frame_shared(next_frame_index),
+                    ));
+                }
+                break;
             }
         }
+        self.prune_to_limit(targets);
+    }
 
-        previews.sort_by_key(|(order, _)| *order);
-        previews.into_iter().map(|(_, preview)| preview).collect()
+    pub(in crate::tui) fn reuse_cached_sources(
+        &mut self,
+        targets: &[ImagePreviewTarget],
+        shared: &mut MediaImageDecodeCache,
+    ) -> bool {
+        let mut reused = false;
+        let admitted = admitted_preview_keys(targets);
+        for target in targets
+            .iter()
+            .filter(|target| admitted.contains(&target.key()))
+        {
+            let key = target.key();
+            if self.cache.entries.contains_key(&key) {
+                continue;
+            }
+            let image = shared
+                .get(&target.url)
+                .or_else(|| self.ready_image_for_url(&target.url));
+            let Some(image) = image else {
+                continue;
+            };
+            let last_used = self.cache.next_tick();
+            let generation = self.cache.next_decode_generation();
+            self.cache.entries.insert(
+                key,
+                ImagePreviewEntry::Ready {
+                    filename: target.filename.clone(),
+                    generation,
+                    image,
+                    protocols: Box::new(RenderProtocolCache::new()),
+                    last_used,
+                },
+            );
+            reused = true;
+        }
+        reused
+    }
+
+    pub(in crate::tui) fn render_state(
+        &self,
+        targets: &[ImagePreviewTarget],
+    ) -> Vec<ImagePreview<'_>> {
+        targets
+            .iter()
+            .map(|target| {
+                let state = match self.cache.entries.get(&target.key()) {
+                    Some(ImagePreviewEntry::Loading { filename, .. })
+                    | Some(ImagePreviewEntry::Decoding { filename, .. }) => {
+                        ImagePreviewState::Loading {
+                            filename: filename.clone(),
+                        }
+                    }
+                    Some(ImagePreviewEntry::Ready {
+                        filename,
+                        image,
+                        protocols,
+                        ..
+                    }) => {
+                        let current = PreviewFrameProtocolKey {
+                            render_spec: target.protocol_render_spec(),
+                            frame_index: image.current_frame_index(),
+                        };
+                        match protocols.get_or_last_matching(&current, |candidate| {
+                            candidate.render_spec == current.render_spec
+                        }) {
+                            Some(protocol) => ImagePreviewState::Ready { protocol },
+                            None => match self
+                                .protocol_failures
+                                .get(&(target.key(), current.render_spec))
+                            {
+                                Some(message) => ImagePreviewState::Failed {
+                                    filename: filename.clone(),
+                                    message: message.clone(),
+                                },
+                                None => ImagePreviewState::Loading {
+                                    filename: filename.clone(),
+                                },
+                            },
+                        }
+                    }
+                    Some(ImagePreviewEntry::Failed {
+                        filename, message, ..
+                    }) => ImagePreviewState::Failed {
+                        filename: filename.clone(),
+                        message: message.clone(),
+                    },
+                    None => ImagePreviewState::Loading {
+                        filename: target.filename.clone(),
+                    },
+                };
+                target.render(state)
+            })
+            .collect()
     }
 
     pub(in crate::tui) fn next_requests(
@@ -189,7 +321,12 @@ impl ImagePreviewCache {
             .filter(|(_, entry)| matches!(entry, ImagePreviewEntry::Loading { .. }))
             .map(|(key, _)| key.url.clone())
             .collect::<HashSet<_>>();
-        for target in targets.iter().take(MAX_IMAGE_PREVIEW_CACHE_ENTRIES) {
+        let admitted = admitted_preview_keys(targets);
+        let mut seen = HashSet::new();
+        for target in targets.iter().filter(|target| {
+            let key = target.key();
+            admitted.contains(&key) && seen.insert(key)
+        }) {
             let key = target.key();
             if self.cache.entries.contains_key(&key) && !self.cache.take_due_retry(&key, now) {
                 continue;
@@ -201,7 +338,6 @@ impl ImagePreviewCache {
                 key,
                 ImagePreviewEntry::Loading {
                     filename: target.filename.clone(),
-                    protocol_spec: target.protocol_render_spec(),
                     last_used,
                 },
             );
@@ -209,7 +345,6 @@ impl ImagePreviewCache {
                 intents.push(AppCommand::LoadAttachmentPreview { url });
             }
         }
-        self.prune_to_limit(targets);
         intents
     }
 
@@ -227,7 +362,7 @@ impl ImagePreviewCache {
         }
     }
 
-    pub(super) fn store_loaded(&mut self, url: &str) -> Vec<MediaImageDecodeRequest> {
+    pub(in crate::tui) fn store_loaded(&mut self, url: &str) -> Vec<MediaImageDecodeRequest> {
         let keys = self.loading_keys_for_url(url);
         if keys.is_empty() {
             return Vec::new();
@@ -238,18 +373,46 @@ impl ImagePreviewCache {
                 let filename = self.filename_for_key(&key);
                 let last_used = self.cache.next_tick();
                 self.cache.entries.insert(
-                    key,
+                    key.clone(),
                     ImagePreviewEntry::Failed {
                         filename,
                         message: "inline preview unavailable in this terminal".to_owned(),
                         last_used,
                     },
                 );
+                self.protocol_failures
+                    .retain(|(failed_key, _), _| failed_key != &key);
             }
             return Vec::new();
         };
 
         self.decode_requests_for_loaded_keys(keys)
+    }
+
+    pub(in crate::tui) fn ready_image_for_url(&self, url: &str) -> Option<DecodedMediaImage> {
+        self.cache.entries.iter().find_map(|(key, entry)| {
+            if key.url != url {
+                return None;
+            }
+            match entry {
+                ImagePreviewEntry::Ready { image, .. } => Some(image.fresh_playback()),
+                _ => None,
+            }
+        })
+    }
+
+    pub(in crate::tui) fn defer_loading(&mut self, url: &str) {
+        self.cache.entries.retain(|key, entry| {
+            key.url != url || !matches!(entry, ImagePreviewEntry::Loading { .. })
+        });
+    }
+
+    pub(in crate::tui) fn accepts_decode_request(
+        &self,
+        key: &ImagePreviewKey,
+        generation: u64,
+    ) -> bool {
+        self.cache.decoded_generation_matches(key, generation)
     }
 
     fn decode_requests_for_loaded_keys(
@@ -259,18 +422,6 @@ impl ImagePreviewCache {
         let mut requests = Vec::new();
         for key in keys {
             let filename = self.filename_for_key(&key);
-            let Some(protocol_spec) = self.protocol_spec_for_key(&key) else {
-                let last_used = self.cache.next_tick();
-                self.cache.entries.insert(
-                    key,
-                    ImagePreviewEntry::Failed {
-                        filename,
-                        message: "preview dimensions unavailable".to_owned(),
-                        last_used,
-                    },
-                );
-                continue;
-            };
             let last_used = self.cache.next_tick();
             let generation = self.cache.next_decode_generation();
             self.cache.entries.insert(
@@ -278,7 +429,6 @@ impl ImagePreviewCache {
                 ImagePreviewEntry::Decoding {
                     filename,
                     generation,
-                    protocol_spec,
                     last_used,
                 },
             );
@@ -296,14 +446,9 @@ impl ImagePreviewCache {
         result_generation: u64,
         result: MediaWorkResult<DecodedMediaImage>,
     ) {
-        let Some((filename, protocol_spec)) = self.cache.entries.get(&key).and_then(|entry| {
-            if let ImagePreviewEntry::Decoding {
-                filename,
-                protocol_spec,
-                ..
-            } = entry
-            {
-                Some((filename.clone(), *protocol_spec))
+        let Some(filename) = self.cache.entries.get(&key).and_then(|entry| {
+            if let ImagePreviewEntry::Decoding { filename, .. } = entry {
+                Some(filename.clone())
             } else {
                 None
             }
@@ -319,6 +464,8 @@ impl ImagePreviewCache {
         }
 
         let last_used = self.cache.next_tick();
+        self.protocol_failures
+            .retain(|(failed_key, _), _| failed_key != &key);
         match result {
             Ok(image) => {
                 if self.picker.is_none() {
@@ -338,14 +485,14 @@ impl ImagePreviewCache {
                         filename,
                         generation: result_generation,
                         image,
-                        protocol_spec,
                         protocols: Box::new(RenderProtocolCache::new()),
                         last_used,
                     },
                 );
             }
             Err(MediaWorkError::Busy) => {
-                self.cache.entries.remove(&key);
+                // The shared decode cache keeps the downloaded bytes and retries
+                // decoding, so keep this consumer attached to its generation.
             }
             Err(MediaWorkError::Failed(message)) => {
                 self.cache.entries.insert(
@@ -357,14 +504,6 @@ impl ImagePreviewCache {
                     },
                 );
             }
-        }
-    }
-
-    fn protocol_spec_for_key(&self, key: &ImagePreviewKey) -> Option<MediaProtocolRenderSpec> {
-        match self.cache.entries.get(key)? {
-            ImagePreviewEntry::Loading { protocol_spec, .. }
-            | ImagePreviewEntry::Decoding { protocol_spec, .. } => Some(*protocol_spec),
-            ImagePreviewEntry::Ready { .. } | ImagePreviewEntry::Failed { .. } => None,
         }
     }
 
@@ -399,8 +538,16 @@ impl ImagePreviewCache {
             }
             if image.next_frame_deadline().is_none()
                 && protocol_window_frame_indices(image).all(|frame_index| {
-                    protocols.get(&frame_index).is_some()
-                        || protocols.is_terminally_failed(&frame_index)
+                    self.prepared_specs.get(key).is_some_and(|specs| {
+                        specs.iter().all(|render_spec| {
+                            let protocol_key = PreviewFrameProtocolKey {
+                                render_spec: *render_spec,
+                                frame_index,
+                            };
+                            protocols.get(&protocol_key).is_some()
+                                || protocols.is_terminally_failed(&protocol_key)
+                        })
+                    })
                 })
             {
                 image.start_animation(now);
@@ -414,6 +561,12 @@ impl ImagePreviewCache {
 
     pub(in crate::tui) fn forget_failures(&mut self) {
         self.cache.forget_failures();
+        self.protocol_failures.clear();
+        for entry in self.cache.entries.values_mut() {
+            if let ImagePreviewEntry::Ready { protocols, .. } = entry {
+                protocols.forget_failures();
+            }
+        }
     }
 
     pub(in crate::tui) fn pause_animations(&mut self) {
@@ -426,7 +579,7 @@ impl ImagePreviewCache {
 
     pub(in crate::tui) fn advance_animations(&mut self, now: Instant) -> bool {
         let mut advanced = false;
-        for entry in self.cache.entries.values_mut() {
+        for (key, entry) in &mut self.cache.entries {
             let ImagePreviewEntry::Ready {
                 image, protocols, ..
             } = entry
@@ -434,8 +587,16 @@ impl ImagePreviewCache {
                 continue;
             };
             let next_frame_index = image.frame_index_with_offset(1);
-            let next_frame_ready = protocols.get(&next_frame_index).is_some()
-                || protocols.is_terminally_failed(&next_frame_index);
+            let next_frame_ready = self.prepared_specs.get(key).is_none_or(|specs| {
+                specs.iter().all(|render_spec| {
+                    let protocol_key = PreviewFrameProtocolKey {
+                        render_spec: *render_spec,
+                        frame_index: next_frame_index,
+                    };
+                    protocols.get(&protocol_key).is_some()
+                        || protocols.is_terminally_failed(&protocol_key)
+                })
+            });
             if image
                 .next_frame_deadline()
                 .is_some_and(|deadline| deadline <= now)
@@ -459,7 +620,7 @@ impl ImagePreviewCache {
 
     fn estimated_protocol_bytes(&self, render_spec: MediaProtocolRenderSpec) -> u64 {
         let font_size = self.picker.as_ref().map_or((10, 20), picker_font_size);
-        estimated_media_protocol_bytes(render_spec, font_size)
+        estimated_preview_protocol_bytes(render_spec, font_size)
     }
 
     pub(in crate::tui) fn store_protocol(&mut self, completed: MediaProtocolBuildResult) {
@@ -472,38 +633,44 @@ impl ImagePreviewCache {
             return;
         };
         let protocol_bytes = self.estimated_protocol_bytes(render_spec);
-        let failure = match self.cache.entries.get_mut(&key) {
+        let protocol_key = PreviewFrameProtocolKey {
+            render_spec,
+            frame_index,
+        };
+        let failed_message = match &completed.result {
+            Err(MediaWorkError::Failed(message)) => Some(message.clone()),
+            Ok(_) | Err(MediaWorkError::Busy) => None,
+        };
+        let stored = match self.cache.entries.get_mut(&key) {
             Some(ImagePreviewEntry::Ready {
-                filename,
                 generation,
-                protocol_spec,
                 protocols,
                 ..
-            }) if *generation == completed.generation && *protocol_spec == render_spec => protocols
-                .store_result(frame_index, completed.result, protocol_bytes)
-                .err()
-                .map(|error| (filename.clone(), error)),
+            }) if *generation == completed.generation => {
+                let _ = protocols.store_result(protocol_key, completed.result, protocol_bytes);
+                Some((
+                    protocols
+                        .get_or_last_matching(&protocol_key, |candidate| {
+                            candidate.render_spec == render_spec
+                        })
+                        .is_some(),
+                    protocols.is_terminally_failed(&protocol_key),
+                ))
+            }
             _ => None,
         };
-        if let Some((filename, message)) = failure {
-            let last_used = self.cache.next_tick();
-            self.cache.entries.insert(
-                key,
-                ImagePreviewEntry::Failed {
-                    filename,
-                    message,
-                    last_used,
-                },
-            );
+        let Some((has_matching_protocol, terminally_failed)) = stored else {
+            return;
+        };
+        if has_matching_protocol {
+            self.protocol_failures.remove(&(key, render_spec));
+        } else if terminally_failed && let Some(message) = failed_message {
+            self.protocol_failures.insert((key, render_spec), message);
         }
     }
 
     fn prune_to_limit(&mut self, targets: &[ImagePreviewTarget]) {
-        let protected = targets
-            .iter()
-            .take(MAX_IMAGE_PREVIEW_CACHE_ENTRIES)
-            .map(ImagePreviewTarget::key)
-            .collect::<HashSet<_>>();
+        let protected = admitted_preview_keys(targets);
         self.cache.prune_to_limits(
             MAX_IMAGE_PREVIEW_CACHE_ENTRIES,
             IMAGE_PREVIEW_CACHE_DECODED_BYTE_BUDGET,
@@ -553,23 +720,49 @@ fn protocol_window_frame_indices(image: &DecodedMediaImage) -> impl Iterator<Ite
         .map(|offset| image.frame_index_with_offset(offset))
 }
 
+fn admitted_preview_keys(targets: &[ImagePreviewTarget]) -> HashSet<ImagePreviewKey> {
+    let mut admitted = HashSet::new();
+    for target in targets {
+        if admitted.len() >= MAX_IMAGE_PREVIEW_CACHE_ENTRIES {
+            break;
+        }
+        admitted.insert(target.key());
+    }
+    admitted
+}
+
+fn estimated_preview_protocol_bytes(
+    render_spec: MediaProtocolRenderSpec,
+    font_size: (u16, u16),
+) -> u64 {
+    let visible_height = render_spec
+        .visible_height
+        .min(render_spec.height.saturating_sub(render_spec.top_clip_rows));
+    estimated_media_protocol_bytes(
+        MediaProtocolRenderSpec {
+            height: visible_height,
+            visible_height,
+            top_clip_rows: 0,
+            ..render_spec
+        },
+        font_size,
+    )
+}
+
 impl ImagePreviewTarget {
     pub(in crate::tui) fn key(&self) -> ImagePreviewKey {
         ImagePreviewKey {
             viewer: self.viewer,
             message_id: self.message_id,
             preview_index: self.preview_index,
-            // A thread-card target stores its absolute card row here for rendering.
-            // Screen position must not split the decoded-image cache when the
-            // same card moves because another thread was inserted or removed.
-            preview_y_offset_rows: if self.thread_card {
-                0
-            } else {
-                self.preview_y_offset_rows
-            },
-            visible_preview_height: self.visible_preview_height,
-            top_clip_rows: self.top_clip_rows,
             url: self.url.clone(),
+        }
+    }
+
+    pub(in crate::tui) fn fragment_key(&self) -> ImagePreviewFragmentKey {
+        ImagePreviewFragmentKey {
+            preview: self.key(),
+            render_spec: self.protocol_render_spec(),
         }
     }
 

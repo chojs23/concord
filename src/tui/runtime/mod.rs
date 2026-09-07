@@ -230,6 +230,7 @@ pub(super) async fn run_dashboard(
                 &commands,
                 &local_upload_preview_tx,
                 &media_protocol_tx,
+                &media_decode_tx,
             )
             .await;
         }
