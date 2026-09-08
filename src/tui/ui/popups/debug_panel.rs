@@ -78,7 +78,7 @@ pub(in crate::tui::ui) fn sync_debug_panel(area: Rect, state: &mut DashboardStat
             .debug_log_entries()
             .iter()
             .filter(|entry| query.is_empty() || entry.text.to_lowercase().contains(&query))
-            .map(|entry| (entry.offset, entry.text.as_str())),
+            .map(|entry| (entry.id, entry.text.as_str())),
         usize::from(content.width.saturating_sub(1)),
     );
     state.sync_debug_log_lines(lines, usize::from(content.height));
@@ -171,14 +171,7 @@ pub(in crate::tui::ui) fn render_debug_panel(
     };
     let viewport = usize::from(content.height);
     let scroll = state.debug_log_scroll();
-    if let Some(error) = state.debug_log_error() {
-        frame.render_widget(
-            Paragraph::new(error)
-                .style(theme.style(theme::HighlightGroup::Error))
-                .wrap(Wrap { trim: false }),
-            text_area,
-        );
-    } else if lines.is_empty() {
+    if lines.is_empty() {
         frame.render_widget(
             Paragraph::new("Empty").style(theme.style(theme::HighlightGroup::Placeholder)),
             text_area,

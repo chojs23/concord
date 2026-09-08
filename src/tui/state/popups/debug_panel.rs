@@ -4,7 +4,7 @@ use crate::tui::media::{MediaCacheStats, SharedMediaCacheStats};
 use super::super::DashboardState;
 use super::super::pane_filter::PaneFilterState;
 use super::{ActiveModalPopupKind, ModalPopup};
-use crate::logging::LogFileLine;
+use crate::logging::LogLine;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::tui) struct DebugMediaSnapshot {
@@ -28,8 +28,7 @@ pub(in crate::tui) struct DebugLogLine {
 pub(in crate::tui) struct DebugLogPopupState {
     pub(super) scroll: super::ScrollablePopupState,
     lines: Vec<DebugLogLine>,
-    log_entries: Vec<LogFileLine>,
-    log_error: Option<String>,
+    log_entries: Vec<LogLine>,
     following: bool,
     media: Option<DebugMediaSnapshot>,
     filter: Option<PaneFilterState>,
@@ -166,48 +165,20 @@ impl DashboardState {
         }
     }
 
-    pub(in crate::tui) fn debug_log_entries(&self) -> &[LogFileLine] {
+    pub(in crate::tui) fn debug_log_entries(&self) -> &[LogLine] {
         self.popups
             .debug_log_popup()
             .map_or(&[], |popup| &popup.log_entries)
     }
 
-    pub(in crate::tui) fn debug_log_error(&self) -> Option<&str> {
-        self.popups.debug_log_popup()?.log_error.as_deref()
-    }
-
-    pub(in crate::tui) fn store_debug_log_tail(
-        &mut self,
-        result: std::result::Result<Vec<LogFileLine>, String>,
-    ) -> bool {
+    pub(in crate::tui) fn store_debug_log_tail(&mut self, entries: Vec<LogLine>) -> bool {
         let Some(popup) = self.popups.debug_log_popup_mut() else {
             return false;
         };
-        let (entries, error) = match result {
-            Ok(entries) => (entries, None),
-            Err(error) => (Vec::new(), Some(error)),
-        };
-        if popup.log_entries == entries && popup.log_error == error {
+        if popup.log_entries == entries {
             return false;
         }
-        // File offsets survive appends, but may be reused after rotation or
-        // truncation. Keep an anchor only while its original text still exists.
-        if let Some(anchor) = popup.lines.get(popup.scroll.scroll()) {
-            let previous = popup
-                .log_entries
-                .iter()
-                .find(|entry| entry.offset == anchor.entry_id);
-            let retained = previous.is_some_and(|previous| {
-                entries.iter().any(|entry| {
-                    entry.offset == previous.offset && entry.text.starts_with(&previous.text)
-                })
-            });
-            if !retained {
-                popup.lines.clear();
-            }
-        }
         popup.log_entries = entries;
-        popup.log_error = error;
         true
     }
 

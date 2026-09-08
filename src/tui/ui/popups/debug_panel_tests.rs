@@ -117,24 +117,21 @@ fn media_overview_shows_cache_budgets_and_work_without_a_false_memory_total() {
 }
 
 #[test]
-fn file_snapshot_displays_all_levels_and_filters_physical_lines_by_text() {
+fn log_snapshot_displays_all_levels_and_filters_physical_lines_by_text() {
     let area = Rect::new(0, 0, 120, 40);
     let mut state = DashboardState::new();
     state.open_debug_log_popup();
+    assert!(render_panel(&state, 120, 40).contains("Empty"));
     let text = "2026-09-07 12:34:56 UTC [DEBUG] media: cache hit\n2026-09-07 12:34:57 UTC [ERROR] history: request failed\n\n  native backend detail\n";
-    let mut offset = 0;
     let entries = text
-        .split_inclusive('\n')
-        .map(|line| {
-            let entry = crate::logging::LogFileLine {
-                offset,
-                text: line.trim_end_matches('\n').to_owned(),
-            };
-            offset += line.len() as u64;
-            entry
+        .split_terminator('\n')
+        .enumerate()
+        .map(|(id, line)| crate::logging::LogLine {
+            id: id as u64,
+            text: line.to_owned(),
         })
         .collect::<Vec<_>>();
-    assert!(state.store_debug_log_tail(Ok(entries.clone())));
+    assert!(state.store_debug_log_tail(entries.clone()));
     sync_debug_panel(area, &mut state);
     let dump = render_panel(&state, 120, 40);
     for expected in [
@@ -143,14 +140,11 @@ fn file_snapshot_displays_all_levels_and_filters_physical_lines_by_text() {
         "[ERROR] history: request failed",
         "  native backend detail",
     ] {
-        assert!(
-            dump.contains(expected),
-            "file content is preserved:\n{dump}"
-        );
+        assert!(dump.contains(expected), "log content is preserved:\n{dump}");
     }
     assert_eq!(state.debug_log_lines()[2].text, "");
     assert!(
-        !state.store_debug_log_tail(Ok(entries)),
+        !state.store_debug_log_tail(entries),
         "unchanged tail does not redraw"
     );
 
@@ -197,23 +191,23 @@ fn file_snapshot_displays_all_levels_and_filters_physical_lines_by_text() {
 }
 
 #[test]
-fn file_tail_preserves_paused_offsets_and_handles_replacement_read_errors_and_recovery() {
+fn log_tail_preserves_paused_entries_and_remains_available_after_reopening() {
     let area = Rect::new(0, 0, 120, 40);
     let tail = |range: std::ops::Range<u64>| {
         range
-            .map(|id| crate::logging::LogFileLine {
-                offset: id * 80,
+            .map(|id| crate::logging::LogLine {
+                id,
                 text: format!("12:34:56 [DEBUG] media: line {id:03}"),
             })
             .collect::<Vec<_>>()
     };
     let mut state = DashboardState::new();
     assert!(
-        !state.store_debug_log_tail(Ok(tail(0..100))),
-        "closed panel ignores reads"
+        !state.store_debug_log_tail(tail(0..100)),
+        "closed panel ignores snapshots"
     );
     state.open_debug_log_popup();
-    state.store_debug_log_tail(Ok(tail(0..100)));
+    state.store_debug_log_tail(tail(0..100));
     key(&mut state, KeyCode::Char('/'));
     for ch in "line".chars() {
         key(&mut state, KeyCode::Char(ch));
@@ -221,12 +215,12 @@ fn file_tail_preserves_paused_offsets_and_handles_replacement_read_errors_and_re
     key(&mut state, KeyCode::Enter);
     sync_debug_panel(area, &mut state);
     key(&mut state, KeyCode::Up);
-    let offset = state.debug_log_lines()[state.debug_log_scroll()].entry_id;
-    state.store_debug_log_tail(Ok(tail(5..105)));
+    let entry_id = state.debug_log_lines()[state.debug_log_scroll()].entry_id;
+    state.store_debug_log_tail(tail(5..105));
     sync_debug_panel(area, &mut state);
     assert_eq!(
         state.debug_log_lines()[state.debug_log_scroll()].entry_id,
-        offset
+        entry_id
     );
     assert!(!state.debug_log_following());
     assert_eq!(state.debug_log_filter_query(), Some("line"));
@@ -251,33 +245,15 @@ fn file_tail_preserves_paused_offsets_and_handles_replacement_read_errors_and_re
             .ends_with("104")
     );
 
-    let replacement = tail(0..100)
-        .into_iter()
-        .map(|mut entry| {
-            entry.text = entry.text.replace("media", "rotated");
-            entry
-        })
-        .collect::<Vec<_>>();
-    state.store_debug_log_tail(Ok(replacement));
+    key(&mut state, KeyCode::Esc);
+    key(&mut state, KeyCode::Esc);
+    assert_eq!(state.active_modal_popup_kind(), None);
+    state.open_debug_log_popup();
+    state.store_debug_log_tail(tail(5..105));
     sync_debug_panel(area, &mut state);
-    assert_eq!(
-        state.debug_log_scroll(),
-        0,
-        "reused offsets cannot anchor unrelated text"
-    );
-
-    let error = "Cannot read log file: permission denied".to_owned();
-    assert!(state.store_debug_log_tail(Err(error.clone())));
-    sync_debug_panel(area, &mut state);
-    assert!(render_panel(&state, 120, 40).contains(&error));
-    assert!(!state.store_debug_log_tail(Err(error)));
-    assert!(state.store_debug_log_tail(Ok(tail(0..2))));
-    sync_debug_panel(area, &mut state);
-    assert!(state.debug_log_error().is_none());
-    assert!(render_panel(&state, 120, 40).contains("[DEBUG] media: line 001"));
-    assert!(state.store_debug_log_tail(Ok(Vec::new())));
-    sync_debug_panel(area, &mut state);
-    assert!(render_panel(&state, 120, 40).contains("Empty"));
+    assert!(state.debug_log_following());
+    assert_eq!(state.debug_log_entries().len(), 100);
+    assert!(render_panel(&state, 120, 40).contains("[DEBUG] media: line 104"));
 }
 
 #[test]
