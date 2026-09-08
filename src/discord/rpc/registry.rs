@@ -14,14 +14,25 @@ pub(super) struct ActivityRegistry {
 }
 
 impl ActivityRegistry {
-    pub(super) fn set(&mut self, client_id: String, pid: i64, activity: ActivityInfo) {
+    pub(super) fn set(&mut self, client_id: String, pid: i64, activity: ActivityInfo) -> u64 {
         let sequence = self.next_sequence;
         self.next_sequence = sequence.saturating_add(1);
         self.entries.insert((client_id, pid), (activity, sequence));
+        sequence
     }
 
     pub(super) fn clear(&mut self, client_id: &str, pid: i64) {
         self.entries.remove(&(client_id.to_owned(), pid));
+    }
+
+    pub(super) fn clear_if_current(&mut self, client_id: &str, pid: i64, sequence: u64) {
+        if self
+            .entries
+            .get(&(client_id.to_owned(), pid))
+            .is_some_and(|(_, current)| *current == sequence)
+        {
+            self.clear(client_id, pid);
+        }
     }
 
     /// All activities, most recently updated first. Also drives the UI picker
@@ -162,6 +173,21 @@ mod tests {
         );
 
         registry.clear("game", 2);
+        assert!(registry.latest_activity().is_none());
+    }
+
+    #[test]
+    fn stale_connection_cleanup_keeps_the_reconnected_activity() {
+        let mut registry = ActivityRegistry::default();
+        let old = registry.set("app".to_owned(), 1, ActivityInfo::playing("Old activity"));
+        let new = registry.set("app".to_owned(), 1, ActivityInfo::playing("New activity"));
+
+        registry.clear_if_current("app", 1, old);
+        assert_eq!(
+            registry.latest_activity(),
+            Some(ActivityInfo::playing("New activity"))
+        );
+        registry.clear_if_current("app", 1, new);
         assert!(registry.latest_activity().is_none());
     }
 }

@@ -296,12 +296,15 @@ impl DiscordClient {
                 .expect("voice runtime task mutex is not poisoned") = Some(task);
         }
 
-        // Best-effort, so it never blocks the gateway from starting.
-        if serve_rich_presence {
-            tokio::spawn(crate::discord::rpc::run_rpc_server(self.clone()));
-        }
-
+        let presence_client = self.clone();
         tokio::spawn(async move {
+            // Selection changes still need a coordinator when IPC is disabled.
+            // Owning the task here also stops it when this session ends.
+            let mut presence_tasks = tokio::task::JoinSet::new();
+            presence_tasks.spawn(crate::discord::rpc::run_rich_presence(
+                presence_client,
+                serve_rich_presence,
+            ));
             let runtime = GatewayRuntime {
                 fingerprint,
                 state,
@@ -309,6 +312,7 @@ impl DiscordClient {
                 event_publisher,
             };
             run_gateway(token, gateway_commands, runtime).await;
+            presence_tasks.shutdown().await;
         })
     }
 
@@ -855,14 +859,24 @@ impl DiscordClient {
             .clone()
     }
 
-    /// Wake the RPC presence debounce loop so it re-broadcasts. A no-op when
-    /// the RPC server is not running.
+    /// Wake the presence coordinator, including when the IPC listener is disabled.
     pub fn notify_rich_presence_dirty(&self) {
         self.rich_presence_dirty.notify_one();
     }
 
     pub(crate) fn rich_presence_dirty(&self) -> Arc<Notify> {
         Arc::clone(&self.rich_presence_dirty)
+    }
+
+    pub(in crate::discord) fn clear_rich_presence_pin(&self, client_id: &str) {
+        let mut selection = self
+            .rich_presence_selection
+            .write()
+            .expect("selected rich presence lock is not poisoned");
+        // A disconnect must not overwrite a newer manual choice or another pin.
+        if matches!(&*selection, RichPresenceSelection::App(id) if id == client_id) {
+            *selection = RichPresenceSelection::Automatic;
+        }
     }
 
     /// So the RPC server can relay an activity without clobbering a manually chosen status.

@@ -145,10 +145,9 @@ pub(super) async fn update_activity(
     rich_presence: RichPresenceSelection,
 ) {
     client.set_rich_presence_selection(rich_presence.clone());
-    // Automatic mode is owned by the RPC debounce loop: it recomputes from
-    // the live registry and keeps the user's custom status composed in, which
-    // no snapshot passed through here can match.
-    if matches!(rich_presence, RichPresenceSelection::Automatic) {
+    // Both relay modes use the live registry and preserve custom status.
+    // Only a manual activity is taken from the command's UI snapshot.
+    if !matches!(rich_presence, RichPresenceSelection::Manual) {
         client.notify_rich_presence_dirty();
         return;
     }
@@ -195,6 +194,45 @@ async fn publish_gateway_error(client: &DiscordClient, error: &crate::AppError) 
 mod tests {
     use super::*;
     use crate::discord::{GlobalUserProfileUpdate, UserProfileUpdate};
+
+    #[tokio::test]
+    async fn relay_selections_notify_the_coordinator_without_publishing_ui_snapshots() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("valid token header");
+        let user_id = Id::new(10);
+        client
+            .publish_event(AppEvent::Ready {
+                user: "neo".to_owned(),
+                user_id: Some(user_id),
+            })
+            .await;
+        let custom = ActivityInfo::test(crate::discord::ActivityKind::Custom, "deep in thought");
+        publish_self_presence(&client, PresenceStatus::Offline, vec![custom.clone()]).await;
+        let mut commands = client.take_gateway_commands_for_test();
+        let dirty = client.rich_presence_dirty();
+
+        for selection in [
+            RichPresenceSelection::Automatic,
+            RichPresenceSelection::App("123".to_owned()),
+        ] {
+            update_activity(
+                client.clone(),
+                PresenceStatus::Online,
+                vec![ActivityInfo::playing("Stale UI activity")],
+                selection.clone(),
+            )
+            .await;
+            assert_eq!(client.rich_presence_selection(), selection);
+            assert_eq!(client.current_user_activities(), vec![custom.clone()]);
+            assert!(
+                commands.try_recv().is_err(),
+                "the coordinator owns the presence payload"
+            );
+            tokio::time::timeout(std::time::Duration::from_secs(1), dirty.notified())
+                .await
+                .expect("relay selection wakes the coordinator");
+        }
+    }
 
     #[tokio::test]
     async fn profile_update_for_another_user_is_rejected_before_any_request() {

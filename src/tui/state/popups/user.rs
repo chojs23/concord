@@ -606,6 +606,7 @@ impl DashboardState {
             let activities = detected.first().cloned().into_iter().collect();
             if let Some(popup) = self.popups.user_profile_popup_mut() {
                 popup.settings.activity_picker = None;
+                popup.settings.manual_activity = None;
                 popup.pending_scroll_reveal = true;
             }
             return Some(AppCommand::UpdateCurrentUserActivity {

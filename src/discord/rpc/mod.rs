@@ -8,7 +8,7 @@ mod protocol;
 mod registry;
 mod socket;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,7 +44,24 @@ struct RpcContext {
     assets: AssetCache,
 }
 
-pub(crate) async fn run_rpc_server(client: DiscordClient) {
+pub(crate) async fn run_rich_presence(client: DiscordClient, serve_rpc: bool) {
+    let context = RpcContext {
+        client,
+        registry: Arc::new(Mutex::new(ActivityRegistry::default())),
+        names: Arc::new(Mutex::new(HashMap::new())),
+        assets: Arc::new(Mutex::new(HashMap::new())),
+    };
+    // IPC availability only controls detection. Switching away from a manual
+    // activity must still work when sharing is disabled or binding fails.
+    tokio::join!(presence_debounce_loop(context.clone()), async {
+        if serve_rpc {
+            run_rpc_server(context).await;
+        }
+    });
+}
+
+async fn run_rpc_server(context: RpcContext) {
+    let client = &context.client;
     let bound = match socket::bind_first_available() {
         Ok(bound) => bound,
         Err(error) => {
@@ -81,24 +98,31 @@ pub(crate) async fn run_rpc_server(client: DiscordClient) {
     );
     let _socket_cleanup = socket::SocketCleanup::new(bound.path.clone());
 
-    let context = RpcContext {
-        client,
-        registry: Arc::new(Mutex::new(ActivityRegistry::default())),
-        names: Arc::new(Mutex::new(HashMap::new())),
-        assets: Arc::new(Mutex::new(HashMap::new())),
-    };
-    tokio::spawn(presence_debounce_loop(context.clone()));
+    let mut connections = tokio::task::JoinSet::new();
     loop {
-        match bound.listener.accept().await {
-            Ok(stream) => {
-                tokio::spawn(handle_connection(stream, context.clone()));
-            }
-            Err(error) => {
-                logging::error("rpc", format!("accept failed: {error}"));
-                break;
-            }
+        tokio::select! {
+            accepted = bound.listener.accept() => match accepted {
+                Ok(stream) => {
+                    connections.spawn(handle_connection(stream, context.clone()));
+                }
+                Err(error) => {
+                    logging::error("rpc", format!("accept failed: {error}"));
+                    break;
+                }
+            },
+            Some(_) = connections.join_next() => {}
         }
     }
+    connections.shutdown().await;
+    {
+        let mut registry = context.registry.lock().await;
+        *registry = ActivityRegistry::default();
+        if let RichPresenceSelection::App(client_id) = client.rich_presence_selection() {
+            client.clear_rich_presence_pin(&client_id);
+        }
+    }
+    publish_detected(&context).await;
+    client.notify_rich_presence_dirty();
 }
 
 async fn handle_connection(mut stream: Stream, context: RpcContext) {
@@ -128,7 +152,9 @@ where
     let user = context.client.current_user_rpc_identity();
     write_frame(stream, Opcode::Frame, &protocol::build_ready_payload(user)).await?;
 
-    let mut active_pids: HashSet<i64> = HashSet::new();
+    // Keep the entry revision owned by this connection. An old connection's
+    // cleanup must not remove an activity already replaced by a reconnect.
+    let mut active_pids: HashMap<i64, u64> = HashMap::new();
     let outcome = loop {
         let frame = match read_frame(stream).await {
             Ok(frame) => frame,
@@ -160,8 +186,11 @@ where
 
     if !active_pids.is_empty() {
         let mut registry = context.registry.lock().await;
-        for pid in &active_pids {
-            registry.clear(&client_id, *pid);
+        for (pid, sequence) in &active_pids {
+            registry.clear_if_current(&client_id, *pid, *sequence);
+        }
+        if registry.activity_for_client(&client_id).is_none() {
+            context.client.clear_rich_presence_pin(&client_id);
         }
         drop(registry);
         publish_detected(context).await;
@@ -174,7 +203,7 @@ async fn handle_command<S>(
     stream: &mut S,
     payload: &[u8],
     client_id: &str,
-    active_pids: &mut HashSet<i64>,
+    active_pids: &mut HashMap<i64, u64>,
     context: &RpcContext,
 ) -> io::Result<()>
 where
@@ -204,16 +233,30 @@ where
                 Some(mut activity) => {
                     activity.name = resolve_app_name(context, client_id).await;
                     resolve_asset_keys(context, client_id, &mut activity).await;
-                    context
-                        .registry
-                        .lock()
-                        .await
-                        .set(client_id.to_owned(), pid, *activity);
-                    active_pids.insert(pid);
+                    let sequence =
+                        context
+                            .registry
+                            .lock()
+                            .await
+                            .set(client_id.to_owned(), pid, *activity);
+                    active_pids.insert(pid, sequence);
                 }
                 None => {
-                    context.registry.lock().await.clear(client_id, pid);
-                    active_pids.remove(&pid);
+                    let mut registry = context.registry.lock().await;
+                    if pid == 0 {
+                        // A zero-PID clear applies to this connection, not every
+                        // process using the same application ID.
+                        for (pid, sequence) in active_pids.drain() {
+                            registry.clear_if_current(client_id, pid, sequence);
+                        }
+                    } else {
+                        // An explicit PID clear can arrive on a new connection.
+                        active_pids.remove(&pid);
+                        registry.clear(client_id, pid);
+                    }
+                    if registry.activity_for_client(client_id).is_none() {
+                        context.client.clear_rich_presence_pin(client_id);
+                    }
                 }
             }
             publish_detected(context).await;
@@ -238,8 +281,22 @@ async fn publish_detected(context: &RpcContext) {
 
 async fn presence_debounce_loop(context: RpcContext) {
     let dirty = context.client.rich_presence_dirty();
+    let mut snapshots = context.client.subscribe_snapshots();
     loop {
         dirty.notified().await;
+        // Keep this dirty update pending until READY supplies self presence.
+        // Watching snapshots avoids polling and needs no second RPC update.
+        while context
+            .client
+            .read_state()
+            .session
+            .current_user_session_status
+            .is_none()
+        {
+            if snapshots.changed().await.is_err() {
+                return;
+            }
+        }
         broadcast_selected_now(&context).await;
         tokio::time::sleep(MIN_PRESENCE_INTERVAL).await;
     }
@@ -249,37 +306,68 @@ async fn presence_debounce_loop(context: RpcContext) {
 /// native client: the selected app wins (falling back to the most recent
 /// one when it is gone), and the user's custom status survives alongside it.
 async fn broadcast_selected_now(context: &RpcContext) {
-    let rpc_activity = {
+    if context
+        .client
+        .read_state()
+        .session
+        .current_user_session_status
+        .is_none()
+    {
+        return;
+    }
+    let (selection, rpc_activity) = {
         let registry = context.registry.lock().await;
-        match context.client.rich_presence_selection() {
+        let mut selection = context.client.rich_presence_selection();
+        let activity = match &selection {
             // A manual activity is owned by the user; RPC never overrides it.
             RichPresenceSelection::Manual => return,
-            RichPresenceSelection::App(client_id) => registry
-                .activity_for_client(&client_id)
-                .or_else(|| registry.latest_activity()),
+            RichPresenceSelection::App(client_id) => {
+                if let Some(activity) = registry.activity_for_client(client_id) {
+                    Some(activity)
+                } else {
+                    context.client.clear_rich_presence_pin(client_id);
+                    selection = RichPresenceSelection::Automatic;
+                    registry.latest_activity()
+                }
+            }
             RichPresenceSelection::Automatic => registry.latest_activity(),
-        }
+        };
+        (selection, activity)
     };
 
-    // Keep the custom status alive next to the relayed activity, like the
-    // native client does when a game is running.
-    let mut activities: Vec<ActivityInfo> = context
-        .client
-        .current_user_activities()
-        .into_iter()
-        .filter(|activity| activity.kind == ActivityKind::Custom)
-        .collect();
     // Turn raw external image URLs into `mp:` refs here (only for the app we
     // broadcast), since the gateway needs them registered first.
-    if let Some(mut activity) = rpc_activity {
+    let mut rpc_activity = rpc_activity;
+    if let Some(activity) = rpc_activity.as_mut() {
         context
             .client
-            .resolve_activity_external_assets(&mut activity)
+            .resolve_activity_external_assets(activity)
             .await;
-        activities.push(activity);
     }
 
-    let status = context.client.current_user_status();
+    // Asset lookup can yield to a manual selection, re-identify, or a status
+    // change. Never publish the old selection or a guessed Online status.
+    if context.client.rich_presence_selection() != selection {
+        return;
+    }
+    let (user_id, status, mut activities) = {
+        let state = context.client.read_state();
+        let Some(status) = state.session.current_user_session_status else {
+            context.client.notify_rich_presence_dirty();
+            return;
+        };
+        let Some(user_id) = state.current_user_id() else {
+            return;
+        };
+        let custom_status = state
+            .user_activities(user_id)
+            .iter()
+            .filter(|activity| activity.kind == ActivityKind::Custom)
+            .cloned()
+            .collect::<Vec<_>>();
+        (user_id, status, custom_status)
+    };
+    activities.extend(rpc_activity);
     if let Err(error) = context
         .client
         .update_presence_activity(status, activities.clone())
@@ -287,19 +375,17 @@ async fn broadcast_selected_now(context: &RpcContext) {
         logging::error("rpc", format!("live presence update failed: {error}"));
         return;
     }
-    if let Some(user_id) = context.client.current_user_id() {
-        context
-            .client
-            .publish_event(AppEvent::PresenceUpdate {
-                guild_id: None,
-                presence: PresenceEventFields {
-                    user_id,
-                    status,
-                    activities,
-                },
-            })
-            .await;
-    }
+    context
+        .client
+        .publish_event(AppEvent::PresenceUpdate {
+            guild_id: None,
+            presence: PresenceEventFields {
+                user_id,
+                status,
+                activities,
+            },
+        })
+        .await;
 }
 
 async fn resolve_app_name(context: &RpcContext, client_id: &str) -> String {
@@ -535,6 +621,480 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn automatic_waits_for_initial_self_presence_and_replays_pending_activity() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let context = test_context();
+        let client = context.client.clone();
+        let mut commands = client.take_gateway_commands_for_test();
+        let game = ActivityInfo::playing("Game A");
+        context
+            .registry
+            .lock()
+            .await
+            .set("app-a".to_owned(), 1, game.clone());
+        let task = tokio::spawn(super::presence_debounce_loop(context));
+        client.notify_rich_presence_dirty();
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(30), commands.recv())
+                .await
+                .is_err()
+        );
+        let user_id = Id::new(10);
+        client
+            .publish_event(AppEvent::Ready {
+                user: "neo".to_owned(),
+                user_id: Some(user_id),
+            })
+            .await;
+        // Guild presence is not the session's own status, and can arrive first.
+        client
+            .publish_event(AppEvent::PresenceUpdate {
+                guild_id: Some(Id::new(20)),
+                presence: PresenceEventFields {
+                    user_id,
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+            })
+            .await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(30), commands.recv())
+                .await
+                .is_err()
+        );
+
+        let custom = ActivityInfo::test(ActivityKind::Custom, "deep in thought");
+        client
+            .publish_event(AppEvent::PresenceUpdate {
+                guild_id: None,
+                presence: PresenceEventFields {
+                    user_id,
+                    status: PresenceStatus::Offline,
+                    activities: vec![custom.clone()],
+                },
+            })
+            .await;
+        // No second RPC update is needed to release the pending activity.
+        let command = tokio::time::timeout(std::time::Duration::from_secs(1), commands.recv())
+            .await
+            .expect("readiness wakes the relay")
+            .expect("presence update");
+        assert_eq!(
+            presence_update_command(command),
+            (PresenceStatus::Offline, vec![custom, game])
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn disconnected_pin_stays_automatic_after_the_app_restarts() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (client, user_id) = test_client_with_current_user().await;
+        client
+            .publish_event(AppEvent::PresenceUpdate {
+                guild_id: None,
+                presence: PresenceEventFields {
+                    user_id,
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+            })
+            .await;
+        let mut commands = client.take_gateway_commands_for_test();
+        let context = context_with_client(client.clone());
+        client.set_rich_presence_selection(RichPresenceSelection::App("app-a".to_owned()));
+        context
+            .registry
+            .lock()
+            .await
+            .set("app-b".to_owned(), 2, ActivityInfo::playing("Game B"));
+        broadcast_selected_now(&context).await;
+        assert_eq!(
+            client.rich_presence_selection(),
+            RichPresenceSelection::Automatic
+        );
+        commands.try_recv().expect("fallback update");
+
+        context.registry.lock().await.set(
+            "app-a".to_owned(),
+            1,
+            ActivityInfo::playing("Game A restarted"),
+        );
+        context.registry.lock().await.set(
+            "app-b".to_owned(),
+            2,
+            ActivityInfo::playing("Game B latest"),
+        );
+        broadcast_selected_now(&context).await;
+        let (_, activities) = presence_update_command(commands.try_recv().expect("latest update"));
+        assert_eq!(activities, vec![ActivityInfo::playing("Game B latest")]);
+    }
+
+    #[tokio::test]
+    async fn automatic_clears_manual_activity_without_an_ipc_listener() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (client, user_id) = test_client_with_current_user().await;
+        let custom = ActivityInfo::test(ActivityKind::Custom, "deep in thought");
+        client
+            .publish_event(AppEvent::PresenceUpdate {
+                guild_id: None,
+                presence: PresenceEventFields {
+                    user_id,
+                    status: PresenceStatus::DoNotDisturb,
+                    activities: vec![custom.clone(), ActivityInfo::playing("Manual Game")],
+                },
+            })
+            .await;
+        let mut commands = client.take_gateway_commands_for_test();
+        client.set_rich_presence_selection(RichPresenceSelection::Manual);
+        let task = tokio::spawn(super::run_rich_presence(client.clone(), false));
+        client.set_rich_presence_selection(RichPresenceSelection::Automatic);
+        client.notify_rich_presence_dirty();
+
+        let command = tokio::time::timeout(std::time::Duration::from_secs(1), commands.recv())
+            .await
+            .expect("automatic works without IPC")
+            .expect("presence update");
+        assert_eq!(
+            presence_update_command(command),
+            (PresenceStatus::DoNotDisturb, vec![custom])
+        );
+        assert!(
+            !task.is_finished(),
+            "the coordinator stays available without a listener"
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn clearing_or_disconnecting_the_last_pinned_process_releases_the_pin() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        for disconnect in [false, true] {
+            let context = test_context();
+            context
+                .names
+                .lock()
+                .await
+                .insert("123".to_owned(), "Game A".to_owned());
+            let (mut app, mut server) = tokio::io::duplex(4096);
+            let server_context = context.clone();
+            let task =
+                tokio::spawn(async move { serve_connection(&mut server, &server_context).await });
+            app.write_all(&encode_frame(
+                Opcode::Handshake,
+                br#"{"v":1,"client_id":"123"}"#,
+            ))
+            .await
+            .expect("send handshake");
+            read_frame(&mut app).await.expect("ready frame");
+            for pid in [1, 2] {
+                let payload = serde_json::json!({"cmd":"SET_ACTIVITY","args":{"pid":pid,"activity":{"type":0}}});
+                app.write_all(&encode_frame(Opcode::Frame, payload.to_string().as_bytes()))
+                    .await
+                    .expect("set activity");
+                read_frame(&mut app).await.expect("activity acknowledged");
+            }
+            context
+                .client
+                .set_rich_presence_selection(RichPresenceSelection::App("123".to_owned()));
+            let clear = |pid| {
+                serde_json::json!({"cmd":"SET_ACTIVITY","args":{"pid":pid,"activity":null}})
+                    .to_string()
+            };
+            app.write_all(&encode_frame(Opcode::Frame, clear(1).as_bytes()))
+                .await
+                .expect("clear first process");
+            read_frame(&mut app).await.expect("clear acknowledged");
+            assert_eq!(
+                context.client.rich_presence_selection(),
+                RichPresenceSelection::App("123".to_owned())
+            );
+
+            if !disconnect {
+                app.write_all(&encode_frame(Opcode::Frame, clear(2).as_bytes()))
+                    .await
+                    .expect("clear final process");
+                read_frame(&mut app).await.expect("clear acknowledged");
+                assert_eq!(
+                    context.client.rich_presence_selection(),
+                    RichPresenceSelection::Automatic
+                );
+            }
+            app.write_all(&encode_frame(Opcode::Close, b""))
+                .await
+                .expect("close app");
+            task.await
+                .expect("connection task joins")
+                .expect("clean close");
+            assert_eq!(
+                context.client.rich_presence_selection(),
+                RichPresenceSelection::Automatic
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_clear_from_reconnected_client_removes_the_previous_activity() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (client, user_id) = test_client_with_current_user().await;
+        let custom = ActivityInfo::test(ActivityKind::Custom, "deep in thought");
+        client
+            .publish_event(AppEvent::PresenceUpdate {
+                guild_id: None,
+                presence: PresenceEventFields {
+                    user_id,
+                    status: PresenceStatus::Online,
+                    activities: vec![custom.clone()],
+                },
+            })
+            .await;
+        let mut commands = client.take_gateway_commands_for_test();
+        let context = context_with_client(client);
+        context
+            .names
+            .lock()
+            .await
+            .insert("123".to_owned(), "Neovim".to_owned());
+
+        let (mut app, mut server) = tokio::io::duplex(4096);
+        let server_context = context.clone();
+        let activity_task =
+            tokio::spawn(async move { serve_connection(&mut server, &server_context).await });
+        app.write_all(&encode_frame(
+            Opcode::Handshake,
+            br#"{"v":1,"client_id":"123"}"#,
+        ))
+        .await
+        .expect("send activity connection handshake");
+        read_frame(&mut app)
+            .await
+            .expect("activity connection ready");
+        let set = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "args": { "pid": 42, "activity": { "type": 0, "details": "Editing" } }
+        });
+        app.write_all(&encode_frame(Opcode::Frame, set.to_string().as_bytes()))
+            .await
+            .expect("set activity");
+        read_frame(&mut app).await.expect("set acknowledged");
+
+        // An explicit clear is keyed by application and process, so it must
+        // also work when it arrives over a replacement IPC connection.
+        let (mut clearing_app, mut clearing_server) = tokio::io::duplex(4096);
+        let clearing_context = context.clone();
+        let clearing_task =
+            tokio::spawn(
+                async move { serve_connection(&mut clearing_server, &clearing_context).await },
+            );
+        clearing_app
+            .write_all(&encode_frame(
+                Opcode::Handshake,
+                br#"{"v":1,"client_id":"123"}"#,
+            ))
+            .await
+            .expect("send clearing connection handshake");
+        read_frame(&mut clearing_app)
+            .await
+            .expect("clearing connection ready");
+        let clear = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "args": { "pid": 42, "activity": null }
+        });
+        clearing_app
+            .write_all(&encode_frame(Opcode::Frame, clear.to_string().as_bytes()))
+            .await
+            .expect("clear activity");
+        read_frame(&mut clearing_app)
+            .await
+            .expect("clear acknowledged");
+
+        let detected = context.registry.lock().await.activities();
+        broadcast_selected_now(&context).await;
+        let outbound = presence_update_command(commands.recv().await.expect("presence update"));
+        let local_activities = context.client.current_user_activities();
+
+        clearing_app
+            .write_all(&encode_frame(Opcode::Close, b""))
+            .await
+            .expect("close clearing connection");
+        clearing_task
+            .await
+            .expect("clearing task joins")
+            .expect("clearing connection closes cleanly");
+        app.write_all(&encode_frame(Opcode::Close, b""))
+            .await
+            .expect("close activity connection");
+        activity_task
+            .await
+            .expect("activity task joins")
+            .expect("activity connection closes cleanly");
+
+        assert!(
+            detected.is_empty(),
+            "the cleared app must not stay detected"
+        );
+        assert_eq!(outbound, (PresenceStatus::Online, vec![custom.clone()]));
+        assert_eq!(local_activities, vec![custom]);
+    }
+
+    #[tokio::test]
+    async fn zero_pid_clear_removes_connection_activity_and_preserves_custom_status() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (client, user_id) = test_client_with_current_user().await;
+        let custom = ActivityInfo::test(ActivityKind::Custom, "deep in thought");
+        client
+            .publish_event(AppEvent::PresenceUpdate {
+                guild_id: None,
+                presence: PresenceEventFields {
+                    user_id,
+                    status: PresenceStatus::DoNotDisturb,
+                    activities: vec![custom.clone()],
+                },
+            })
+            .await;
+        let mut commands = client.take_gateway_commands_for_test();
+        let context = context_with_client(client);
+        context
+            .names
+            .lock()
+            .await
+            .insert("123".to_owned(), "Neovim".to_owned());
+
+        let (mut app, mut server) = tokio::io::duplex(4096);
+        let server_context = context.clone();
+        let task =
+            tokio::spawn(async move { serve_connection(&mut server, &server_context).await });
+        app.write_all(&encode_frame(
+            Opcode::Handshake,
+            br#"{"v":1,"client_id":"123"}"#,
+        ))
+        .await
+        .expect("send handshake");
+        read_frame(&mut app).await.expect("connection ready");
+        let set = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "args": {
+                "pid": 42,
+                "activity": { "type": 0, "details": "Editing concord" }
+            }
+        });
+        app.write_all(&encode_frame(Opcode::Frame, set.to_string().as_bytes()))
+            .await
+            .expect("set activity");
+        read_frame(&mut app).await.expect("set acknowledged");
+
+        // A persistent RPC process can clear the activities owned by this
+        // connection with pid 0 and no activity field.
+        let clear = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "args": { "pid": 0 }
+        });
+        app.write_all(&encode_frame(Opcode::Frame, clear.to_string().as_bytes()))
+            .await
+            .expect("clear activity");
+        let clear_response = read_frame(&mut app).await.expect("clear acknowledged");
+        let clear_response: serde_json::Value =
+            serde_json::from_slice(&clear_response.payload).expect("clear response is JSON");
+
+        let detected = context.registry.lock().await.activities();
+        broadcast_selected_now(&context).await;
+        let outbound = presence_update_command(commands.recv().await.expect("presence update"));
+        let local_activities = context.client.current_user_activities();
+
+        app.write_all(&encode_frame(Opcode::Close, b""))
+            .await
+            .expect("close connection");
+        task.await
+            .expect("connection task joins")
+            .expect("connection closes cleanly");
+
+        assert!(
+            clear_response["evt"].is_null(),
+            "clear must be acknowledged"
+        );
+        assert!(
+            detected.is_empty(),
+            "the cleared app must not stay detected"
+        );
+        assert_eq!(
+            outbound,
+            (PresenceStatus::DoNotDisturb, vec![custom.clone()])
+        );
+        assert_eq!(local_activities, vec![custom]);
+    }
+
+    #[tokio::test]
+    async fn zero_pid_clear_only_removes_entries_owned_by_the_connection() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let context = test_context();
+        context
+            .names
+            .lock()
+            .await
+            .insert("123".to_owned(), "Neovim".to_owned());
+
+        let (mut app, mut server) = tokio::io::duplex(4096);
+        let server_context = context.clone();
+        let task =
+            tokio::spawn(async move { serve_connection(&mut server, &server_context).await });
+        app.write_all(&encode_frame(
+            Opcode::Handshake,
+            br#"{"v":1,"client_id":"123"}"#,
+        ))
+        .await
+        .expect("send handshake");
+        read_frame(&mut app).await.expect("connection ready");
+        for pid in [42, 43] {
+            let set = serde_json::json!({
+                "cmd": "SET_ACTIVITY",
+                "args": { "pid": pid, "activity": { "type": 0, "details": pid.to_string() } }
+            });
+            app.write_all(&encode_frame(Opcode::Frame, set.to_string().as_bytes()))
+                .await
+                .expect("set connection activity");
+            read_frame(&mut app).await.expect("set acknowledged");
+        }
+
+        // Model a newer connection replacing one key, plus an unrelated app.
+        // The pid-zero clear must not remove either entry.
+        {
+            let mut registry = context.registry.lock().await;
+            registry.set(
+                "123".to_owned(),
+                43,
+                ActivityInfo::playing("Replacement connection"),
+            );
+            registry.set("456".to_owned(), 9, ActivityInfo::playing("Unrelated app"));
+        }
+
+        let clear = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "args": { "pid": 0 }
+        });
+        app.write_all(&encode_frame(Opcode::Frame, clear.to_string().as_bytes()))
+            .await
+            .expect("clear connection activities");
+        read_frame(&mut app).await.expect("clear acknowledged");
+
+        // Inspect before closing so disconnect cleanup cannot mask a bad clear.
+        let remaining = context.registry.lock().await.activities();
+        app.write_all(&encode_frame(Opcode::Close, b""))
+            .await
+            .expect("close connection");
+        task.await
+            .expect("connection task joins")
+            .expect("connection closes cleanly");
+
+        let names = remaining
+            .iter()
+            .map(|activity| activity.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Unrelated app", "Replacement connection"]);
+        assert_eq!(context.registry.lock().await.activities(), remaining);
+    }
+
+    #[tokio::test]
     async fn automatic_mode_broadcasts_latest_activity_and_keeps_custom_status() {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (client, user_id) = test_client_with_current_user().await;
@@ -567,16 +1127,24 @@ mod tests {
             );
         }
 
-        // Automatic (the default) relays the most recently updated activity,
-        // with the custom status still alongside it.
-        broadcast_selected_now(&context).await;
-        let (status, activities) =
-            presence_update_command(gateway_commands.recv().await.expect("presence update"));
-        assert_eq!(status, PresenceStatus::Online);
-        assert_eq!(
-            activities,
-            vec![custom, ActivityInfo::test(ActivityKind::Playing, "Song B"),]
-        );
+        // Both automatic and pinned relay keep the custom status alongside it.
+        for (selection, name) in [
+            (RichPresenceSelection::Automatic, "Song B"),
+            (RichPresenceSelection::App("app-a".to_owned()), "Game A"),
+        ] {
+            client.set_rich_presence_selection(selection);
+            broadcast_selected_now(&context).await;
+            let (status, activities) =
+                presence_update_command(gateway_commands.recv().await.expect("presence update"));
+            assert_eq!(status, PresenceStatus::Online);
+            assert_eq!(
+                activities,
+                vec![
+                    custom.clone(),
+                    ActivityInfo::test(ActivityKind::Playing, name)
+                ]
+            );
+        }
 
         // A pinned app that is gone falls back to the latest remaining one.
         client.set_rich_presence_selection(RichPresenceSelection::App("gone".to_owned()));

@@ -710,6 +710,7 @@ fn runs_inline(command: &AppCommand) -> bool {
         command,
         AppCommand::SetSelectedGuild { .. }
             | AppCommand::SetSelectedMessageChannel { .. }
+            | AppCommand::UpdateCurrentUserActivity { .. }
             | AppCommand::JoinVoiceChannel { .. }
             | AppCommand::UpdateVoiceState { .. }
             | AppCommand::UpdateVoiceCapturePermission { .. }
@@ -735,6 +736,11 @@ mod tests {
 
     #[test]
     fn only_order_sensitive_control_commands_run_inline() {
+        assert!(runs_inline(&AppCommand::UpdateCurrentUserActivity {
+            status: crate::discord::PresenceStatus::Online,
+            activities: Vec::new(),
+            rich_presence: crate::discord::RichPresenceSelection::Automatic,
+        }));
         assert!(runs_inline(&AppCommand::SetSelectedGuild {
             guild_id: Some(Id::new(1)),
         }));
