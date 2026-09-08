@@ -5,8 +5,8 @@ use crate::discord::ids::{
 use crate::{
     DiscordClient,
     discord::{
-        ActivityInfo, AppEvent, PresenceEventFields, PresenceStatus, UserProfileUpdate,
-        UserSettingsInfo,
+        ActivityInfo, AppEvent, PresenceEventFields, PresenceStatus, RichPresenceSelection,
+        UserProfileUpdate, UserSettingsInfo,
     },
 };
 
@@ -142,9 +142,16 @@ pub(super) async fn update_activity(
     client: DiscordClient,
     status: PresenceStatus,
     mut activities: Vec<ActivityInfo>,
-    track_client_id: Option<String>,
+    rich_presence: RichPresenceSelection,
 ) {
-    client.select_rich_presence(track_client_id);
+    client.set_rich_presence_selection(rich_presence.clone());
+    // Automatic mode is owned by the RPC debounce loop: it recomputes from
+    // the live registry and keeps the user's custom status composed in, which
+    // no snapshot passed through here can match.
+    if matches!(rich_presence, RichPresenceSelection::Automatic) {
+        client.notify_rich_presence_dirty();
+        return;
+    }
     for activity in &mut activities {
         client.resolve_activity_external_assets(activity).await;
     }

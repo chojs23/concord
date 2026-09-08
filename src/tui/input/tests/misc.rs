@@ -189,6 +189,8 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, key(KeyCode::Enter));
+    // Move past the automatic row onto the manual row before committing.
+    handle_key(&mut state, char_key('j'));
     handle_key(&mut state, key(KeyCode::Enter));
 
     for value in "Concord".chars() {
@@ -200,9 +202,51 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![ActivityInfo::playing("Concord")],
-            track_client_id: None,
+            rich_presence: RichPresenceSelection::Manual,
         })
     );
+}
+
+#[test]
+fn profile_activity_picker_enter_defaults_to_automatic() {
+    let mut state = DashboardState::new();
+    let user_id = Id::new(10);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
+    });
+    state.set_detected_rich_presence(vec![ActivityInfo {
+        application_id: Some("client-1".to_owned()),
+        ..ActivityInfo::playing("Visual Studio Code")
+    }]);
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        handle_key(&mut state, char_key('j'));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    // The picker opens on the automatic row, so Enter relays the latest
+    // detected app without further navigation.
+    assert_eq!(
+        handle_key(&mut state, key(KeyCode::Enter)),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo {
+                application_id: Some("client-1".to_owned()),
+                ..ActivityInfo::playing("Visual Studio Code")
+            }],
+            rich_presence: RichPresenceSelection::Automatic,
+        })
+    );
+    assert!(!state.is_user_profile_activity_picker_open());
 }
 
 #[test]

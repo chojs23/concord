@@ -602,13 +602,13 @@ impl CommandDispatcher {
             AppCommand::UpdateCurrentUserActivity {
                 status,
                 activities,
-                track_client_id,
+                rich_presence,
             } => {
                 user_commands::update_activity(
                     self.client.clone(),
                     status,
                     activities,
-                    track_client_id,
+                    rich_presence,
                 )
                 .await;
             }

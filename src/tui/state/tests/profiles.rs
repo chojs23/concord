@@ -4,7 +4,7 @@ use crate::discord::test_builders::{
 };
 use crate::discord::{
     ActivityInfo, AppCommand, GlobalUserProfileUpdate, GuildUserProfileUpdate,
-    MessageAttachmentUpload, ProfileAvatarUpload, UserProfileUpdate,
+    MessageAttachmentUpload, ProfileAvatarUpload, RichPresenceSelection, UserProfileUpdate,
 };
 use crate::tui::state::UserProfileSettingsField;
 use crate::tui::text_input::TextEditAction;
@@ -440,6 +440,8 @@ fn profile_settings_activity_manual_entry_dispatches_presence_update() {
 
     assert_eq!(state.start_or_commit_user_profile_edit(), None);
     assert!(state.is_user_profile_activity_picker_open());
+    // The picker defaults to automatic; move down to the manual row.
+    state.move_user_profile_activity_picker_down();
     assert_eq!(state.activate_user_profile_activity_picker(), None);
     assert!(!state.is_user_profile_activity_picker_open());
     assert_eq!(
@@ -456,7 +458,7 @@ fn profile_settings_activity_manual_entry_dispatches_presence_update() {
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![ActivityInfo::playing("Concord")],
-            track_client_id: None,
+            rich_presence: RichPresenceSelection::Manual,
         })
     );
 }
@@ -489,16 +491,33 @@ fn profile_settings_activity_picker_selects_detected_app() {
 
     assert_eq!(state.start_or_commit_user_profile_edit(), None);
     let rows = state.user_profile_activity_picker_rows();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].0, "Visual Studio Code");
-    assert!(rows[0].1, "detected app is selected first");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].0, "Automatic (most recent app)");
+    assert_eq!(rows[1].0, "Visual Studio Code");
+    assert_eq!(rows[2].0, "Set manually…");
+    assert!(rows[0].1, "automatic is selected first");
 
+    // Automatic relays the most recently detected app, like the native client.
+    assert_eq!(
+        state.activate_user_profile_activity_picker(),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![detected.clone()],
+            rich_presence: RichPresenceSelection::Automatic,
+        })
+    );
+    assert!(!state.is_user_profile_activity_picker_open());
+
+    // Pinning the app keeps relaying exactly that app.
+    assert_eq!(state.start_or_commit_user_profile_edit(), None);
+    assert!(state.is_user_profile_activity_picker_open());
+    state.move_user_profile_activity_picker_down();
     assert_eq!(
         state.activate_user_profile_activity_picker(),
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![detected],
-            track_client_id: Some("client-123".to_owned()),
+            rich_presence: RichPresenceSelection::App("client-123".to_owned()),
         })
     );
     assert!(!state.is_user_profile_activity_picker_open());

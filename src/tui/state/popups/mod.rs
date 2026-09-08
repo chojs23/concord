@@ -2153,7 +2153,7 @@ impl DashboardState {
                     .settings
                     .activity_picker
                     .as_ref()?;
-                (selection, self.detected_rich_presence().len() + 1)
+                (selection, self.detected_rich_presence().len() + 2)
             }
             SelectablePopupTarget::EmojiReactions => {
                 let selection = &self.popups.emoji_reaction_picker()?.selection;
@@ -2396,7 +2396,7 @@ impl DashboardState {
                 }
             }
             SelectablePopupTarget::UserProfileActivity => {
-                let len = self.detected_rich_presence().len() + 1;
+                let len = self.detected_rich_presence().len() + 2;
                 if let Some(selection) = self
                     .popups
                     .user_profile_popup_mut()

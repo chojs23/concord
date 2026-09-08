@@ -1,5 +1,7 @@
-//! Local Rich Presence (RPC/IPC) server. Detected apps are surfaced to the UI so
-//! the user picks which one to broadcast. Nothing is broadcast automatically.
+//! Local Rich Presence (RPC/IPC) server. Detected apps are relayed to the
+//! user's profile automatically — the most recently updated activity wins,
+//! like the native client. The profile settings picker can pin a specific
+//! app or opt out entirely with a manual activity.
 
 mod codec;
 mod protocol;
@@ -14,10 +16,10 @@ use std::time::Duration;
 use interprocess::local_socket::tokio::Stream;
 use interprocess::local_socket::traits::tokio::Listener as _;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 
 use crate::discord::events::{AppEvent, PresenceEventFields};
-use crate::discord::{ActivityInfo, DiscordClient};
+use crate::discord::{ActivityInfo, ActivityKind, DiscordClient, RichPresenceSelection};
 use crate::logging;
 
 use codec::{Opcode, read_frame, write_frame};
@@ -40,7 +42,6 @@ struct RpcContext {
     registry: SharedRegistry,
     names: NameCache,
     assets: AssetCache,
-    presence_dirty: Arc<Notify>,
 }
 
 pub(crate) async fn run_rpc_server(client: DiscordClient) {
@@ -65,7 +66,6 @@ pub(crate) async fn run_rpc_server(client: DiscordClient) {
         registry: Arc::new(Mutex::new(ActivityRegistry::default())),
         names: Arc::new(Mutex::new(HashMap::new())),
         assets: Arc::new(Mutex::new(HashMap::new())),
-        presence_dirty: Arc::new(Notify::new()),
     };
     tokio::spawn(presence_debounce_loop(context.clone()));
     loop {
@@ -145,7 +145,7 @@ where
         }
         drop(registry);
         publish_detected(context).await;
-        context.presence_dirty.notify_one();
+        context.client.notify_rich_presence_dirty();
     }
     outcome
 }
@@ -197,7 +197,7 @@ where
                 }
             }
             publish_detected(context).await;
-            context.presence_dirty.notify_one();
+            context.client.notify_rich_presence_dirty();
             write_frame(
                 stream,
                 Opcode::Frame,
@@ -217,33 +217,46 @@ async fn publish_detected(context: &RpcContext) {
 }
 
 async fn presence_debounce_loop(context: RpcContext) {
+    let dirty = context.client.rich_presence_dirty();
     loop {
-        context.presence_dirty.notified().await;
+        dirty.notified().await;
         broadcast_selected_now(&context).await;
         tokio::time::sleep(MIN_PRESENCE_INTERVAL).await;
     }
 }
 
-/// Does nothing when no app is selected, so a manual activity is never
-/// overridden.
+/// Relays the current RPC activity to the user's presence, mirroring the
+/// native client: the selected app wins (falling back to the most recent
+/// one when it is gone), and the user's custom status survives alongside it.
 async fn broadcast_selected_now(context: &RpcContext) {
-    let Some(client_id) = context.client.selected_rich_presence() else {
-        return;
+    let rpc_activity = {
+        let registry = context.registry.lock().await;
+        match context.client.rich_presence_selection() {
+            // A manual activity is owned by the user; RPC never overrides it.
+            RichPresenceSelection::Manual => return,
+            RichPresenceSelection::App(client_id) => registry
+                .activity_for_client(&client_id)
+                .or_else(|| registry.latest_activity()),
+            RichPresenceSelection::Automatic => registry.latest_activity(),
+        }
     };
+
+    // Keep the custom status alive next to the relayed activity, like the
+    // native client does when a game is running.
     let mut activities: Vec<ActivityInfo> = context
-        .registry
-        .lock()
-        .await
-        .activity_for_client(&client_id)
+        .client
+        .current_user_activities()
         .into_iter()
+        .filter(|activity| activity.kind == ActivityKind::Custom)
         .collect();
     // Turn raw external image URLs into `mp:` refs here (only for the app we
     // broadcast), since the gateway needs them registered first.
-    if let Some(activity) = activities.first_mut() {
+    if let Some(mut activity) = rpc_activity {
         context
             .client
-            .resolve_activity_external_assets(activity)
+            .resolve_activity_external_assets(&mut activity)
             .await;
+        activities.push(activity);
     }
 
     let status = context.client.current_user_status();
@@ -343,21 +356,34 @@ mod tests {
     use std::sync::Arc;
 
     use tokio::io::AsyncWriteExt;
-    use tokio::sync::{Mutex, Notify};
+    use tokio::sync::Mutex;
 
     use super::codec::{Opcode, encode_frame, read_frame};
     use super::registry::ActivityRegistry;
-    use super::{RpcContext, is_external_image_url, needs_key_lookup, serve_connection};
-    use crate::discord::DiscordClient;
+    use super::{
+        RpcContext, broadcast_selected_now, is_external_image_url, needs_key_lookup,
+        serve_connection,
+    };
+    use crate::discord::events::{AppEvent, PresenceEventFields};
+    use crate::discord::gateway::GatewayCommand;
+    use crate::discord::ids::Id;
+    use crate::discord::{
+        ActivityInfo, ActivityKind, DiscordClient, PresenceStatus, RichPresenceSelection,
+    };
 
-    fn test_context() -> RpcContext {
+    fn context_with_client(client: DiscordClient) -> RpcContext {
         RpcContext {
-            client: DiscordClient::new("test-token".to_owned()).expect("valid token header"),
+            client,
             registry: Arc::new(Mutex::new(ActivityRegistry::default())),
             names: Arc::new(Mutex::new(HashMap::new())),
             assets: Arc::new(Mutex::new(HashMap::new())),
-            presence_dirty: Arc::new(Notify::new()),
         }
+    }
+
+    fn test_context() -> RpcContext {
+        context_with_client(
+            DiscordClient::new("test-token".to_owned()).expect("valid token header"),
+        )
     }
 
     #[test]
@@ -466,5 +492,104 @@ mod tests {
             .await
             .expect("send close");
         server_task.await.expect("server task joins cleanly");
+    }
+
+    fn presence_update_command(command: GatewayCommand) -> (PresenceStatus, Vec<ActivityInfo>) {
+        match command {
+            GatewayCommand::UpdatePresence { status, activities } => (status, activities),
+            other => panic!("expected UpdatePresence, got {other:?}"),
+        }
+    }
+
+    async fn test_client_with_current_user()
+    -> (DiscordClient, Id<crate::discord::ids::marker::UserMarker>) {
+        let client = DiscordClient::new("test-token".to_owned()).expect("valid token header");
+        let user_id = Id::new(10);
+        client
+            .publish_event(AppEvent::Ready {
+                user: "neo".to_owned(),
+                user_id: Some(user_id),
+            })
+            .await;
+        (client, user_id)
+    }
+
+    #[tokio::test]
+    async fn automatic_mode_broadcasts_latest_activity_and_keeps_custom_status() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (client, user_id) = test_client_with_current_user().await;
+        let mut gateway_commands = client.take_gateway_commands_for_test();
+
+        let custom = ActivityInfo::test(ActivityKind::Custom, "deep in thought");
+        client
+            .publish_event(AppEvent::PresenceUpdate {
+                guild_id: None,
+                presence: PresenceEventFields {
+                    user_id,
+                    status: PresenceStatus::Online,
+                    activities: vec![custom.clone()],
+                },
+            })
+            .await;
+
+        let context = context_with_client(client.clone());
+        {
+            let mut registry = context.registry.lock().await;
+            registry.set(
+                "app-a".to_owned(),
+                1,
+                ActivityInfo::test(ActivityKind::Playing, "Game A"),
+            );
+            registry.set(
+                "app-b".to_owned(),
+                2,
+                ActivityInfo::test(ActivityKind::Playing, "Song B"),
+            );
+        }
+
+        // Automatic (the default) relays the most recently updated activity,
+        // with the custom status still alongside it.
+        broadcast_selected_now(&context).await;
+        let (status, activities) =
+            presence_update_command(gateway_commands.recv().await.expect("presence update"));
+        assert_eq!(status, PresenceStatus::Online);
+        assert_eq!(
+            activities,
+            vec![custom, ActivityInfo::test(ActivityKind::Playing, "Song B"),]
+        );
+
+        // A pinned app that is gone falls back to the latest remaining one.
+        client.set_rich_presence_selection(RichPresenceSelection::App("gone".to_owned()));
+        broadcast_selected_now(&context).await;
+        let (_status, activities) =
+            presence_update_command(gateway_commands.recv().await.expect("presence update"));
+        assert_eq!(
+            activities.last().map(|activity| activity.name.as_str()),
+            Some("Song B")
+        );
+
+        // Manual never broadcasts, so a manual activity cannot be overridden.
+        client.set_rich_presence_selection(RichPresenceSelection::Manual);
+        broadcast_selected_now(&context).await;
+        assert!(
+            gateway_commands.try_recv().is_err(),
+            "manual mode must not broadcast"
+        );
+
+        // An empty registry in automatic mode clears the relayed activity but
+        // keeps the custom status.
+        client.set_rich_presence_selection(RichPresenceSelection::Automatic);
+        context.registry.lock().await.clear("app-a", 1);
+        context.registry.lock().await.clear("app-b", 2);
+        broadcast_selected_now(&context).await;
+        let (_status, activities) =
+            presence_update_command(gateway_commands.recv().await.expect("presence update"));
+        assert_eq!(
+            activities
+                .iter()
+                .map(|activity| activity.name.as_str())
+                .collect::<Vec<_>>(),
+            ["deep in thought"]
+        );
     }
 }
