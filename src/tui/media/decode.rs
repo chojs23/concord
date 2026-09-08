@@ -301,10 +301,19 @@ impl MediaImageDecodeCache {
         completed: MediaImageDecodeResult,
     ) -> MediaImageDecodeRequestOutcome {
         if matches!(completed.result, Err(MediaWorkError::Busy)) {
-            if let Some(SharedDecodeEntry::Decoding { retry_pending, .. }) =
-                self.entries.get_mut(&completed.url)
-            {
-                *retry_pending = true;
+            let has_consumers = match self.entries.get_mut(&completed.url) {
+                Some(SharedDecodeEntry::Decoding {
+                    requests,
+                    retry_pending,
+                    ..
+                }) => {
+                    *retry_pending = true;
+                    !requests.is_empty()
+                }
+                _ => false,
+            };
+            if !has_consumers {
+                self.entries.remove(&completed.url);
             }
             return MediaImageDecodeRequestOutcome {
                 job: None,
@@ -358,12 +367,24 @@ impl MediaImageDecodeCache {
     pub(in crate::tui) fn retain_requests(
         &mut self,
         mut retain: impl FnMut(&MediaImageDecodeRequest) -> bool,
-    ) {
-        for entry in self.entries.values_mut() {
-            if let SharedDecodeEntry::Decoding { requests, .. } = entry {
+    ) -> Vec<String> {
+        let mut retired = Vec::new();
+        self.entries.retain(|url, entry| {
+            if let SharedDecodeEntry::Decoding {
+                requests,
+                retry_pending,
+                ..
+            } = entry
+            {
                 requests.retain(&mut retain);
+                if requests.is_empty() && *retry_pending {
+                    retired.push(url.clone());
+                    return false;
+                }
             }
-        }
+            true
+        });
+        retired
     }
 
     pub(in crate::tui) fn take_retry_jobs(
@@ -1041,4 +1062,69 @@ fn decode_limits() -> Limits {
     limits.max_image_height = Some(MAX_DECODED_IMAGE_HEIGHT);
     limits.max_alloc = Some(MAX_DECODED_IMAGE_BYTES);
     limits
+}
+
+#[cfg(test)]
+mod shared_cache_tests {
+    use super::*;
+
+    fn avatar_request(generation: u64) -> MediaImageDecodeRequest {
+        MediaImageDecodeRequest {
+            key: MediaImageDecodeKey::Avatar(format!("avatar-{generation}")),
+            generation,
+        }
+    }
+
+    #[test]
+    fn consumerless_busy_decode_releases_source_bytes_without_retrying() {
+        let url = "https://cdn.discordapp.com/avatar.png";
+        let source = [1, 2, 3, 4];
+        let mut cache = MediaImageDecodeCache::new();
+        assert!(
+            cache
+                .request(url, &source, vec![avatar_request(1)])
+                .job
+                .is_some()
+        );
+        cache.complete(MediaImageDecodeResult {
+            url: url.to_owned(),
+            result: Err(MediaWorkError::Busy),
+        });
+
+        let retired = cache.retain_requests(|_| false);
+
+        assert_eq!(retired, [url.to_owned()]);
+        assert!(!cache.is_decoding(url));
+        assert_eq!(cache.diagnostics().retained_source_bytes, 0);
+        assert!(cache.take_retry_jobs(&[], 1).is_empty());
+    }
+
+    #[test]
+    fn consumerless_running_decode_stays_deduped_until_completion() {
+        let url = "https://cdn.discordapp.com/avatar.png";
+        let mut cache = MediaImageDecodeCache::new();
+        assert!(
+            cache
+                .request(url, &[1, 2, 3, 4], vec![avatar_request(1)])
+                .job
+                .is_some()
+        );
+
+        assert!(cache.retain_requests(|_| false).is_empty());
+        assert!(cache.is_decoding(url));
+        assert!(
+            cache
+                .request(url, &[], vec![avatar_request(2)])
+                .job
+                .is_none()
+        );
+
+        let completed = cache.complete(MediaImageDecodeResult {
+            url: url.to_owned(),
+            result: Ok(DecodedMediaImage::still(DynamicImage::new_rgba8(1, 1))),
+        });
+        assert_eq!(completed.deliveries.len(), 1);
+        assert_eq!(completed.deliveries[0].generation, 2);
+        assert!(!cache.is_decoding(url));
+    }
 }

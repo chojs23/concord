@@ -277,6 +277,59 @@ impl EmojiImageCache {
         }
     }
 
+    pub(in crate::tui) fn retain_source_consumers(&mut self, targets: &[EmojiImageTarget]) {
+        let protected = targets
+            .iter()
+            .take(MAX_EMOJI_IMAGE_CACHE_ENTRIES)
+            .map(|target| target.url.as_str())
+            .collect::<HashSet<_>>();
+        self.cache.entries.retain(|url, entry| {
+            !matches!(
+                entry,
+                EmojiImageEntry::Loading { .. } | EmojiImageEntry::Decoding { .. }
+            ) || protected.contains(url.as_str())
+        });
+    }
+
+    pub(in crate::tui) fn reuse_cached_sources(
+        &mut self,
+        targets: &[EmojiImageTarget],
+        mut lookup: impl FnMut(&str) -> Option<DecodedMediaImage>,
+    ) -> bool {
+        if self.picker.is_none() {
+            return false;
+        }
+        let mut reused = false;
+        for url in targets
+            .iter()
+            .take(MAX_EMOJI_IMAGE_CACHE_ENTRIES)
+            .map(|target| target.url.clone())
+        {
+            if matches!(
+                self.cache.entries.get(&url),
+                Some(EmojiImageEntry::Ready { .. })
+            ) {
+                continue;
+            }
+            let Some(image) = lookup(&url) else {
+                continue;
+            };
+            let generation = self.cache.next_decode_generation();
+            let last_used = self.cache.next_tick();
+            self.cache.entries.insert(
+                url,
+                EmojiImageEntry::Ready {
+                    generation,
+                    image,
+                    protocols: Box::new(EmojiProtocolCaches::new()),
+                    last_used,
+                },
+            );
+            reused = true;
+        }
+        reused
+    }
+
     pub(in crate::tui) fn store_loaded(&mut self, url: &str) -> Option<MediaImageDecodeRequest> {
         self.cache.start_decode_request(
             url.to_owned(),
@@ -288,6 +341,13 @@ impl EmojiImageCache {
             |last_used| EmojiImageEntry::Failed { last_used },
             MediaImageDecodeKey::Emoji,
         )
+    }
+
+    pub(in crate::tui) fn ready_image_for_url(&self, url: &str) -> Option<DecodedMediaImage> {
+        let EmojiImageEntry::Ready { image, .. } = self.cache.entries.get(url)? else {
+            return None;
+        };
+        Some(image.fresh_playback())
     }
 
     pub(in crate::tui) fn store_decoded(
@@ -332,6 +392,15 @@ impl EmojiImageCache {
     }
 
     fn store_failed(&mut self, url: &str) {
+        // A cache hit may have replaced the placeholder while HTTP was in flight.
+        if !self
+            .cache
+            .entries
+            .get(url)
+            .is_some_and(MediaImageCacheEntry::is_loading)
+        {
+            return;
+        }
         self.cache
             .store_failed_if_present(url.to_owned(), |last_used| EmojiImageEntry::Failed {
                 last_used,

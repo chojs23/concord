@@ -411,6 +411,63 @@ impl AvatarImageCache {
             .collect()
     }
 
+    pub(in crate::tui) fn retain_source_consumers(
+        &mut self,
+        targets: &[AvatarTarget],
+        popup_url: Option<&str>,
+    ) {
+        let protected = admitted_avatar_urls(targets)
+            .into_iter()
+            .chain(popup_url.map(|url| {
+                avatar_preview_url(url, PROFILE_POPUP_AVATAR_WIDTH, PROFILE_POPUP_AVATAR_HEIGHT)
+            }))
+            .collect::<HashSet<_>>();
+        self.cache.entries.retain(|url, entry| {
+            !matches!(
+                entry,
+                AvatarImageEntry::Loading { .. } | AvatarImageEntry::Decoding { .. }
+            ) || protected.contains(url)
+        });
+    }
+
+    pub(in crate::tui) fn reuse_cached_sources(
+        &mut self,
+        targets: &[AvatarTarget],
+        popup_url: Option<&str>,
+        mut lookup: impl FnMut(&str) -> Option<DecodedMediaImage>,
+    ) -> bool {
+        let mut reused = false;
+        let urls = admitted_avatar_urls(targets)
+            .into_iter()
+            .chain(popup_url.map(|url| {
+                avatar_preview_url(url, PROFILE_POPUP_AVATAR_WIDTH, PROFILE_POPUP_AVATAR_HEIGHT)
+            }));
+        for url in urls {
+            if matches!(
+                self.cache.entries.get(&url),
+                Some(AvatarImageEntry::Ready { .. })
+            ) {
+                continue;
+            }
+            let Some(image) = lookup(&url) else {
+                continue;
+            };
+            let generation = self.cache.next_decode_generation();
+            let last_used = self.cache.next_tick();
+            self.cache.entries.insert(
+                url,
+                AvatarImageEntry::Ready {
+                    generation,
+                    image,
+                    protocols: Box::new(RenderProtocolCache::new()),
+                    last_used,
+                },
+            );
+            reused = true;
+        }
+        reused
+    }
+
     pub(in crate::tui) fn store_loaded(&mut self, url: &str) -> Option<MediaImageDecodeRequest> {
         self.cache.start_decode_request(
             url.to_owned(),
@@ -422,6 +479,13 @@ impl AvatarImageCache {
             |last_used| AvatarImageEntry::Failed { last_used },
             MediaImageDecodeKey::Avatar,
         )
+    }
+
+    pub(in crate::tui) fn ready_image_for_url(&self, url: &str) -> Option<DecodedMediaImage> {
+        let AvatarImageEntry::Ready { image, .. } = self.cache.entries.get(url)? else {
+            return None;
+        };
+        Some(image.fresh_playback())
     }
 
     pub(in crate::tui) fn store_decoded(
@@ -460,6 +524,15 @@ impl AvatarImageCache {
     }
 
     fn store_failed(&mut self, url: &str) {
+        // A cache hit may have replaced the placeholder while HTTP was in flight.
+        if !self
+            .cache
+            .entries
+            .get(url)
+            .is_some_and(MediaImageCacheEntry::is_loading)
+        {
+            return;
+        }
         self.cache
             .store_failed_if_present(url.to_owned(), |last_used| AvatarImageEntry::Failed {
                 last_used,

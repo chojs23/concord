@@ -18,8 +18,8 @@ pub(super) use decode::{
     MediaImageDecodeResult, SharedMediaCacheStats, spawn_media_image_decode,
 };
 pub(super) use emoji::EmojiImageCache;
-pub(super) use preview::ImagePreviewCache;
 pub(in crate::tui) use preview::ImagePreviewFragmentKey;
+pub(super) use preview::{ImagePreviewCache, admit_image_preview_targets};
 #[cfg(test)]
 pub(in crate::tui) use protocol_job::build_media_protocol;
 pub(super) use protocol_job::{

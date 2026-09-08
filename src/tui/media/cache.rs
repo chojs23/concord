@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
     time::{Duration, Instant},
 };
@@ -11,7 +11,7 @@ use super::{
         DecodedMediaImage, MAX_RETAINED_ANIMATION_FRAMES, MediaImageDecodeKey,
         MediaImageDecodeRequest,
     },
-    work::{MediaWorkError, MediaWorkResult},
+    work::{MediaProtocolRequest, MediaWorkError, MediaWorkResult},
 };
 
 const MAX_RENDER_PROTOCOLS_PER_MEDIA_ENTRY: usize = MAX_RETAINED_ANIMATION_FRAMES;
@@ -49,6 +49,9 @@ pub(super) struct RenderProtocolCache<K> {
     last_ready: Option<K>,
     entry_bytes: HashMap<K, u64>,
     retained_bytes: u64,
+    protected: Option<HashSet<K>>,
+    request: Option<MediaProtocolRequest>,
+    retiring: Option<MediaProtocolRequest>,
 }
 
 impl<K> RenderProtocolCache<K>
@@ -64,6 +67,9 @@ where
             last_ready: None,
             entry_bytes: HashMap::new(),
             retained_bytes: 0,
+            protected: None,
+            request: None,
+            retiring: None,
         }
     }
 
@@ -101,6 +107,80 @@ where
             return false;
         }
         self.pending = Some(key.clone());
+        true
+    }
+
+    pub(super) fn protect(&mut self, keys: impl IntoIterator<Item = K>) {
+        let protected = keys.into_iter().collect::<HashSet<_>>();
+        debug_assert!(protected.len() <= MAX_RENDER_PROTOCOLS_PER_MEDIA_ENTRY);
+        if self
+            .retiring
+            .as_ref()
+            .is_some_and(MediaProtocolRequest::is_finished)
+        {
+            self.retiring = None;
+        }
+        if (self
+            .pending
+            .as_ref()
+            .is_some_and(|key| !protected.contains(key))
+            || self
+                .request
+                .as_ref()
+                .is_some_and(MediaProtocolRequest::is_cancelled))
+            && let Some(request) = &self.request
+        {
+            request.cancel();
+            if request.is_finished() {
+                self.request = None;
+                self.pending = None;
+            } else if self.retiring.is_none() {
+                self.retiring = self.request.take();
+                self.pending = None;
+            }
+            // Two encoders may already be running. Keep the cancelled current
+            // slot until one finishes, rather than growing a queue.
+        }
+        self.protected = Some(protected);
+        self.trim_to_limits();
+    }
+
+    pub(super) fn request_protected_build(&mut self, key: &K) -> Option<MediaProtocolRequest> {
+        if !self
+            .protected
+            .as_ref()
+            .is_some_and(|keys| keys.contains(key))
+            || !self.request_build(key)
+        {
+            return None;
+        }
+        let request = MediaProtocolRequest::new();
+        self.request = Some(request.clone());
+        Some(request)
+    }
+
+    pub(super) fn store_requested_result(
+        &mut self,
+        key: K,
+        request: &MediaProtocolRequest,
+        result: MediaWorkResult<Protocol>,
+        bytes: u64,
+    ) -> bool {
+        if !self
+            .request
+            .as_ref()
+            .is_some_and(|current| current.same_request(request))
+            || self.pending.as_ref() != Some(&key)
+            || request.is_cancelled()
+            || !self
+                .protected
+                .as_ref()
+                .is_some_and(|keys| keys.contains(&key))
+        {
+            return false;
+        }
+        self.request = None;
+        self.store_result(key, result, bytes);
         true
     }
 
@@ -142,35 +222,47 @@ where
     }
 
     pub(super) fn insert(&mut self, key: K, protocol: Protocol, bytes: u64) {
-        if self.entries.contains_key(&key) {
-            self.entries.insert(key.clone(), protocol);
-            self.set_entry_bytes(key.clone(), bytes);
-            self.last_ready = Some(key);
-            return;
+        if !self.entries.contains_key(&key) {
+            self.insertion_order.push_back(key.clone());
         }
-
-        // An animation needs its current and next protocols at the same time.
-        // Keep that two-frame window even when a large preview exceeds the
-        // soft byte budget, otherwise the two frames evict and rebuild each
-        // other forever before playback can start.
-        while self.entries.len() >= MAX_RENDER_PROTOCOLS_PER_MEDIA_ENTRY
-            || (self.entries.len() >= MIN_RENDER_PROTOCOLS_PER_MEDIA_ENTRY
-                && self.retained_bytes.saturating_add(bytes)
-                    > RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY)
-        {
-            let Some(oldest) = self.insertion_order.pop_front() else {
-                break;
-            };
-            self.entries.remove(&oldest);
-            self.forget_entry_bytes(&oldest);
-            // Keys here vary with scroll position, so a stale attempt count
-            // per evicted key would accumulate for the whole session.
-            self.failed_attempts.remove(&oldest);
-        }
-        self.insertion_order.push_back(key.clone());
         self.last_ready = Some(key.clone());
         self.entries.insert(key.clone(), protocol);
         self.set_entry_bytes(key, bytes);
+        self.trim_to_limits();
+    }
+
+    fn trim_to_limits(&mut self) {
+        // Previews protect every visible crop in the current/next frame window.
+        // That finite set may exceed the byte budget, but scroll history may not.
+        // Avatar and emoji caches retain their existing two-frame policy.
+        let minimum = if self.protected.is_some() {
+            0
+        } else {
+            MIN_RENDER_PROTOCOLS_PER_MEDIA_ENTRY
+        };
+        while self.entries.len() > MAX_RENDER_PROTOCOLS_PER_MEDIA_ENTRY
+            || (self.entries.len() > minimum
+                && self.retained_bytes > RENDER_PROTOCOL_BYTE_BUDGET_PER_MEDIA_ENTRY)
+        {
+            let Some(index) = self.insertion_order.iter().position(|key| {
+                !self
+                    .protected
+                    .as_ref()
+                    .is_some_and(|keys| keys.contains(key))
+            }) else {
+                break;
+            };
+            let oldest = self
+                .insertion_order
+                .remove(index)
+                .expect("eviction index exists");
+            self.entries.remove(&oldest);
+            self.forget_entry_bytes(&oldest);
+            self.failed_attempts.remove(&oldest);
+            if self.last_ready.as_ref() == Some(&oldest) {
+                self.last_ready = self.insertion_order.back().cloned();
+            }
+        }
     }
 
     fn set_entry_bytes(&mut self, key: K, bytes: u64) {
@@ -193,6 +285,14 @@ where
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
         self.entries.len()
+    }
+}
+
+impl<K> Drop for RenderProtocolCache<K> {
+    fn drop(&mut self) {
+        for request in self.request.iter().chain(self.retiring.iter()) {
+            request.cancel();
+        }
     }
 }
 
