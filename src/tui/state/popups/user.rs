@@ -277,8 +277,11 @@ impl DashboardState {
                 .cache
                 .user_activities(user_id)
                 .iter()
+                // Any non-custom activity is a presence worth showing here,
+                // including RPC-relayed ones whose kind is not `Playing`
+                // (e.g. music bridges send `Listening`).
                 .find(|activity| {
-                    activity.kind == ActivityKind::Playing && !activity.name.trim().is_empty()
+                    activity.kind != ActivityKind::Custom && !activity.name.trim().is_empty()
                 })
                 .map(|activity| activity.name.clone())
         })

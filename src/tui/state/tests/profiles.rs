@@ -524,6 +524,72 @@ fn profile_settings_activity_picker_selects_detected_app() {
 }
 
 #[test]
+fn profile_settings_activity_field_shows_non_playing_relayed_activity() {
+    // Music bridges (e.g. mprisence) relay `Listening` activities. The field
+    // must show them instead of "(not set)".
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![
+                ActivityInfo::test(crate::discord::ActivityKind::Custom, "deep in thought"),
+                ActivityInfo::test(crate::discord::ActivityKind::Listening, "Spotify"),
+            ],
+        },
+    });
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
+
+    assert_eq!(
+        state.user_profile_settings_field_value(UserProfileSettingsField::ManualActivity),
+        "Spotify",
+        "a non-playing activity still names the relayed presence"
+    );
+}
+
+#[test]
+fn profile_settings_activity_field_ignores_custom_status() {
+    // The custom status is composed alongside the relayed activity, so it must
+    // never leak into the activity field as a name.
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(
+                crate::discord::ActivityKind::Custom,
+                "deep in thought",
+            )],
+        },
+    });
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
+
+    assert_eq!(
+        state.user_profile_settings_field_value(UserProfileSettingsField::ManualActivity),
+        "",
+        "a custom-status-only presence leaves the activity field empty"
+    );
+}
+
+#[test]
 fn profile_settings_ignore_non_current_user_profile() {
     let mut state = DashboardState::new();
     state.push_event(AppEvent::Ready {
