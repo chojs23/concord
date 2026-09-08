@@ -48,10 +48,30 @@ pub(crate) async fn run_rpc_server(client: DiscordClient) {
     let bound = match socket::bind_first_available() {
         Ok(bound) => bound,
         Err(error) => {
-            logging::debug("rpc", format!("rich presence server disabled: {error}"));
+            let message = format!(
+                "Rich Presence is disabled: no discord-ipc socket could be bound ({error})"
+            );
+            logging::error("rpc", &message);
+            client
+                .publish_event(AppEvent::RichPresenceWarning { message })
+                .await;
             return;
         }
     };
+    // RPC apps probe discord-ipc-0 first and connect to the first socket that
+    // answers, so a nonzero slot usually means another local client receives
+    // the activity instead of concord. Still serve the slot for apps that
+    // reach it, but make the steal visible.
+    if bound.slot > 0 {
+        let message = format!(
+            "Another client owns discord-ipc-0; Rich Presence apps may relay through it instead of concord (concord listens on discord-ipc-{})",
+            bound.slot
+        );
+        logging::error("rpc", &message);
+        client
+            .publish_event(AppEvent::RichPresenceWarning { message })
+            .await;
+    }
     logging::debug(
         "rpc",
         format!(

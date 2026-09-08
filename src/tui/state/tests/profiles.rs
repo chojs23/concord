@@ -492,7 +492,10 @@ fn profile_settings_activity_picker_selects_detected_app() {
     assert_eq!(state.start_or_commit_user_profile_edit(), None);
     let rows = state.user_profile_activity_picker_rows();
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].0, "Automatic (most recent app)");
+    assert_eq!(
+        rows[0].0, "Automatic (most recent app) — Visual Studio Code",
+        "the automatic row names the app it would relay"
+    );
     assert_eq!(rows[1].0, "Visual Studio Code");
     assert_eq!(rows[2].0, "Set manually…");
     assert!(rows[0].1, "automatic is selected first");

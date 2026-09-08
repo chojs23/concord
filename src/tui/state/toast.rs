@@ -383,6 +383,22 @@ mod tests {
     }
 
     #[test]
+    fn rich_presence_warning_event_shows_toast_without_gateway_banner() {
+        let mut state = DashboardState::new();
+
+        state.push_event(AppEvent::RichPresenceWarning {
+            message: "Another client owns discord-ipc-0".to_owned(),
+        });
+
+        let toast = state.toast_message().expect("rpc warning toast is visible");
+        assert!(toast.text.contains("discord-ipc-0"));
+        assert_eq!(toast.kind, ToastKind::Error);
+        // An RPC socket steal is not a connection failure, so the persistent
+        // gateway-error banner must stay clear.
+        assert!(state.gateway_error().is_none());
+    }
+
+    #[test]
     fn newer_toast_replaces_previous_toast() {
         let mut state = DashboardState::new();
         let now = Instant::now();

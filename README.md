@@ -226,6 +226,9 @@ Linux screen capture depends on the active X11 or Wayland support.
 - The profile settings activity picker can pin a specific app, switch back to
   automatic, or set a manual activity RPC will not override
 - Only apps that speak Discord's Rich Presence (RPC/IPC) protocol are detected.
+- RPC apps connect to the first `discord-ipc` socket that answers, so a running
+  native desktop client (or Vesktop/LegCord/arRPC) receives them instead of
+  concord; concord shows a warning toast when it detects this
 - Toggle with `share_rich_presence` under `[presence]` in `config.toml`
 
 ### Notifications

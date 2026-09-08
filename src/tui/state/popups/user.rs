@@ -656,8 +656,15 @@ impl DashboardState {
         let detected = self.detected_rich_presence();
         let len = detected.len() + 2;
         let selected = picker.selected_for_len(len);
-        let mut rows: Vec<(String, bool)> =
-            vec![(AUTOMATIC_ACTIVITY_PICKER_LABEL.to_owned(), selected == 0)];
+        // Surface what automatic mode is currently relaying so detection is
+        // visible without opening the picker's other rows.
+        let automatic_label = match detected.first() {
+            Some(latest) if !latest.name.trim().is_empty() => {
+                format!("{AUTOMATIC_ACTIVITY_PICKER_LABEL} — {}", latest.name.trim())
+            }
+            _ => AUTOMATIC_ACTIVITY_PICKER_LABEL.to_owned(),
+        };
+        let mut rows: Vec<(String, bool)> = vec![(automatic_label, selected == 0)];
         rows.extend(
             detected
                 .iter()

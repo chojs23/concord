@@ -508,6 +508,12 @@ pub enum AppEvent {
     RichPresenceDetected {
         activities: Vec<ActivityInfo>,
     },
+    /// Rich Presence server could not take over `discord-ipc-0` (or any socket),
+    /// so local apps likely relay through another client. Surfaced as a toast
+    /// because the silent fallback is otherwise invisible.
+    RichPresenceWarning {
+        message: String,
+    },
     VoiceStateUpdate {
         state: VoiceStateInfo,
     },
@@ -907,6 +913,7 @@ define_app_event_kinds! {
     GuildMemberRemove: AppEvent::GuildMemberRemove { .. },
     PresenceUpdate: AppEvent::PresenceUpdate { .. },
     RichPresenceDetected: AppEvent::RichPresenceDetected { .. },
+    RichPresenceWarning: AppEvent::RichPresenceWarning { .. },
     VoiceStateUpdate: AppEvent::VoiceStateUpdate { .. },
     VoiceSpeakingUpdate: AppEvent::VoiceSpeakingUpdate { .. },
     VoiceServerUpdate: AppEvent::VoiceServerUpdate { .. },
@@ -1980,6 +1987,7 @@ impl AppEventKind {
             | AppEventKind::VoiceConnectionStatusChanged
             | AppEventKind::VoiceSound
             | AppEventKind::RichPresenceDetected
+            | AppEventKind::RichPresenceWarning
             | AppEventKind::GatewayResumed
             | AppEventKind::GatewayClosed => AppEventMetadata::effect_only(),
 

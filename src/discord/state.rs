@@ -590,8 +590,9 @@ impl DiscordState {
             | AppEvent::InboxRecentMentionDeleteFailed { .. }
             | AppEvent::InboxChannelMessagesLoaded { .. }
             | AppEvent::InboxChannelMessagesLoadFailed { .. } => {}
-            // Detected Rich Presence is UI-only. It does not mutate the shared cache.
-            AppEvent::RichPresenceDetected { .. } => {}
+            // Detected Rich Presence and its warnings are UI-only. They do not
+            // mutate the shared cache.
+            AppEvent::RichPresenceDetected { .. } | AppEvent::RichPresenceWarning { .. } => {}
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::MessageSearchLoadFailed { .. } => {}
             AppEvent::MessageUpdateDispatch { update } => {
