@@ -167,6 +167,10 @@ impl DashboardState {
                 self.runtime.gateway_error = Some(message.clone());
                 self.show_error_toast(message, Instant::now());
             }
+            AppEvent::RichPresenceWarning { message } => {
+                logging::error("tui", message);
+                self.show_error_toast(message, Instant::now());
+            }
             AppEvent::CaptchaRequired { action } => {
                 self.show_captcha_toast(
                     format!(

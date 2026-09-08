@@ -33,8 +33,9 @@ use crate::{
         GuildMemberListOperation, GuildMemberListUpdateInfo, GuildNotificationSettingsInfo,
         MemberInfo, MessageInfo, MessageReferenceInfo, MessageSnapshotInfo,
         MicrophoneSensitivityDb, NotificationLevel, PollAnswerInfo, PollInfo, PresenceEventFields,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReadStateInfo, RoleInfo,
-        UserGuildSettingsInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceVolumePercent,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReadStateInfo, RichPresenceSelection,
+        RoleInfo, UserGuildSettingsInfo, UserSettingsInfo, VoiceConnectionStatus,
+        VoiceVolumePercent,
     },
     tui::state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,

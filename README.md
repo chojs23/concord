@@ -219,9 +219,16 @@ Linux screen capture depends on the active X11 or Wayland support.
 
 ### Rich Presence
 
-- Concord serves the local `discord-ipc` socket, detects connected apps, and
-  lets you pick which one to share from your profile's activity picker
+- Concord serves the local `discord-ipc` socket and relays Rich Presence from
+  connected apps automatically, like the native client: the most recently
+  updated app becomes your activity, your custom status is kept alongside it,
+  and the activity clears when the app disconnects
+- The profile settings activity picker can pin a specific app, switch back to
+  automatic, or set a manual activity RPC will not override
 - Only apps that speak Discord's Rich Presence (RPC/IPC) protocol are detected.
+- RPC apps connect to the first `discord-ipc` socket that answers, so a running
+  native desktop client (or Vesktop/LegCord/arRPC) receives them instead of
+  concord; concord shows a warning toast when it detects this
 - Toggle with `share_rich_presence` under `[presence]` in `config.toml`
 
 ### Notifications
@@ -379,7 +386,8 @@ emojis_as_links = false
 # favorite_emojis = ["🔥", "👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀", "💯"]
 
 [presence]
-# Relay Rich Presence from local apps as your activity.
+# Relay Rich Presence from local apps as your activity (most recent app wins,
+# like the native client).
 share_rich_presence = true
 
 [credentials]

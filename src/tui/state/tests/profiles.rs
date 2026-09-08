@@ -4,7 +4,7 @@ use crate::discord::test_builders::{
 };
 use crate::discord::{
     ActivityInfo, AppCommand, GlobalUserProfileUpdate, GuildUserProfileUpdate,
-    MessageAttachmentUpload, ProfileAvatarUpload, UserProfileUpdate,
+    MessageAttachmentUpload, ProfileAvatarUpload, RichPresenceSelection, UserProfileUpdate,
 };
 use crate::tui::state::UserProfileSettingsField;
 use crate::tui::text_input::TextEditAction;
@@ -440,6 +440,8 @@ fn profile_settings_activity_manual_entry_dispatches_presence_update() {
 
     assert_eq!(state.start_or_commit_user_profile_edit(), None);
     assert!(state.is_user_profile_activity_picker_open());
+    // The picker defaults to automatic; move down to the manual row.
+    state.move_user_profile_activity_picker_down();
     assert_eq!(state.activate_user_profile_activity_picker(), None);
     assert!(!state.is_user_profile_activity_picker_open());
     assert_eq!(
@@ -456,8 +458,74 @@ fn profile_settings_activity_manual_entry_dispatches_presence_update() {
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![ActivityInfo::playing("Concord")],
-            track_client_id: None,
+            rich_presence: RichPresenceSelection::Manual,
         })
+    );
+}
+
+#[test]
+fn profile_settings_automatic_activity_follows_live_updates_while_open() {
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
+    });
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
+
+    // First choose a manual activity so the popup holds a local draft value.
+    assert_eq!(state.start_or_commit_user_profile_edit(), None);
+    state.move_user_profile_activity_picker_down();
+    assert_eq!(state.activate_user_profile_activity_picker(), None);
+    state.insert_user_profile_edit_text("Concord");
+    assert_eq!(
+        state.start_or_commit_user_profile_edit(),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::playing("Concord")],
+            rich_presence: RichPresenceSelection::Manual,
+        })
+    );
+
+    let detected = ActivityInfo {
+        application_id: Some("client-123".to_owned()),
+        ..ActivityInfo::playing("Visual Studio Code")
+    };
+    state.set_detected_rich_presence(vec![detected.clone()]);
+    assert_eq!(state.start_or_commit_user_profile_edit(), None);
+    assert_eq!(
+        state.activate_user_profile_activity_picker(),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![detected],
+            rich_presence: RichPresenceSelection::Automatic,
+        })
+    );
+
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::playing("A New Game")],
+        },
+    });
+
+    assert_eq!(
+        state.user_profile_settings_field_value(UserProfileSettingsField::ManualActivity),
+        "A New Game",
+        "automatic mode should follow live activity updates without reopening the profile"
     );
 }
 
@@ -489,19 +557,105 @@ fn profile_settings_activity_picker_selects_detected_app() {
 
     assert_eq!(state.start_or_commit_user_profile_edit(), None);
     let rows = state.user_profile_activity_picker_rows();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].0, "Visual Studio Code");
-    assert!(rows[0].1, "detected app is selected first");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(
+        rows[0].0, "Automatic (most recent app) — Visual Studio Code",
+        "the automatic row names the app it would relay"
+    );
+    assert_eq!(rows[1].0, "Visual Studio Code");
+    assert_eq!(rows[2].0, "Set manually…");
+    assert!(rows[0].1, "automatic is selected first");
 
+    // Automatic relays the most recently detected app, like the native client.
+    assert_eq!(
+        state.activate_user_profile_activity_picker(),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![detected.clone()],
+            rich_presence: RichPresenceSelection::Automatic,
+        })
+    );
+    assert!(!state.is_user_profile_activity_picker_open());
+
+    // Pinning the app keeps relaying exactly that app.
+    assert_eq!(state.start_or_commit_user_profile_edit(), None);
+    assert!(state.is_user_profile_activity_picker_open());
+    state.move_user_profile_activity_picker_down();
     assert_eq!(
         state.activate_user_profile_activity_picker(),
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![detected],
-            track_client_id: Some("client-123".to_owned()),
+            rich_presence: RichPresenceSelection::App("client-123".to_owned()),
         })
     );
     assert!(!state.is_user_profile_activity_picker_open());
+}
+
+#[test]
+fn profile_settings_activity_field_shows_non_playing_relayed_activity() {
+    // Music bridges (e.g. mprisence) relay `Listening` activities. The field
+    // must show them instead of "(not set)".
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![
+                ActivityInfo::test(crate::discord::ActivityKind::Custom, "deep in thought"),
+                ActivityInfo::test(crate::discord::ActivityKind::Listening, "Spotify"),
+            ],
+        },
+    });
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
+
+    assert_eq!(
+        state.user_profile_settings_field_value(UserProfileSettingsField::ManualActivity),
+        "Spotify",
+        "a non-playing activity still names the relayed presence"
+    );
+}
+
+#[test]
+fn profile_settings_activity_field_ignores_custom_status() {
+    // The custom status is composed alongside the relayed activity, so it must
+    // never leak into the activity field as a name.
+    let user_id = Id::new(10);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo::test(
+                crate::discord::ActivityKind::Custom,
+                "deep in thought",
+            )],
+        },
+    });
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        state.next_user_profile_settings_field();
+    }
+
+    assert_eq!(
+        state.user_profile_settings_field_value(UserProfileSettingsField::ManualActivity),
+        "",
+        "a custom-status-only presence leaves the activity field empty"
+    );
 }
 
 #[test]

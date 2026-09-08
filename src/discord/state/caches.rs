@@ -146,6 +146,9 @@ pub(in crate::discord) struct SessionState {
     /// and consulted by `can_view_channel` to look up our own roles and
     /// match member-level permission overwrites.
     pub(in crate::discord) current_user_id: Option<Id<UserMarker>>,
+    /// Guild presence can arrive before READY's own session presence. Do not
+    /// publish local activities until the user's actual status is known.
+    pub(in crate::discord) current_user_session_status: Option<PresenceStatus>,
     pub(in crate::discord) current_user: Option<String>,
     pub(in crate::discord) current_user_premium_tier: Option<PremiumTier>,
     pub(in crate::discord) current_user_email_verified: Option<bool>,

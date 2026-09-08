@@ -18,7 +18,7 @@ use crate::discord::ids::{
 };
 use reqwest::header::HeaderValue;
 use tokio::{
-    sync::{Mutex as AsyncMutex, mpsc, watch},
+    sync::{Mutex as AsyncMutex, Notify, mpsc, watch},
     task::JoinHandle,
     time::{Duration, timeout},
 };
@@ -28,7 +28,7 @@ use crate::{AppError, Result};
 use super::{
     ActivityInfo, ApplicationCommandAutocompleteInvocation, ApplicationCommandInfo,
     ApplicationCommandInvocation, DiscordAction, DiscordAuthSession, DiscordPermission,
-    PresenceStatus,
+    PresenceStatus, RichPresenceSelection,
     application_commands::{
         application_command_autocomplete_from_invocation,
         application_command_interaction_from_invocation,
@@ -92,7 +92,11 @@ pub struct DiscordClient {
     state: Arc<RwLock<DiscordState>>,
     requested_voice: Arc<RwLock<Option<CurrentVoiceConnectionState>>>,
     push_to_talk: Arc<RwLock<bool>>,
-    selected_rich_presence: Arc<RwLock<Option<String>>>,
+    rich_presence_selection: Arc<RwLock<RichPresenceSelection>>,
+    /// Woken whenever the RPC registry or the selection changes, so the
+    /// presence debounce loop re-broadcasts. Lives on the client (not inside
+    /// the RPC server) so the app layer can also trigger a broadcast.
+    rich_presence_dirty: Arc<Notify>,
     /// `application_id -> (external image url -> media-proxy path)`, so a url is
     /// registered with Discord only once.
     external_assets: Arc<Mutex<HashMap<String, HashMap<String, String>>>>,
@@ -173,7 +177,8 @@ impl DiscordClient {
             state,
             requested_voice: Arc::new(RwLock::new(None)),
             push_to_talk: Arc::new(RwLock::new(false)),
-            selected_rich_presence: Arc::new(RwLock::new(None)),
+            rich_presence_selection: Arc::new(RwLock::new(RichPresenceSelection::Automatic)),
+            rich_presence_dirty: Arc::new(Notify::new()),
             external_assets: Arc::new(Mutex::new(HashMap::new())),
             gateway_session_id: Arc::new(RwLock::new(None)),
             application_command_requests,
@@ -200,6 +205,17 @@ impl DiscordClient {
 
     pub fn subscribe_snapshots(&self) -> watch::Receiver<SnapshotRevision> {
         self.snapshots_tx.subscribe()
+    }
+
+    /// Test-only access to the gateway command stream, so sibling modules (for
+    /// example the RPC tests) can observe presence updates the client sends.
+    #[cfg(test)]
+    pub(crate) fn take_gateway_commands_for_test(&self) -> mpsc::UnboundedReceiver<GatewayCommand> {
+        self.gateway_commands_rx
+            .lock()
+            .expect("gateway command receiver mutex is not poisoned")
+            .take()
+            .expect("gateway commands can only be taken once")
     }
 
     pub(super) fn read_state(&self) -> RwLockReadGuard<'_, DiscordState> {
@@ -280,12 +296,15 @@ impl DiscordClient {
                 .expect("voice runtime task mutex is not poisoned") = Some(task);
         }
 
-        // Best-effort, so it never blocks the gateway from starting.
-        if serve_rich_presence {
-            tokio::spawn(crate::discord::rpc::run_rpc_server(self.clone()));
-        }
-
+        let presence_client = self.clone();
         tokio::spawn(async move {
+            // Selection changes still need a coordinator when IPC is disabled.
+            // Owning the task here also stops it when this session ends.
+            let mut presence_tasks = tokio::task::JoinSet::new();
+            presence_tasks.spawn(crate::discord::rpc::run_rich_presence(
+                presence_client,
+                serve_rich_presence,
+            ));
             let runtime = GatewayRuntime {
                 fingerprint,
                 state,
@@ -293,6 +312,7 @@ impl DiscordClient {
                 event_publisher,
             };
             run_gateway(token, gateway_commands, runtime).await;
+            presence_tasks.shutdown().await;
         })
     }
 
@@ -823,20 +843,40 @@ impl DiscordClient {
         }
     }
 
-    /// Record which app's activity to broadcast. `None` means a manual/no
-    /// activity that RPC updates must not override.
-    pub fn select_rich_presence(&self, client_id: Option<String>) {
+    /// Record how RPC activities are relayed to the user's profile. See
+    /// [`RichPresenceSelection`] for the semantics of each mode.
+    pub fn set_rich_presence_selection(&self, selection: RichPresenceSelection) {
         *self
-            .selected_rich_presence
+            .rich_presence_selection
             .write()
-            .expect("selected rich presence lock is not poisoned") = client_id;
+            .expect("selected rich presence lock is not poisoned") = selection;
     }
 
-    pub fn selected_rich_presence(&self) -> Option<String> {
-        self.selected_rich_presence
+    pub fn rich_presence_selection(&self) -> RichPresenceSelection {
+        self.rich_presence_selection
             .read()
             .expect("selected rich presence lock is not poisoned")
             .clone()
+    }
+
+    /// Wake the presence coordinator, including when the IPC listener is disabled.
+    pub fn notify_rich_presence_dirty(&self) {
+        self.rich_presence_dirty.notify_one();
+    }
+
+    pub(crate) fn rich_presence_dirty(&self) -> Arc<Notify> {
+        Arc::clone(&self.rich_presence_dirty)
+    }
+
+    pub(in crate::discord) fn clear_rich_presence_pin(&self, client_id: &str) {
+        let mut selection = self
+            .rich_presence_selection
+            .write()
+            .expect("selected rich presence lock is not poisoned");
+        // A disconnect must not overwrite a newer manual choice or another pin.
+        if matches!(&*selection, RichPresenceSelection::App(id) if id == client_id) {
+            *selection = RichPresenceSelection::Automatic;
+        }
     }
 
     /// So the RPC server can relay an activity without clobbering a manually chosen status.

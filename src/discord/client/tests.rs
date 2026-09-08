@@ -27,7 +27,8 @@ use crate::{
 use serde_json::{Value, json};
 
 use super::{
-    DiscordClient, MEMBER_SEARCH_MAX_LIMIT, OFFICIAL_WORDLE_APPLICATION_ID, validate_token_header,
+    DiscordClient, MEMBER_SEARCH_MAX_LIMIT, OFFICIAL_WORDLE_APPLICATION_ID, RichPresenceSelection,
+    validate_token_header,
 };
 
 #[tokio::test]
@@ -430,6 +431,27 @@ async fn current_user_activities_returns_cached_presence_activity() {
         .await;
 
     assert_eq!(client.current_user_activities(), vec![activity]);
+}
+
+#[test]
+fn rich_presence_selection_defaults_to_automatic_and_round_trips() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+
+    assert_eq!(
+        client.rich_presence_selection(),
+        RichPresenceSelection::Automatic
+    );
+    client.set_rich_presence_selection(RichPresenceSelection::App("client-123".to_owned()));
+    assert_eq!(
+        client.rich_presence_selection(),
+        RichPresenceSelection::App("client-123".to_owned())
+    );
+    client.set_rich_presence_selection(RichPresenceSelection::Manual);
+    assert_eq!(
+        client.rich_presence_selection(),
+        RichPresenceSelection::Manual
+    );
 }
 
 #[tokio::test]

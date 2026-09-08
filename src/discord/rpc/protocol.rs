@@ -71,10 +71,8 @@ pub(super) fn parse_command(payload: &[u8], client_id: &str) -> Result<Command, 
         .get("pid")
         .and_then(Value::as_i64)
         .ok_or_else(|| CommandError::invalid_payload(Some(cmd.clone()), nonce.clone()))?;
-    let raw_activity = args
-        .get("activity")
-        .cloned()
-        .ok_or_else(|| CommandError::invalid_payload(Some(cmd.clone()), nonce.clone()))?;
+    // RPC clients can clear activity by omitting this optional field.
+    let raw_activity = args.get("activity").cloned().unwrap_or(Value::Null);
     let activity = match &raw_activity {
         Value::Null => None,
         Value::Object(_) => Some(Box::new(
@@ -329,16 +327,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_command_treats_null_activity_as_clear() {
-        let payload = json!({
-            "cmd": "SET_ACTIVITY",
-            "args": { "pid": 1, "activity": null }
-        })
-        .to_string();
+    fn parse_command_treats_null_or_omitted_activity_as_clear() {
+        for args in [
+            json!({ "pid": 1, "activity": null }),
+            json!({ "pid": 1 }),
+            json!({ "pid": 0 }),
+        ] {
+            let payload = json!({ "cmd": "SET_ACTIVITY", "args": args }).to_string();
 
-        let command = parse_command(payload.as_bytes(), "999").expect("command parses");
-        let Command::SetActivity { activity, .. } = command;
-        assert!(activity.is_none());
+            let command = parse_command(payload.as_bytes(), "999").expect("command parses");
+            let Command::SetActivity { activity, echo, .. } = command;
+            assert!(activity.is_none());
+            assert!(echo.is_null());
+        }
     }
 
     #[test]

@@ -590,8 +590,9 @@ impl DiscordState {
             | AppEvent::InboxRecentMentionDeleteFailed { .. }
             | AppEvent::InboxChannelMessagesLoaded { .. }
             | AppEvent::InboxChannelMessagesLoadFailed { .. } => {}
-            // Detected Rich Presence is UI-only. It does not mutate the shared cache.
-            AppEvent::RichPresenceDetected { .. } => {}
+            // Detected Rich Presence and its warnings are UI-only. They do not
+            // mutate the shared cache.
+            AppEvent::RichPresenceDetected { .. } | AppEvent::RichPresenceWarning { .. } => {}
             AppEvent::MessageHistoryLoadFailed { .. } => {}
             AppEvent::MessageSearchLoadFailed { .. } => {}
             AppEvent::MessageUpdateDispatch { update } => {
@@ -782,6 +783,8 @@ impl DiscordState {
                 if guild_id.is_none() {
                     self.update_user_activities(user_id, &presence.activities);
                     if self.session.current_user_id == Some(user_id) {
+                        self.session_mut().current_user_session_status =
+                            (status != PresenceStatus::Unknown).then_some(status);
                         self.update_cached_guild_activities_for_user(user_id, &presence.activities);
                     }
                     self.update_cached_guild_presence_for_user(user_id, status);
@@ -883,6 +886,7 @@ impl DiscordState {
                 *is_bot,
             ),
             AppEvent::Ready { user, user_id } => {
+                self.session_mut().current_user_session_status = None;
                 self.session_mut().current_user = Some(user.clone());
                 if let Some(user_id) = user_id {
                     self.session_mut().current_user_id = Some(*user_id);
