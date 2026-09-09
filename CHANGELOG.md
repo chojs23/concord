@@ -2,7 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.5.17] - 2026-09-08
+## [2.5.18] - 2026-09-09
+
+### Bug Fixes
+
+- Show only current-process logs in the debug panel by @chojs23
+- _(media)_ Preserve active images and retire stale work by @chojs23
+- Gate packed capture helper to supported platforms by @chojs23
+- _(tui)_ Prioritize fixed arrow selection in selectable contexts (#353) in [#353](https://github.com/chojs23/concord/pull/353) by @chojs23
+- _(message)_ Fix channel actions to use the highlighted filtered entry (#354) in [#354](https://github.com/chojs23/concord/pull/354) by @chojs23
+
+### Features
+
+- _(presence)_ Automatic client switching (#349) in [#349](https://github.com/chojs23/concord/pull/349) by @oneshinyboi
+
+### Refactor
+
+- Reduce duplication and simplify shared logic by @chojs23
+
+### New Contributors
+
+- @oneshinyboi made their first contribution in [#349](https://github.com/chojs23/concord/pull/349)
+
+## [2.5.17] - 2026-09-07
 
 ### Bug Fixes
 
