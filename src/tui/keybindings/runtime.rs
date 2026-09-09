@@ -60,7 +60,7 @@ impl KeyBindings {
         summaries
     }
 
-    fn binding_label(&self, action: UiAction) -> String {
+    pub(in crate::tui) fn binding_label(&self, action: UiAction) -> String {
         self.keymap.first_sequence_label(action)
     }
 
@@ -468,6 +468,8 @@ impl KeyBindings {
             KeyCode::Backspace => Some(PaneFilterAction::DeleteChar),
             KeyCode::Left => Some(PaneFilterAction::MoveCursorLeft),
             KeyCode::Right => Some(PaneFilterAction::MoveCursorRight),
+            KeyCode::Home => Some(PaneFilterAction::MoveCursorHome),
+            KeyCode::End => Some(PaneFilterAction::MoveCursorEnd),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(PaneFilterAction::Ignore)
             }
@@ -696,13 +698,23 @@ impl KeyBindings {
         key: KeyEvent,
         key_set: SelectionKeySet,
     ) -> Option<SelectionAction> {
+        if let Some(action) = self.fixed_selection_action(key) {
+            return Some(action);
+        }
+        if key_set == SelectionKeySet::Navigation || !is_text_entry_character(key) {
+            return self.keymap_selection_action(key);
+        }
+        None
+    }
+
+    /// Row movement aliases that keep their meaning outside text entry modes.
+    pub(in crate::tui) fn fixed_selection_action(&self, key: KeyEvent) -> Option<SelectionAction> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Down => Some(SelectionAction::Next),
             KeyCode::Up => Some(SelectionAction::Previous),
             KeyCode::Char('n') if ctrl => Some(SelectionAction::Next),
             KeyCode::Char('p') if ctrl => Some(SelectionAction::Previous),
-            _ if key_set == SelectionKeySet::Navigation => self.keymap_selection_action(key),
             _ => None,
         }
     }
@@ -813,21 +825,16 @@ impl KeyBindings {
     }
 
     pub(in crate::tui) fn scroll_action(&self, key: KeyEvent) -> Option<ScrollAction> {
-        match key.code {
-            KeyCode::Down => Some(ScrollAction::Down),
-            KeyCode::Up => Some(ScrollAction::Up),
-            _ => self
-                .keymap_single_key_shortcuts(UiAction::ScrollViewportDown)
-                .iter()
-                .any(|shortcut| shortcut.matches(key))
-                .then_some(ScrollAction::Down)
-                .or_else(|| {
-                    self.keymap_single_key_shortcuts(UiAction::ScrollViewportUp)
-                        .iter()
-                        .any(|shortcut| shortcut.matches(key))
-                        .then_some(ScrollAction::Up)
-                }),
-        }
+        self.keymap_single_key_shortcuts(UiAction::ScrollViewportDown)
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+            .then_some(ScrollAction::Down)
+            .or_else(|| {
+                self.keymap_single_key_shortcuts(UiAction::ScrollViewportUp)
+                    .iter()
+                    .any(|shortcut| shortcut.matches(key))
+                    .then_some(ScrollAction::Up)
+            })
     }
 
     pub fn start_composer_key_label(&self) -> String {
@@ -887,30 +894,14 @@ impl KeyBindings {
         "Enter verify | Esc choose method | Ctrl-C quit"
     }
 
-    pub fn channel_action_shortcuts(
-        &self,
-        actions: &[ChannelActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.channel,
-            |kind| self.default_channel_action_shortcut(kind),
-        )
-    }
-
-    pub fn channel_action_label(&self, action: &ChannelActionItem) -> String {
-        action_label(&self.action_shortcuts.channel, action.kind, &action.label)
-    }
-
-    pub fn channel_action_shortcut_label(
-        &self,
-        actions: &[ChannelActionItem],
-        index: usize,
-    ) -> String {
-        key_chord_list_label(&self.channel_action_shortcuts(actions, index))
-    }
+    define_action_menu_scope!(
+        channel,
+        ChannelActionItem,
+        channel_action_shortcuts,
+        channel_action_label,
+        default_channel_action_shortcut,
+        channel_action_shortcut_label
+    );
 
     fn default_channel_action_shortcut(&self, kind: ChannelActionKind) -> Vec<KeyChord> {
         match kind {

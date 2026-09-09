@@ -97,7 +97,7 @@ pub(in crate::tui::ui) fn options_popup_lines(
             );
             let style = selectable_popup_label_style(selected, item.effective || index == 0);
             let mut spans = vec![
-                selectable_popup_marker(selected),
+                selection_marker(selected),
                 Span::styled(format!("{control} "), style),
                 Span::styled(item.label, style),
             ];

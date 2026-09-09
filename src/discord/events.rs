@@ -26,9 +26,6 @@ use super::{
 use super::{ApplicationCommandChoiceInfo, ApplicationCommandInfo};
 use super::{ArchivedThreadsPage, ForumPostDataInfo};
 
-#[cfg(test)]
-use super::PollAnswerInfo;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct GatewayDispatchInfo {
     pub event_type: String,
@@ -430,9 +427,11 @@ pub enum AppEvent {
         message: String,
     },
     MessageSearchLoaded {
+        request_id: u64,
         page: MessageSearchPage,
     },
     MessageSearchLoadFailed {
+        request_id: u64,
         query: MessageSearchQuery,
         message: String,
     },
@@ -507,6 +506,12 @@ pub enum AppEvent {
     /// does not change presence on its own.
     RichPresenceDetected {
         activities: Vec<ActivityInfo>,
+    },
+    /// Rich Presence server could not take over `discord-ipc-0` (or any socket),
+    /// so local apps likely relay through another client. Surfaced as a toast
+    /// because the silent fallback is otherwise invisible.
+    RichPresenceWarning {
+        message: String,
     },
     VoiceStateUpdate {
         state: VoiceStateInfo,
@@ -907,6 +912,7 @@ define_app_event_kinds! {
     GuildMemberRemove: AppEvent::GuildMemberRemove { .. },
     PresenceUpdate: AppEvent::PresenceUpdate { .. },
     RichPresenceDetected: AppEvent::RichPresenceDetected { .. },
+    RichPresenceWarning: AppEvent::RichPresenceWarning { .. },
     VoiceStateUpdate: AppEvent::VoiceStateUpdate { .. },
     VoiceSpeakingUpdate: AppEvent::VoiceSpeakingUpdate { .. },
     VoiceServerUpdate: AppEvent::VoiceServerUpdate { .. },
@@ -1980,6 +1986,7 @@ impl AppEventKind {
             | AppEventKind::VoiceConnectionStatusChanged
             | AppEventKind::VoiceSound
             | AppEventKind::RichPresenceDetected
+            | AppEventKind::RichPresenceWarning
             | AppEventKind::GatewayResumed
             | AppEventKind::GatewayClosed => AppEventMetadata::effect_only(),
 
@@ -2033,46 +2040,6 @@ fn channel_upsert_needs_effect_delivery(channel: &ChannelInfo) -> bool {
 }
 
 #[cfg(test)]
-fn poll_result_info_from_fields<'a>(
-    fields: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> Option<PollInfo> {
-    let mut question = None;
-    let mut winner_id = None;
-    let mut winner_text = None;
-    let mut winner_votes = None;
-    let mut total_votes = None;
-    for (name, value) in fields {
-        match name {
-            "poll_question_text" => question = Some(value.to_owned()),
-            "victor_answer_id" => winner_id = value.parse::<u8>().ok(),
-            "victor_answer_text" => winner_text = Some(value.to_owned()),
-            "victor_answer_votes" => winner_votes = value.parse::<u64>().ok(),
-            "total_votes" => total_votes = value.parse::<u64>().ok(),
-            _ => {}
-        }
-    }
-
-    let question = question.unwrap_or_else(|| "Poll results".to_owned());
-    let answers = winner_text
-        .map(|text| {
-            vec![PollAnswerInfo {
-                answer_id: winner_id.unwrap_or(1),
-                text,
-                vote_count: winner_votes,
-                me_voted: false,
-            }]
-        })
-        .unwrap_or_default();
-
-    Some(PollInfo {
-        answers,
-        results_finalized: Some(true),
-        total_votes,
-        ..PollInfo::test(question)
-    })
-}
-
-#[cfg(test)]
 mod tests {
     use crate::discord::{AttachmentInfo, AttachmentMediaType};
 
@@ -2112,24 +2079,6 @@ mod tests {
         assert!(
             attachment_info("MUSIC.MP3", None).media_type() == Some(AttachmentMediaType::Audio)
         );
-    }
-
-    #[test]
-    fn poll_result_embed_fields_map_to_poll_summary() {
-        let poll = poll_result_info_from_fields([
-            ("poll_question_text", "오늘 뭐 먹지?"),
-            ("victor_answer_id", "1"),
-            ("victor_answer_text", "김치찌개"),
-            ("victor_answer_votes", "5"),
-            ("total_votes", "7"),
-        ])
-        .expect("poll result fields should map");
-
-        assert_eq!(poll.question, "오늘 뭐 먹지?");
-        assert_eq!(poll.total_votes, Some(7));
-        assert_eq!(poll.results_finalized, Some(true));
-        assert_eq!(poll.answers[0].text, "김치찌개");
-        assert_eq!(poll.answers[0].vote_count, Some(5));
     }
 
     #[test]

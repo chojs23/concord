@@ -493,23 +493,6 @@ fn user_profile_popup_absorbs_all_backdrop_clicks() {
 }
 
 #[test]
-fn mouse_click_selects_message_action_row() {
-    let mut state = state_with_thread_created_message();
-    state.focus_pane(FocusPane::Messages);
-    handle_key(&mut state, key(KeyCode::Enter));
-    let count = state.selected_message_action_items().len() as u16;
-    let (column, row) = message_action_row_point(count, 0);
-
-    assert!(handle_mouse(
-        &mut state,
-        mouse(MouseEventKind::Down(MouseButton::Left), column, row),
-        dashboard_area(),
-    ));
-
-    assert_eq!(state.selected_message_action_index(), Some(0));
-}
-
-#[test]
 fn mouse_double_click_activates_message_action_row_like_enter() {
     let mut state = state_with_multiselect_poll();
     state.focus_pane(FocusPane::Messages);
@@ -526,18 +509,35 @@ fn mouse_double_click_activates_message_action_row_like_enter() {
         u16::try_from(poll_row).expect("message action row fits in test area"),
     );
 
-    handle_mouse_event(
+    let first = handle_mouse_event(
         &mut state,
         mouse(MouseEventKind::Down(MouseButton::Left), column, row),
         dashboard_area(),
         &mut clicks,
     );
-    handle_mouse_event(
+    assert!(first.handled, "mouse_click_selects_message_action_row");
+    assert_eq!(
+        first.command, None,
+        "mouse_click_selects_message_action_row"
+    );
+    assert_eq!(
+        state.selected_message_action_index(),
+        Some(poll_row),
+        "mouse_click_selects_message_action_row"
+    );
+    assert!(
+        state.is_message_action_menu_active(),
+        "mouse_click_selects_message_action_row"
+    );
+
+    let release = handle_mouse_event(
         &mut state,
         mouse(MouseEventKind::Up(MouseButton::Left), column, row),
         dashboard_area(),
         &mut clicks,
     );
+    assert!(release.handled);
+    assert!(state.is_message_action_menu_active());
     let second = handle_mouse_event(
         &mut state,
         mouse(MouseEventKind::Down(MouseButton::Left), column, row),
@@ -545,6 +545,7 @@ fn mouse_double_click_activates_message_action_row_like_enter() {
         &mut clicks,
     );
 
+    assert!(second.handled);
     assert_eq!(second.command, None);
     assert!(!state.is_message_action_menu_active());
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::PollVotePicker));

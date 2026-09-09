@@ -1,5 +1,5 @@
-use super::super::message::list::format_message_sent_time;
 use super::*;
+use crate::tui::message::time::format_message_local_time;
 use crate::tui::state::{MemberSearchResultItem, SearchSuggestionItem};
 use crate::tui::ui::loading_indicator::AsciiLoadingIndicator;
 
@@ -179,12 +179,11 @@ fn search_popup_header_lines(
                 SearchPopupMode::Member => "Type to filter members".to_owned(),
             }
         };
-        push_wrapped_styled_popup_text(
-            &mut lines,
+        lines.extend(wrapped_styled_popup_lines(
             &status,
             width,
             theme::current().style(theme::HighlightGroup::Hint),
-        );
+        ));
     }
 
     lines
@@ -239,12 +238,11 @@ fn search_popup_result_lines(
 fn search_popup_footer_lines(view: &SearchPopupView, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if view.suggestions.is_empty() && view.has_more {
-        push_wrapped_styled_popup_text(
-            &mut lines,
+        lines.extend(wrapped_styled_popup_lines(
             "More results: [Down/PageDown] load more at the end",
             width,
             theme::current().style(theme::HighlightGroup::Hint),
-        );
+        ));
     }
     lines
 }
@@ -283,7 +281,7 @@ fn search_result_line(
     } else {
         Style::default()
     };
-    let mut spans = vec![selectable_popup_marker(selected)];
+    let mut spans = vec![selection_marker(selected)];
     match result {
         SearchResultItem::Message(item) => {
             spans.push(Span::styled(
@@ -297,7 +295,7 @@ fn search_result_line(
             spans.push(Span::styled(
                 format!(
                     "{}: ",
-                    format_message_sent_time(item.message_id, hour_format_24)
+                    format_message_local_time(item.message_id, hour_format_24)
                 ),
                 theme::current().style(theme::HighlightGroup::MessageTimestamp),
             ));
@@ -322,7 +320,7 @@ fn search_suggestion_line(
     } else {
         Style::default()
     };
-    let mut spans = vec![selectable_popup_marker(selected)];
+    let mut spans = vec![selection_marker(selected)];
     match suggestion {
         SearchSuggestionItem::Member(item) => {
             push_member_search_spans(&mut spans, item, selected, false);

@@ -49,10 +49,10 @@ fn thread_edit_shortcuts_cycle_selectors_submit_and_cancel() {
     let mut state = state_with_forum_channel_posts();
     state.open_thread_edit(Id::new(31));
 
-    // Focus the auto-archive selector: Title -> Tags -> SlowMode -> AutoArchive.
-    handle_key(&mut state, key(KeyCode::Tab));
-    handle_key(&mut state, key(KeyCode::Tab));
-    handle_key(&mut state, key(KeyCode::Tab));
+    // Fixed arrow keys move the field selection even though the form can scroll.
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Down));
 
     let initial = state
         .thread_edit_view()
@@ -93,7 +93,7 @@ fn page_keys_move_nested_tag_pickers_with_the_shared_list_viewport() {
         let mut state = state_with_forum_channel_posts();
         handle_key(&mut state, char_key('i'));
         for _ in 0..3 {
-            handle_key(&mut state, key(KeyCode::Tab));
+            handle_key(&mut state, key(KeyCode::Down));
         }
         handle_key(&mut state, key(KeyCode::Enter));
         crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
@@ -121,7 +121,7 @@ fn page_keys_move_nested_tag_pickers_with_the_shared_list_viewport() {
     {
         let mut state = state_with_forum_channel_posts();
         state.open_thread_edit(Id::new(31));
-        handle_key(&mut state, key(KeyCode::Tab));
+        handle_key(&mut state, key(KeyCode::Down));
         handle_key(&mut state, key(KeyCode::Enter));
         crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
 
@@ -233,17 +233,32 @@ fn forum_post_overlay_shortcuts_submit_and_cancel() {
 }
 
 #[test]
-fn number_keys_type_digits_while_composing() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
+fn composer_treats_shortcut_characters_as_text() {
+    for (case, input, debug_stays_closed) in [
+        ("number_keys_type_digits_while_composing", "4", false),
+        ("composer_treats_vim_keys_as_text", "jk", false),
+        ("backtick_types_while_composing", "`", true),
+    ] {
+        let mut state = state_with_channel_tree();
+        state.focus_pane(FocusPane::Channels);
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('i'));
 
-    handle_key(&mut state, char_key('4'));
+        for value in input.chars() {
+            handle_key(&mut state, char_key(value));
+        }
 
-    assert_eq!(state.focus(), FocusPane::Messages);
-    assert_eq!(state.composer_input(), "4");
+        assert_eq!(state.focus(), FocusPane::Messages, "{case}");
+        assert!(state.is_composing(), "{case}");
+        assert_eq!(state.composer_input(), input, "{case}");
+        if debug_stays_closed {
+            assert!(
+                !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog),
+                "{case}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -294,21 +309,6 @@ fn ctrl_c_clears_composer_without_quitting() {
     assert!(state.pending_composer_attachments().is_empty());
     assert!(!state.should_quit());
     remove_temp_upload_file(&attachment);
-}
-
-#[test]
-fn composer_treats_vim_keys_as_text() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
-
-    handle_key(&mut state, char_key('j'));
-    handle_key(&mut state, char_key('k'));
-
-    assert!(state.is_composing());
-    assert_eq!(state.composer_input(), "jk");
 }
 
 #[test]
@@ -579,7 +579,7 @@ fn composer_up_down_moves_cursor_between_lines() {
     handle_key(&mut state, key(KeyCode::Right));
     handle_key(&mut state, key(KeyCode::Down));
 
-    assert_eq!(state.composer_cursor_byte_index(), "가나\na".len());
+    assert_eq!(state.composer_cursor_byte_index(), "가나\nab".len());
     assert!(
         state
             .composer_input()

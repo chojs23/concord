@@ -1,6 +1,8 @@
 use std::{
     collections::VecDeque,
     env,
+    fs::OpenOptions,
+    io::Write,
     path::PathBuf,
     sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -12,35 +14,53 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     thread,
 };
-#[cfg(not(test))]
-use std::{fs::OpenOptions, io::Write};
 
 use chrono::{DateTime, Utc};
 
 use crate::paths;
 
 static LOGGER: OnceLock<FileLogger> = OnceLock::new();
-static ERROR_LOG: OnceLock<Mutex<VecDeque<ErrorLogEntry>>> = OnceLock::new();
 
-const MAX_ERROR_LOG_ENTRIES: usize = 200;
+const MAX_LOG_TAIL_LINES: usize = 200;
+const MAX_LOG_TAIL_BYTES: usize = 256 * 1024;
 #[cfg(all(target_os = "linux", feature = "stream-broadcast", not(test)))]
 const NATIVE_STDERR_TARGET: &str = "native-stderr";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ErrorLogEntry {
-    timestamp_millis: u128,
-    target: String,
-    message: String,
+pub(crate) struct LogLine {
+    pub(crate) id: u64,
+    pub(crate) text: String,
 }
 
-impl ErrorLogEntry {
-    pub fn line(&self) -> String {
-        format_log_line(
-            self.timestamp_millis,
-            Level::Error,
-            &self.target,
-            &self.message,
-        )
+#[derive(Debug, Default)]
+struct LogTail {
+    lines: VecDeque<LogLine>,
+    bytes: usize,
+    next_id: u64,
+}
+
+impl LogTail {
+    fn push(&mut self, text: &str) {
+        for text in text.split_terminator('\n') {
+            let text = text.strip_suffix('\r').unwrap_or(text);
+            // Keep a bounded suffix even for a single huge line, without
+            // splitting a UTF-8 character. Retained lines never change IDs.
+            let mut start = text.len().saturating_sub(MAX_LOG_TAIL_BYTES);
+            while !text.is_char_boundary(start) {
+                start += 1;
+            }
+            let text = text[start..].to_owned();
+            self.bytes += text.len();
+            self.lines.push_back(LogLine {
+                id: self.next_id,
+                text,
+            });
+            self.next_id += 1;
+            while self.lines.len() > MAX_LOG_TAIL_LINES || self.bytes > MAX_LOG_TAIL_BYTES {
+                let removed = self.lines.pop_front().expect("tail exceeds its bound");
+                self.bytes -= removed.text.len();
+            }
+        }
     }
 }
 
@@ -59,11 +79,12 @@ impl Level {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[cfg_attr(test, allow(dead_code))]
 struct FileLogger {
     path: Option<PathBuf>,
     debug_enabled: bool,
+    tail: Mutex<LogTail>,
 }
 
 impl FileLogger {
@@ -71,14 +92,27 @@ impl FileLogger {
         Self {
             path: log_path(),
             debug_enabled: debug_enabled(),
+            ..Default::default()
         }
     }
 
     #[cfg(not(test))]
     fn write(&self, level: Level, target: &str, message: &str) {
+        self.record(level, target, message);
+    }
+
+    fn record(&self, level: Level, target: &str, message: &str) {
         if !self.should_write(level) {
             return;
         }
+        let mut line = format_log_line(unix_timestamp_millis(), level, target, message);
+        line.push('\n');
+        // Capture at the logging call, not by reading back a shared file.
+        // Release the buffer lock before disk I/O so snapshots stay responsive.
+        self.tail
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(&line);
         let Some(path) = self.path.as_ref() else {
             return;
         };
@@ -86,12 +120,18 @@ impl FileLogger {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(
-                file,
-                "{}",
-                format_log_line(unix_timestamp_millis(), level, target, message)
-            );
+            let _ = file.write_all(line.as_bytes());
         }
+    }
+
+    fn recent_lines(&self) -> Vec<LogLine> {
+        self.tail
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .lines
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Tests exercise logging with synthetic entries, so they must not write to
@@ -117,46 +157,16 @@ pub fn debug(target: &str, message: impl AsRef<str>) {
 }
 
 pub fn error(target: &str, message: impl AsRef<str>) {
-    let message = message.as_ref();
-    push_error_entry(target, message);
-    logger().write(Level::Error, target, message);
-}
-
-/// Records a native library failure without presenting it as an application
-/// error in the TUI. Native backends often report a recoverable hardware
-/// failure before Concord falls back to another backend.
-#[cfg(any(all(target_os = "linux", feature = "stream-broadcast"), test))]
-fn file_error(target: &str, message: impl AsRef<str>) {
     logger().write(Level::Error, target, message.as_ref());
 }
 
-pub fn error_entries() -> Vec<ErrorLogEntry> {
-    error_log()
-        .lock()
-        .map(|entries| entries.iter().cloned().collect())
-        .unwrap_or_default()
+/// Snapshots the current process's recent log lines without accessing disk.
+pub(crate) fn recent_log_lines() -> Vec<LogLine> {
+    logger().recent_lines()
 }
 
 fn logger() -> &'static FileLogger {
     LOGGER.get_or_init(FileLogger::from_env)
-}
-
-fn error_log() -> &'static Mutex<VecDeque<ErrorLogEntry>> {
-    ERROR_LOG.get_or_init(|| Mutex::new(VecDeque::new()))
-}
-
-fn push_error_entry(target: &str, message: &str) {
-    let Ok(mut entries) = error_log().lock() else {
-        return;
-    };
-    if entries.len() >= MAX_ERROR_LOG_ENTRIES {
-        entries.pop_front();
-    }
-    entries.push_back(ErrorLogEntry {
-        timestamp_millis: unix_timestamp_millis(),
-        target: target.to_owned(),
-        message: message.to_owned(),
-    });
 }
 
 fn log_path() -> Option<PathBuf> {
@@ -185,14 +195,7 @@ fn flag_enabled(value: &str) -> bool {
 }
 
 #[cfg(any(all(target_os = "linux", feature = "stream-broadcast"), test))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NativeStderrLevel {
-    Debug,
-    Error,
-}
-
-#[cfg(any(all(target_os = "linux", feature = "stream-broadcast"), test))]
-fn classify_native_stderr(message: &str) -> NativeStderrLevel {
+fn classify_native_stderr(message: &str) -> Level {
     let message = message.trim_start().to_ascii_lowercase();
     let informational_prefixes = [
         "libva info:",
@@ -212,11 +215,11 @@ fn classify_native_stderr(message: &str) -> NativeStderrLevel {
         .iter()
         .any(|prefix| message.starts_with(prefix))
     {
-        NativeStderrLevel::Debug
+        Level::Debug
     } else {
         // stderr has no standard severity metadata. Unknown output stays in the
         // normal log so a native failure is not silently discarded.
-        NativeStderrLevel::Error
+        Level::Error
     }
 }
 
@@ -228,8 +231,8 @@ fn record_native_stderr(message: &str) {
     }
 
     match classify_native_stderr(message) {
-        NativeStderrLevel::Debug => debug(NATIVE_STDERR_TARGET, message),
-        NativeStderrLevel::Error => file_error(NATIVE_STDERR_TARGET, message),
+        Level::Debug => debug(NATIVE_STDERR_TARGET, message),
+        Level::Error => error(NATIVE_STDERR_TARGET, message),
     }
 }
 
@@ -339,10 +342,10 @@ fn drain_native_stderr(read_fd: OwnedFd) {
         match reader.read_until(b'\n', &mut bytes) {
             Ok(0) => break,
             Ok(_) => record_native_stderr(&String::from_utf8_lossy(&bytes)),
-            Err(error) => {
-                file_error(
+            Err(read_error) => {
+                error(
                     NATIVE_STDERR_TARGET,
-                    format!("native stderr capture failed: {error}"),
+                    format!("native stderr capture failed: {read_error}"),
                 );
                 break;
             }
@@ -379,86 +382,148 @@ fn format_log_timestamp(timestamp_millis: u128) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
+    use std::fs;
 
     use super::{
-        FileLogger, Level, NativeStderrLevel, classify_native_stderr, error, error_entries,
-        error_log, file_error,
+        FileLogger, Level, LogTail, MAX_LOG_TAIL_BYTES, MAX_LOG_TAIL_LINES, classify_native_stderr,
     };
 
-    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn test_lock() -> &'static Mutex<()> {
-        TEST_LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn clear_error_log() {
-        error_log().lock().expect("error log mutex").clear();
-    }
-
     #[test]
-    fn error_records_current_process_entry() {
-        let _guard = test_lock().lock().expect("logging test mutex");
-        clear_error_log();
+    fn process_log_tail_captures_only_its_own_output_with_the_file_log_level_policy() {
+        for debug_enabled in [false, true] {
+            let directory = tempfile::tempdir().expect("temporary log directory should be created");
+            let path = directory.path().join("write.log");
+            let previous = "previous process log\n";
+            fs::write(&path, previous).expect("write previous process log");
+            let logger = FileLogger {
+                path: Some(path.clone()),
+                debug_enabled,
+                ..Default::default()
+            };
+            assert!(
+                logger.recent_lines().is_empty(),
+                "the current process starts without previous process logs"
+            );
+            logger.record(Level::Error, "gateway", "first\n\nsecond");
+            logger.record(Level::Debug, "media", "decoded image");
 
-        error("history", "request failed with status 403");
+            let lines = logger.recent_lines();
+            assert_eq!(lines.len(), if debug_enabled { 4 } else { 3 });
+            assert!(lines[0].text.contains("[ERROR] gateway: first"));
+            assert_eq!(lines[1].text, "");
+            assert_eq!(lines[2].text, "second");
+            if debug_enabled {
+                assert!(lines[3].text.contains("[DEBUG] media: decoded image"));
+            }
+            assert!(lines.windows(2).all(|pair| pair[0].id < pair[1].id));
+            let current = lines
+                .iter()
+                .map(|line| format!("{}\n", line.text))
+                .collect::<String>();
+            assert_eq!(
+                fs::read_to_string(&path).expect("read written log"),
+                format!("{previous}{current}"),
+                "file history is preserved and new output matches the panel"
+            );
 
-        let entries = error_entries();
-        assert_eq!(entries.len(), 1);
-        assert!(entries[0].line().contains("[ERROR] history"));
-        assert!(entries[0].line().contains("request failed with status 403"));
-    }
-
-    #[test]
-    fn error_entries_are_bounded_to_recent_entries() {
-        let _guard = test_lock().lock().expect("logging test mutex");
-        clear_error_log();
-
-        for index in 0..205 {
-            error("test", format!("entry {index}"));
+            let other_logger = FileLogger {
+                path: Some(path.clone()),
+                ..Default::default()
+            };
+            assert!(other_logger.recent_lines().is_empty());
+            other_logger.record(Level::Error, "gateway", "another process");
+            assert_eq!(other_logger.recent_lines().len(), 1);
+            assert_eq!(
+                logger.recent_lines(),
+                lines,
+                "other writers cannot enter the buffer"
+            );
         }
-
-        let entries = error_entries();
-        assert_eq!(entries.len(), 200);
-        assert!(entries[0].line().contains("entry 5"));
-        assert!(entries[199].line().contains("entry 204"));
     }
 
     #[test]
     fn native_stderr_levels_follow_debug_and_error_policy() {
         for (message, expected) in [
-            (
-                "libva info: VA-API version 1.23.0",
-                NativeStderrLevel::Debug,
-            ),
-            (
-                "warning: optional encoder unavailable",
-                NativeStderrLevel::Debug,
-            ),
-            (
-                "libva error: driver initialization failed",
-                NativeStderrLevel::Error,
-            ),
-            ("unclassified native failure", NativeStderrLevel::Error),
+            ("libva info: VA-API version 1.23.0", Level::Debug),
+            ("warning: optional encoder unavailable", Level::Debug),
+            ("libva error: driver initialization failed", Level::Error),
+            ("unclassified native failure", Level::Error),
         ] {
             assert_eq!(classify_native_stderr(message), expected, "{message}");
         }
 
-        let normal_logger = FileLogger {
+        let logger = FileLogger {
             path: None,
             debug_enabled: false,
+            ..Default::default()
         };
-        assert!(!normal_logger.should_write(Level::Debug));
-        assert!(normal_logger.should_write(Level::Error));
+        assert!(!logger.should_write(Level::Debug));
+        assert!(logger.should_write(Level::Error));
     }
 
     #[test]
-    fn file_only_native_error_does_not_enter_tui_error_log() {
-        let _guard = test_lock().lock().expect("logging test mutex");
-        clear_error_log();
+    fn log_tail_is_bounded_by_line_count_and_bytes() {
+        let mut tail = LogTail::default();
+        let content = (0..MAX_LOG_TAIL_LINES + 5)
+            .map(|index| format!("line {index}\n"))
+            .collect::<String>();
+        tail.push(&content);
+        assert_eq!(tail.lines.len(), MAX_LOG_TAIL_LINES);
+        assert_eq!(tail.lines[0].text, "line 5");
+        assert_eq!(tail.lines[0].id, 5);
+        assert_eq!(tail.lines[MAX_LOG_TAIL_LINES - 1].text, "line 204");
+        tail.push("next\n");
+        assert_eq!(tail.lines[0].id, 6, "eviction preserves line identity");
 
-        file_error("native-stderr", "libva error: driver initialization failed");
+        let mut tail = LogTail::default();
+        let half = "x".repeat(MAX_LOG_TAIL_BYTES / 2);
+        tail.push(&format!("{half}\n{half}\n"));
+        assert_eq!(tail.lines.len(), 2);
+        tail.push("new\n");
+        assert_eq!(tail.lines.len(), 2);
+        assert_eq!(tail.lines[0].id, 1);
+        assert!(tail.lines.iter().map(|line| line.text.len()).sum::<usize>() <= MAX_LOG_TAIL_BYTES);
 
-        assert!(error_entries().is_empty());
+        for oversized in [
+            "x".repeat(MAX_LOG_TAIL_BYTES + 10),
+            format!("{}끝", "가".repeat(MAX_LOG_TAIL_BYTES / 3 + 2)),
+        ] {
+            tail.push(&oversized);
+            assert_eq!(tail.lines.len(), 1);
+            let text = &tail.lines[0].text;
+            assert!(text.len() <= MAX_LOG_TAIL_BYTES);
+            assert!(text.len() >= MAX_LOG_TAIL_BYTES - 3);
+            assert!(oversized.ends_with(text));
+            assert!(!text.contains('\u{fffd}'));
+        }
+
+        tail.push(&"\n".repeat(MAX_LOG_TAIL_BYTES));
+        assert_eq!(tail.lines.len(), MAX_LOG_TAIL_LINES);
+        assert!(tail.lines.iter().all(|line| line.text.is_empty()));
+    }
+
+    #[test]
+    fn process_log_tail_survives_file_changes_and_write_failures() {
+        let directory = tempfile::tempdir().expect("temporary log directory should be created");
+        let path = directory.path().join("updates.log");
+        let logger = FileLogger {
+            path: Some(path.clone()),
+            ..Default::default()
+        };
+        logger.record(Level::Error, "media", "current process");
+        let initial = logger.recent_lines();
+        fs::write(&path, "external file content\n").expect("overwrite log file");
+        assert_eq!(logger.recent_lines(), initial);
+
+        fs::remove_file(&path).expect("remove log file");
+        fs::create_dir(&path).expect("block file writes with a directory");
+        logger.record(Level::Error, "media", "still visible");
+        let lines = logger.recent_lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], initial[0]);
+        assert!(lines[1].text.ends_with("still visible"));
+        let logger = FileLogger::default();
+        logger.record(Level::Error, "media", "no log path");
+        assert_eq!(logger.recent_lines().len(), 1);
     }
 }

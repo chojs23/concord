@@ -342,12 +342,17 @@ impl MediaFoundationEncoder {
         let bytes = read_sample(&sample)?;
         let mut annex_b = normalize_h264_access_unit(&bytes)?;
         let is_keyframe = clean_point || annex_b_contains_idr(&annex_b);
-        if is_keyframe && (!contains_nal_type(&annex_b, 7) || !contains_nal_type(&annex_b, 8)) {
+        if is_keyframe
+            && (!super::annex_b_contains_nal_type(&annex_b, 7)
+                || !super::annex_b_contains_nal_type(&annex_b, 8))
+        {
             let mut parameter_sets = self.parameter_sets()?.ok_or_else(|| {
                 "Media Foundation IDR output omitted SPS/PPS and no sequence header is available"
                     .to_owned()
             })?;
-            if !contains_nal_type(&parameter_sets, 7) || !contains_nal_type(&parameter_sets, 8) {
+            if !super::annex_b_contains_nal_type(&parameter_sets, 7)
+                || !super::annex_b_contains_nal_type(&parameter_sets, 8)
+            {
                 return Err(
                     "Media Foundation sequence header does not contain both SPS and PPS".to_owned(),
                 );
@@ -812,28 +817,6 @@ fn append_avcc_parameter_set(
     Ok(())
 }
 
-fn contains_nal_type(annex_b: &[u8], expected_type: u8) -> bool {
-    let mut index = 0;
-    while index + 3 <= annex_b.len() {
-        let start_length = if annex_b[index..].starts_with(&[0, 0, 0, 1]) {
-            4
-        } else if annex_b[index..].starts_with(&[0, 0, 1]) {
-            3
-        } else {
-            index += 1;
-            continue;
-        };
-        if annex_b
-            .get(index + start_length)
-            .is_some_and(|header| header & 0x1f == expected_type)
-        {
-            return true;
-        }
-        index += start_length;
-    }
-    false
-}
-
 const fn pack_pair(high: u32, low: u32) -> u64 {
     ((high as u64) << 32) | low as u64
 }
@@ -867,8 +850,8 @@ mod tests {
         let encoded = encoded.expect("Media Foundation should return an encoded frame");
 
         assert!(encoded.is_keyframe);
-        assert!(contains_nal_type(&encoded.annex_b, 7));
-        assert!(contains_nal_type(&encoded.annex_b, 8));
-        assert!(contains_nal_type(&encoded.annex_b, 5));
+        assert!(super::super::annex_b_contains_nal_type(&encoded.annex_b, 7));
+        assert!(super::super::annex_b_contains_nal_type(&encoded.annex_b, 8));
+        assert!(super::super::annex_b_contains_nal_type(&encoded.annex_b, 5));
     }
 }

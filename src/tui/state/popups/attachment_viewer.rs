@@ -193,7 +193,7 @@ mod tests {
     use super::AttachmentViewerZoom;
 
     #[test]
-    fn zoom_in_steps_default_large_fullscreen_and_caps() {
+    fn attachment_viewer_zoom_transitions() {
         let zoom = AttachmentViewerZoom::Default;
         let zoom = zoom.zoom_in();
         assert_eq!(zoom, AttachmentViewerZoom::Large);
@@ -201,10 +201,7 @@ mod tests {
         assert_eq!(zoom, AttachmentViewerZoom::Fullscreen);
         let zoom = zoom.zoom_in();
         assert_eq!(zoom, AttachmentViewerZoom::Fullscreen);
-    }
 
-    #[test]
-    fn zoom_out_steps_fullscreen_large_default_and_caps() {
         let zoom = AttachmentViewerZoom::Fullscreen;
         let zoom = zoom.zoom_out();
         assert_eq!(zoom, AttachmentViewerZoom::Large);
@@ -212,10 +209,7 @@ mod tests {
         assert_eq!(zoom, AttachmentViewerZoom::Default);
         let zoom = zoom.zoom_out();
         assert_eq!(zoom, AttachmentViewerZoom::Default);
-    }
 
-    #[test]
-    fn toggle_fullscreen_round_trips() {
         let zoom = AttachmentViewerZoom::Default;
         let zoom = zoom.toggle_fullscreen();
         assert_eq!(zoom, AttachmentViewerZoom::Fullscreen);

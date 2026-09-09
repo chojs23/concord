@@ -6,8 +6,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::Result;
 
 use super::{
-    AppOptions, BorderShape, BorderSurface, HighlightGroup, HighlightLinkOptions,
-    KeymapFileOptions, KeymapOptions, ReactionOptions, ThemeOptions, UiStateOptions,
+    AppOptions, BorderShape, BorderSurface, HighlightGroup, HighlightLinkOptions, KeymapOptions,
+    ReactionOptions, ThemeOptions, UiStateOptions,
 };
 
 /// Parse `config.toml` tolerantly: a value with a wrong type or unknown variant
@@ -398,9 +398,8 @@ pub(super) fn parse_keymap_options(content: &str) -> Result<(KeymapOptions, Vec<
         }
     }
 
-    let file = one_entry("keymap", toml::Value::Table(clean));
-    let keymap = match toml::Value::Table(file).try_into::<KeymapFileOptions>() {
-        Ok(file) => file.keymap,
+    let keymap = match toml::Value::Table(clean).try_into::<KeymapOptions>() {
+        Ok(keymap) => keymap,
         Err(error) => {
             warnings.push(format!(
                 "[keymap] could not be applied, using defaults: {error}"

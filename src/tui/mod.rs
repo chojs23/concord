@@ -75,13 +75,7 @@ pub async fn run(
     config_warnings: Vec<String>,
 ) -> Result<DashboardExit> {
     let mut terminal = ratatui::init();
-    let _restore_guard = match terminal::TerminalRestoreGuard::new() {
-        Ok(guard) => guard,
-        Err(error) => {
-            ratatui::restore();
-            return Err(error);
-        }
-    };
+    let _restore_guard = terminal::TerminalRestoreGuard::new();
 
     runtime::run_dashboard(
         &mut terminal,

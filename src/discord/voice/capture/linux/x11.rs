@@ -3,7 +3,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, Sender, SyncSender},
+        mpsc::{self, Sender, SyncSender},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -26,6 +26,7 @@ use x11rb::{
 
 use super::super::{
     CaptureFrame, CaptureFrameBufferPool, CaptureOutput, STREAM_CAPTURE_FPS, send_capture_result,
+    wait_for_capture_start,
 };
 use crate::{
     discord::voice::{StreamCaptureTarget, StreamCaptureTargetKind},
@@ -111,7 +112,15 @@ pub(super) fn start_capture(
         })
         .map_err(|error| format!("X11 video worker spawn failed: {error}"))?;
 
-    match wait_for_start(&startup_rx, external_stop) {
+    match wait_for_capture_start(
+        &startup_rx,
+        external_stop,
+        START_TIMEOUT,
+        START_POLL_INTERVAL,
+        "X11 screen capture was cancelled",
+        "X11 screen capture did not start in time",
+        "X11 screen capture stopped during startup",
+    ) {
         Ok(()) => Ok((
             CaptureSession {
                 stop_requested,
@@ -425,30 +434,6 @@ fn clean_text(text: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join(" ");
     (!text.is_empty()).then_some(text)
-}
-
-fn wait_for_start(
-    startup: &Receiver<Result<(), String>>,
-    external_stop: &AtomicBool,
-) -> Result<(), String> {
-    let deadline = Instant::now() + START_TIMEOUT;
-    loop {
-        if external_stop.load(Ordering::Acquire) {
-            return Err("X11 screen capture was cancelled".to_owned());
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            return Err("X11 screen capture did not start in time".to_owned());
-        }
-        let wait = (deadline - now).min(START_POLL_INTERVAL);
-        match startup.recv_timeout(wait) {
-            Ok(result) => return result,
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("X11 screen capture stopped during startup".to_owned());
-            }
-        }
-    }
 }
 
 fn run_capture(

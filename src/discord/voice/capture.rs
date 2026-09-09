@@ -772,21 +772,41 @@ fn wait_for_capture_ready(
     stop: &AtomicBool,
     timeout: Duration,
 ) -> Result<(), String> {
+    wait_for_capture_start(
+        ready_rx,
+        stop,
+        timeout,
+        STREAM_RECORDER_POLL_INTERVAL,
+        "stream capture preparation was cancelled",
+        "stream capture did not become ready in time",
+        "stream capture stopped before becoming ready",
+    )
+}
+
+fn wait_for_capture_start<T>(
+    startup: &Receiver<Result<T, String>>,
+    stop: &AtomicBool,
+    timeout: Duration,
+    poll_interval: Duration,
+    cancelled_message: &str,
+    timeout_message: &str,
+    disconnected_message: &str,
+) -> Result<T, String> {
     let deadline = Instant::now() + timeout;
     loop {
         if stop.load(Ordering::Acquire) {
-            return Err("stream capture preparation was cancelled".to_owned());
+            return Err(cancelled_message.to_owned());
         }
         let now = Instant::now();
         if now >= deadline {
-            return Err("stream capture did not become ready in time".to_owned());
+            return Err(timeout_message.to_owned());
         }
-        let wait = (deadline - now).min(STREAM_RECORDER_POLL_INTERVAL);
-        match ready_rx.recv_timeout(wait) {
+        let wait = (deadline - now).min(poll_interval);
+        match startup.recv_timeout(wait) {
             Ok(result) => return result,
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
-                return Err("stream capture stopped before becoming ready".to_owned());
+                return Err(disconnected_message.to_owned());
             }
         }
     }
@@ -1057,10 +1077,7 @@ mod tests {
                 "milliseconds={milliseconds:?}",
             );
         }
-    }
 
-    #[test]
-    fn capture_handle_stores_the_negotiated_keyframe_interval() {
         let handle = StreamCaptureHandle {
             control: StreamCaptureControl {
                 stop: Arc::new(AtomicBool::new(false)),
@@ -1424,26 +1441,20 @@ mod tests {
     fn frame_deadline_corrects_sleep_overshoot_without_drift() {
         let started_at = Instant::now();
         let deadline = started_at + STREAM_CAPTURE_FRAME_INTERVAL;
-        let woke_late = deadline + Duration::from_millis(4);
-
-        assert_eq!(
-            next_stream_frame_deadline(deadline, woke_late),
-            deadline + STREAM_CAPTURE_FRAME_INTERVAL
-        );
-    }
-
-    #[test]
-    fn frame_deadline_skips_missed_intervals_without_catch_up_bursts() {
-        let started_at = Instant::now();
-        let deadline = started_at + STREAM_CAPTURE_FRAME_INTERVAL;
         let second_deadline = deadline + STREAM_CAPTURE_FRAME_INTERVAL;
         let third_deadline = second_deadline + STREAM_CAPTURE_FRAME_INTERVAL;
-        let finished_after_third_deadline = third_deadline + Duration::from_millis(1);
-
-        assert_eq!(
-            next_stream_frame_deadline(deadline, finished_after_third_deadline),
-            third_deadline + STREAM_CAPTURE_FRAME_INTERVAL
-        );
+        for (finished_at, expected) in [
+            (
+                deadline + Duration::from_millis(4),
+                deadline + STREAM_CAPTURE_FRAME_INTERVAL,
+            ),
+            (
+                third_deadline + Duration::from_millis(1),
+                third_deadline + STREAM_CAPTURE_FRAME_INTERVAL,
+            ),
+        ] {
+            assert_eq!(next_stream_frame_deadline(deadline, finished_at), expected);
+        }
     }
 
     #[test]

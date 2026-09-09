@@ -3,9 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::discord::AppCommand;
 use crate::tui::keybindings::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, EmojiReactionPickerAction,
-    KeyChord, NotificationInboxAction, OptionsPopupAction, PollVotePickerAction, PopupKeyMapLookup,
-    PopupListAction, ProfilePopupAction, ProfilePopupTabAction, ReactionUsersPopupAction,
-    ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
+    KeyChord, NotificationInboxAction, OptionsPopupAction, PollVotePickerAction, PopupAction,
+    PopupKeyMapLookup, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
+    ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
     VoiceParticipantAudioPopupAction, push_to_talk_shortcut_from_key,
 };
 use crate::tui::state::{
@@ -71,6 +71,19 @@ pub(super) fn handle_popup_key(
         return Some(command);
     }
 
+    // Resolve fixed row movement once for every routed popup. The active popup
+    // policy decides whether that means selecting a row or scrolling a document.
+    if keymap_context.is_some()
+        && let Some(action) = state.key_bindings().fixed_selection_action(key)
+    {
+        let action = match action {
+            SelectionAction::Next => PopupAction::SelectNext,
+            SelectionAction::Previous => PopupAction::SelectPrevious,
+        };
+        state.close_key_sequence();
+        return Some(state.execute_popup_keymap_action(action));
+    }
+
     let close_key = match policy.input_mode {
         PopupInputMode::Routed => state.key_bindings().is_popup_close_key(key),
         PopupInputMode::TextEntry => state.key_bindings().is_text_entry_popup_close_key(key),
@@ -120,7 +133,9 @@ fn dispatch_popup_key(
         ActiveModalPopupKind::KeymapHelp => {
             route_fallback_key(state, key, stage, handle_keymap_popup_key)
         }
-        ActiveModalPopupKind::DebugLog => route_fallback_key(state, key, stage, ignore_popup_key),
+        ActiveModalPopupKind::DebugLog => {
+            route_fallback_key(state, key, stage, handle_debug_log_key)
+        }
         ActiveModalPopupKind::QuitConfirmation => route_confirmation_key(
             state,
             key,
@@ -464,8 +479,8 @@ fn handle_forum_post_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
         return handle_forum_post_composer_edit_key(state, key);
     }
 
-    // The scroll keys (J/K and the arrows) pan the viewport without moving the
-    // field selection, so long bodies stay readable.
+    // Viewport scroll actions pan the form without moving the field selection,
+    // so long bodies stay readable.
     if let Some(action) = state.key_bindings().scroll_action(key) {
         state.scroll_forum_post_composer(action);
         return None;
@@ -604,9 +619,8 @@ fn handle_thread_edit_key(state: &mut DashboardState, key: KeyEvent) -> Option<A
         return handle_thread_edit_title_key(state, key);
     }
 
-    // The scroll keys (J/K and the arrows) pan the viewport without moving the
-    // field selection. The selectors claim Left/Right and h/l below before this
-    // runs.
+    // Viewport scroll actions pan the form without moving the field selection.
+    // The selectors claim Left/Right and h/l below before this runs.
     if !matches!(
         key.code,
         KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l')
@@ -1287,6 +1301,25 @@ fn handle_reaction_users_popup_key(
         }
         None => None,
     }
+}
+
+fn handle_debug_log_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    if state.debug_log_filter_cursor().is_some() {
+        if let Some(action) = state.key_bindings().pane_filter_action(key) {
+            state.apply_debug_log_filter_action(action);
+        }
+        return None;
+    }
+    if let Some(action) = state
+        .key_bindings()
+        .selection_action(key, SelectionKeySet::Navigation)
+    {
+        return match action {
+            SelectionAction::Next => state.move_active_popup_down(),
+            SelectionAction::Previous => state.move_active_popup_up(),
+        };
+    }
+    None
 }
 
 fn handle_keymap_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {

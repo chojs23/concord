@@ -61,7 +61,7 @@ fn action_menu_lines(rows: &[ActionMenuRow], selected: usize) -> Vec<Line<'stati
             let style = selectable_popup_label_style(is_selected, row.enabled);
             selected_row_line(
                 Line::from(vec![
-                    selectable_popup_marker(is_selected),
+                    selection_marker(is_selected),
                     selectable_popup_shortcut_span(shortcut),
                     Span::styled(label, style),
                 ]),

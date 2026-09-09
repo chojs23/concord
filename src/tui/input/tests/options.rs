@@ -1,40 +1,58 @@
 use super::*;
 
-type DisplayOptionCheck = fn(&DashboardState) -> bool;
+type DisplayOptionChange = fn(DisplayOptions) -> DisplayOptions;
 
 #[test]
-fn options_popup_toggles_and_cycles_display_settings() {
-    // (label, rows to move down inside the Display category, expected effect).
-    // `None` stays on the category picker, where the row is a plain toggle.
-    let cases: [(&str, Option<usize>, DisplayOptionCheck); 4] = [
-        ("show avatars", None, |state| {
-            !state.display_options().show_avatars
+fn every_display_option_changes_only_its_own_setting() {
+    let cases: [(&str, DisplayOptionChange); 10] = [
+        ("disable image preview", |mut options| {
+            options.disable_image_preview = !options.disable_image_preview;
+            options
         }),
-        ("image preview quality", Some(3), |state| {
-            state.display_options().image_preview_quality == ImagePreviewQualityPreset::High
+        ("show avatars", |mut options| {
+            options.show_avatars = !options.show_avatars;
+            options
         }),
-        ("attachment viewer quality", Some(4), |state| {
-            state.display_options().attachment_viewer_quality
-                == ImagePreviewQualityPreset::Efficient
+        ("show images", |mut options| {
+            options.show_images = !options.show_images;
+            options
         }),
-        ("media playback", Some(7), |state| {
-            state.display_options().media_playback
+        ("image preview quality", |mut options| {
+            options.image_preview_quality = options.image_preview_quality.next();
+            options
+        }),
+        ("attachment viewer quality", |mut options| {
+            options.attachment_viewer_quality = options.attachment_viewer_quality.next();
+            options
+        }),
+        ("show custom emoji", |mut options| {
+            options.show_custom_emoji = !options.show_custom_emoji;
+            options
+        }),
+        ("circular avatars", |mut options| {
+            options.circular_avatars = !options.circular_avatars;
+            options
+        }),
+        ("media playback", |mut options| {
+            options.media_playback = !options.media_playback;
+            options
+        }),
+        ("24-hour time", |mut options| {
+            options.hour_format_24 = !options.hour_format_24;
+            options
+        }),
+        ("animate previews", |mut options| {
+            options.animate_previews = options.animate_previews.next();
+            options
         }),
     ];
 
-    for (label, rows, expected) in cases {
+    for (index, (label, change)) in cases.into_iter().enumerate() {
         let mut state = state_with_messages(1);
+        let before = state.display_options();
         state.open_options_popup();
-        match rows {
-            None => {
-                handle_key(&mut state, key(KeyCode::Down));
-            }
-            Some(rows) => {
-                handle_key(&mut state, key(KeyCode::Enter));
-                for _ in 0..rows {
-                    handle_key(&mut state, key(KeyCode::Down));
-                }
-            }
+        for _ in 0..index {
+            handle_key(&mut state, key(KeyCode::Down));
         }
         handle_key(&mut state, key(KeyCode::Enter));
 
@@ -42,7 +60,7 @@ fn options_popup_toggles_and_cycles_display_settings() {
             state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::Options),
             "{label}"
         );
-        assert!(expected(&state), "{label}");
+        assert_eq!(state.display_options(), change(before), "{label}");
         assert_eq!(
             state.take_options_save_request(),
             Some(AppOptions {

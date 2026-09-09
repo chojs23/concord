@@ -69,7 +69,7 @@ define_ui_actions! {
     StartComposer => ("start composer", &[&[Char('i')]], Some(DashboardAction::StartComposer)),
     OpenPaneFilter => ("filter/search pane", &[&[Char('/')]], Some(DashboardAction::OpenFocusedPaneFilter)),
     ClosePopup => ("close popup", &[&[Char('q')]], None),
-    OpenDebugLog => ("open debug log", &[&[Char('`')]], None),
+    OpenDebugPanel => ("open debug panel", &[&[Char('`')]], None),
     FocusGuildPane => ("focus Servers", &[&[Char('1')]], Some(DashboardAction::FocusPane(FocusPane::Guilds))),
     FocusChannelPane => ("focus Channels", &[&[Char('2')]], Some(DashboardAction::FocusPane(FocusPane::Channels))),
     FocusMessagePane => ("focus Messages", &[&[Char('3')]], Some(DashboardAction::FocusPane(FocusPane::Messages))),
@@ -188,7 +188,7 @@ impl UiAction {
     }
 }
 
-/// Configurable navigation actions that are valid while a popup owns input.
+/// Configurable actions that are valid while a popup owns input.
 ///
 /// Popup closing is matched directly at the input boundary because it is a
 /// single-key command, not a navigable key sequence.
@@ -196,6 +196,7 @@ impl UiAction {
 pub(in crate::tui) enum PopupKeymapScope {
     Selectable,
     Scrollable,
+    FilterableScrollable,
     Confirmation,
 }
 
@@ -225,6 +226,7 @@ define_popup_actions! {
     HalfPageUp => HalfPageUp,
     JumpTop => JumpTop,
     JumpBottom => JumpBottom,
+    OpenFilter => OpenPaneFilter,
 }
 
 impl PopupAction {
@@ -233,11 +235,17 @@ impl PopupAction {
             Self::SelectNext | Self::SelectPrevious => true,
             Self::HalfPageDown | Self::HalfPageUp => matches!(
                 scope,
-                PopupKeymapScope::Selectable | PopupKeymapScope::Scrollable
+                PopupKeymapScope::Selectable
+                    | PopupKeymapScope::Scrollable
+                    | PopupKeymapScope::FilterableScrollable
             ),
             Self::JumpTop | Self::JumpBottom => {
-                matches!(scope, PopupKeymapScope::Selectable)
+                matches!(
+                    scope,
+                    PopupKeymapScope::Selectable | PopupKeymapScope::FilterableScrollable
+                )
             }
+            Self::OpenFilter => matches!(scope, PopupKeymapScope::FilterableScrollable),
         }
     }
 }
@@ -373,6 +381,8 @@ pub(in crate::tui) enum PaneFilterAction {
     DeleteChar,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveCursorHome,
+    MoveCursorEnd,
     Ignore,
     InsertChar(char),
 }

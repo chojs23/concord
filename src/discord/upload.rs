@@ -1,6 +1,9 @@
 use crate::discord::{MAX_PROFILE_AVATAR_BYTES, ProfileAvatarUpload};
 use image::ImageFormat;
 
+const INVALID_PROFILE_AVATAR_MESSAGE: &str =
+    "profile avatar must contain valid PNG, JPEG, GIF, or WebP image data";
+
 pub(crate) struct ProfileAvatarImage {
     pub(crate) content_type: String,
     pub(crate) bytes: Vec<u8>,
@@ -54,12 +57,10 @@ pub(crate) async fn read_profile_avatar_image(
 }
 
 fn profile_avatar_content_type(bytes: &[u8]) -> std::result::Result<String, String> {
-    let format = image::guess_format(bytes).map_err(|_| {
-        "profile avatar must contain valid PNG, JPEG, GIF, or WebP image data".to_owned()
-    })?;
-    image::load_from_memory_with_format(bytes, format).map_err(|_| {
-        "profile avatar must contain valid PNG, JPEG, GIF, or WebP image data".to_owned()
-    })?;
+    let format =
+        image::guess_format(bytes).map_err(|_| INVALID_PROFILE_AVATAR_MESSAGE.to_owned())?;
+    image::load_from_memory_with_format(bytes, format)
+        .map_err(|_| INVALID_PROFILE_AVATAR_MESSAGE.to_owned())?;
     match format {
         ImageFormat::Png => Ok("image/png".to_owned()),
         ImageFormat::Jpeg => Ok("image/jpeg".to_owned()),
@@ -71,7 +72,7 @@ fn profile_avatar_content_type(bytes: &[u8]) -> std::result::Result<String, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::profile_avatar_content_type;
+    use super::{INVALID_PROFILE_AVATAR_MESSAGE, profile_avatar_content_type};
     use std::io::Cursor;
 
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
@@ -95,9 +96,6 @@ mod tests {
         let error = profile_avatar_content_type(b"not actually a png")
             .expect_err("non-image bytes should fail");
 
-        assert_eq!(
-            error,
-            "profile avatar must contain valid PNG, JPEG, GIF, or WebP image data"
-        );
+        assert_eq!(error, INVALID_PROFILE_AVATAR_MESSAGE);
     }
 }

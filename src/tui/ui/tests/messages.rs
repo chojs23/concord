@@ -1664,42 +1664,6 @@ fn message_content_does_not_split_grapheme_clusters() {
 }
 
 #[test]
-fn thread_created_message_uses_cached_thread_details() {
-    let mut message = message_with_content(Some("release notes".to_owned()));
-    message.message_kind = MessageKind::new(18);
-    message.id =
-        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(10 * 60 * 1000));
-    let latest_thread_message_id =
-        test_message_id_for_unix_millis(current_unix_millis().saturating_sub(2 * 60 * 1000));
-    let mut state = DashboardState::new();
-    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
-        guild_id: Some(Id::new(1)),
-        parent_id: Some(message.channel_id),
-        last_message_id: Some(latest_thread_message_id),
-        name: "release notes".to_owned(),
-        message_count: Some(12),
-        total_message_sent: Some(14),
-        thread_metadata: Some(crate::discord::ThreadMetadataInfo::test(false, false)),
-        ..ChannelInfo::test(Id::new(10), "thread")
-    }));
-
-    let lines = format_message_content_lines(&message, &state, 200);
-    let texts = line_texts(&lines);
-
-    assert_eq!(texts[0], "neo started release notes thread.");
-    assert!(texts[1].starts_with("  ╭"));
-    assert!(texts[2].starts_with("  │ release notes"));
-    assert!(texts[3].trim().trim_matches('│').trim().is_empty());
-    assert!(texts[4].starts_with("  │ Preview unavailable"));
-    // The thread has no tags, so the tags row is omitted: metadata follows the
-    // preview directly.
-    assert!(texts[5].contains("12 comments"));
-    assert!(texts[5].contains("2 minutes ago"));
-    assert!(texts[6].starts_with("  ╰"));
-    assert_eq!(lines[0].style, Style::default());
-}
-
-#[test]
 fn thread_created_message_uses_shared_thread_card_layout() {
     let mut message = message_with_content(Some("release notes".to_owned()));
     message.message_kind = MessageKind::new(18);
@@ -1738,6 +1702,16 @@ fn thread_created_message_uses_shared_thread_card_layout() {
 
     assert_eq!(texts[0], "neo started release notes thread.");
     assert_eq!(&texts[1..1 + expected_card.len()], expected_card.as_slice());
+    assert!(texts[1].starts_with("  ╭"));
+    assert!(texts[2].starts_with("  │ release notes"));
+    assert!(texts[3].trim().trim_matches('│').trim().is_empty());
+    assert!(texts[4].starts_with("  │ Preview unavailable"));
+    // The thread has no tags, so the tags row is omitted: metadata follows the
+    // preview directly.
+    assert!(texts[5].contains("12 comments"));
+    assert!(texts[5].contains("2 minutes ago"));
+    assert!(texts[6].starts_with("  ╰"));
+    assert_eq!(lines[0].style, Style::default());
 }
 
 #[test]
@@ -2316,7 +2290,7 @@ fn message_viewport_lines_keep_rows_from_tall_following_message() {
     .take(5)
     .collect::<Vec<_>>();
     let visible_text = line_texts_from_ratatui(&visible_rows);
-    let sent_time = format_message_sent_time(Id::new(1), true);
+    let sent_time = format_message_local_time(Id::new(1), true);
 
     assert!(visible_text[0].starts_with("╭─oooo  "));
     assert!(visible_text[0].contains(&sent_time));

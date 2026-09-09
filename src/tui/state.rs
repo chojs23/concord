@@ -52,8 +52,8 @@ use pending_messages::PendingMessageUiState;
 use popups::PopupUiState;
 use request_tracking::RequestTrackingState;
 use runtime_state::{
-    MediaPlaybackPreparingUiState, RuntimeUiState, StreamBroadcastUiTarget, StreamPlaybackUiTarget,
-    ToastMessage, VoiceConnectionUiState,
+    ClipboardPasteRequest, ClipboardPasteTarget, MediaPlaybackPreparingUiState, RuntimeUiState,
+    StreamBroadcastUiTarget, StreamPlaybackUiTarget, ToastMessage, VoiceConnectionUiState,
 };
 pub(in crate::tui) use scroll::SCROLL_OFF;
 use scroll::clamp_selected_index;
@@ -67,6 +67,7 @@ pub use composer::{
 };
 pub use dashboard::DashboardState;
 pub use member_grouping::{MemberEntry, MemberGroup};
+pub(super) use member_grouping::{MemberRow, MemberRows};
 pub use message_viewport::MessagePaneSource;
 #[cfg(test)]
 pub(crate) use model::ActionAvailability;
@@ -87,8 +88,9 @@ pub use model::{
 };
 pub use options::{DisplayOptionGauge, DisplayOptionItem};
 pub(in crate::tui) use popups::{
-    ActiveModalPopupKind, ConfirmationButton, MessageConfirmationKind, PopupInputMode,
-    PopupKeymapContext, SelectablePopupSnapshot, SelectablePopupTarget, VoiceParticipantAudioField,
+    ActiveModalPopupKind, ConfirmationButton, DebugLogLine, DebugMediaSnapshot,
+    MessageConfirmationKind, PopupInputMode, PopupKeymapContext, SelectablePopupSnapshot,
+    SelectablePopupTarget, VoiceParticipantAudioField,
 };
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,

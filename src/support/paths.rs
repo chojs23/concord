@@ -57,38 +57,32 @@ pub fn download_dir() -> Option<PathBuf> {
 }
 
 fn config_base_dir() -> Option<PathBuf> {
-    xdg_config_home_from_env(env::var_os("XDG_CONFIG_HOME")).or_else(dirs::config_dir)
+    absolute_env_path(env::var_os("XDG_CONFIG_HOME")).or_else(dirs::config_dir)
 }
 
 fn state_base_dir() -> Option<PathBuf> {
-    xdg_state_home_from_env(env::var_os("XDG_STATE_HOME"))
+    absolute_env_path(env::var_os("XDG_STATE_HOME"))
         .or_else(|| Some(dirs::home_dir()?.join(".local").join("state")))
 }
 
-fn xdg_config_home_from_env(value: Option<OsString>) -> Option<PathBuf> {
-    value.map(PathBuf::from).filter(|path| path.is_absolute())
-}
-
-fn xdg_state_home_from_env(value: Option<OsString>) -> Option<PathBuf> {
+fn absolute_env_path(value: Option<OsString>) -> Option<PathBuf> {
     value.map(PathBuf::from).filter(|path| path.is_absolute())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::xdg_config_home_from_env;
+    use super::absolute_env_path;
 
     #[test]
-    fn xdg_config_home_accepts_absolute_paths() {
+    fn absolute_env_path_accepts_only_absolute_paths() {
         let path = std::env::temp_dir().join("concord-xdg-config-home");
 
-        assert_eq!(
-            xdg_config_home_from_env(Some(path.clone().into())),
-            Some(path)
-        );
-    }
-
-    #[test]
-    fn xdg_config_home_ignores_relative_paths() {
-        assert_eq!(xdg_config_home_from_env(Some("relative/path".into())), None);
+        for (value, expected) in [
+            (Some(path.clone().into()), Some(path)),
+            (Some("relative/path".into()), None),
+            (None, None),
+        ] {
+            assert_eq!(absolute_env_path(value), expected);
+        }
     }
 }

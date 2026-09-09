@@ -1,6 +1,6 @@
 use super::*;
 use crate::tui::selection;
-use crate::tui::state::{ThreadEditField, ThreadEditTagView, ThreadEditView};
+use crate::tui::state::{ForumPostComposerTagView, ThreadEditField, ThreadEditView};
 use crate::tui::ui::emoji_overlay::overlay_emoji_column;
 
 const FORUM_POST_EDIT_POPUP_WIDTH: u16 = 78;
@@ -128,7 +128,7 @@ fn build_edit_layout(view: &ThreadEditView, width: usize) -> EditLayout {
         lines.push(popup_form_summary_line(
             "Tags",
             view.requires_tag,
-            &tag_summary(&view.tags, width),
+            &forum_tag_summary(&view.tags, width),
             (!view.tags.is_empty()).then_some("Enter ›"),
             view.active_field == ThreadEditField::Tags,
             !view.tags.is_empty(),
@@ -276,10 +276,11 @@ pub(in crate::tui::ui) fn render_thread_edit_tag_picker(
     let rows: Vec<Line<'static>> = tags[visible_range.clone()]
         .iter()
         .map(|tag| {
-            tag_line(
+            forum_tag_line(
                 tag,
                 usize::from(content.width),
                 tag_custom_emoji_ready(tag.custom_emoji_url.as_deref(), &ready_urls),
+                true,
             )
         })
         .collect();
@@ -340,7 +341,12 @@ pub(in crate::tui::ui) fn thread_edit_tag_picker_list_layout(
     )
 }
 
-fn tag_line(tag: &ThreadEditTagView, width: usize, thumbnail_ready: bool) -> Line<'static> {
+pub(super) fn forum_tag_line(
+    tag: &ForumPostComposerTagView,
+    width: usize,
+    thumbnail_ready: bool,
+    dim_unselectable: bool,
+) -> Line<'static> {
     let marker = if tag.active { "▸" } else { " " };
     let checkbox = if tag.selected { "[x]" } else { "[ ]" };
     let emoji = tag_emoji_text(
@@ -351,7 +357,7 @@ fn tag_line(tag: &ThreadEditTagView, width: usize, thumbnail_ready: bool) -> Lin
     );
     let style = if tag.active {
         highlight_style()
-    } else if !tag.selectable {
+    } else if dim_unselectable && !tag.selectable {
         theme::current().style(theme::HighlightGroup::Disabled)
     } else {
         Style::default()
@@ -405,7 +411,7 @@ pub(super) fn tag_custom_emoji_ready(
     custom_emoji_url.is_some_and(|url| ready_urls.iter().any(|ready| ready == url))
 }
 
-fn tag_summary(tags: &[ThreadEditTagView], width: usize) -> String {
+pub(super) fn forum_tag_summary(tags: &[ForumPostComposerTagView], width: usize) -> String {
     if tags.is_empty() {
         return "None".to_owned();
     }

@@ -30,13 +30,7 @@ pub async fn prompt_login(
     auth_session: DiscordAuthSession,
 ) -> Result<String> {
     let mut terminal = ratatui::init();
-    let _restore_guard = match TerminalRestoreGuard::new() {
-        Ok(guard) => guard,
-        Err(error) => {
-            ratatui::restore();
-            return Err(error);
-        }
-    };
+    let _restore_guard = TerminalRestoreGuard::new();
     let mut state = LoginState::new(notice);
     let mut events = EventStream::new();
     let mut qr_handle: Option<QrHandle> = None;

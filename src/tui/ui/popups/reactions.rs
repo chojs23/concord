@@ -356,49 +356,8 @@ pub(in crate::tui::ui) fn reaction_users_list_layout(
     })
 }
 
-#[cfg(test)]
-pub(in crate::tui::ui) fn reaction_users_popup_lines(
-    popup: &ReactionUsersPopupState,
-    scroll: usize,
-    max_visible_lines: usize,
-    inner_width: usize,
-) -> Vec<Line<'static>> {
-    if popup.is_viewing_users() {
-        reaction_user_lines(popup, scroll, max_visible_lines, inner_width, |user| {
-            user.display_name.clone()
-        })
-    } else {
-        reaction_list_lines(
-            popup.entries(),
-            popup.list_selected(),
-            scroll,
-            max_visible_lines,
-            true,
-            &[],
-            inner_width,
-        )
-    }
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn reaction_list_lines_with_ready_urls(
-    popup: &ReactionUsersPopupState,
-    ready_urls: &[String],
-    inner_width: usize,
-) -> Vec<Line<'static>> {
-    reaction_list_lines(
-        popup.entries(),
-        popup.list_selected(),
-        popup.list_scroll(),
-        usize::MAX,
-        true,
-        ready_urls,
-        inner_width,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
-fn reaction_list_lines(
+pub(in crate::tui::ui) fn reaction_list_lines(
     entries: &[ReactionUsersEntry],
     selected: usize,
     scroll: usize,
@@ -428,7 +387,7 @@ fn reaction_list_lines(
             );
             let line = selected_row_line(
                 Line::from(vec![
-                    selectable_popup_marker(is_selected),
+                    selection_marker(is_selected),
                     Span::styled(format!("{cell} {}", entry.count()), style),
                 ]),
                 is_selected,
@@ -476,7 +435,7 @@ fn render_reaction_list_images(
     );
 }
 
-fn reaction_user_lines(
+pub(in crate::tui::ui) fn reaction_user_lines(
     popup: &ReactionUsersPopupState,
     scroll: usize,
     max_visible_lines: usize,
@@ -531,114 +490,18 @@ fn reaction_emoji_label(emoji: &crate::discord::ReactionEmoji, show_custom_emoji
     }
 }
 
-#[cfg(test)]
-pub(in crate::tui::ui) fn emoji_reaction_picker_lines(
-    reactions: &[EmojiReactionItem],
-    selected: usize,
-    max_visible_items: usize,
-    scroll: usize,
-    thumbnail_urls: &[String],
-) -> Vec<Line<'static>> {
-    emoji_reaction_picker_lines_with_custom_emoji_images(
-        reactions,
-        selected,
-        EmojiReactionPickerRenderOptions {
-            key_bindings: &crate::tui::keybindings::KeyBindings::default(),
-            max_visible_items,
-            scroll,
-            thumbnail_urls,
-            own_reactions: &[],
-            show_custom_emoji: true,
-            filter: None,
-            max_width: usize::MAX,
-        },
-    )
+pub(in crate::tui::ui) struct EmojiReactionPickerRenderOptions<'a> {
+    pub(in crate::tui::ui) key_bindings: &'a crate::tui::keybindings::KeyBindings,
+    pub(in crate::tui::ui) max_visible_items: usize,
+    pub(in crate::tui::ui) scroll: usize,
+    pub(in crate::tui::ui) thumbnail_urls: &'a [String],
+    pub(in crate::tui::ui) own_reactions: &'a [crate::discord::ReactionEmoji],
+    pub(in crate::tui::ui) show_custom_emoji: bool,
+    pub(in crate::tui::ui) filter: Option<&'a str>,
+    pub(in crate::tui::ui) max_width: usize,
 }
 
-#[cfg(test)]
-pub(in crate::tui::ui) fn emoji_reaction_picker_lines_for_width(
-    reactions: &[EmojiReactionItem],
-    selected: usize,
-    max_visible_items: usize,
-    thumbnail_urls: &[String],
-    width: usize,
-) -> Vec<Line<'static>> {
-    emoji_reaction_picker_lines_with_custom_emoji_images(
-        reactions,
-        selected,
-        EmojiReactionPickerRenderOptions {
-            key_bindings: &crate::tui::keybindings::KeyBindings::default(),
-            max_visible_items,
-            scroll: 0,
-            thumbnail_urls,
-            own_reactions: &[],
-            show_custom_emoji: true,
-            filter: None,
-            max_width: width,
-        },
-    )
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_own_reactions(
-    reactions: &[EmojiReactionItem],
-    own_reactions: &[crate::discord::ReactionEmoji],
-    selected: usize,
-    max_visible_items: usize,
-    thumbnail_urls: &[String],
-) -> Vec<Line<'static>> {
-    emoji_reaction_picker_lines_with_custom_emoji_images(
-        reactions,
-        selected,
-        EmojiReactionPickerRenderOptions {
-            key_bindings: &crate::tui::keybindings::KeyBindings::default(),
-            max_visible_items,
-            scroll: 0,
-            thumbnail_urls,
-            own_reactions,
-            show_custom_emoji: true,
-            filter: None,
-            max_width: usize::MAX,
-        },
-    )
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn filtered_emoji_reaction_picker_lines(
-    reactions: &[EmojiReactionItem],
-    selected: usize,
-    max_visible_items: usize,
-    thumbnail_urls: &[String],
-    filter: &str,
-) -> Vec<Line<'static>> {
-    emoji_reaction_picker_lines_with_custom_emoji_images(
-        reactions,
-        selected,
-        EmojiReactionPickerRenderOptions {
-            key_bindings: &crate::tui::keybindings::KeyBindings::default(),
-            max_visible_items,
-            scroll: 0,
-            thumbnail_urls,
-            own_reactions: &[],
-            show_custom_emoji: true,
-            filter: Some(filter),
-            max_width: usize::MAX,
-        },
-    )
-}
-
-struct EmojiReactionPickerRenderOptions<'a> {
-    key_bindings: &'a crate::tui::keybindings::KeyBindings,
-    max_visible_items: usize,
-    scroll: usize,
-    thumbnail_urls: &'a [String],
-    own_reactions: &'a [crate::discord::ReactionEmoji],
-    show_custom_emoji: bool,
-    filter: Option<&'a str>,
-    max_width: usize,
-}
-
-fn emoji_reaction_picker_lines_with_custom_emoji_images(
+pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_custom_emoji_images(
     reactions: &[EmojiReactionItem],
     selected: usize,
     options: EmojiReactionPickerRenderOptions<'_>,
@@ -671,7 +534,7 @@ fn emoji_reaction_picker_lines_with_custom_emoji_images(
                     .is_some_and(|url| options.thumbnail_urls.iter().any(|ready| ready == &url));
             selected_row_line(
                 Line::from(vec![
-                    selectable_popup_marker(is_selected),
+                    selection_marker(is_selected),
                     Span::styled(
                         shortcut,
                         theme::current().style(theme::HighlightGroup::Shortcut),

@@ -10,18 +10,16 @@ use crate::discord::{
 };
 use crate::logging;
 
+use super::message_viewport::MessageViewportAnchor;
 use super::popups::{ChannelActionMenuState, ModalPopup};
 use super::{
     ChannelPaneCursor, DashboardState, MINIMUM_ESTABLISHED_DM_MESSAGES, VoiceConnectionUiState,
 };
 
 struct EventViewportContext {
-    was_at_latest: bool,
-    was_following_cursor: bool,
+    anchor: MessageViewportAnchor,
     user_just_sent: bool,
     active_new_message: Option<(Id<ChannelMarker>, Id<MessageMarker>)>,
-    selected_message_id: Option<Id<MessageMarker>>,
-    scroll_message_id: Option<Id<MessageMarker>>,
     channel_cursor: Option<ChannelPaneCursor>,
 }
 
@@ -57,34 +55,10 @@ impl EventViewportContext {
         // Both modes share `message_auto_follow`. It means the next render
         // should align the viewport to the bottom. Auto-follow also jumps
         // the cursor.
-        let was_auto_follow = state.messages.message_auto_follow;
-        let was_at_latest = was_auto_follow || state.is_viewport_at_latest_message();
-        let was_cursor_on_last = state.cursor_on_last_message();
-        let was_following_cursor = was_at_latest && was_cursor_on_last;
-        let preserve_selection = !was_following_cursor;
-        let preserve_scroll = !(was_at_latest || was_following_cursor);
-
         Self {
-            was_at_latest,
-            was_following_cursor,
+            anchor: MessageViewportAnchor::capture(state),
             user_just_sent: state.event_is_self_message_in_active_channel(event),
             active_new_message: state.active_channel_message_create(event),
-            selected_message_id: preserve_selection
-                .then(|| {
-                    state
-                        .messages()
-                        .get(state.selected_message())
-                        .map(|message| message.id)
-                })
-                .flatten(),
-            scroll_message_id: preserve_scroll
-                .then(|| {
-                    state
-                        .messages()
-                        .get(state.messages.message_scroll)
-                        .map(|message| message.id)
-                })
-                .flatten(),
             channel_cursor: state.selected_channel_cursor(),
         }
     }
@@ -96,12 +70,15 @@ impl EventViewportContext {
         state.clear_missing_new_messages_marker();
 
         let in_message_view = state.message_pane_supports_auto_follow();
-        let should_follow = self.was_following_cursor && in_message_view;
-        let should_scroll = should_follow || (self.was_at_latest && in_message_view);
+        let should_follow = self.anchor.was_following_cursor && in_message_view;
+        let should_scroll = should_follow || (self.anchor.was_at_latest && in_message_view);
         if should_follow {
             state.follow_latest_message();
         } else {
-            state.restore_message_position(self.selected_message_id, self.scroll_message_id);
+            state.restore_message_position(
+                self.anchor.selected_message_id,
+                self.anchor.scroll_message_id,
+            );
         }
 
         if should_scroll {
@@ -120,7 +97,7 @@ impl EventViewportContext {
                 }
             }
         } else if in_message_view
-            && !self.was_at_latest
+            && !self.anchor.was_at_latest
             && !self.user_just_sent
             && state.messages.new_messages_marker_message_id.is_none()
         {
@@ -165,6 +142,10 @@ impl DashboardState {
             AppEvent::GatewayError { message } => {
                 logging::error("tui", message);
                 self.runtime.gateway_error = Some(message.clone());
+                self.show_error_toast(message, Instant::now());
+            }
+            AppEvent::RichPresenceWarning { message } => {
+                logging::error("tui", message);
                 self.show_error_toast(message, Instant::now());
             }
             AppEvent::CaptchaRequired { action } => {
@@ -608,41 +589,34 @@ impl DashboardState {
                 );
             }
             VoiceConnectionStatus::Disconnected => {
-                self.runtime.stream_capture_targets_request = None;
-                self.runtime.stream_playback_preparing = None;
-                self.runtime.active_stream_playback = None;
-                self.runtime.stream_broadcast_preparing = None;
-                self.runtime.active_stream_broadcast = None;
-                if self
-                    .runtime
-                    .voice_connection
-                    .is_some_and(|voice| voice.scope == scope)
-                {
-                    self.runtime.voice_connection = None;
-                }
+                self.clear_finished_voice_connection(scope);
                 self.show_success_toast(
                     message.as_deref().unwrap_or("Voice leave requested"),
                     Instant::now(),
                 );
             }
             VoiceConnectionStatus::Failed => {
-                self.runtime.stream_capture_targets_request = None;
-                self.runtime.stream_playback_preparing = None;
-                self.runtime.active_stream_playback = None;
-                self.runtime.stream_broadcast_preparing = None;
-                self.runtime.active_stream_broadcast = None;
-                if self
-                    .runtime
-                    .voice_connection
-                    .is_some_and(|voice| voice.scope == scope)
-                {
-                    self.runtime.voice_connection = None;
-                }
+                self.clear_finished_voice_connection(scope);
                 self.show_error_toast(
                     message.as_deref().unwrap_or("Voice request failed"),
                     Instant::now(),
                 );
             }
+        }
+    }
+
+    fn clear_finished_voice_connection(&mut self, scope: VoiceScope) {
+        self.runtime.stream_capture_targets_request = None;
+        self.runtime.stream_playback_preparing = None;
+        self.runtime.active_stream_playback = None;
+        self.runtime.stream_broadcast_preparing = None;
+        self.runtime.active_stream_broadcast = None;
+        if self
+            .runtime
+            .voice_connection
+            .is_some_and(|voice| voice.scope == scope)
+        {
+            self.runtime.voice_connection = None;
         }
     }
 

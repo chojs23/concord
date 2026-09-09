@@ -37,8 +37,8 @@ pub(in crate::tui::ui) fn render_message_confirmation(
 
     let lines = message_confirmation_lines(
         kind,
-        &author,
-        content.as_deref(),
+        author,
+        content,
         56,
         state.active_confirmation_button(),
     );
@@ -142,8 +142,8 @@ pub(in crate::tui::ui) fn message_confirmation_popup_area_for_state(
     let (kind, author, content) = state.message_confirmation_lines()?;
     let lines = message_confirmation_lines(
         kind,
-        &author,
-        content.as_deref(),
+        author,
+        content,
         56,
         state.active_confirmation_button(),
     );
@@ -192,58 +192,9 @@ pub(in crate::tui::ui) fn thread_delete_confirmation_popup_area_for_state(
     Some(thread_delete_confirmation_popup_area(area, lines.len()))
 }
 
-#[cfg(test)]
-pub(in crate::tui::ui) fn message_delete_confirmation_lines(
-    author: &str,
-    content: Option<&str>,
-    width: usize,
+pub(in crate::tui::ui) fn quit_confirmation_popup_lines(
+    active: ConfirmationButton,
 ) -> Vec<Line<'static>> {
-    message_confirmation_lines(
-        MessageConfirmationKind::Delete,
-        author,
-        content,
-        width,
-        ConfirmationButton::default(),
-    )
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn message_pin_confirmation_lines(
-    pinned: bool,
-    author: &str,
-    content: Option<&str>,
-    width: usize,
-) -> Vec<Line<'static>> {
-    message_confirmation_lines(
-        MessageConfirmationKind::Pin { pinned },
-        author,
-        content,
-        width,
-        ConfirmationButton::default(),
-    )
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn quit_confirmation_lines() -> Vec<Line<'static>> {
-    quit_confirmation_popup_lines(ConfirmationButton::default())
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn message_remove_embeds_confirmation_lines(
-    author: &str,
-    content: Option<&str>,
-    width: usize,
-) -> Vec<Line<'static>> {
-    message_confirmation_lines(
-        MessageConfirmationKind::RemoveEmbeds,
-        author,
-        content,
-        width,
-        ConfirmationButton::default(),
-    )
-}
-
-fn quit_confirmation_popup_lines(active: ConfirmationButton) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(Span::raw("Quit Concord?")),
         Line::from(Span::raw(String::new())),
@@ -305,7 +256,7 @@ fn confirmation_button_lines_with_labels(
     ]
 }
 
-fn long_message_confirmation_lines(
+pub(in crate::tui::ui) fn long_message_confirmation_lines(
     character_count: usize,
     character_limit: usize,
     active: ConfirmationButton,
@@ -325,18 +276,6 @@ fn long_message_confirmation_lines(
         "cancel",
     ));
     lines
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn long_message_confirmation_lines_for_test(
-    character_count: usize,
-    character_limit: usize,
-) -> Vec<Line<'static>> {
-    long_message_confirmation_lines(
-        character_count,
-        character_limit,
-        ConfirmationButton::default(),
-    )
 }
 
 fn notification_inbox_mark_all_confirmation_lines(
@@ -360,7 +299,7 @@ fn capitalize_first(value: &str) -> String {
     }
 }
 
-fn message_confirmation_lines(
+pub(in crate::tui::ui) fn message_confirmation_lines(
     kind: MessageConfirmationKind,
     author: &str,
     content: Option<&str>,

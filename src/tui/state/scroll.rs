@@ -71,6 +71,15 @@ impl VerticalScrollState {
         self.scroll = 0;
     }
 
+    pub(super) fn set_scroll(&mut self, scroll: usize) {
+        self.scroll = scroll;
+        self.clamp_scroll();
+    }
+
+    pub(super) fn scroll_to_bottom(&mut self) {
+        self.set_scroll(self.total_lines);
+    }
+
     pub(super) fn is_near_bottom(&self, threshold: usize) -> bool {
         self.scroll
             .saturating_add(self.view_height)

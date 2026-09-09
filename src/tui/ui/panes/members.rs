@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::state::{MemberRow, MemberRows};
 use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
 pub(in crate::tui::ui) fn render_members(
@@ -26,7 +27,6 @@ pub(in crate::tui::ui) fn render_members(
         .focused_member_selection_line_in_groups(&groups)
         .map(|line| line + state.member_scroll());
     let focused = state.focus() == FocusPane::Members;
-    let mut line_index = 0usize;
 
     if loading_members && groups.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -40,20 +40,23 @@ pub(in crate::tui::ui) fn render_members(
         )));
     }
 
-    for group in &groups {
-        if line_index > 0 {
-            if line_index >= scroll && line_index < visible_end {
-                lines.push(Line::from(""));
+    for (line_index, row) in MemberRows::new(state, &groups).enumerate() {
+        let visible = line_index >= scroll && line_index < visible_end;
+        match row {
+            MemberRow::Gap => {
+                if visible {
+                    lines.push(Line::from(""));
+                }
             }
-            line_index += 1;
-        }
-        if line_index >= scroll && line_index < visible_end {
-            lines.push(member_group_header(group, content_width));
-        }
-        line_index += 1;
-        for member in &group.entries {
-            let member = *member;
-            if line_index >= scroll && line_index < visible_end {
+            MemberRow::GroupHeader(group) => {
+                if visible {
+                    lines.push(member_group_header(group, content_width));
+                }
+            }
+            MemberRow::Member { entry: member, .. } => {
+                if !visible {
+                    continue;
+                }
                 let is_selected = focused && selected_line == Some(line_index);
                 let marker_style = selected_presence_style(is_selected, member.status());
                 let name_style =
@@ -94,31 +97,21 @@ pub(in crate::tui::ui) fn render_members(
                 }
                 lines.push(selected_row_line(line, is_selected));
             }
-            line_index += 1;
-
-            if !matches!(
-                member.status(),
-                PresenceStatus::Offline | PresenceStatus::Unknown
-            ) {
+            MemberRow::Activity { entry: member, .. } => {
                 let activities = state.user_activities(member.user_id());
-                if !activities.is_empty() {
-                    let h_scroll = state.member_horizontal_scroll();
-                    if line_index >= scroll
-                        && line_index < visible_end
-                        && let Some(render) = primary_activity_summary(activities, emoji_images)
-                    {
-                        let activity_line = compact_activity_line(
-                            render,
-                            activity_leading_width,
-                            activity_leading_width.saturating_add(max_name_width),
-                            h_scroll,
-                        );
-                        if let Some(image) = activity_line.image {
-                            emoji_line_urls.push((line_index, image.column, image.url));
-                        }
-                        lines.push(activity_line.line);
+                let h_scroll = state.member_horizontal_scroll();
+                if visible && let Some(render) = primary_activity_summary(activities, emoji_images)
+                {
+                    let activity_line = compact_activity_line(
+                        render,
+                        activity_leading_width,
+                        activity_leading_width.saturating_add(max_name_width),
+                        h_scroll,
+                    );
+                    if let Some(image) = activity_line.image {
+                        emoji_line_urls.push((line_index, image.column, image.url));
                     }
-                    line_index += 1;
+                    lines.push(activity_line.line);
                 }
             }
         }

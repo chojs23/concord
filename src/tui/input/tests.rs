@@ -25,7 +25,7 @@ use ratatui::layout::Rect;
 use super::{MouseClickTracker, handle_key, handle_mouse, handle_mouse_event, handle_paste};
 use crate::discord::AppCommand;
 use crate::{
-    config::{AppOptions, DisplayOptions, ImagePreviewQualityPreset, KeymapBinding, KeymapOptions},
+    config::{AppOptions, DisplayOptions, KeymapBinding, KeymapOptions},
     discord::{
         ActivityInfo, AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo,
         AttachmentDownloadId, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
@@ -33,12 +33,13 @@ use crate::{
         GuildMemberListOperation, GuildMemberListUpdateInfo, GuildNotificationSettingsInfo,
         MemberInfo, MessageInfo, MessageReferenceInfo, MessageSnapshotInfo,
         MicrophoneSensitivityDb, NotificationLevel, PollAnswerInfo, PollInfo, PresenceEventFields,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReadStateInfo, RoleInfo,
-        UserGuildSettingsInfo, UserSettingsInfo, VoiceConnectionStatus, VoiceVolumePercent,
+        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReadStateInfo, RichPresenceSelection,
+        RoleInfo, UserGuildSettingsInfo, UserSettingsInfo, VoiceConnectionStatus,
+        VoiceVolumePercent,
     },
     tui::state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
-        SelectablePopupTarget,
+        MessagePaneSource, SelectablePopupTarget,
     },
 };
 

@@ -18,7 +18,7 @@ use super::members::parse_member_info;
 use super::presence::parse_activities;
 use super::shared::{
     display_name_from_parts, display_name_from_parts_or_unknown, extra_fields, parse_id,
-    parse_status,
+    parse_id_array, parse_mute_config, parse_status,
 };
 
 pub(crate) fn parse_channel_info(
@@ -159,22 +159,6 @@ fn current_user_thread_member_payload<'a>(value: &'a Value, kind: &str) -> Optio
                 .get("thread_member")
                 .filter(|member| member.is_object())
         })
-}
-
-fn parse_thread_member_mute_end_time(value: &Value) -> Option<String> {
-    value
-        .get("mute_config")
-        .and_then(|config| config.get("end_time"))
-        .and_then(Value::as_str)
-        .filter(|end_time| !end_time.is_empty())
-        .map(str::to_owned)
-}
-
-fn parse_thread_member_selected_time_window(value: &Value) -> Option<i64> {
-    value
-        .get("mute_config")
-        .and_then(|config| config.get("selected_time_window"))
-        .and_then(Value::as_i64)
 }
 
 fn parse_thread_metadata(value: &Value) -> Option<ThreadMetadataInfo> {
@@ -512,6 +496,7 @@ pub(crate) fn parse_thread_member_info(
             activities: parse_activities(presence),
         })
     });
+    let (mute_end_time, selected_time_window) = parse_mute_config(value);
 
     Some(ThreadMemberInfo {
         thread_id,
@@ -522,8 +507,8 @@ pub(crate) fn parse_thread_member_info(
             .map(str::to_owned),
         flags: value.get("flags").and_then(Value::as_u64),
         muted: value.get("muted").and_then(Value::as_bool),
-        mute_end_time: parse_thread_member_mute_end_time(value),
-        selected_time_window: parse_thread_member_selected_time_window(value),
+        mute_end_time,
+        selected_time_window,
         member,
         presence,
         extra_fields: extra_fields(
@@ -541,11 +526,4 @@ pub(crate) fn parse_thread_member_info(
             ],
         ),
     })
-}
-
-fn parse_id_array<T>(value: Option<&Value>) -> Vec<Id<T>> {
-    value
-        .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(parse_id::<T>).collect())
-        .unwrap_or_default()
 }

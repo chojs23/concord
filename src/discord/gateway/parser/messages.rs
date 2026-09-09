@@ -21,7 +21,8 @@ use crate::{
 };
 
 use super::shared::{
-    display_name_from_parts_or_unknown, extra_fields, parse_id, parse_nonnegative_i64,
+    display_name_from_parts_or_unknown, extra_fields, parse_id, parse_id_array,
+    parse_nonnegative_i64,
 };
 
 pub(crate) fn parse_message_info(data: &Value) -> Option<MessageInfo> {
@@ -614,10 +615,7 @@ pub(super) fn parse_mentions(value: Option<&Value>) -> Vec<MentionInfo> {
 }
 
 fn parse_mention_roles(value: Option<&Value>) -> Vec<Id<RoleMarker>> {
-    value
-        .and_then(Value::as_array)
-        .map(|roles| roles.iter().filter_map(parse_id::<RoleMarker>).collect())
-        .unwrap_or_default()
+    parse_id_array(value)
 }
 
 fn parse_reactions(value: Option<&Value>) -> Vec<ReactionInfo> {

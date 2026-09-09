@@ -8,13 +8,13 @@ const SPS_NAL_TYPE: u8 = 7;
 const HIGH_PROFILE_IDS: [u8; 12] = [100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134];
 
 pub(super) fn normalize_annex_b_for_webrtc(frame: &mut Vec<u8>) -> Result<(), String> {
-    let nals = crate::discord::voice::media::annex_b_nals(frame);
-    if nals.is_empty() {
+    let mut nals = crate::discord::voice::media::annex_b_nals(frame).peekable();
+    if nals.peek().is_none() {
         return Err("H264 access unit contains no NAL units".to_owned());
     }
 
     let mut changed = false;
-    let mut normalized = Vec::with_capacity(nals.len());
+    let mut normalized = Vec::new();
     for nal in nals {
         if nal
             .first()
@@ -474,7 +474,9 @@ mod tests {
         normalize_annex_b_for_webrtc(&mut access_unit)
             .expect("VideoToolbox SPS should accept WebRTC VUI normalization");
         assert_eq!(
-            crate::discord::voice::media::annex_b_nals(&access_unit)[0],
+            crate::discord::voice::media::annex_b_nals(&access_unit)
+                .next()
+                .expect("normalized access unit should contain an SPS"),
             [
                 0x27, 0x42, 0xc0, 0x1f, 0xab, 0x40, 0x28, 0x02, 0xdd, 0x00, 0xda, 0x08, 0x84, 0x6a,
                 0x00,

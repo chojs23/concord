@@ -27,8 +27,11 @@ pub(super) fn parse_user_settings_info(settings: &Value) -> Option<UserSettingsI
     settings.as_object()?;
 
     Some(UserSettingsInfo {
-        activity_restricted_guild_ids: parse_id_list(settings, "activity_restricted_guild_ids"),
-        activity_joining_restricted_guild_ids: parse_id_list(
+        activity_restricted_guild_ids: parse_guild_id_list(
+            settings,
+            "activity_restricted_guild_ids",
+        ),
+        activity_joining_restricted_guild_ids: parse_guild_id_list(
             settings,
             "activity_joining_restricted_guild_ids",
         ),
@@ -70,7 +73,7 @@ pub(super) fn parse_user_settings_info(settings: &Value) -> Option<UserSettingsI
         passwordless: parse_bool_field(settings, "passwordless"),
         render_embeds: parse_bool_field(settings, "render_embeds"),
         render_reactions: parse_bool_field(settings, "render_reactions"),
-        restricted_guilds: parse_id_list(settings, "restricted_guilds"),
+        restricted_guilds: parse_guild_id_list(settings, "restricted_guilds"),
         show_current_game: parse_bool_field(settings, "show_current_game"),
         slayer_sdk_receive_dms_in_game: parse_u64_field(settings, "slayer_sdk_receive_dms_in_game"),
         soundboard_volume: settings.get("soundboard_volume").and_then(Value::as_f64),
@@ -135,7 +138,7 @@ fn parse_string_field(settings: &Value, field: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn parse_id_list(settings: &Value, field: &str) -> Option<Vec<Id<GuildMarker>>> {
+fn parse_guild_id_list(settings: &Value, field: &str) -> Option<Vec<Id<GuildMarker>>> {
     let values = settings.get(field)?.as_array()?;
     Some(values.iter().filter_map(parse_id::<GuildMarker>).collect())
 }

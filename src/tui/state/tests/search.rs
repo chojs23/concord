@@ -23,7 +23,7 @@ fn message_search_builds_query_and_jumps_to_selected_result() {
     let command = state
         .activate_search_popup()
         .expect("message search command");
-    let AppCommand::SearchMessages { query } = command else {
+    let AppCommand::SearchMessages { request_id, query } = command else {
         panic!("expected search command");
     };
     assert_eq!(query.guild_id, Some(Id::new(1)));
@@ -36,6 +36,7 @@ fn message_search_builds_query_and_jumps_to_selected_result() {
     result.author = "unknown".to_owned();
     result.content = Some("needle in a haystack".to_owned());
     state.push_event(AppEvent::MessageSearchLoaded {
+        request_id,
         page: MessageSearchPage {
             query,
             messages: vec![result],
@@ -135,7 +136,7 @@ fn message_search_suggestions_show_names_and_use_selected_ids() {
         assert!(view.suggestions.is_empty());
         assert_eq!(state.message_search_member_query(), None);
 
-        let AppCommand::SearchMessages { query } = run_search(&mut state) else {
+        let AppCommand::SearchMessages { query, .. } = run_search(&mut state) else {
             panic!("expected search command");
         };
         assert_eq!(query.author_id, Some(Id::new(20)));
@@ -160,7 +161,7 @@ fn message_search_suggestions_show_names_and_use_selected_ids() {
         assert_eq!(view.fields[4].value, "Sammy");
         assert_eq!(state.message_search_member_query(), None);
 
-        let AppCommand::SearchMessages { query } = run_search(&mut state) else {
+        let AppCommand::SearchMessages { query, .. } = run_search(&mut state) else {
             panic!("expected search command");
         };
         assert_eq!(query.mentions_user_id, Some(Id::new(21)));
@@ -183,7 +184,7 @@ fn message_search_suggestions_show_names_and_use_selected_ids() {
         let view = state.search_popup_view().expect("search popup view");
         assert_eq!(view.fields[2].value, "general");
 
-        let AppCommand::SearchMessages { query } = run_search(&mut state) else {
+        let AppCommand::SearchMessages { query, .. } = run_search(&mut state) else {
             panic!("expected search command");
         };
         assert_eq!(query.channel_id, Some(Id::new(2)));
@@ -385,7 +386,7 @@ fn message_search_builds_advanced_filter_query() {
     cycle_search_field(&mut state, 1);
     type_search_text(&mut state, "y");
 
-    let AppCommand::SearchMessages { query } = run_search(&mut state) else {
+    let AppCommand::SearchMessages { query, .. } = run_search(&mut state) else {
         panic!("expected search command");
     };
     assert_eq!(
@@ -431,6 +432,67 @@ fn message_search_rejects_invalid_filters_before_backend_command() {
             "input {value:?}"
         );
     }
+}
+
+#[test]
+fn message_search_ignores_responses_from_a_previous_popup_request() {
+    let mut state = state_with_writable_channel();
+    state.open_search_popup_for_focus(FocusPane::Messages);
+    type_search_text(&mut state, "needle");
+    let AppCommand::SearchMessages {
+        request_id: stale_request_id,
+        query: stale_query,
+    } = run_search(&mut state)
+    else {
+        panic!("expected search command");
+    };
+
+    state.close_search_popup();
+    state.open_search_popup_for_focus(FocusPane::Messages);
+    type_search_text(&mut state, "needle");
+    let AppCommand::SearchMessages {
+        request_id: current_request_id,
+        query: current_query,
+    } = run_search(&mut state)
+    else {
+        panic!("expected search command");
+    };
+    assert_ne!(stale_request_id, current_request_id);
+
+    state.push_event(AppEvent::MessageSearchLoadFailed {
+        request_id: stale_request_id,
+        query: stale_query.clone(),
+        message: "stale failure".to_owned(),
+    });
+    state.push_event(AppEvent::MessageSearchLoaded {
+        request_id: stale_request_id,
+        page: MessageSearchPage {
+            query: stale_query,
+            messages: vec![message_info(Id::new(2), 90)],
+            total_results: Some(1),
+            has_more: false,
+        },
+    });
+
+    let view = state.search_popup_view().expect("search popup view");
+    assert!(view.loading);
+    assert!(view.results.is_empty());
+    assert_eq!(view.error, None);
+    assert!(state.toast_message().is_none());
+
+    state.push_event(AppEvent::MessageSearchLoaded {
+        request_id: current_request_id,
+        page: MessageSearchPage {
+            query: current_query,
+            messages: vec![message_info(Id::new(2), 91)],
+            total_results: Some(1),
+            has_more: false,
+        },
+    });
+
+    let view = state.search_popup_view().expect("search popup view");
+    assert!(!view.loading);
+    assert_eq!(view.results.len(), 1);
 }
 
 #[test]

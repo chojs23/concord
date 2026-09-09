@@ -7,7 +7,10 @@ use crate::discord::PollInfo;
 use crate::tui::text::{RenderedText, truncate_display_width, truncate_text};
 use crate::tui::theme;
 
-use super::{MessageContentLine, wrap_rendered_text_lines_with_loaded_custom_emoji_urls};
+use super::{
+    MessageContentLine, prefix_message_content_line_with_style,
+    wrap_rendered_text_lines_with_loaded_custom_emoji_urls,
+};
 
 pub(super) fn format_poll_lines(
     poll: &PollInfo,
@@ -102,26 +105,10 @@ fn poll_box_line(mut line: MessageContentLine, inner_width: usize) -> MessageCon
     let prefix = "│ ";
     let suffix = " │";
     let padding = inner_width.saturating_sub(line.text.width());
-    let shift = prefix.len();
-    for highlight in &mut line.text_highlights {
-        highlight.start = highlight.start.saturating_add(shift);
-        highlight.end = highlight.end.saturating_add(shift);
-    }
-    for styled_prefix in &mut line.styled_prefixes {
-        styled_prefix.start = styled_prefix.start.saturating_add(shift);
-    }
-    for slot in &mut line.image_slots {
-        slot.byte_start = slot.byte_start.saturating_add(shift);
-        slot.col = slot.col.saturating_add(prefix.width() as u16);
-    }
-    line.text = format!("{prefix}{}{}{suffix}", line.text, " ".repeat(padding));
     let border_style = theme::current().style(theme::HighlightGroup::Border);
-    line.styled_range(0, prefix.len(), border_style);
-    line.styled_range(
-        line.text.len().saturating_sub(suffix.len()),
-        suffix.len(),
-        border_style,
-    );
+    line.text.push_str(&" ".repeat(padding));
+    line = prefix_message_content_line_with_style(prefix, border_style, line);
+    line.append_styled_suffix(suffix, border_style);
     line
 }
 

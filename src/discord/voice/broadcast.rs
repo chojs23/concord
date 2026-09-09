@@ -364,10 +364,6 @@ impl StreamBroadcastRuntimeState {
                     self.clear_matching(stream_key, &mut update, false);
                 }
             }
-            #[cfg(test)]
-            VoiceRuntimeEvent::BroadcastStreamCancelled { stream_key } => {
-                self.clear_matching(stream_key, &mut update, false);
-            }
             VoiceRuntimeEvent::BroadcastStreamStopRequested { stream_key } => {
                 self.clear_matching(stream_key, &mut update, true);
                 if update.close_stream_key.is_none() {
@@ -767,7 +763,13 @@ async fn connect_stream_broadcast(
                 let value: Value = serde_json::from_str(&text)
                     .map_err(|error| format!("broadcast websocket JSON parse failed: {error}"))?;
                 gateway_control.record_sequence(&value).await;
-                let opcode = value.get("op").and_then(Value::as_u64).unwrap_or_default() as u8;
+                let Some(opcode) = gateway::voice_gateway_opcode(&value) else {
+                    logging::debug(
+                        "stream",
+                        "ignored broadcast gateway payload with invalid opcode",
+                    );
+                    continue;
+                };
                 match opcode {
                     VOICE_OP_READY => {
                         let ready = gateway::parse_voice_ready_payload(&value)?;
@@ -2649,25 +2651,6 @@ mod tests {
     }
 
     #[test]
-    fn broadcast_runtime_pending_cancel_ends_preparing_once() {
-        let request = request();
-        let mut state = StreamBroadcastRuntimeState::default();
-        state.apply(&VoiceRuntimeEvent::BroadcastStreamRequested(
-            request.clone(),
-        ));
-
-        let cancelled = state.apply(&VoiceRuntimeEvent::BroadcastStreamCancelled {
-            stream_key: request.stream_key.clone(),
-        });
-        assert_eq!(cancelled.broadcast_ended, Some(request.clone()));
-
-        let repeated = state.apply(&VoiceRuntimeEvent::BroadcastStreamCancelled {
-            stream_key: request.stream_key,
-        });
-        assert!(repeated.broadcast_ended.is_none());
-    }
-
-    #[test]
     fn capture_failure_reports_error_and_ends_the_preparing_broadcast() {
         let request = request();
         let mut state = StreamBroadcastRuntimeState::default();
@@ -2685,8 +2668,15 @@ mod tests {
             failed.error.as_deref(),
             Some("Could not broadcast stream: PipeWire format negotiation failed")
         );
-        assert_eq!(failed.broadcast_ended, Some(request));
+        assert_eq!(failed.broadcast_ended, Some(request.clone()));
         assert!(state.requested.is_none());
+
+        let repeated = state.apply(&VoiceRuntimeEvent::BroadcastStreamCaptureFailed {
+            request_id: 1,
+            stream_key: request.stream_key,
+            error: "PipeWire format negotiation failed".to_owned(),
+        });
+        assert!(repeated.broadcast_ended.is_none());
     }
 
     #[test]

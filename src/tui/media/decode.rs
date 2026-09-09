@@ -18,19 +18,42 @@ use super::{
     work::{MediaWorkError, MediaWorkResult, media_image_job_permits, media_image_work_permits},
 };
 
-const MAX_SHARED_DECODED_MEDIA_IMAGES: usize = 64;
-const MAX_SHARED_DECODED_MEDIA_BYTES: u64 = 256 * 1024 * 1024;
+/// The surface caches hold clones of these images, and `DecodedMediaImage`
+/// shares its frames through an `Arc`, so this cache is what actually pins
+/// decoded pixels in memory: an entry here keeps them alive long after the
+/// preview that asked for them scrolled away. It was the largest single store
+/// in the client.
+const MAX_SHARED_DECODED_MEDIA_IMAGES: usize = 32;
+const MAX_SHARED_DECODED_MEDIA_BYTES: u64 = 128 * 1024 * 1024;
 pub(super) const MAX_DECODED_IMAGE_WIDTH: u32 = 4096;
 pub(super) const MAX_DECODED_IMAGE_HEIGHT: u32 = 4096;
 const MAX_DECODED_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ANIMATION_SOURCE_FRAMES: usize = 4096;
 pub(super) const MAX_RETAINED_ANIMATION_FRAMES: usize = 32;
+/// Total decoded pixel work accepted from one raster animation. This is larger
+/// than the retained-frame budget because decoded frames are compacted as they
+/// arrive. Animations that exceed this work budget fall back to their first
+/// frame instead of presenting an incomplete prefix as a valid loop.
 const MAX_ANIMATION_DECODE_WORK_BYTES: u64 = 256 * 1024 * 1024;
 pub(super) const MAX_LOTTIE_JSON_BYTES: usize = 1024 * 1024;
 const MIN_ANIMATION_FRAME_DELAY: Duration = Duration::from_millis(50);
 const MAX_UNDERSPECIFIED_FRAME_DELAY: Duration = Duration::from_millis(10);
 const DEFAULT_UNDERSPECIFIED_FRAME_DELAY: Duration = Duration::from_millis(100);
 const MAX_ANIMATION_FRAME_DELAY: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::tui) struct SharedMediaCacheStats {
+    pub(in crate::tui) ready: usize,
+    pub(in crate::tui) ready_limit: usize,
+    pub(in crate::tui) ready_decoded_bytes: u64,
+    pub(in crate::tui) decoded_byte_budget: u64,
+    pub(in crate::tui) decoding: usize,
+    pub(in crate::tui) pending_requests: usize,
+    pub(in crate::tui) retry_pending: usize,
+    /// Source bytes held while decoding. Worker jobs can share the same `Arc`,
+    /// so this value is cache ownership rather than additive process memory.
+    pub(in crate::tui) retained_source_bytes: u64,
+}
 
 struct DecodedMediaFrame {
     image: Arc<DynamicImage>,
@@ -107,6 +130,15 @@ impl DecodedMediaImage {
         self.retained_bytes
     }
 
+    pub(in crate::tui) fn fresh_playback(&self) -> Self {
+        Self {
+            frames: self.frames.clone(),
+            retained_bytes: self.retained_bytes,
+            current_frame_index: 0,
+            next_frame_deadline: None,
+        }
+    }
+
     pub(in crate::tui) fn start_animation(&mut self, now: Instant) {
         if !self.is_animated() || self.next_frame_deadline.is_some() {
             return;
@@ -157,8 +189,8 @@ pub(in crate::tui) enum MediaImageDecodeKey {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::tui) struct MediaImageDecodeRequest {
-    pub(super) key: MediaImageDecodeKey,
-    pub(super) generation: u64,
+    pub(in crate::tui) key: MediaImageDecodeKey,
+    pub(in crate::tui) generation: u64,
 }
 
 pub(in crate::tui) struct MediaImageDecodeJob {
@@ -184,7 +216,9 @@ pub(in crate::tui) struct MediaImageDecodeCache {
 
 enum SharedDecodeEntry {
     Decoding {
+        bytes: Arc<[u8]>,
         requests: Vec<MediaImageDecodeRequest>,
+        retry_pending: bool,
     },
     Ready {
         image: DecodedMediaImage,
@@ -220,8 +254,14 @@ impl MediaImageDecodeCache {
 
         let tick = self.next_tick();
         match self.entries.get_mut(url) {
-            Some(SharedDecodeEntry::Decoding { requests: pending }) => {
-                pending.extend(requests);
+            Some(SharedDecodeEntry::Decoding {
+                requests: pending, ..
+            }) => {
+                let new_requests = requests
+                    .into_iter()
+                    .filter(|request| !pending.contains(request))
+                    .collect::<Vec<_>>();
+                pending.extend(new_requests);
                 MediaImageDecodeRequestOutcome {
                     job: None,
                     deliveries: Vec::new(),
@@ -235,13 +275,20 @@ impl MediaImageDecodeCache {
                 }
             }
             None => {
-                self.entries
-                    .insert(url.to_owned(), SharedDecodeEntry::Decoding { requests });
+                let bytes: Arc<[u8]> = Arc::from(bytes.to_vec());
+                self.entries.insert(
+                    url.to_owned(),
+                    SharedDecodeEntry::Decoding {
+                        bytes: bytes.clone(),
+                        requests,
+                        retry_pending: false,
+                    },
+                );
                 self.prune_ready_to_limit();
                 MediaImageDecodeRequestOutcome {
                     job: Some(MediaImageDecodeJob {
                         url: url.to_owned(),
-                        bytes: Arc::from(bytes.to_vec()),
+                        bytes,
                     }),
                     deliveries: Vec::new(),
                 }
@@ -252,11 +299,35 @@ impl MediaImageDecodeCache {
     pub(in crate::tui) fn complete(
         &mut self,
         completed: MediaImageDecodeResult,
-    ) -> Vec<MediaImageDecodeDelivery> {
+    ) -> MediaImageDecodeRequestOutcome {
+        if matches!(completed.result, Err(MediaWorkError::Busy)) {
+            let has_consumers = match self.entries.get_mut(&completed.url) {
+                Some(SharedDecodeEntry::Decoding {
+                    requests,
+                    retry_pending,
+                    ..
+                }) => {
+                    *retry_pending = true;
+                    !requests.is_empty()
+                }
+                _ => false,
+            };
+            if !has_consumers {
+                self.entries.remove(&completed.url);
+            }
+            return MediaImageDecodeRequestOutcome {
+                job: None,
+                deliveries: Vec::new(),
+            };
+        }
+
         let Some(SharedDecodeEntry::Decoding { requests, .. }) =
             self.entries.remove(&completed.url)
         else {
-            return Vec::new();
+            return MediaImageDecodeRequestOutcome {
+                job: None,
+                deliveries: Vec::new(),
+            };
         };
 
         if let Ok(image) = &completed.result {
@@ -271,7 +342,134 @@ impl MediaImageDecodeCache {
             self.prune_ready_to_limit();
         }
 
-        deliveries_for_requests(requests, completed.result)
+        MediaImageDecodeRequestOutcome {
+            job: None,
+            deliveries: deliveries_for_requests(requests, completed.result),
+        }
+    }
+
+    pub(in crate::tui) fn get(&mut self, url: &str) -> Option<DecodedMediaImage> {
+        let tick = self.next_tick();
+        let SharedDecodeEntry::Ready { image, last_used } = self.entries.get_mut(url)? else {
+            return None;
+        };
+        *last_used = tick;
+        Some(image.fresh_playback())
+    }
+
+    pub(in crate::tui) fn is_decoding(&self, url: &str) -> bool {
+        matches!(
+            self.entries.get(url),
+            Some(SharedDecodeEntry::Decoding { .. })
+        )
+    }
+
+    pub(in crate::tui) fn retain_requests(
+        &mut self,
+        mut retain: impl FnMut(&MediaImageDecodeRequest) -> bool,
+    ) -> Vec<String> {
+        let mut retired = Vec::new();
+        self.entries.retain(|url, entry| {
+            if let SharedDecodeEntry::Decoding {
+                requests,
+                retry_pending,
+                ..
+            } = entry
+            {
+                requests.retain(&mut retain);
+                if requests.is_empty() && *retry_pending {
+                    retired.push(url.clone());
+                    return false;
+                }
+            }
+            true
+        });
+        retired
+    }
+
+    pub(in crate::tui) fn take_retry_jobs(
+        &mut self,
+        visible_urls: &[String],
+        max_jobs: usize,
+    ) -> Vec<MediaImageDecodeJob> {
+        let visible = visible_urls
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let mut retry_urls = self
+            .entries
+            .iter()
+            .filter_map(|(url, entry)| match entry {
+                SharedDecodeEntry::Decoding {
+                    retry_pending: true,
+                    ..
+                } => Some((!visible.contains(url), url.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        retry_urls.sort();
+        retry_urls
+            .into_iter()
+            .take(max_jobs)
+            .filter_map(|(_, url)| {
+                let SharedDecodeEntry::Decoding {
+                    bytes,
+                    retry_pending,
+                    ..
+                } = self.entries.get_mut(&url)?
+                else {
+                    return None;
+                };
+                *retry_pending = false;
+                Some(MediaImageDecodeJob {
+                    url,
+                    bytes: bytes.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// Ready entries and the decoded bytes they pin. These are the same `Arc`
+    /// buffers the surface caches report, counted once here.
+    pub(in crate::tui) fn retained_stats(&self) -> (usize, u64) {
+        self.entries
+            .values()
+            .fold((0, 0), |(count, bytes), entry| match entry {
+                SharedDecodeEntry::Ready { image, .. } => {
+                    (count + 1, bytes.saturating_add(image.retained_bytes()))
+                }
+                SharedDecodeEntry::Decoding { .. } => (count, bytes),
+            })
+    }
+
+    pub(in crate::tui) fn diagnostics(&self) -> SharedMediaCacheStats {
+        let mut stats = SharedMediaCacheStats {
+            ready_limit: MAX_SHARED_DECODED_MEDIA_IMAGES,
+            decoded_byte_budget: MAX_SHARED_DECODED_MEDIA_BYTES,
+            ..SharedMediaCacheStats::default()
+        };
+        for entry in self.entries.values() {
+            match entry {
+                SharedDecodeEntry::Ready { image, .. } => {
+                    stats.ready += 1;
+                    stats.ready_decoded_bytes = stats
+                        .ready_decoded_bytes
+                        .saturating_add(image.retained_bytes());
+                }
+                SharedDecodeEntry::Decoding {
+                    bytes,
+                    requests,
+                    retry_pending,
+                } => {
+                    stats.decoding += 1;
+                    stats.pending_requests = stats.pending_requests.saturating_add(requests.len());
+                    stats.retry_pending += usize::from(*retry_pending);
+                    stats.retained_source_bytes = stats
+                        .retained_source_bytes
+                        .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+                }
+            }
+        }
+        stats
     }
 
     fn next_tick(&mut self) -> u64 {
@@ -582,12 +780,28 @@ fn lottie_frame_delay(duration_seconds: f32, retained_frame_count: usize) -> Dur
 }
 
 fn decode_gif_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
+    decode_gif_animation_with_limits(
+        bytes,
+        MAX_ANIMATION_SOURCE_FRAMES,
+        MAX_ANIMATION_DECODE_WORK_BYTES,
+    )
+}
+
+pub(super) fn decode_gif_animation_with_limits(
+    bytes: &[u8],
+    max_source_frames: usize,
+    max_decode_work_bytes: u64,
+) -> std::result::Result<DecodedMediaImage, String> {
     let mut decoder =
         GifDecoder::new(Cursor::new(bytes)).map_err(|error| format!("decode failed: {error}"))?;
     decoder
         .set_limits(decode_limits())
         .map_err(|error| format!("decode failed: {error}"))?;
-    decode_animation_frames(decoder.into_frames())
+    decode_animation_frames_with_limits(
+        decoder.into_frames(),
+        max_source_frames,
+        max_decode_work_bytes,
+    )
 }
 
 fn decode_webp_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
@@ -623,12 +837,29 @@ fn decode_png_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, 
 fn decode_animation_frames(
     frames: impl Iterator<Item = image::ImageResult<Frame>>,
 ) -> std::result::Result<DecodedMediaImage, String> {
+    decode_animation_frames_with_limits(
+        frames,
+        MAX_ANIMATION_SOURCE_FRAMES,
+        MAX_ANIMATION_DECODE_WORK_BYTES,
+    )
+}
+
+fn decode_animation_frames_with_limits(
+    frames: impl Iterator<Item = image::ImageResult<Frame>>,
+    max_source_frames: usize,
+    max_decode_work_bytes: u64,
+) -> std::result::Result<DecodedMediaImage, String> {
     let mut sampled_frames = Vec::new();
     let mut retained_bytes = 0u64;
     let mut decode_work_bytes = 0u64;
     let mut source_frame_count = 0usize;
 
-    for (frame_index, result) in frames.take(MAX_ANIMATION_SOURCE_FRAMES).enumerate() {
+    // Read one frame past the source limit so an oversized animation cannot be
+    // mistaken for a complete animation that happens to end at the limit.
+    for (frame_index, result) in frames.take(max_source_frames.saturating_add(1)).enumerate() {
+        if frame_index >= max_source_frames {
+            return first_sampled_frame_fallback(sampled_frames);
+        }
         let frame = result.map_err(|error| {
             format!(
                 "decode failed at animation frame {}: {error}",
@@ -639,9 +870,9 @@ fn decode_animation_frames(
 
         let frame_bytes = u64::try_from(frame.buffer().as_raw().len()).unwrap_or(u64::MAX);
         if frame_bytes > MAX_DECODED_IMAGE_BYTES
-            || decode_work_bytes.saturating_add(frame_bytes) > MAX_ANIMATION_DECODE_WORK_BYTES
+            || decode_work_bytes.saturating_add(frame_bytes) > max_decode_work_bytes
         {
-            return finish_sampled_animation(sampled_frames, source_frame_count);
+            return first_sampled_frame_fallback(sampled_frames);
         }
 
         decode_work_bytes = decode_work_bytes.saturating_add(frame_bytes);
@@ -660,6 +891,16 @@ fn decode_animation_frames(
     }
 
     finish_sampled_animation(sampled_frames, source_frame_count)
+}
+
+fn first_sampled_frame_fallback(
+    frames: Vec<SampledAnimationFrame>,
+) -> std::result::Result<DecodedMediaImage, String> {
+    frames
+        .into_iter()
+        .next()
+        .map(|sample| DecodedMediaImage::still(Arc::unwrap_or_clone(sample.frame.image)))
+        .ok_or_else(|| "decode failed: animated image has no frames".to_owned())
 }
 
 fn finish_sampled_animation(
@@ -825,4 +1066,69 @@ fn decode_limits() -> Limits {
     limits.max_image_height = Some(MAX_DECODED_IMAGE_HEIGHT);
     limits.max_alloc = Some(MAX_DECODED_IMAGE_BYTES);
     limits
+}
+
+#[cfg(test)]
+mod shared_cache_tests {
+    use super::*;
+
+    fn avatar_request(generation: u64) -> MediaImageDecodeRequest {
+        MediaImageDecodeRequest {
+            key: MediaImageDecodeKey::Avatar(format!("avatar-{generation}")),
+            generation,
+        }
+    }
+
+    #[test]
+    fn consumerless_busy_decode_releases_source_bytes_without_retrying() {
+        let url = "https://cdn.discordapp.com/avatar.png";
+        let source = [1, 2, 3, 4];
+        let mut cache = MediaImageDecodeCache::new();
+        assert!(
+            cache
+                .request(url, &source, vec![avatar_request(1)])
+                .job
+                .is_some()
+        );
+        cache.complete(MediaImageDecodeResult {
+            url: url.to_owned(),
+            result: Err(MediaWorkError::Busy),
+        });
+
+        let retired = cache.retain_requests(|_| false);
+
+        assert_eq!(retired, [url.to_owned()]);
+        assert!(!cache.is_decoding(url));
+        assert_eq!(cache.diagnostics().retained_source_bytes, 0);
+        assert!(cache.take_retry_jobs(&[], 1).is_empty());
+    }
+
+    #[test]
+    fn consumerless_running_decode_stays_deduped_until_completion() {
+        let url = "https://cdn.discordapp.com/avatar.png";
+        let mut cache = MediaImageDecodeCache::new();
+        assert!(
+            cache
+                .request(url, &[1, 2, 3, 4], vec![avatar_request(1)])
+                .job
+                .is_some()
+        );
+
+        assert!(cache.retain_requests(|_| false).is_empty());
+        assert!(cache.is_decoding(url));
+        assert!(
+            cache
+                .request(url, &[], vec![avatar_request(2)])
+                .job
+                .is_none()
+        );
+
+        let completed = cache.complete(MediaImageDecodeResult {
+            url: url.to_owned(),
+            result: Ok(DecodedMediaImage::still(DynamicImage::new_rgba8(1, 1))),
+        });
+        assert_eq!(completed.deliveries.len(), 1);
+        assert_eq!(completed.deliveries[0].generation, 2);
+        assert!(!cache.is_decoding(url));
+    }
 }

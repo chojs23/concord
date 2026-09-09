@@ -17,6 +17,7 @@ use crate::tui::theme;
 use crate::tui::ui::thread_card::{thread_card_lines, thread_card_width_in_message};
 
 use super::components::{ComponentFormatContext, format_component_lines};
+use super::embed::EmbedFormatContext;
 use super::polls::format_poll_result_lines;
 use super::{
     MessageContentLine, display_text_with_stickers, format_attachment_summary_lines,
@@ -275,11 +276,13 @@ pub(super) fn format_forwarded_snapshot(
         lines.extend(
             format_embed_lines(
                 &snapshot.embeds,
-                snapshot.content.as_deref(),
-                state.show_custom_emoji(),
-                state.hour_format_24(),
-                width.saturating_sub(2).max(1),
-                loaded_custom_emoji_urls,
+                &EmbedFormatContext {
+                    message_content: snapshot.content.as_deref(),
+                    show_custom_emoji: state.show_custom_emoji(),
+                    hour_format_24: state.hour_format_24(),
+                    width: width.saturating_sub(2).max(1),
+                    loaded_custom_emoji_urls,
+                },
             )
             .into_iter()
             .map(|line| prefix_message_content_line_without_underline("│ ", line)),

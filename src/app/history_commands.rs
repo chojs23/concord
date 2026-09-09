@@ -349,11 +349,15 @@ pub(super) async fn load_archived_threads(
     }
 }
 
-pub(super) async fn search_messages(client: DiscordClient, query: MessageSearchQuery) {
+pub(super) async fn search_messages(
+    client: DiscordClient,
+    request_id: u64,
+    query: MessageSearchQuery,
+) {
     match client.search_messages(query.clone()).await {
         Ok(page) => {
             client
-                .publish_event(AppEvent::MessageSearchLoaded { page })
+                .publish_event(AppEvent::MessageSearchLoaded { request_id, page })
                 .await;
         }
         Err(error) => {
@@ -367,7 +371,11 @@ pub(super) async fn search_messages(client: DiscordClient, query: MessageSearchQ
                 ),
             );
             client
-                .publish_event(AppEvent::MessageSearchLoadFailed { query, message })
+                .publish_event(AppEvent::MessageSearchLoadFailed {
+                    request_id,
+                    query,
+                    message,
+                })
                 .await;
         }
     }

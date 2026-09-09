@@ -273,7 +273,7 @@ fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Lin
         .map(|label| format!("{label} / "))
         .unwrap_or_default();
     let mut spans = vec![
-        selectable_popup_marker(selected),
+        selection_marker(selected),
         Span::raw(indent),
         Span::styled(
             parent,

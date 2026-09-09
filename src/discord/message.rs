@@ -761,32 +761,7 @@ impl AttachmentInfo {
     }
 
     pub fn media_type(&self) -> Option<AttachmentMediaType> {
-        if let Some(content_type) = self.content_type.as_deref() {
-            if content_type.starts_with("image/") {
-                return Some(AttachmentMediaType::Image);
-            } else if content_type.starts_with("video/") {
-                return Some(AttachmentMediaType::Video);
-            } else if content_type.starts_with("audio/") {
-                return Some(AttachmentMediaType::Audio);
-            }
-        }
-
-        if filename_has_extension(
-            &self.filename,
-            &["avif", "gif", "jpeg", "jpg", "png", "webp"],
-        ) {
-            return Some(AttachmentMediaType::Image);
-        }
-        if filename_has_extension(&self.filename, &["m4v", "mov", "mp4", "webm"]) {
-            return Some(AttachmentMediaType::Video);
-        }
-        if filename_has_extension(
-            &self.filename,
-            &["mp3", "m4a", "opus", "ogg", "flac", "wav", "aiff"],
-        ) {
-            return Some(AttachmentMediaType::Audio);
-        }
-        None
+        media_type_from(self.content_type.as_deref(), &self.filename)
     }
 
     pub fn inline_preview_url(&self) -> Option<&str> {
@@ -940,30 +915,7 @@ impl ComponentMediaInfo {
     }
 
     pub(crate) fn media_type(&self) -> Option<AttachmentMediaType> {
-        if let Some(content_type) = self.content_type.as_deref() {
-            if content_type.starts_with("image/") {
-                return Some(AttachmentMediaType::Image);
-            } else if content_type.starts_with("video/") {
-                return Some(AttachmentMediaType::Video);
-            } else if content_type.starts_with("audio/") {
-                return Some(AttachmentMediaType::Audio);
-            }
-        }
-
-        let filename = self.display_filename();
-        if filename_has_extension(filename, &["avif", "gif", "jpeg", "jpg", "png", "webp"]) {
-            return Some(AttachmentMediaType::Image);
-        }
-        if filename_has_extension(filename, &["m4v", "mov", "mp4", "webm"]) {
-            return Some(AttachmentMediaType::Video);
-        }
-        if filename_has_extension(
-            filename,
-            &["mp3", "m4a", "opus", "ogg", "flac", "wav", "aiff"],
-        ) {
-            return Some(AttachmentMediaType::Audio);
-        }
-        None
+        media_type_from(self.content_type.as_deref(), self.display_filename())
     }
 
     fn inline_preview_info<'a>(
@@ -1304,6 +1256,34 @@ fn media_is_animated(flags: u64, filename: &str, url: &str) -> bool {
     flags & MEDIA_FLAG_IS_ANIMATED != 0 || media_name_is_animated(filename, url)
 }
 
+fn media_type_from(content_type: Option<&str>, filename: &str) -> Option<AttachmentMediaType> {
+    if let Some(content_type) = content_type {
+        if content_type.starts_with("image/") {
+            return Some(AttachmentMediaType::Image);
+        }
+        if content_type.starts_with("video/") {
+            return Some(AttachmentMediaType::Video);
+        }
+        if content_type.starts_with("audio/") {
+            return Some(AttachmentMediaType::Audio);
+        }
+    }
+
+    if filename_has_extension(filename, &["avif", "gif", "jpeg", "jpg", "png", "webp"]) {
+        return Some(AttachmentMediaType::Image);
+    }
+    if filename_has_extension(filename, &["m4v", "mov", "mp4", "webm"]) {
+        return Some(AttachmentMediaType::Video);
+    }
+    if filename_has_extension(
+        filename,
+        &["mp3", "m4a", "opus", "ogg", "flac", "wav", "aiff"],
+    ) {
+        return Some(AttachmentMediaType::Audio);
+    }
+    None
+}
+
 fn component_media_is_animated(flags: u64, filename: &str, url: &str) -> bool {
     // Discord's public app docs and user-client payload docs expose different
     // bit positions for this received field, so accept both representations.
@@ -1337,51 +1317,44 @@ mod tests {
     use crate::discord::ids::Id;
 
     #[test]
-    fn raster_guild_sticker_builds_media_proxy_preview_url() {
-        let sticker = StickerInfo::new(Id::new(11), "Laugh", StickerFormat::Png);
-        let preview = sticker
-            .inline_preview_info()
-            .expect("png sticker should have a raster preview");
+    fn sticker_formats_build_expected_preview_urls() {
+        let cases = [
+            (
+                11,
+                "Laugh",
+                StickerFormat::Png,
+                "https://media.discordapp.net/stickers/11.png?size=160&passthrough=false",
+                Some("https://media.discordapp.net/stickers/11.png?size=160&passthrough=false"),
+                false,
+            ),
+            (
+                12,
+                "Wumpus",
+                StickerFormat::Lottie,
+                "https://cdn.discordapp.com/stickers/12.json",
+                None,
+                true,
+            ),
+            (
+                13,
+                "Dance",
+                StickerFormat::Gif,
+                "https://media.discordapp.net/stickers/13.gif?size=160&passthrough=true",
+                Some("https://media.discordapp.net/stickers/13.gif?size=160&passthrough=true"),
+                true,
+            ),
+        ];
 
-        assert_eq!(
-            preview.url,
-            "https://media.discordapp.net/stickers/11.png?size=160&passthrough=false"
-        );
-        assert_eq!(
-            preview.proxy_url,
-            Some("https://media.discordapp.net/stickers/11.png?size=160&passthrough=false")
-        );
-        assert!(!preview.animated);
-        assert_eq!(preview.filename, "Laugh");
-    }
+        for (id, name, format, expected_url, expected_proxy_url, expected_animated) in cases {
+            let sticker = StickerInfo::new(Id::new(id), name, format);
+            let preview = sticker
+                .inline_preview_info()
+                .expect("supported sticker format should have an inline preview");
 
-    #[test]
-    fn lottie_sticker_uses_json_cdn_and_is_animated() {
-        let sticker = StickerInfo::new(Id::new(12), "Wumpus", StickerFormat::Lottie);
-        let preview = sticker
-            .inline_preview_info()
-            .expect("Lottie sticker should have an inline preview");
-
-        assert_eq!(preview.url, "https://cdn.discordapp.com/stickers/12.json");
-        assert_eq!(preview.proxy_url, None);
-        assert!(preview.animated);
-    }
-
-    #[test]
-    fn gif_sticker_uses_gif_media_and_is_animated() {
-        let sticker = StickerInfo::new(Id::new(13), "Dance", StickerFormat::Gif);
-        let preview = sticker
-            .inline_preview_info()
-            .expect("gif sticker should have a raster preview");
-
-        assert_eq!(
-            preview.url,
-            "https://media.discordapp.net/stickers/13.gif?size=160&passthrough=true"
-        );
-        assert_eq!(
-            preview.proxy_url,
-            Some("https://media.discordapp.net/stickers/13.gif?size=160&passthrough=true")
-        );
-        assert!(preview.animated);
+            assert_eq!(preview.url, expected_url, "format={format:?}");
+            assert_eq!(preview.proxy_url, expected_proxy_url, "format={format:?}");
+            assert_eq!(preview.animated, expected_animated, "format={format:?}");
+            assert_eq!(preview.filename, name, "format={format:?}");
+        }
     }
 }

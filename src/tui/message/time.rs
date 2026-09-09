@@ -4,9 +4,7 @@ use chrono::{DateTime, Local, NaiveDate};
 
 use crate::{
     discord::ids::{Id, marker::MessageMarker},
-    tui::text::{
-        RenderedText, TextHighlight, TextHighlightKind, TextReplacement, remap_text_offset,
-    },
+    tui::text::{RenderedText, TextHighlight, TextHighlightKind, TextReplacement},
 };
 
 const DISCORD_EPOCH_MILLIS: u64 = 1_420_070_400_000;
@@ -64,13 +62,7 @@ fn render_discord_timestamps_at(
     }
     output.push_str(&input[cursor..]);
 
-    for highlight in &mut rendered.highlights {
-        highlight.start = remap_text_offset(&replacements, highlight.start);
-        highlight.end = remap_text_offset(&replacements, highlight.end);
-    }
-    for slot in &mut rendered.emoji_slots {
-        slot.byte_start = remap_text_offset(&replacements, slot.byte_start);
-    }
+    rendered.remap_metadata(&replacements);
     rendered.highlights.extend(timestamp_highlights);
     rendered
         .highlights
@@ -364,7 +356,7 @@ pub(in crate::tui) fn format_message_local_time(
     hour_format_24: bool,
 ) -> String {
     message_local_datetime(message_id)
-        .map(|datetime| format_local_time(&datetime, hour_format_24))
+        .map(|datetime| format_time(&datetime, hour_format_24))
         .unwrap_or_else(|| "--:--".to_owned())
 }
 
@@ -374,10 +366,14 @@ pub(in crate::tui) fn format_rfc3339_local_time(
 ) -> Option<String> {
     DateTime::parse_from_rfc3339(timestamp)
         .ok()
-        .map(|datetime| format_local_time(&datetime.with_timezone(&Local), hour_format_24))
+        .map(|datetime| format_time(&datetime.with_timezone(&Local), hour_format_24))
 }
 
-fn format_local_time(datetime: &DateTime<Local>, hour_format_24: bool) -> String {
+fn format_time<Tz>(datetime: &DateTime<Tz>, hour_format_24: bool) -> String
+where
+    Tz: chrono::TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
     datetime.format(time_format(hour_format_24)).to_string()
 }
 
@@ -432,16 +428,6 @@ pub(in crate::tui) fn test_message_id_for_unix_millis(unix_millis: u64) -> Id<Me
 }
 
 #[cfg(test)]
-pub(in crate::tui) fn format_unix_millis_with_offset(
-    unix_millis: u64,
-    offset: chrono::FixedOffset,
-) -> Option<String> {
-    let unix_millis = i64::try_from(unix_millis).ok()?;
-    let utc = DateTime::from_timestamp_millis(unix_millis)?;
-    Some(utc.with_timezone(&offset).format("%H:%M").to_string())
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::tui::text::InlineEmojiSlot;
@@ -457,6 +443,17 @@ mod tests {
 
     fn render_at(value: &str, hour_format_24: bool, now: i64) -> RenderedText {
         render_discord_timestamps_at(rendered(value), hour_format_24, now)
+    }
+
+    #[test]
+    fn format_message_sent_time_with_injected_offset_uses_production_formatter() {
+        let kst = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("KST offset is valid");
+        let unix_millis =
+            i64::try_from(DISCORD_EPOCH_MILLIS).expect("Discord epoch fits an i64 timestamp");
+        let utc = DateTime::from_timestamp_millis(unix_millis)
+            .expect("Discord epoch is a valid timestamp");
+
+        assert_eq!(format_time(&utc.with_timezone(&kst), true), "09:00");
     }
 
     #[test]

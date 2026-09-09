@@ -433,7 +433,7 @@ fn voice_close_codes_follow_reconnect_policy() {
 }
 
 #[test]
-fn voice_gateway_session_debug_redacts_secrets() {
+fn voice_debug_output_redacts_gateway_and_state_secrets() {
     let session = VoiceGatewaySession {
         connection_id: 0,
         scope: VoiceScope::Guild(Id::new(1)),
@@ -449,12 +449,8 @@ fn voice_gateway_session_debug_redacts_secrets() {
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("secret-session"));
     assert!(!debug.contains("secret-token"));
-}
 
-#[test]
-fn voice_state_debug_redacts_session_id() {
     let state = voice_state(10, Some(Id::new(10)));
-
     let debug = format!("{state:?}");
 
     assert!(debug.contains("<redacted>"));
@@ -1217,6 +1213,32 @@ fn remote_speaking_activity_ignores_silence_and_unplayable_media() {
 }
 
 #[test]
+fn voice_gateway_opcode_rejects_values_that_do_not_fit_u8() {
+    assert_eq!(gateway::voice_gateway_opcode(&json!({ "op": 2 })), Some(2));
+    assert_eq!(gateway::voice_gateway_opcode(&json!({ "op": 258 })), None);
+    assert_eq!(gateway::voice_gateway_opcode(&json!({ "op": "2" })), None);
+}
+
+#[test]
+fn remote_speaking_activity_queue_is_bounded_and_recovers_capacity() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let first = Id::new(10);
+    let second = Id::new(20);
+
+    gateway::queue_remote_speaking_activity(&tx, first);
+    gateway::queue_remote_speaking_activity(&tx, second);
+
+    assert_eq!(rx.try_recv(), Ok(first));
+    assert!(matches!(
+        rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+
+    gateway::queue_remote_speaking_activity(&tx, second);
+    assert_eq!(rx.try_recv(), Ok(second));
+}
+
+#[test]
 fn microphone_sensitivity_filters_quiet_pcm_frames() {
     let quiet = vec![100i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
@@ -1573,40 +1595,39 @@ fn voice_microphone_overload_promotes_sparse_clipped_transients_to_handling_nois
 }
 
 #[test]
-fn voice_microphone_overload_gain_keeps_sub_extreme_same_polarity_clip_audible() {
-    let mut clipped = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-    for sample in clipped
-        .iter_mut()
-        .take(VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES - 1)
-    {
-        *sample = i16::MAX;
+fn voice_microphone_same_polarity_clip_threshold_selects_attenuation_or_blank() {
+    for (name, clipped_samples, expected_kind, expected_gain) in [
+        (
+            "sub-extreme",
+            VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES - 1,
+            VoiceMicrophoneOverloadKind::Transient,
+            VOICE_MIC_OVERLOAD_TRANSIENT_GAIN,
+        ),
+        (
+            "extreme",
+            VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES,
+            VoiceMicrophoneOverloadKind::HandlingNoise,
+            VOICE_MIC_HANDLING_NOISE_GAIN,
+        ),
+    ] {
+        let mut clipped = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        clipped[..clipped_samples].fill(i16::MAX);
+
+        let decision = voice_microphone_overload_decision(&clipped)
+            .unwrap_or_else(|| panic!("{name} clipped frame should be classified"));
+        assert_eq!(decision.kind, expected_kind, "{name}");
+        assert_eq!(decision.gain, expected_gain, "{name}");
+        assert_eq!(
+            voice_microphone_overload_gain(&clipped),
+            Some(expected_gain),
+            "{name}"
+        );
+        assert_eq!(
+            voice_microphone_clipped_sample_count(&clipped),
+            clipped_samples,
+            "{name}"
+        );
     }
-
-    assert_eq!(
-        voice_microphone_overload_gain(&clipped),
-        Some(VOICE_MIC_OVERLOAD_TRANSIENT_GAIN)
-    );
-}
-
-#[test]
-fn voice_microphone_overload_gain_blanks_extreme_same_polarity_clip() {
-    let mut clipped = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-    for sample in clipped
-        .iter_mut()
-        .take(VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES)
-    {
-        *sample = i16::MAX;
-    }
-
-    let decision = voice_microphone_overload_decision(&clipped)
-        .expect("extreme clipped frame should be blanked");
-
-    assert_eq!(decision.kind, VoiceMicrophoneOverloadKind::HandlingNoise);
-    assert_eq!(decision.gain, VOICE_MIC_HANDLING_NOISE_GAIN);
-    assert_eq!(
-        voice_microphone_clipped_sample_count(&clipped),
-        VOICE_MIC_OVERLOAD_EXTREME_CLIPPED_SAMPLES
-    );
 }
 
 #[test]
@@ -1985,54 +2006,45 @@ fn outbound_rtp_encrypts_aead_rtpsize_modes_for_decrypt_round_trip() {
 }
 
 #[test]
-fn opus_encoder_encodes_decodable_20ms_stereo_frame() {
-    let mut encoder = VoiceOpusEncode::new().expect("Opus encoder should build");
+fn voice_opus_encoders_produce_decodable_20ms_stereo_frames() {
     let pcm = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+    let encoders = [
+        (
+            "voice",
+            VoiceOpusEncode::new().expect("voice Opus encoder should build"),
+        ),
+        (
+            "system audio",
+            VoiceOpusEncode::new_system_audio().expect("system audio Opus encoder should build"),
+        ),
+    ];
 
-    let opus = encoder
-        .encode_20ms_i16(&pcm)
-        .expect("20 ms stereo frame should encode");
+    for (name, mut encoder) in encoders {
+        let opus = encoder
+            .encode_20ms_i16(&pcm)
+            .unwrap_or_else(|error| panic!("{name} 20 ms stereo frame should encode: {error}"));
+        assert!(!opus.is_empty(), "{name}");
 
-    assert!(!opus.is_empty());
-
-    let mut decoder = OpusDecoder::new(Channels::Stereo, OpusSampleRate::Hz48000)
-        .expect("Opus decoder should build");
-    let mut decoded = vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-    let samples_per_channel = decoder
-        .decode_float_to_slice(&opus, &mut decoded, false)
-        .expect("encoded Opus should decode");
-
-    assert_eq!(samples_per_channel, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL);
-    assert_eq!(
-        encoder
-            .encode_20ms_i16(&pcm[..pcm.len() - 1])
-            .expect_err("short frame should fail"),
-        format!(
-            "voice Opus encoder expected {} interleaved stereo samples, got {}",
-            DISCORD_OPUS_20MS_STEREO_SAMPLES,
-            DISCORD_OPUS_20MS_STEREO_SAMPLES - 1
-        )
-    );
-}
-
-#[test]
-fn system_audio_opus_encoder_encodes_decodable_20ms_stereo_frame() {
-    let mut encoder =
-        VoiceOpusEncode::new_system_audio().expect("system audio Opus encoder should build");
-    let pcm = vec![0i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-
-    let opus = encoder
-        .encode_20ms_i16(&pcm)
-        .expect("system audio frame should encode");
-
-    let mut decoder = OpusDecoder::new(Channels::Stereo, OpusSampleRate::Hz48000)
-        .expect("Opus decoder should build");
-    let mut decoded = vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES];
-    let samples_per_channel = decoder
-        .decode_float_to_slice(&opus, &mut decoded, false)
-        .expect("system audio Opus should decode");
-
-    assert_eq!(samples_per_channel, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL);
+        let mut decoder = OpusDecoder::new(Channels::Stereo, OpusSampleRate::Hz48000)
+            .expect("Opus decoder should build");
+        let mut decoded = vec![0.0f32; DISCORD_OPUS_20MS_STEREO_SAMPLES];
+        let samples_per_channel = decoder
+            .decode_float_to_slice(&opus, &mut decoded, false)
+            .unwrap_or_else(|error| panic!("{name} Opus frame should decode: {error:?}"));
+        assert_eq!(
+            samples_per_channel, DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL,
+            "{name}"
+        );
+        assert_eq!(
+            encoder.encode_20ms_i16(&pcm[..pcm.len() - 1]).unwrap_err(),
+            format!(
+                "voice Opus encoder expected {} interleaved stereo samples, got {}",
+                DISCORD_OPUS_20MS_STEREO_SAMPLES,
+                DISCORD_OPUS_20MS_STEREO_SAMPLES - 1
+            ),
+            "{name}"
+        );
+    }
 }
 
 #[cfg(feature = "voice-playback")]
@@ -2049,6 +2061,9 @@ fn microphone_input_conversion_produces_20ms_stereo_frames() {
 
     let unsigned = voice_input_u8_to_stereo_i16(&[0, 255], 2);
     assert_eq!(unsigned, vec![i16::MIN, 32512]);
+
+    let unsigned = voice_input_u16_to_stereo_i16(&[0, u16::MAX], 2);
+    assert_eq!(unsigned, vec![i16::MIN, i16::MAX]);
 }
 
 #[cfg(feature = "voice-playback")]

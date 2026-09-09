@@ -801,12 +801,12 @@ impl DashboardState {
 
     pub fn message_confirmation_lines(
         &self,
-    ) -> Option<(MessageConfirmationKind, String, Option<String>)> {
+    ) -> Option<(MessageConfirmationKind, &str, Option<&str>)> {
         let confirmation = self.popups.message_confirmation()?;
         Some((
             confirmation.kind,
-            confirmation.author.clone(),
-            confirmation.content.clone(),
+            &confirmation.author,
+            confirmation.content.as_deref(),
         ))
     }
 

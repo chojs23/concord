@@ -15,9 +15,9 @@ use objc2::{AllocAnyThread, DefinedClass, define_class, msg_send};
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_core_video::{
     CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
-    CVPixelBufferGetHeight, CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress,
-    CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress, kCVPixelFormatType_32BGRA,
-    kCVReturnSuccess,
+    CVPixelBufferGetDataSize, CVPixelBufferGetHeight, CVPixelBufferGetWidth,
+    CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+    kCVPixelFormatType_32BGRA, kCVReturnSuccess,
 };
 use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
 use objc2_screen_capture_kit::{
@@ -26,7 +26,12 @@ use objc2_screen_capture_kit::{
 };
 
 use super::{
-    CaptureFrame, CaptureFrameBufferPool, CaptureOutput, STREAM_CAPTURE_FPS, send_capture_result,
+    CaptureFrame, CaptureFrameBufferPool, CaptureOutput, STREAM_CAPTURE_FPS,
+    conversion::{
+        CaptureColorInfo, CapturePixelFormat, CapturePlane, convert_capture_frame,
+        packed_plane_buffer_length,
+    },
+    send_capture_result,
 };
 use crate::discord::voice::{StreamCaptureTarget, StreamCaptureTargetKind};
 
@@ -449,8 +454,13 @@ fn copy_bgra_frame(
     let row_length = width
         .checked_mul(4)
         .ok_or_else(|| "ScreenCaptureKit frame width overflowed".to_owned())?;
-    if width == 0 || height == 0 || bytes_per_row < row_length {
-        return Err("ScreenCaptureKit returned invalid frame dimensions".to_owned());
+    let readable_length = packed_plane_buffer_length(row_length, bytes_per_row, height)
+        .map_err(|error| format!("ScreenCaptureKit returned invalid frame dimensions: {error}"))?;
+    let data_size = CVPixelBufferGetDataSize(pixel_buffer);
+    if data_size < readable_length {
+        return Err(format!(
+            "ScreenCaptureKit pixel buffer is truncated: required={readable_length} available={data_size}"
+        ));
     }
     let base_address = CVPixelBufferGetBaseAddress(pixel_buffer).cast::<u8>();
     if base_address.is_null() {
@@ -461,27 +471,27 @@ fn copy_bgra_frame(
         .checked_mul(height)
         .ok_or_else(|| "ScreenCaptureKit frame size overflowed".to_owned())?;
     let mut rgba = buffer_pool.take(output_length);
-    for row in 0..height {
-        let source =
-            unsafe { slice::from_raw_parts(base_address.add(row * bytes_per_row), row_length) };
-        let destination = &mut rgba[row * row_length..(row + 1) * row_length];
-        for (bgra, rgba) in source
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(destination.as_chunks_mut::<4>().0)
-        {
-            rgba.copy_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
-        }
-    }
+    let source = unsafe { slice::from_raw_parts(base_address, data_size) };
+    let width =
+        u32::try_from(width).map_err(|_| "ScreenCaptureKit frame width is too large".to_owned())?;
+    let height = u32::try_from(height)
+        .map_err(|_| "ScreenCaptureKit frame height is too large".to_owned())?;
+    let stride = isize::try_from(bytes_per_row)
+        .map_err(|_| "ScreenCaptureKit frame stride is too large".to_owned())?;
+    convert_capture_frame(
+        &[CapturePlane {
+            bytes: source,
+            offset: 0,
+            stride,
+        }],
+        width,
+        height,
+        CapturePixelFormat::Bgra,
+        CaptureColorInfo::default(),
+        &mut rgba,
+    )?;
 
-    Ok(CaptureFrame::new(
-        u32::try_from(width).map_err(|_| "ScreenCaptureKit frame width is too large".to_owned())?,
-        u32::try_from(height)
-            .map_err(|_| "ScreenCaptureKit frame height is too large".to_owned())?,
-        rgba,
-        buffer_pool.clone(),
-    ))
+    Ok(CaptureFrame::new(width, height, rgba, buffer_pool.clone()))
 }
 
 #[cfg(test)]

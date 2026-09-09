@@ -60,21 +60,6 @@ fn question_mark_opens_current_keymap_popup_and_scrolls_within_bounds() {
 }
 
 #[test]
-fn backtick_types_while_composing() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
-
-    handle_key(&mut state, char_key('`'));
-
-    assert!(state.is_composing());
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-    assert_eq!(state.composer_input(), "`");
-}
-
-#[test]
 fn esc_closes_modal_before_returning_from_opened_thread() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Messages);
@@ -105,9 +90,12 @@ fn ctrl_v_requests_clipboard_paste_on_profile_avatar_field() {
 
     handle_key(&mut state, ctrl_key('v'));
 
-    assert!(state.take_paste_clipboard_request());
+    let request_id = state
+        .take_paste_clipboard_request()
+        .expect("clipboard paste request");
     assert!(state.accepts_clipboard_paste());
-    assert!(state.begin_clipboard_paste());
+    assert!(state.start_clipboard_paste(request_id));
+    assert!(state.begin_clipboard_paste(request_id));
     assert_eq!(
         state.user_profile_settings_status(),
         Some("Reading clipboard image...")
@@ -128,13 +116,17 @@ fn profile_navigation_routes_selection_keys_and_picker_enter() {
         user_id: Some(Id::new(10)),
     });
     state.open_current_user_profile_popup();
-    handle_key(&mut state, char_key('j'));
-    handle_key(&mut state, char_key('j'));
-    handle_key(&mut state, char_key('j'));
+
+    // Up and Down are fixed aliases, so this round trip returns to the first row.
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Up));
+    for _ in 0..3 {
+        handle_key(&mut state, key(KeyCode::Down));
+    }
     handle_key(&mut state, key(KeyCode::Enter));
     assert!(state.is_user_profile_status_picker_open());
 
-    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, key(KeyCode::Down));
     assert_eq!(
         handle_key(&mut state, key(KeyCode::Enter)),
         Some(AppCommand::UpdateCurrentUserStatus {
@@ -189,6 +181,8 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, char_key('j'));
     handle_key(&mut state, key(KeyCode::Enter));
+    // Move past the automatic row onto the manual row before committing.
+    handle_key(&mut state, char_key('j'));
     handle_key(&mut state, key(KeyCode::Enter));
 
     for value in "Concord".chars() {
@@ -200,9 +194,51 @@ fn profile_activity_edit_enter_dispatches_presence_update() {
         Some(AppCommand::UpdateCurrentUserActivity {
             status: PresenceStatus::Online,
             activities: vec![ActivityInfo::playing("Concord")],
-            track_client_id: None,
+            rich_presence: RichPresenceSelection::Manual,
         })
     );
+}
+
+#[test]
+fn profile_activity_picker_enter_defaults_to_automatic() {
+    let mut state = DashboardState::new();
+    let user_id = Id::new(10);
+    state.push_event(AppEvent::Ready {
+        user: "neo".to_owned(),
+        user_id: Some(user_id),
+    });
+    state.push_event(AppEvent::PresenceUpdate {
+        guild_id: None,
+        presence: crate::discord::PresenceEventFields {
+            user_id,
+            status: PresenceStatus::Online,
+            activities: Vec::new(),
+        },
+    });
+    state.set_detected_rich_presence(vec![ActivityInfo {
+        application_id: Some("client-1".to_owned()),
+        ..ActivityInfo::playing("Visual Studio Code")
+    }]);
+    state.open_current_user_profile_popup();
+    for _ in 0..4 {
+        handle_key(&mut state, char_key('j'));
+    }
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    // The picker opens on the automatic row, so Enter relays the latest
+    // detected app without further navigation.
+    assert_eq!(
+        handle_key(&mut state, key(KeyCode::Enter)),
+        Some(AppCommand::UpdateCurrentUserActivity {
+            status: PresenceStatus::Online,
+            activities: vec![ActivityInfo {
+                application_id: Some("client-1".to_owned()),
+                ..ActivityInfo::playing("Visual Studio Code")
+            }],
+            rich_presence: RichPresenceSelection::Automatic,
+        })
+    );
+    assert!(!state.is_user_profile_activity_picker_open());
 }
 
 #[test]
@@ -255,11 +291,14 @@ fn ctrl_v_pastes_text_into_profile_edit_field_at_cursor() {
     handle_key(&mut state, key(KeyCode::Left));
     handle_key(&mut state, ctrl_key('v'));
 
-    assert!(state.take_paste_clipboard_request());
+    let request_id = state
+        .take_paste_clipboard_request()
+        .expect("clipboard paste request");
     assert!(state.accepts_clipboard_paste());
-    assert!(state.begin_clipboard_paste());
+    assert!(state.start_clipboard_paste(request_id));
+    assert!(state.begin_clipboard_paste(request_id));
     assert!(handle_paste(&mut state, "b"));
-    state.finish_clipboard_paste();
+    assert!(state.finish_clipboard_paste(request_id));
 
     assert_eq!(
         state.user_profile_settings_field_value(

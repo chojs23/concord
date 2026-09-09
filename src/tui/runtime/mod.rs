@@ -41,7 +41,7 @@ use media_runtime::{
 use redraw::{DashboardRedrawState, draw_dashboard_transaction};
 use scheduler::DashboardCommandScheduler;
 
-type ClipboardPasteResult = std::result::Result<
+type ClipboardReadResult = std::result::Result<
     std::result::Result<ClipboardPasteData, ClipboardError>,
     tokio::task::JoinError,
 >;
@@ -159,8 +159,14 @@ pub(super) async fn run_dashboard(
     const BACKGROUND_REDRAW_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
     const RELATIVE_TIMESTAMP_REFRESH_INTERVAL: std::time::Duration =
         std::time::Duration::from_secs(60);
+    // Slow memory growth only shows up over a long session, so the report goes
+    // out on a timer as well as on demand. Debug logging gates it.
+    const MEDIA_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+    let mut last_media_report = std::time::Instant::now();
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut animation_frame_deadline: Option<tokio::time::Instant> = None;
+    let mut debug_panel_deadline: Option<tokio::time::Instant> = None;
+    const DEBUG_PANEL_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
     let mut relative_timestamp_deadline =
         tokio::time::Instant::now() + RELATIVE_TIMESTAMP_REFRESH_INTERVAL;
     #[cfg(feature = "voice-playback")]
@@ -176,7 +182,7 @@ pub(super) async fn run_dashboard(
         .then(|| tokio::time::Instant::now() + GlobalPushToTalkRuntime::poll_interval());
     #[cfg(not(feature = "voice-playback"))]
     let push_to_talk_deadline: Option<tokio::time::Instant> = None;
-    let mut clipboard_paste_in_flight = false;
+    let mut clipboard_paste_in_flight = None;
     // Fingerprint of the last drawn frame's background-visible state. Background
     // events only schedule a redraw when this moves (see `redraw_gate`).
     let mut last_view_signature = redraw_gate::view_signature(&state);
@@ -204,8 +210,15 @@ pub(super) async fn run_dashboard(
                 redraw_plan,
             )?;
             media_runtime.commit_placements();
+            if last_media_report.elapsed() >= MEDIA_REPORT_INTERVAL {
+                if logging::debug_logging_enabled() {
+                    media_runtime.log_memory_report();
+                }
+                last_media_report = std::time::Instant::now();
+            }
             if state.terminal_focused() {
-                media_runtime.sync_animation_visibility(std::time::Instant::now());
+                media_runtime
+                    .sync_animation_visibility(std::time::Instant::now(), state.animate_previews());
             } else {
                 media_runtime.pause_animations();
             }
@@ -219,6 +232,7 @@ pub(super) async fn run_dashboard(
                 &commands,
                 &local_upload_preview_tx,
                 &media_protocol_tx,
+                &media_decode_tx,
             )
             .await;
         }
@@ -250,7 +264,19 @@ pub(super) async fn run_dashboard(
             animation_frame_deadline = None;
         }
 
+        // Snapshot immediately on open, then refresh only while inspecting diagnostics.
+        if state.is_active_modal_popup(super::state::ActiveModalPopupKind::DebugLog) {
+            debug_panel_deadline.get_or_insert_with(tokio::time::Instant::now);
+        } else {
+            debug_panel_deadline = None;
+        }
+
         tokio::select! {
+            _ = wait_for_optional_deadline(debug_panel_deadline) => {
+                dirty |= state.set_debug_media_snapshot(media_runtime.diagnostics());
+                dirty |= state.store_debug_log_tail(logging::recent_log_lines());
+                debug_panel_deadline = Some(tokio::time::Instant::now() + DEBUG_PANEL_REFRESH_INTERVAL);
+            }
             maybe_event = terminal_events.next() => {
                 match maybe_event {
                     Some(Ok(event)) => {
@@ -261,7 +287,13 @@ pub(super) async fn run_dashboard(
                             &mut mouse_clicks,
                         )?;
                         if state.take_terminal_refresh_request() {
+                            // Redrawing alone cannot recover a picture whose
+                            // download failed, so the refresh key drops those
+                            // too and the next frame asks for them again.
+                            media_runtime.forget_failed_media();
+                            media_runtime.log_memory_report();
                             terminal.clear()?;
+                            dirty = true;
                         }
                         if state.take_open_composer_in_editor_request()
                             && let Err(error) = open_composer_in_editor(terminal, &mut state)
@@ -274,21 +306,21 @@ pub(super) async fn run_dashboard(
                         {
                             logging::error("tui", format!("editor failed: {error}"));
                         }
-                        if state.take_paste_clipboard_request()
-                            && state.accepts_clipboard_paste()
-                            && !clipboard_paste_in_flight
+                        if clipboard_paste_in_flight.is_none()
+                            && let Some(request_id) = state.take_paste_clipboard_request()
+                            && state.start_clipboard_paste(request_id)
                         {
-                            clipboard_paste_in_flight = true;
+                            clipboard_paste_in_flight = Some(request_id);
                             let clipboard_paste_tx = clipboard_paste_tx.clone();
                             let clipboard_paste_indicator_tx = clipboard_paste_indicator_tx.clone();
                             tokio::spawn(async move {
                                 let result = tokio::task::spawn_blocking(move || {
                                     ClipboardService::read_paste_data_with_progress(|| {
-                                        let _ = clipboard_paste_indicator_tx.send(());
+                                        let _ = clipboard_paste_indicator_tx.send(request_id);
                                     })
                                 })
                                 .await;
-                                let _ = clipboard_paste_tx.send(result);
+                                let _ = clipboard_paste_tx.send((request_id, result));
                             });
                         }
                         if let Some((content, toast)) = state.take_copy_text_request() {
@@ -384,20 +416,24 @@ pub(super) async fn run_dashboard(
                 );
                 schedule_background_redraw(&mut pending_redraw_deadline, BACKGROUND_REDRAW_DEBOUNCE);
             }
-            Some(result) = clipboard_paste_rx.recv() => {
-                let was_pending = clipboard_paste_in_flight;
-                clipboard_paste_in_flight = false;
-                let indicator_was_visible = state.clipboard_paste_pending();
-                state.finish_clipboard_paste();
+            Some((request_id, result)) = clipboard_paste_rx.recv() => {
+                let was_pending = clipboard_paste_in_flight == Some(request_id);
                 if was_pending {
+                    clipboard_paste_in_flight = None;
+                }
+                let indicator_was_visible = state.clipboard_paste_pending();
+                let accepted = state.finish_clipboard_paste(request_id);
+                if was_pending && accepted {
                     apply_clipboard_paste_result(&mut state, result);
                     dirty = true;
                 } else if indicator_was_visible {
                     dirty = true;
                 }
             }
-            Some(()) = clipboard_paste_indicator_rx.recv() => {
-                if clipboard_paste_in_flight && state.begin_clipboard_paste() {
+            Some(request_id) = clipboard_paste_indicator_rx.recv() => {
+                if clipboard_paste_in_flight == Some(request_id)
+                    && state.begin_clipboard_paste(request_id)
+                {
                     dirty = true;
                 }
             }
@@ -496,12 +532,7 @@ pub(super) async fn run_dashboard(
                     }
                 }
             }
-            _ = async {
-                match animation_frame_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline).await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
+            _ = wait_for_optional_deadline(animation_frame_deadline) => {
                 state.advance_animation_frame();
                 animation_frame_deadline = Some(
                     tokio::time::Instant::now() + LOADING_ANIMATION_FRAME_INTERVAL,
@@ -514,26 +545,18 @@ pub(super) async fn run_dashboard(
                 state.clear_message_row_content_metrics_cache();
                 dirty = true;
             }
-            _ = async {
-                match pending_media_animation_deadline {
-                    Some(deadline) => tokio::time::sleep_until(
-                        tokio::time::Instant::from_std(deadline),
-                    )
-                    .await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
+            _ = media_runtime.wait_for_fetch_retry() => {
+                // Retry through the normal draw and source admission path,
+                // even when the user and Discord have produced no events.
+                dirty = true;
+            }
+            _ = wait_for_optional_deadline(pending_media_animation_deadline) => {
                 if media_runtime.advance_animations(std::time::Instant::now()) {
                     redraw_state.request_media_animation();
                     dirty = true;
                 }
             }
-            _ = async {
-                match push_to_talk_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline).await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
+            _ = wait_for_optional_deadline(push_to_talk_deadline) => {
                 #[cfg(feature = "voice-playback")]
                 {
                     if let Some(error) = push_to_talk.poll() {
@@ -546,35 +569,14 @@ pub(super) async fn run_dashboard(
                     });
                 }
             }
-            _ = async {
-                match pending_redraw_deadline {
-                    Some(deadline) => tokio::time::sleep_until(deadline).await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
+            _ = wait_for_optional_deadline(pending_redraw_deadline) => {
                 pending_redraw_deadline = None;
                 dirty = true;
             }
-            _ = async {
-                match pending_composer_lock_refresh_deadline {
-                    Some(deadline) => tokio::time::sleep_until(
-                        tokio::time::Instant::from_std(deadline),
-                    )
-                    .await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
+            _ = wait_for_optional_deadline(pending_composer_lock_refresh_deadline) => {
                 dirty = true;
             }
-            _ = async {
-                match pending_read_ack_deadline {
-                    Some(deadline) => tokio::time::sleep_until(
-                        tokio::time::Instant::from_std(deadline),
-                    )
-                    .await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
+            _ = wait_for_optional_deadline(pending_read_ack_deadline) => {
                 for command in client.due_read_ack_commands(std::time::Instant::now()) {
                     if command_helpers::send_or_record_closed(&mut state, &commands, command)
                         .await
@@ -585,33 +587,9 @@ pub(super) async fn run_dashboard(
                 }
                 dirty = true;
             }
-            _ = async {
-                match pending_member_search_deadline {
-                    Some(deadline) => tokio::time::sleep_until(
-                        tokio::time::Instant::from_std(deadline),
-                    )
-                    .await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {}
-            _ = async {
-                match pending_member_list_subscription_deadline {
-                    Some(deadline) => tokio::time::sleep_until(
-                        tokio::time::Instant::from_std(deadline),
-                    )
-                    .await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {}
-            _ = async {
-                match pending_toast_deadline {
-                    Some(deadline) => tokio::time::sleep_until(
-                        tokio::time::Instant::from_std(deadline),
-                    )
-                    .await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
+            _ = wait_for_optional_deadline(pending_member_search_deadline) => {}
+            _ = wait_for_optional_deadline(pending_member_list_subscription_deadline) => {}
+            _ = wait_for_optional_deadline(pending_toast_deadline) => {
                 if state.clear_expired_toast(std::time::Instant::now()) {
                     dirty = true;
                 }
@@ -649,6 +627,13 @@ pub(super) async fn run_dashboard(
     }
 }
 
+async fn wait_for_optional_deadline(deadline: Option<impl Into<tokio::time::Instant>>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
 fn schedule_background_redraw(
     pending_redraw_deadline: &mut Option<tokio::time::Instant>,
     debounce: std::time::Duration,
@@ -658,7 +643,7 @@ fn schedule_background_redraw(
     }
 }
 
-fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardPasteResult) {
+fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardReadResult) {
     match result {
         Ok(Ok(data)) => {
             if !apply_clipboard_paste_data(state, data) {

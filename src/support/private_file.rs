@@ -19,30 +19,29 @@ pub(crate) fn set_private_dir_permissions(_path: &Path) -> Result<()> {
 
 /// Writes to a sibling temp file and renames it into place, so a crash or
 /// full disk mid-write can never leave a truncated file behind.
-#[cfg(unix)]
 pub(crate) fn write_private_file(path: &Path, content: &str) -> Result<()> {
-    use std::{fs, io::Write, os::unix::fs::PermissionsExt};
+    use std::io::Write;
 
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut file = tempfile::Builder::new()
-        .permissions(fs::Permissions::from_mode(0o600))
-        .tempfile_in(dir)?;
+    let mut file = create_private_temp_file(dir)?;
     file.write_all(content.as_bytes())?;
     file.as_file().sync_all()?;
     file.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
-#[cfg(not(unix))]
-pub(crate) fn write_private_file(path: &Path, content: &str) -> Result<()> {
-    use std::io::Write;
+#[cfg(unix)]
+fn create_private_temp_file(dir: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    use std::{fs, os::unix::fs::PermissionsExt};
 
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut file = tempfile::NamedTempFile::new_in(dir)?;
-    file.write_all(content.as_bytes())?;
-    file.as_file().sync_all()?;
-    file.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o600))
+        .tempfile_in(dir)
+}
+
+#[cfg(not(unix))]
+fn create_private_temp_file(dir: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    tempfile::NamedTempFile::new_in(dir)
 }
 
 #[cfg(all(test, unix))]

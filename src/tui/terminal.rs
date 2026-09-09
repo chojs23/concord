@@ -9,8 +9,6 @@ use crossterm::{
     execute,
 };
 
-use crate::Result;
-
 pub(in crate::tui) struct TerminalRestoreGuard {
     keyboard_enhancement_enabled: bool,
     mouse_capture_enabled: bool,
@@ -19,7 +17,7 @@ pub(in crate::tui) struct TerminalRestoreGuard {
 }
 
 impl TerminalRestoreGuard {
-    pub(in crate::tui) fn new() -> Result<Self> {
+    pub(in crate::tui) fn new() -> Self {
         // Kitty progressive enhancement isn't supported on every terminal
         // (e.g. legacy Windows console). Fall back silently when unavailable
         // so the app still runs with basic key handling.
@@ -31,12 +29,12 @@ impl TerminalRestoreGuard {
         let mouse_capture_enabled = execute!(stdout(), EnableMouseCapture).is_ok();
         let bracketed_paste_enabled = execute!(stdout(), EnableBracketedPaste).is_ok();
         let focus_change_enabled = execute!(stdout(), EnableFocusChange).is_ok();
-        Ok(Self {
+        Self {
             keyboard_enhancement_enabled,
             mouse_capture_enabled,
             bracketed_paste_enabled,
             focus_change_enabled,
-        })
+        }
     }
 }
 

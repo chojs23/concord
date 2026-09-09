@@ -1098,50 +1098,54 @@ impl DashboardState {
         &self,
         entries: &[ChannelPaneEntry<'_>],
     ) -> usize {
-        selectable_channel_index_near(entries, self.navigation.channels.list.selected, false)
-            .unwrap_or(0)
+        selectable_channel_index_near(entries, self.navigation.channels.list.selected).unwrap_or(0)
+    }
+
+    /// Resolves the selection against the same filtered list used for rendering
+    /// and navigation. Callers must not apply this index to `channel_pane_entries`
+    /// because filtering changes both the order and the set of entries.
+    pub(super) fn selected_channel_pane_entry(&self) -> Option<ChannelPaneEntry<'_>> {
+        let entries = self.channel_pane_filtered_entries();
+        let selected = self.selected_channel_from_entries(&entries);
+        entries.get(selected).cloned()
     }
 
     pub(super) fn move_channel_selection_down(&mut self) {
         let selected = self.selected_channel();
-        self.select_channel_entry_near(selected.saturating_add(1), true);
+        self.select_channel_entry_near(selected.saturating_add(1));
         self.navigation.channels.list.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     pub(super) fn move_channel_selection_up(&mut self) {
         let selected = self.selected_channel();
-        self.select_channel_entry_near(selected.saturating_sub(1), false);
+        self.select_channel_entry_near(selected.saturating_sub(1));
         self.navigation.channels.list.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     pub(super) fn jump_channel_selection_top(&mut self) {
-        self.select_channel_entry_near(0, true);
+        self.select_channel_entry_near(0);
         self.navigation.channels.list.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
     pub(super) fn jump_channel_selection_bottom(&mut self) {
         let entries = self.channel_pane_filtered_entries();
-        self.navigation.channels.list.selected = entries
-            .iter()
-            .rposition(ChannelPaneEntry::is_selectable)
-            .unwrap_or(0);
+        self.navigation.channels.list.selected = entries.len().saturating_sub(1);
         self.navigation.channels.list.keep_selection_visible();
         self.clamp_channel_viewport();
     }
 
-    fn select_channel_entry_near(&mut self, index: usize, prefer_forward: bool) {
+    fn select_channel_entry_near(&mut self, index: usize) {
         let entries = self.channel_pane_filtered_entries();
         self.navigation.channels.list.selected =
-            selectable_channel_index_near(&entries, index, prefer_forward).unwrap_or(0);
+            selectable_channel_index_near(&entries, index).unwrap_or(0);
     }
 
     pub(super) fn selected_channel_cursor(&self) -> Option<ChannelPaneCursor> {
-        self.channel_pane_entries()
-            .get(self.selected_channel())
-            .map(ChannelPaneEntry::cursor)
+        self.selected_channel_pane_entry()
+            .map(|entry| entry.cursor())
     }
 
     #[cfg(test)]
@@ -1358,19 +1362,13 @@ impl DashboardState {
             VoiceParticipant,
         }
 
-        let selected = self
-            .channel_pane_entries()
-            .get(self.selected_channel())
-            .map(|entry| match entry {
-                ChannelPaneEntry::CategoryHeader { .. } => SelectedChannelPaneEntry::Category,
-                ChannelPaneEntry::Channel { state, .. }
-                | ChannelPaneEntry::Thread { state, .. } => {
-                    SelectedChannelPaneEntry::Channel(state.id)
-                }
-                ChannelPaneEntry::VoiceParticipant { .. } => {
-                    SelectedChannelPaneEntry::VoiceParticipant
-                }
-            });
+        let selected = self.selected_channel_pane_entry().map(|entry| match entry {
+            ChannelPaneEntry::CategoryHeader { .. } => SelectedChannelPaneEntry::Category,
+            ChannelPaneEntry::Channel { state, .. } | ChannelPaneEntry::Thread { state, .. } => {
+                SelectedChannelPaneEntry::Channel(state.id)
+            }
+            ChannelPaneEntry::VoiceParticipant { .. } => SelectedChannelPaneEntry::VoiceParticipant,
+        });
 
         match selected {
             Some(SelectedChannelPaneEntry::Category) => {
@@ -1425,14 +1423,7 @@ impl DashboardState {
         self.messages.thread_return_target = Some(ThreadReturnTarget {
             thread_channel_id,
             channel_id,
-            selected_message: self.messages.selected_message,
-            message_scroll: self.messages.message_scroll,
-            message_line_scroll: self.messages.message_line_scroll,
-            message_keep_selection_visible: self.messages.message_keep_selection_visible,
-            message_auto_follow: self.messages.message_auto_follow,
-            new_messages_marker_message_id: self.messages.new_messages_marker_message_id,
-            unread_divider_last_acked_id: self.messages.unread_divider_last_acked_id,
-            pending_unread_anchor_scroll: self.messages.pending_unread_anchor_scroll,
+            position: self.messages.return_position(),
         });
     }
 
@@ -1456,14 +1447,7 @@ impl DashboardState {
         }
 
         self.activate_channel(target.channel_id);
-        self.messages.selected_message = target.selected_message;
-        self.messages.message_scroll = target.message_scroll;
-        self.messages.message_line_scroll = target.message_line_scroll;
-        self.messages.message_keep_selection_visible = target.message_keep_selection_visible;
-        self.messages.message_auto_follow = target.message_auto_follow;
-        self.messages.new_messages_marker_message_id = target.new_messages_marker_message_id;
-        self.messages.unread_divider_last_acked_id = target.unread_divider_last_acked_id;
-        self.messages.pending_unread_anchor_scroll = target.pending_unread_anchor_scroll;
+        self.messages.restore_return_position(target.position);
         self.messages.thread_return_target = None;
         self.clamp_message_viewport();
         true
@@ -1681,45 +1665,9 @@ impl DashboardState {
     }
 }
 
-fn selectable_channel_index_near(
-    entries: &[ChannelPaneEntry<'_>],
-    index: usize,
-    prefer_forward: bool,
-) -> Option<usize> {
+fn selectable_channel_index_near(entries: &[ChannelPaneEntry<'_>], index: usize) -> Option<usize> {
     if entries.is_empty() {
         return None;
     }
-    let index = index.min(entries.len() - 1);
-    if entries[index].is_selectable() {
-        return Some(index);
-    }
-    if prefer_forward {
-        entries
-            .iter()
-            .enumerate()
-            .skip(index.saturating_add(1))
-            .find_map(|(index, entry)| entry.is_selectable().then_some(index))
-            .or_else(|| {
-                entries
-                    .iter()
-                    .enumerate()
-                    .take(index)
-                    .rev()
-                    .find_map(|(index, entry)| entry.is_selectable().then_some(index))
-            })
-    } else {
-        entries
-            .iter()
-            .enumerate()
-            .take(index)
-            .rev()
-            .find_map(|(index, entry)| entry.is_selectable().then_some(index))
-            .or_else(|| {
-                entries
-                    .iter()
-                    .enumerate()
-                    .skip(index.saturating_add(1))
-                    .find_map(|(index, entry)| entry.is_selectable().then_some(index))
-            })
-    }
+    Some(index.min(entries.len() - 1))
 }

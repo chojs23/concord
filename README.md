@@ -219,9 +219,16 @@ Linux screen capture depends on the active X11 or Wayland support.
 
 ### Rich Presence
 
-- Concord serves the local `discord-ipc` socket, detects connected apps, and
-  lets you pick which one to share from your profile's activity picker
+- Concord serves the local `discord-ipc` socket and relays Rich Presence from
+  connected apps automatically, like the native client: the most recently
+  updated app becomes your activity, your custom status is kept alongside it,
+  and the activity clears when the app disconnects
+- The profile settings activity picker can pin a specific app, switch back to
+  automatic, or set a manual activity RPC will not override
 - Only apps that speak Discord's Rich Presence (RPC/IPC) protocol are detected.
+- RPC apps connect to the first `discord-ipc` socket that answers, so a running
+  native desktop client (or Vesktop/LegCord/arRPC) receives them instead of
+  concord; concord shows a warning toast when it detects this
 - Toggle with `share_rich_presence` under `[presence]` in `config.toml`
 
 ### Notifications
@@ -354,6 +361,12 @@ image_preview_quality = "balanced"
 # Attachment viewer quality: efficient, balanced, high, or original.
 attachment_viewer_quality = "original"
 
+# Which animated GIF and WebP previews keep playing: always, selected, or never.
+# Each animated frame rebuilds a terminal graphics protocol, so "always" costs
+# roughly 8% of a CPU core per animated preview on screen. Custom emoji animate
+# regardless; theirs are small enough not to matter.
+animate_previews = "always"
+
 # Render custom Discord emoji as images when possible.
 show_custom_emoji = true
 
@@ -373,7 +386,8 @@ emojis_as_links = false
 # favorite_emojis = ["🔥", "👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀", "💯"]
 
 [presence]
-# Relay Rich Presence from local apps as your activity.
+# Relay Rich Presence from local apps as your activity (most recent app wins,
+# like the native client).
 share_rich_presence = true
 
 [credentials]
@@ -452,7 +466,7 @@ leader = "space"
 StartComposer = "i"
 OpenPaneFilter = "/"
 ClosePopup = "q"
-OpenDebugLog = "`"
+OpenDebugPanel = "`"
 FocusGuildPane = "1"
 FocusChannelPane = "2"
 FocusMessagePane = "3"

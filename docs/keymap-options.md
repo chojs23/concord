@@ -10,7 +10,7 @@ Example `keymap.toml`:
 [keymap]
 StartComposer = { keys = ["c"] }
 ClosePopup = "q"
-OpenDebugLog = "`"
+OpenDebugPanel = "`"
 ReplyMessage = "<leader>mr"
 VoiceDeafen = "<leader>vd"
 VoiceMute = "<leader>vm"
@@ -127,7 +127,7 @@ Navigation and app actions:
 | `StartComposer`         | `"i"`                      | Start the message composer, or open the forum/media post composer overlay. |
 | `OpenPaneFilter`        | `"/"`                      | Open the focused pane filter or search.                                    |
 | `ClosePopup`            | `"q"`                      | Close the active popup.                                                    |
-| `OpenDebugLog`          | `` "`" ``                  | Open the Debug Log popup from the dashboard.                               |
+| `OpenDebugPanel`        | ``"`"``                    | Open the debug panel from the dashboard.                                   |
 | `RefreshScreen`         | `"<leader>r"`              | Clear and fully redraw the TUI.                                            |
 | `FocusGuildPane`        | `"1"`                      | Show and focus the Servers pane.                                           |
 | `FocusChannelPane`      | `"2"`                      | Show and focus the Channels pane.                                          |
@@ -157,7 +157,8 @@ These configured navigation actions also work while a modal popup owns input:
 | ------------------------------ | ---------------------------------------------- |
 | `SelectNext`, `SelectPrevious` | Lists, scrollable documents, and confirmations |
 | `HalfPageDown`, `HalfPageUp`   | Lists and scrollable documents                 |
-| `JumpTop`, `JumpBottom`        | Selectable lists                               |
+| `JumpTop`, `JumpBottom`        | Selectable lists and debug panel logs          |
+| `OpenPaneFilter`               | Debug panel log filter                         |
 
 Popup-local fixed shortcuts run first. `ClosePopup` is then matched directly as
 a single key instead of being treated as a popup navigation sequence. For
@@ -169,7 +170,7 @@ search, filter, or editor owns input. Use `Esc` or a modified/non-character
 Once a navigation sequence hint is open, its next key wins so the displayed
 continuation is always truthful. Physical `PageUp` and `PageDown`, plus
 configured modified or non-character half-page keys, remain available where a
-text popup supports paging. `OpenDebugLog` is a dashboard action and is not
+text popup supports paging. `OpenDebugPanel` is a dashboard action and is not
 part of popup navigation.
 
 Message actions:

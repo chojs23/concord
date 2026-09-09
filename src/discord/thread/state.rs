@@ -242,10 +242,6 @@ impl ThreadCache {
         }
     }
 
-    pub(in crate::discord) fn remove_archived_parent(&mut self, parent_id: Id<ChannelMarker>) {
-        self.archived.remove(&parent_id);
-    }
-
     pub(in crate::discord) fn upsert_current_user_member(
         &mut self,
         thread_id: Id<ChannelMarker>,
@@ -401,7 +397,7 @@ impl ThreadCache {
 
     pub(in crate::discord) fn remove_thread(&mut self, thread_id: Id<ChannelMarker>) {
         self.active.remove(&thread_id);
-        self.remove_archived_parent(thread_id);
+        self.archived.remove(&thread_id);
         self.remove_archived_thread(thread_id);
         self.joined.remove(&thread_id);
         self.participants.remove(&thread_id);
@@ -772,11 +768,7 @@ impl DiscordState {
             self.threads_mut().remove_thread(thread_id);
             return;
         };
-        let Some(guild_id) = thread.guild_id else {
-            self.threads_mut().remove_thread(thread_id);
-            return;
-        };
-        let Some(parent_id) = thread.parent_id else {
+        let Some((guild_id, parent_id)) = thread.guild_id.zip(thread.parent_id) else {
             self.threads_mut().remove_thread(thread_id);
             return;
         };

@@ -5,9 +5,8 @@ use crate::discord::ids::{
 use crate::{
     DiscordClient,
     discord::{
-        AppEvent, MicrophoneSensitivityDb, StreamCaptureTarget, VoiceAudioSettings,
-        VoiceAudioSources, VoiceConnectionStatus, VoiceParticipantPlaybackSettings, VoiceScope,
-        VoiceVolumePercent,
+        AppEvent, StreamCaptureTarget, VoiceAudioSettings, VoiceAudioSources,
+        VoiceConnectionStatus, VoiceParticipantPlaybackSettings, VoiceScope,
     },
     logging,
 };
@@ -19,13 +18,8 @@ pub(super) struct JoinRequest {
     pub channel_id: Id<ChannelMarker>,
     pub self_mute: bool,
     pub self_deaf: bool,
-    pub input_source: Option<String>,
-    pub output_source: Option<String>,
-    pub allow_microphone_transmit: bool,
-    pub noise_suppression: bool,
-    pub microphone_sensitivity: MicrophoneSensitivityDb,
-    pub microphone_volume: VoiceVolumePercent,
-    pub voice_output_volume: VoiceVolumePercent,
+    pub audio_sources: VoiceAudioSources,
+    pub audio_settings: VoiceAudioSettings,
     pub participant_playback_settings: Vec<(Id<UserMarker>, VoiceParticipantPlaybackSettings)>,
 }
 
@@ -35,28 +29,13 @@ pub(super) async fn join_channel(client: DiscordClient, request: JoinRequest) {
         channel_id,
         self_mute,
         self_deaf,
-        input_source,
-        output_source,
-        allow_microphone_transmit,
-        noise_suppression,
-        microphone_sensitivity,
-        microphone_volume,
-        voice_output_volume,
+        audio_sources,
+        audio_settings,
         participant_playback_settings,
     } = request;
-    let audio_settings = VoiceAudioSettings {
-        allow_microphone_transmit,
-        noise_suppression,
-        microphone_sensitivity,
-        microphone_volume,
-        voice_output_volume,
-    };
 
     client.replace_voice_participant_playback_settings(participant_playback_settings);
-    client.update_voice_audio_sources(VoiceAudioSources {
-        input: input_source,
-        output: output_source,
-    });
+    client.update_voice_audio_sources(audio_sources);
     if let Err(message) = client.request_voice_join(scope, channel_id, self_mute, self_deaf) {
         logging::error("app", &message);
         client

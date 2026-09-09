@@ -1,8 +1,6 @@
 use super::*;
 use crate::tui::selection;
-use crate::tui::state::{
-    ForumPostComposerField, ForumPostComposerTagView, ForumPostComposerView, LocalUploadPreviewView,
-};
+use crate::tui::state::{ForumPostComposerField, ForumPostComposerView, LocalUploadPreviewView};
 use crate::tui::ui::{LOCAL_UPLOAD_PREVIEW_HEIGHT, LOCAL_UPLOAD_PREVIEW_WIDTH};
 
 const FORUM_POST_POPUP_WIDTH: u16 = 78;
@@ -264,7 +262,7 @@ fn build_composer_layout(
     lines.push(popup_form_summary_line(
         "Tags",
         view.requires_tag,
-        &tag_summary(&view.tags, width),
+        &super::thread_edit::forum_tag_summary(&view.tags, width),
         (!view.tags.is_empty()).then_some("Enter ›"),
         view.active_field == ForumPostComposerField::Tags,
         !view.tags.is_empty(),
@@ -379,65 +377,6 @@ pub(in crate::tui::ui) fn forum_post_composer_metrics(
     }
 }
 
-fn tag_line(tag: &ForumPostComposerTagView, width: usize, thumbnail_ready: bool) -> Line<'static> {
-    let marker = if tag.active { "▸" } else { " " };
-    let checkbox = if tag.selected { "[x]" } else { "[ ]" };
-    let emoji = super::thread_edit::tag_emoji_text(
-        tag.unicode_emoji.as_deref(),
-        tag.custom_emoji_url.as_deref(),
-        tag.custom_emoji_label.as_deref(),
-        thumbnail_ready,
-    );
-    // Unselectable tags (the cap is reached and this one is not yet selected)
-    // are dimmed. The active row keeps its highlight so the cursor stays visible
-    // even while sitting on a dimmed tag.
-    let style = if tag.active {
-        highlight_style()
-    } else if !tag.selectable {
-        theme::current().style(theme::HighlightGroup::Disabled)
-    } else {
-        Style::default()
-    };
-    Line::from(Span::styled(
-        truncate_display_width(&format!("{marker} {checkbox}{emoji} {}", tag.name), width),
-        style,
-    ))
-}
-
-fn tag_summary(tags: &[ForumPostComposerTagView], width: usize) -> String {
-    if tags.is_empty() {
-        return "None".to_owned();
-    }
-    let selected: Vec<String> = tags
-        .iter()
-        .filter(|tag| tag.selected)
-        .map(|tag| {
-            let emoji = super::thread_edit::tag_emoji_text(
-                tag.unicode_emoji.as_deref(),
-                tag.custom_emoji_url.as_deref(),
-                tag.custom_emoji_label.as_deref(),
-                false,
-            );
-            let emoji = emoji.trim();
-            if emoji.is_empty() {
-                format!("[{}]", tag.name)
-            } else {
-                format!("[{emoji} {}]", tag.name)
-            }
-        })
-        .collect();
-    if selected.is_empty() {
-        return "None selected".to_owned();
-    }
-
-    let available = width.saturating_sub(20).max(1);
-    let all = selected.join(" ");
-    if all.width() <= available || selected.len() == 1 {
-        return all;
-    }
-    format!("{} +{}", selected[0], selected.len().saturating_sub(1))
-}
-
 fn attachment_summary(view: &ForumPostComposerView) -> String {
     if view.attachments.is_empty() {
         return if view.paste_pending {
@@ -499,13 +438,14 @@ pub(in crate::tui::ui) fn render_forum_post_tag_picker(
     let rows: Vec<Line<'static>> = tags[visible_range.clone()]
         .iter()
         .map(|tag| {
-            tag_line(
+            super::thread_edit::forum_tag_line(
                 tag,
                 usize::from(content.width),
                 super::thread_edit::tag_custom_emoji_ready(
                     tag.custom_emoji_url.as_deref(),
                     &ready_urls,
                 ),
+                true,
             )
         })
         .collect();
@@ -766,7 +706,7 @@ fn cursor_prefix(value: &str, cursor: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::state::ForumPostComposerView;
+    use crate::tui::state::{ForumPostComposerTagView, ForumPostComposerView};
 
     fn body_view(body: &str, body_cursor: usize) -> ForumPostComposerView {
         ForumPostComposerView {
@@ -833,8 +773,11 @@ mod tests {
             .map(|index| tag(&format!("t{index}"), index < 5))
             .collect();
 
-        assert_eq!(tag_summary(&no_selection, 40), "None selected");
-        assert_eq!(tag_summary(&tags, 40), "[t0] +4");
+        assert_eq!(
+            super::thread_edit::forum_tag_summary(&no_selection, 40),
+            "None selected"
+        );
+        assert_eq!(super::thread_edit::forum_tag_summary(&tags, 40), "[t0] +4");
     }
 
     #[test]

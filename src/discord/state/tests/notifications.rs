@@ -598,38 +598,6 @@ fn only_mentions_settings_use_resolved_mentions() {
 }
 
 #[test]
-fn private_messages_increment_discord_mention_count() {
-    let channel_id = Id::new(2);
-    let current_user_id = Id::new(10);
-    let author_id = Id::new(20);
-    let mut state = DiscordState::default();
-
-    state.apply_event(&AppEvent::Ready {
-        user: "me".to_owned(),
-        user_id: Some(current_user_id),
-    });
-    state.apply_event(&AppEvent::ChannelUpsert(dm_channel(channel_id, "dm")));
-    state.apply_event(&user_guild_settings_init(vec![
-        private_notification_settings(NotificationLevel::AllMessages),
-    ]));
-
-    state.apply_event(&message_create(
-        None,
-        channel_id,
-        Id::new(30),
-        author_id,
-        "hello",
-        Vec::new(),
-    ));
-
-    assert_eq!(
-        state.channel_unread(channel_id),
-        ChannelUnreadState::Mentioned(1)
-    );
-    assert_eq!(state.channel_unread_message_count(channel_id), 1);
-}
-
-#[test]
 fn private_notification_settings_control_unread_surfaces() {
     let channel_id = Id::new(2);
     let current_user_id = Id::new(10);
@@ -640,6 +608,7 @@ fn private_notification_settings_control_unread_surfaces() {
         scope_muted,
         channel_override,
         mentions_current_user,
+        triggers_notification,
         unread_count,
         unread,
         sidebar_unread,
@@ -647,12 +616,25 @@ fn private_notification_settings_control_unread_surfaces() {
         direct_message_unread,
     ) in [
         (
+            "all messages",
+            false,
+            None,
+            false,
+            true,
+            1,
+            ChannelUnreadState::Mentioned(1),
+            ChannelUnreadState::Mentioned(1),
+            ChannelUnreadState::Mentioned(1),
+            1,
+        ),
+        (
             "no-messages level",
             false,
             Some(ChannelNotificationOverrideInfo {
                 message_notifications: Some(NotificationLevel::NoMessages),
                 ..ChannelNotificationOverrideInfo::test(channel_id)
             }),
+            false,
             false,
             1,
             ChannelUnreadState::Mentioned(1),
@@ -669,6 +651,7 @@ fn private_notification_settings_control_unread_surfaces() {
                 ..ChannelNotificationOverrideInfo::test(channel_id)
             }),
             false,
+            false,
             0,
             ChannelUnreadState::Unread,
             ChannelUnreadState::Seen,
@@ -684,6 +667,7 @@ fn private_notification_settings_control_unread_surfaces() {
                 ..ChannelNotificationOverrideInfo::test(channel_id)
             }),
             true,
+            false,
             1,
             ChannelUnreadState::Mentioned(1),
             ChannelUnreadState::Seen,
@@ -694,6 +678,7 @@ fn private_notification_settings_control_unread_surfaces() {
             "muted private scope",
             true,
             None,
+            false,
             false,
             0,
             ChannelUnreadState::Unread,
@@ -706,6 +691,7 @@ fn private_notification_settings_control_unread_surfaces() {
             true,
             None,
             true,
+            false,
             1,
             ChannelUnreadState::Mentioned(1),
             ChannelUnreadState::Mentioned(1),
@@ -730,7 +716,11 @@ fn private_notification_settings_control_unread_surfaces() {
             .into_iter()
             .collect();
         let event = message_create(None, channel_id, Id::new(30), author_id, "hello", mentions);
-        assert!(!state.message_event_triggers_notification(&event), "{name}");
+        assert_eq!(
+            state.message_event_triggers_notification(&event),
+            triggers_notification,
+            "{name}"
+        );
         state.apply_event(&event);
 
         assert_eq!(

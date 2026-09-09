@@ -21,7 +21,7 @@ use super::{
     members::{parse_current_user_verification, parse_member_info},
     presence::{parse_activities, parse_presence_entry},
     relationships::parse_relationship_entry,
-    shared::{display_name_from_parts_or_unknown, parse_id, parse_status},
+    shared::{display_name_from_parts_or_unknown, parse_id, parse_id_array, parse_status},
     user_settings::parse_user_settings_info,
     voice::parse_guild_voice_states,
 };
@@ -240,15 +240,7 @@ pub(super) fn parse_ready_supplemental(data: &Value) -> Vec<AppEvent> {
             let Some(channel) = parse_channel_info(raw_channel, None) else {
                 continue;
             };
-            let recipient_ids = raw_channel
-                .get("recipient_ids")
-                .and_then(Value::as_array)
-                .map(|ids| {
-                    ids.iter()
-                        .filter_map(parse_id::<UserMarker>)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            let recipient_ids = parse_id_array(raw_channel.get("recipient_ids"));
             if recipient_ids.is_empty() {
                 events.push(AppEvent::ChannelUpsert(channel));
             } else {

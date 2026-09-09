@@ -61,9 +61,7 @@ use super::{
     notification_settings::mute_request_body,
     polls::poll_vote_request_body,
     profile::parse_user_profile_response,
-    reactions::{
-        next_reaction_users_after, parse_reaction_users_response, reaction_route_component,
-    },
+    reactions::{next_reaction_users_after, parse_reaction_users_response},
     search::{
         MessageSearchResponse, message_search_date_snowflake_bounds, message_search_has_more,
         message_search_query_params, message_search_retry_delay,
@@ -1256,7 +1254,7 @@ fn reaction_route_component_formats_unicode_and_custom_reactions() {
     ];
 
     for (reaction, expected) in cases {
-        assert_eq!(reaction_route_component(&reaction), expected);
+        assert_eq!(reaction.route_component(), expected);
     }
 }
 

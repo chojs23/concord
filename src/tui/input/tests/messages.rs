@@ -115,46 +115,6 @@ fn message_viewport_scroll_uses_configured_keys() {
 }
 
 #[test]
-fn debug_log_uses_the_configured_open_action() {
-    let mut state = DashboardState::new();
-
-    handle_key(&mut state, char_key('`'));
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-
-    handle_key(&mut state, char_key('q'));
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-
-    let mut state = state_with_keymap(KeymapOptions {
-        mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("z d"))]
-            .into_iter()
-            .collect(),
-        ..Default::default()
-    });
-
-    handle_key(&mut state, char_key('`'));
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-
-    handle_key(&mut state, char_key('z'));
-    handle_key(&mut state, char_key('d'));
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-
-    handle_key(&mut state, char_key('q'));
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-}
-
-#[test]
-fn esc_closes_debug_log_popup_modally() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-    state.open_debug_log_popup();
-
-    handle_key(&mut state, key(KeyCode::Esc));
-
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-    assert_eq!(state.focus(), FocusPane::Messages);
-}
-
-#[test]
 fn enter_opens_selected_forum_post_from_message_pane() {
     let mut state = state_with_forum_channel_posts();
     state.focus_pane(FocusPane::Messages);
@@ -251,35 +211,7 @@ fn esc_returns_from_pinned_message_view() {
 }
 
 #[test]
-fn message_pane_shortcuts_reuse_message_actions() {
-    let mut reaction_state = state_with_messages(1);
-    reaction_state.focus_pane(FocusPane::Messages);
-    handle_key(&mut reaction_state, char_key('r'));
-    assert!(
-        reaction_state
-            .is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker)
-    );
-
-    let mut reply_state = state_with_messages(1);
-    reply_state.focus_pane(FocusPane::Messages);
-    handle_key(&mut reply_state, char_key('R'));
-    assert!(reply_state.is_composing());
-    handle_key(&mut reply_state, char_key('o'));
-    let command = handle_key(&mut reply_state, key(KeyCode::Enter));
-    assert_send_message_eq!(
-        command,
-        Some(AppCommand::SendMessage {
-            channel_id: Id::new(2),
-            nonce: Id::new(1),
-            content: "o".to_owned(),
-            reply_to: Some(crate::discord::ReplyReference {
-                message_id: Id::new(1),
-                mention_author: true,
-            }),
-            attachments: Vec::new(),
-        })
-    );
-
+fn direct_edit_shortcut_opens_existing_message_draft() {
     let mut edit_state = state_with_own_message();
     edit_state.focus_pane(FocusPane::Messages);
     handle_key(&mut edit_state, char_key('e'));
@@ -355,55 +287,40 @@ fn open_url_shortcut_opens_url_or_url_picker() {
 }
 
 #[test]
-fn play_media_shortcut_returns_media_command() {
-    let mut state = state_with_messages_from_state(
-        DashboardState::new_with_display_options(DisplayOptions {
-            media_playback: true,
-            ..Default::default()
-        }),
-        0,
-    );
-    state.push_event(message_create_event(MessageCreateFixture {
-        message_id: Id::new(1),
-        content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
-        ..guild_message_create_fixture()
-    }));
-    state.focus_pane(FocusPane::Messages);
+fn message_media_shortcut_respects_display_option() {
+    for (case, enabled) in [
+        ("play_media_shortcut_returns_media_command", true),
+        (
+            "disabled_media_playback_display_option_removes_message_shortcut",
+            false,
+        ),
+    ] {
+        let mut state = state_with_messages_from_state(
+            DashboardState::new_with_display_options(DisplayOptions {
+                media_playback: enabled,
+                ..Default::default()
+            }),
+            0,
+        );
+        state.push_event(message_create_event(MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
+            ..guild_message_create_fixture()
+        }));
+        state.focus_pane(FocusPane::Messages);
 
-    let command = handle_key(&mut state, char_key('x'));
-
-    assert_eq!(
-        command,
-        Some(AppCommand::PlayMedia {
+        let command = handle_key(&mut state, char_key('x'));
+        let expected = enabled.then(|| AppCommand::PlayMedia {
             target: MediaPlaybackTarget {
                 url: "https://youtu.be/dQw4w9WgXcQ".to_owned(),
                 label: "media URL".to_owned(),
                 source: MediaPlaybackSource::Message,
             },
             request_id: None,
-        })
-    );
-}
+        });
 
-#[test]
-fn disabled_media_playback_display_option_removes_message_shortcut() {
-    let mut state = state_with_messages_from_state(
-        DashboardState::new_with_display_options(DisplayOptions {
-            media_playback: false,
-            ..Default::default()
-        }),
-        0,
-    );
-    state.push_event(message_create_event(MessageCreateFixture {
-        message_id: Id::new(1),
-        content: Some("watch https://youtu.be/dQw4w9WgXcQ".to_owned()),
-        ..guild_message_create_fixture()
-    }));
-    state.focus_pane(FocusPane::Messages);
-
-    let command = handle_key(&mut state, char_key('x'));
-
-    assert_eq!(command, None);
+        assert_eq!(command, expected, "{case}");
+    }
 }
 
 #[test]
@@ -484,7 +401,7 @@ fn close_popup_bindings_remain_scoped_from_dashboard_sequences() {
 
     {
         let mut state = state_with_keymap(KeymapOptions {
-            mappings: [("OpenDebugLog".to_owned(), KeymapBinding::one("q d"))]
+            mappings: [("OpenDebugPanel".to_owned(), KeymapBinding::one("q d"))]
                 .into_iter()
                 .collect(),
             ..Default::default()
@@ -1002,81 +919,53 @@ fn attachment_viewer_y_shortcut_requests_selected_attachment_url_copy() {
 }
 
 #[test]
-fn attachment_viewer_x_shortcut_plays_video_attachment() {
-    let mut state = state_with_messages_from_state(
-        DashboardState::new_with_display_options(DisplayOptions {
-            media_playback: true,
-            ..Default::default()
-        }),
-        0,
-    );
-    state.push_event(message_create_event(MessageCreateFixture {
-        message_id: Id::new(1),
-        content: Some(String::new()),
-        attachments: vec![crate::discord::AttachmentInfo {
-            id: Id::new(3),
-            filename: "clip.mp4".to_owned(),
-            url: "https://cdn.discordapp.com/clip.mp4".to_owned(),
-            proxy_url: "https://media.discordapp.net/clip.mp4".to_owned(),
-            content_type: Some("video/mp4".to_owned()),
-            size: 2048,
-            width: Some(640),
-            height: Some(480),
-            description: None,
-            flags: 0,
-        }],
-        ..guild_message_create_fixture()
-    }));
-    state.focus_pane(FocusPane::Messages);
-    handle_key(&mut state, char_key('v'));
+fn attachment_viewer_playback_respects_display_option() {
+    for (case, enabled) in [
+        ("attachment_viewer_x_shortcut_plays_video_attachment", true),
+        (
+            "disabled_media_playback_display_option_blocks_attachment_viewer_playback",
+            false,
+        ),
+    ] {
+        let mut state = state_with_messages_from_state(
+            DashboardState::new_with_display_options(DisplayOptions {
+                media_playback: enabled,
+                ..Default::default()
+            }),
+            0,
+        );
+        state.push_event(message_create_event(MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some(String::new()),
+            attachments: vec![AttachmentInfo {
+                id: Id::new(3),
+                filename: "clip.mp4".to_owned(),
+                url: "https://cdn.discordapp.com/clip.mp4".to_owned(),
+                proxy_url: "https://media.discordapp.net/clip.mp4".to_owned(),
+                content_type: Some("video/mp4".to_owned()),
+                size: 2048,
+                width: Some(640),
+                height: Some(480),
+                description: None,
+                flags: 0,
+            }],
+            ..guild_message_create_fixture()
+        }));
+        state.focus_pane(FocusPane::Messages);
+        handle_key(&mut state, char_key('v'));
 
-    let command = handle_key(&mut state, char_key('x'));
-
-    assert_eq!(
-        command,
-        Some(AppCommand::PlayMedia {
+        let command = handle_key(&mut state, char_key('x'));
+        let expected = enabled.then(|| AppCommand::PlayMedia {
             target: MediaPlaybackTarget {
                 url: "https://cdn.discordapp.com/clip.mp4".to_owned(),
                 label: "clip.mp4".to_owned(),
                 source: MediaPlaybackSource::AttachmentViewer,
             },
             request_id: None,
-        })
-    );
-}
+        });
 
-#[test]
-fn disabled_media_playback_display_option_blocks_attachment_viewer_playback() {
-    let mut state = state_with_messages_from_state(
-        DashboardState::new_with_display_options(DisplayOptions {
-            media_playback: false,
-            ..Default::default()
-        }),
-        0,
-    );
-    state.push_event(message_create_event(MessageCreateFixture {
-        message_id: Id::new(1),
-        content: Some(String::new()),
-        attachments: vec![AttachmentInfo {
-            id: Id::new(3),
-            filename: "clip.mp4".to_owned(),
-            url: "https://cdn.discordapp.com/clip.mp4".to_owned(),
-            proxy_url: "https://media.discordapp.net/clip.mp4".to_owned(),
-            content_type: Some("video/mp4".to_owned()),
-            size: 2048,
-            width: Some(640),
-            height: Some(480),
-            description: None,
-            flags: 0,
-        }],
-        ..guild_message_create_fixture()
-    }));
-    state.focus_pane(FocusPane::Messages);
-    handle_key(&mut state, char_key('v'));
-
-    let command = handle_key(&mut state, char_key('x'));
-
-    assert_eq!(command, None);
+        assert_eq!(command, expected, "{case}");
+    }
 }
 
 #[test]

@@ -53,7 +53,7 @@ pub(in crate::tui::ui) fn poll_vote_picker_lines(
             };
             selected_row_line(
                 Line::from(vec![
-                    selectable_popup_marker(selected),
+                    selection_marker(selected),
                     selectable_popup_shortcut_span(shortcut),
                     Span::styled(format!("{checkbox} {}", answer.label), style),
                 ]),

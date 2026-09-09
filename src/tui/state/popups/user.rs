@@ -4,8 +4,8 @@ use crate::discord::ids::{
 };
 use crate::discord::{
     ActivityInfo, ActivityKind, AppCommand, GlobalUserProfileUpdate, GuildUserProfileUpdate,
-    MessageAttachmentUpload, PresenceStatus, ProfileAvatarUpload, RoleState, UserProfileInfo,
-    UserProfileUpdate,
+    MessageAttachmentUpload, PresenceStatus, ProfileAvatarUpload, RichPresenceSelection, RoleState,
+    UserProfileInfo, UserProfileUpdate,
 };
 use crate::tui::keybindings::{KeyChord, SelectionAction};
 use crate::tui::text_input::TextEditAction;
@@ -29,17 +29,8 @@ impl DashboardState {
     /// Direct shortcut from the member pane: open the profile popup for the
     /// currently selected member without going through Leader Actions.
     pub fn show_selected_member_profile(&mut self) -> Option<AppCommand> {
-        if self.navigation.focus != FocusPane::Members {
-            return None;
-        }
-        let entries = self.flattened_members();
-        let entry = entries.get(self.selected_member())?;
-        let user_id = entry.user_id();
-        let guild_id = match self.navigation.guilds.active {
-            ActiveGuildScope::Guild(guild_id) => Some(guild_id),
-            ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
-        };
-        self.open_user_profile_popup(user_id, guild_id)
+        let context = self.selected_member_action_context()?;
+        self.open_user_profile_popup(context.user_id, context.guild_id)
     }
 
     pub fn open_current_user_profile_popup(&mut self) -> Option<AppCommand> {
@@ -162,6 +153,7 @@ impl DashboardState {
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
     ) -> Option<AppCommand> {
+        self.cancel_clipboard_paste();
         self.popups
             .set_modal(ModalPopup::UserProfile(UserProfilePopupState {
                 user_id,
@@ -177,6 +169,7 @@ impl DashboardState {
     pub fn close_user_profile_popup(&mut self) {
         if self.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
             self.popups.clear_modal();
+            self.cancel_clipboard_paste();
         }
     }
 
@@ -198,6 +191,7 @@ impl DashboardState {
         {
             popup.settings.edit_input.clear();
             popup.pending_scroll_reveal = true;
+            self.cancel_clipboard_paste();
             return;
         }
         self.close_user_profile_popup();
@@ -277,8 +271,11 @@ impl DashboardState {
                 .cache
                 .user_activities(user_id)
                 .iter()
+                // Any non-custom activity is a presence worth showing here,
+                // including RPC-relayed ones whose kind is not `Playing`
+                // (e.g. music bridges send `Listening`).
                 .find(|activity| {
-                    activity.kind == ActivityKind::Playing && !activity.name.trim().is_empty()
+                    activity.kind != ActivityKind::Custom && !activity.name.trim().is_empty()
                 })
                 .map(|activity| activity.name.clone())
         })
@@ -448,12 +445,12 @@ impl DashboardState {
             if field == UserProfileSettingsField::ManualActivity {
                 let status = self.user_profile_settings_presence_status();
                 let activities = self.user_profile_settings_manual_activities();
-                // track_client_id None: a manually-typed activity is not tracked,
-                // so RPC updates must not override it.
+                // A manually-typed activity is owned by the user, so RPC
+                // updates must not override it.
                 return Some(AppCommand::UpdateCurrentUserActivity {
                     status,
                     activities,
-                    track_client_id: None,
+                    rich_presence: RichPresenceSelection::Manual,
                 });
             }
             return None;
@@ -588,16 +585,39 @@ impl DashboardState {
             return None;
         }
         let detected = self.detected_rich_presence().to_vec();
-        let len = detected.len() + 1;
+        let len = detected.len() + 2;
         let selected = {
             let popup = self.popups.user_profile_popup()?;
             let picker = popup.settings.activity_picker.as_ref()?;
             picker.selected_for_len(len)
         };
 
-        if let Some(activity) = detected.get(selected).cloned() {
+        if selected == 0 {
+            // Automatic: relay the most recent app, like the native client.
+            // `detected` is ordered most recent first, matching what the RPC
+            // server broadcasts.
             let status = self.user_profile_settings_presence_status();
-            let track_client_id = activity.application_id.clone();
+            let activities = detected.first().cloned().into_iter().collect();
+            if let Some(popup) = self.popups.user_profile_popup_mut() {
+                popup.settings.activity_picker = None;
+                popup.settings.manual_activity = None;
+                popup.pending_scroll_reveal = true;
+            }
+            return Some(AppCommand::UpdateCurrentUserActivity {
+                status,
+                activities,
+                rich_presence: RichPresenceSelection::Automatic,
+            });
+        }
+
+        if let Some(activity) = detected.get(selected - 1).cloned() {
+            let status = self.user_profile_settings_presence_status();
+            // RPC activities always carry the handshake `client_id` here; a
+            // missing one falls back to manual so nothing is silently pinned.
+            let rich_presence = match activity.application_id.clone() {
+                Some(client_id) => RichPresenceSelection::App(client_id),
+                None => RichPresenceSelection::Manual,
+            };
             if let Some(popup) = self.popups.user_profile_popup_mut() {
                 popup.settings.activity_picker = None;
                 popup.settings.manual_activity = Some(activity.name.clone());
@@ -606,7 +626,7 @@ impl DashboardState {
             return Some(AppCommand::UpdateCurrentUserActivity {
                 status,
                 activities: vec![activity],
-                track_client_id,
+                rich_presence,
             });
         }
 
@@ -629,17 +649,24 @@ impl DashboardState {
             return Vec::new();
         };
         let detected = self.detected_rich_presence();
-        let len = detected.len() + 1;
+        let len = detected.len() + 2;
         let selected = picker.selected_for_len(len);
-        let mut rows: Vec<(String, bool)> = detected
-            .iter()
-            .enumerate()
-            .map(|(index, activity)| (activity_picker_label(activity), index == selected))
-            .collect();
-        rows.push((
-            MANUAL_ACTIVITY_PICKER_LABEL.to_owned(),
-            selected == detected.len(),
-        ));
+        // Surface what automatic mode is currently relaying so detection is
+        // visible without opening the picker's other rows.
+        let automatic_label = match detected.first() {
+            Some(latest) if !latest.name.trim().is_empty() => {
+                format!("{AUTOMATIC_ACTIVITY_PICKER_LABEL} — {}", latest.name.trim())
+            }
+            _ => AUTOMATIC_ACTIVITY_PICKER_LABEL.to_owned(),
+        };
+        let mut rows: Vec<(String, bool)> = vec![(automatic_label, selected == 0)];
+        rows.extend(
+            detected
+                .iter()
+                .enumerate()
+                .map(|(index, activity)| (activity_picker_label(activity), index + 1 == selected)),
+        );
+        rows.push((MANUAL_ACTIVITY_PICKER_LABEL.to_owned(), selected + 1 == len));
         rows
     }
 
@@ -940,6 +967,7 @@ impl DashboardState {
     }
 }
 
+const AUTOMATIC_ACTIVITY_PICKER_LABEL: &str = "Automatic (most recent app)";
 const MANUAL_ACTIVITY_PICKER_LABEL: &str = "Set manually…";
 
 fn manual_activity_from_text(value: &str) -> Vec<ActivityInfo> {

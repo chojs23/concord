@@ -13,6 +13,7 @@ use crate::discord::{
     SnapshotAreas, SnapshotRevision,
 };
 
+use super::message_viewport::MessageViewportAnchor;
 use super::{ChannelPaneCursor, DashboardState, DesktopNotification, message_notification_body};
 
 #[derive(Debug, Default)]
@@ -114,26 +115,7 @@ impl DashboardState {
         thread_card_catalog_changed: bool,
         restore: impl FnOnce(&mut DiscordState),
     ) {
-        let was_auto_follow = self.messages.message_auto_follow;
-        let was_at_latest = was_auto_follow || self.is_viewport_at_latest_message();
-        let was_cursor_on_last = self.cursor_on_last_message();
-        let was_following_cursor = was_at_latest && was_cursor_on_last;
-        let preserve_selection = !was_following_cursor;
-        let preserve_scroll = !(was_at_latest || was_following_cursor);
-        let selected_message_id = preserve_selection
-            .then(|| {
-                self.messages()
-                    .get(self.selected_message())
-                    .map(|message| message.id)
-            })
-            .flatten();
-        let scroll_message_id = preserve_scroll
-            .then(|| {
-                self.messages()
-                    .get(self.messages.message_scroll)
-                    .map(|message| message.id)
-            })
-            .flatten();
+        let anchor = MessageViewportAnchor::capture(self);
         let channel_cursor = self.selected_channel_cursor();
 
         restore(&mut self.discord.cache);
@@ -150,12 +132,12 @@ impl DashboardState {
         }
 
         let in_message_view = self.message_pane_supports_auto_follow();
-        let should_follow = was_following_cursor && in_message_view;
-        let should_scroll = should_follow || (was_at_latest && in_message_view);
+        let should_follow = anchor.was_following_cursor && in_message_view;
+        let should_scroll = should_follow || (anchor.was_at_latest && in_message_view);
         if areas.message || areas.navigation {
             self.repair_message_after_discord_restore(
-                selected_message_id,
-                scroll_message_id,
+                anchor.selected_message_id,
+                anchor.scroll_message_id,
                 should_follow,
                 should_scroll,
             );

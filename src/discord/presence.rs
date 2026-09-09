@@ -41,6 +41,21 @@ impl PresenceStatus {
     }
 }
 
+/// Which local Rich Presence (RPC) activity concord broadcasts on the user's
+/// profile. Mirrors the native client's automatic relay while keeping an
+/// explicit escape hatch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RichPresenceSelection {
+    /// Broadcast the most recently updated RPC activity (last writer wins),
+    /// falling back to the next most recent when that app disconnects.
+    Automatic,
+    /// The user pinned a specific app in the profile settings picker; falls
+    /// back to [`Self::Automatic`] once that app is gone.
+    App(String),
+    /// A manual activity or an explicit none: RPC must never override it.
+    Manual,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ActivityKind {
     Playing,

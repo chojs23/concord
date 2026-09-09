@@ -71,10 +71,8 @@ pub(super) fn parse_command(payload: &[u8], client_id: &str) -> Result<Command, 
         .get("pid")
         .and_then(Value::as_i64)
         .ok_or_else(|| CommandError::invalid_payload(Some(cmd.clone()), nonce.clone()))?;
-    let raw_activity = args
-        .get("activity")
-        .cloned()
-        .ok_or_else(|| CommandError::invalid_payload(Some(cmd.clone()), nonce.clone()))?;
+    // RPC clients can clear activity by omitting this optional field.
+    let raw_activity = args.get("activity").cloned().unwrap_or(Value::Null);
     let activity = match &raw_activity {
         Value::Null => None,
         Value::Object(_) => Some(Box::new(
@@ -201,46 +199,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn parse_command_maps_set_activity_into_rich_activity() {
-        let payload = json!({
-            "cmd": "SET_ACTIVITY",
-            "nonce": "n1",
-            "args": {
-                "pid": 4321,
-                "activity": {
-                    "details": "Editing main.rs",
-                    "state": "Workspace: concord",
-                    "timestamps": { "start": 1_700_000_000_000i64 },
-                    "assets": { "large_image": "rust", "large_text": "Rust" },
-                    "buttons": [{ "label": "Repo", "url": "https://example.com" }]
-                }
-            }
-        })
-        .to_string();
-
-        let command = parse_command(payload.as_bytes(), "999").expect("command parses");
-        let Command::SetActivity {
-            pid,
-            activity,
-            echo,
-            nonce,
-        } = command;
-        assert_eq!(pid, 4321);
-        assert_eq!(nonce.as_deref(), Some("n1"));
-        assert_eq!(echo["details"].as_str(), Some("Editing main.rs"));
-        let activity = activity.expect("activity present");
-        assert_eq!(activity.application_id.as_deref(), Some("999"));
-        assert_eq!(activity.name, "999");
-        assert_eq!(activity.details.as_deref(), Some("Editing main.rs"));
-        assert_eq!(
-            activity.timestamps.and_then(|t| t.start),
-            Some(1_700_000_000_000)
-        );
-        assert_eq!(activity.buttons[0].label, "Repo");
-        assert_eq!(activity.buttons[0].url, "https://example.com");
-    }
-
-    #[test]
     fn parse_command_normalizes_second_timestamps_to_millis() {
         let seconds = 1_700_000_000i64;
         let payload = json!({
@@ -277,13 +235,19 @@ mod tests {
     fn parse_command_preserves_rpc_activity_fields() {
         let payload = json!({
             "cmd": "SET_ACTIVITY",
+            "nonce": "n1",
             "args": {
-                "pid": 1,
+                "pid": 4321,
                 "activity": {
                     "type": 6,
                     "name": "Hang Status",
+                    "details": "Editing main.rs",
+                    "state": "Workspace: concord",
                     "details_url": "https://example.com/details",
                     "state_url": "https://example.com/state",
+                    "timestamps": { "start": 1_700_000_000_000i64 },
+                    "assets": { "large_image": "rust", "large_text": "Rust" },
+                    "buttons": [{ "label": "Repo", "url": "https://example.com" }],
                     "supported_platforms": ["desktop", "xbox"],
                     "party": {
                         "id": "party-1",
@@ -302,9 +266,26 @@ mod tests {
         .to_string();
 
         let command = parse_command(payload.as_bytes(), "999").expect("command parses");
-        let Command::SetActivity { activity, .. } = command;
+        let Command::SetActivity {
+            pid,
+            activity,
+            echo,
+            nonce,
+        } = command;
+        assert_eq!(pid, 4321);
+        assert_eq!(nonce.as_deref(), Some("n1"));
+        assert_eq!(echo["details"].as_str(), Some("Editing main.rs"));
         let activity = activity.expect("activity present");
+        assert_eq!(activity.application_id.as_deref(), Some("999"));
+        assert_eq!(activity.name, "Hang Status");
         assert_eq!(activity.kind, ActivityKind::Hang);
+        assert_eq!(activity.details.as_deref(), Some("Editing main.rs"));
+        assert_eq!(
+            activity.timestamps.and_then(|timestamps| timestamps.start),
+            Some(1_700_000_000_000)
+        );
+        assert_eq!(activity.buttons[0].label, "Repo");
+        assert_eq!(activity.buttons[0].url, "https://example.com");
         assert_eq!(
             activity.details_url.as_deref(),
             Some("https://example.com/details")
@@ -329,16 +310,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_command_treats_null_activity_as_clear() {
-        let payload = json!({
-            "cmd": "SET_ACTIVITY",
-            "args": { "pid": 1, "activity": null }
-        })
-        .to_string();
+    fn parse_command_treats_null_or_omitted_activity_as_clear() {
+        for args in [
+            json!({ "pid": 1, "activity": null }),
+            json!({ "pid": 1 }),
+            json!({ "pid": 0 }),
+        ] {
+            let payload = json!({ "cmd": "SET_ACTIVITY", "args": args }).to_string();
 
-        let command = parse_command(payload.as_bytes(), "999").expect("command parses");
-        let Command::SetActivity { activity, .. } = command;
-        assert!(activity.is_none());
+            let command = parse_command(payload.as_bytes(), "999").expect("command parses");
+            let Command::SetActivity { activity, echo, .. } = command;
+            assert!(activity.is_none());
+            assert!(echo.is_null());
+        }
     }
 
     #[test]

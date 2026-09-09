@@ -20,6 +20,10 @@ use x11rb::{
 };
 use xkeysym::RawKeysym;
 
+use super::ShortcutMatcher;
+
+type PlatformShortcutMatcher = ShortcutMatcher<u32, KeyButMask>;
+
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 pub(super) struct PushToTalkListener {
@@ -124,7 +128,7 @@ fn run_x11_listener(
             };
             match event {
                 Event::XinputRawKeyPress(event) => {
-                    if event.detail == u32::from(matcher.keycode) {
+                    if matcher.key_matches(event.detail) {
                         let Ok(cookie) = connection.query_pointer(root) else {
                             return;
                         };
@@ -157,7 +161,7 @@ fn run_x11_listener(
 fn prepare_x11_listener(
     keysym: RawKeysym,
     modifiers: KeyButMask,
-) -> Result<(RustConnection, Window, ShortcutMatcher), String> {
+) -> Result<(RustConnection, Window, PlatformShortcutMatcher), String> {
     let (connection, screen) = RustConnection::connect(None)
         .map_err(|error| format!("Could not open the X11 display: {error}"))?;
     connection
@@ -182,40 +186,11 @@ fn prepare_x11_listener(
         .flush()
         .map_err(|error| format!("Could not start the X11 push-to-talk monitor: {error}"))?;
 
-    Ok((connection, root, ShortcutMatcher::new(keycode, modifiers)))
-}
-
-#[derive(Clone, Copy)]
-struct ShortcutMatcher {
-    keycode: Keycode,
-    modifiers: KeyButMask,
-    pressed: bool,
-}
-
-impl ShortcutMatcher {
-    const fn new(keycode: Keycode, modifiers: KeyButMask) -> Self {
-        Self {
-            keycode,
-            modifiers,
-            pressed: false,
-        }
-    }
-
-    fn transition(&mut self, pressed: bool, keycode: u32, modifiers: KeyButMask) -> Option<bool> {
-        if keycode != u32::from(self.keycode) {
-            return None;
-        }
-
-        if pressed && !self.pressed && modifiers == self.modifiers {
-            self.pressed = true;
-            Some(true)
-        } else if !pressed && self.pressed {
-            self.pressed = false;
-            Some(false)
-        } else {
-            None
-        }
-    }
+    Ok((
+        connection,
+        root,
+        ShortcutMatcher::new(u32::from(keycode), modifiers),
+    ))
 }
 
 fn modifier_mask(modifiers: Modifiers) -> KeyButMask {
@@ -383,25 +358,4 @@ fn key_to_x11_keysym(key: Code) -> Option<RawKeysym> {
         Code::Pause => xkeysym::key::Pause,
         _ => return None,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bare_key_tracks_press_and_release_without_modifiers() {
-        let mut matcher = ShortcutMatcher::new(10, KeyButMask::default());
-
-        assert_eq!(
-            matcher.transition(true, 10, KeyButMask::default()),
-            Some(true)
-        );
-        assert_eq!(matcher.transition(true, 10, KeyButMask::default()), None);
-        assert_eq!(
-            matcher.transition(false, 10, KeyButMask::default()),
-            Some(false)
-        );
-        assert_eq!(matcher.transition(true, 10, KeyButMask::SHIFT), None);
-    }
 }

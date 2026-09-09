@@ -1,3 +1,8 @@
+#[cfg(test)]
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use global_hotkey::hotkey::HotKey;
@@ -25,6 +30,43 @@ mod x11;
 #[cfg(target_os = "linux")]
 use x11 as platform;
 
+#[derive(Clone, Copy)]
+struct ShortcutMatcher<K, M> {
+    key: K,
+    modifiers: M,
+    pressed: bool,
+}
+
+impl<K: Copy + PartialEq, M: Copy + PartialEq> ShortcutMatcher<K, M> {
+    const fn new(key: K, modifiers: M) -> Self {
+        Self {
+            key,
+            modifiers,
+            pressed: false,
+        }
+    }
+
+    fn key_matches(&self, key: K) -> bool {
+        key == self.key
+    }
+
+    fn transition(&mut self, pressed: bool, key: K, modifiers: M) -> Option<bool> {
+        if !self.key_matches(key) {
+            return None;
+        }
+
+        if pressed && !self.pressed && modifiers == self.modifiers {
+            self.pressed = true;
+            Some(true)
+        } else if !pressed && self.pressed {
+            self.pressed = false;
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PushToTalkConfiguration {
     enabled: bool,
@@ -39,6 +81,8 @@ pub(super) struct GlobalPushToTalkRuntime {
 }
 
 enum PushToTalkBackend {
+    #[cfg(test)]
+    TestCleanup(Arc<AtomicBool>),
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     Native {
         manager: GlobalHotKeyManager,
@@ -132,6 +176,8 @@ impl GlobalPushToTalkRuntime {
         #[cfg(target_os = "linux")]
         let mut backend_failed = None;
         match self.backend.as_mut() {
+            #[cfg(test)]
+            Some(PushToTalkBackend::TestCleanup(_)) => {}
             #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             Some(PushToTalkBackend::Native { hotkey, .. }) => {
                 while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
@@ -253,21 +299,6 @@ impl GlobalPushToTalkRuntime {
             return;
         };
         match backend {
-            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            PushToTalkBackend::Native { manager, hotkey } => {
-                if let Err(error) = manager.unregister(hotkey) {
-                    logging::debug(
-                        "voice",
-                        format!("failed to unregister push-to-talk shortcut: {error}"),
-                    );
-                }
-            }
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            PushToTalkBackend::Passive(listener) => {
-                if let Err(error) = listener.stop() {
-                    logging::debug("voice", error);
-                }
-            }
             #[cfg(target_os = "linux")]
             PushToTalkBackend::Portal {
                 mut shutdown,
@@ -284,6 +315,50 @@ impl GlobalPushToTalkRuntime {
                     task.abort();
                 }
             }
+            backend => stop_backend_immediately(backend),
+        }
+    }
+}
+
+impl Drop for GlobalPushToTalkRuntime {
+    fn drop(&mut self) {
+        self.release();
+        let Some(backend) = self.backend.take() else {
+            return;
+        };
+        stop_backend_immediately(backend);
+    }
+}
+
+fn stop_backend_immediately(backend: PushToTalkBackend) {
+    match backend {
+        #[cfg(test)]
+        PushToTalkBackend::TestCleanup(cleaned_up) => {
+            cleaned_up.store(true, Ordering::SeqCst);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        PushToTalkBackend::Native { manager, hotkey } => {
+            if let Err(error) = manager.unregister(hotkey) {
+                logging::debug(
+                    "voice",
+                    format!("failed to unregister push-to-talk shortcut: {error}"),
+                );
+            }
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        PushToTalkBackend::Passive(listener) => {
+            if let Err(error) = listener.stop() {
+                logging::debug("voice", error);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        PushToTalkBackend::Portal {
+            mut shutdown, task, ..
+        } => {
+            if let Some(shutdown) = shutdown.take() {
+                let _ = shutdown.send(());
+            }
+            task.abort();
         }
     }
 }
@@ -519,6 +594,30 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
+    fn shortcut_matcher_tracks_press_and_release() {
+        let mut matcher = ShortcutMatcher::new(10_u16, 0b0010_u8);
+
+        for (pressed, key, modifiers, expected) in [
+            (true, 11, 0b0010, None),
+            (true, 10, 0b0001, None),
+            (true, 10, 0b0010, Some(true)),
+            (true, 10, 0b0010, None),
+            (true, 10, 0b0100, None),
+            (false, 11, 0b0010, None),
+            (false, 10, 0b0100, Some(false)),
+            (false, 10, 0b0010, None),
+            (true, 10, 0b0010, Some(true)),
+            (false, 10, 0b0010, Some(false)),
+        ] {
+            assert_eq!(
+                matcher.transition(pressed, key, modifiers),
+                expected,
+                "pressed={pressed}, key={key}, modifiers={modifiers:#06b}"
+            );
+        }
+    }
+
+    #[test]
     fn xdg_trigger_uses_portal_shortcut_syntax() {
         let hotkey: HotKey = "control+shift+F8".parse().expect("test shortcut is valid");
 
@@ -542,5 +641,18 @@ mod tests {
             hotkey_to_xdg_trigger(hotkey).as_deref(),
             Some("CTRL+SHIFT+F9")
         );
+    }
+
+    #[test]
+    fn dropping_runtime_cleans_up_the_active_backend() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let cleaned_up = Arc::new(AtomicBool::new(false));
+        let mut runtime = GlobalPushToTalkRuntime::new(client);
+        runtime.backend = Some(PushToTalkBackend::TestCleanup(Arc::clone(&cleaned_up)));
+
+        drop(runtime);
+
+        assert!(cleaned_up.load(Ordering::SeqCst));
     }
 }
