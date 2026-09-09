@@ -9,6 +9,10 @@ use std::{
 };
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+
+use super::ShortcutMatcher;
+
+type PlatformShortcutMatcher = ShortcutMatcher<u32, u8>;
 use windows_sys::Win32::{
     Foundation::{LPARAM, LRESULT, WPARAM},
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
@@ -113,13 +117,13 @@ impl Drop for PushToTalkListener {
 }
 
 struct HookContext {
-    matcher: ShortcutMatcher,
+    matcher: PlatformShortcutMatcher,
     modifiers: ModifierState,
     events: mpsc::Sender<bool>,
 }
 
 fn run_keyboard_hook(
-    matcher: ShortcutMatcher,
+    matcher: PlatformShortcutMatcher,
     events: mpsc::Sender<bool>,
     worker_running: Arc<AtomicBool>,
     startup: mpsc::SyncSender<Result<u32, String>>,
@@ -191,10 +195,15 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             };
 
             context.modifiers.update(event_type, event);
+            let pressed = match event_type {
+                WM_KEYDOWN | WM_SYSKEYDOWN => true,
+                WM_KEYUP | WM_SYSKEYUP => false,
+                _ => return,
+            };
             if let Some(pressed) =
                 context
                     .matcher
-                    .transition(event_type, event.vkCode, context.modifiers.flags())
+                    .transition(pressed, event.vkCode, context.modifiers.flags())
             {
                 let _ = context.events.send(pressed);
             }
@@ -204,41 +213,6 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     // Returning the next hook result is what keeps the physical key available
     // to the focused application.
     unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) }
-}
-
-#[derive(Clone, Copy)]
-struct ShortcutMatcher {
-    virtual_key: u32,
-    modifiers: u8,
-    pressed: bool,
-}
-
-impl ShortcutMatcher {
-    const fn new(virtual_key: u32, modifiers: u8) -> Self {
-        Self {
-            virtual_key,
-            modifiers,
-            pressed: false,
-        }
-    }
-
-    fn transition(&mut self, event_type: u32, virtual_key: u32, modifiers: u8) -> Option<bool> {
-        if virtual_key != self.virtual_key {
-            return None;
-        }
-
-        match event_type {
-            WM_KEYDOWN | WM_SYSKEYDOWN if !self.pressed && modifiers == self.modifiers => {
-                self.pressed = true;
-                Some(true)
-            }
-            WM_KEYUP | WM_SYSKEYUP if self.pressed => {
-                self.pressed = false;
-                Some(false)
-            }
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -477,24 +451,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bare_key_tracks_press_and_release_without_modifiers() {
-        let mut matcher = ShortcutMatcher::new(
-            key_to_virtual_key(Code::Digit1).expect("digit has a Windows virtual key"),
-            0,
-        );
-
-        assert_eq!(
-            matcher.transition(WM_KEYDOWN, u32::from(VK_1), 0),
-            Some(true)
-        );
-        assert_eq!(matcher.transition(WM_KEYDOWN, u32::from(VK_1), 0), None);
-        assert_eq!(
-            matcher.transition(WM_KEYUP, u32::from(VK_1), 0),
-            Some(false)
-        );
-        assert_eq!(
-            matcher.transition(WM_KEYDOWN, u32::from(VK_1), SHIFT_MODIFIER),
-            None
-        );
+    fn windows_digit_one_maps_to_native_code() {
+        assert_eq!(key_to_virtual_key(Code::Digit1), Some(u32::from(VK_1)));
     }
 }

@@ -33,7 +33,7 @@ impl DiscordRest {
                 "https://discord.com/api/v9/channels/{}/messages/{}/reactions/{}/@me",
                 channel_id.get(),
                 message_id.get(),
-                reaction_route_component(emoji)
+                emoji.route_component()
             )),
             "add reaction",
         )
@@ -51,7 +51,7 @@ impl DiscordRest {
                 "https://discord.com/api/v9/channels/{}/messages/{}/reactions/{}/0/@me",
                 channel_id.get(),
                 message_id.get(),
-                reaction_route_component(emoji)
+                emoji.route_component()
             )),
             "remove reaction",
         )
@@ -71,7 +71,7 @@ impl DiscordRest {
                 "https://discord.com/api/v9/channels/{}/messages/{}/reactions/{}",
                 channel_id.get(),
                 message_id.get(),
-                reaction_route_component(emoji)
+                emoji.route_component()
             ))
             .query(&[
                 ("limit", REACTION_USERS_PAGE_LIMIT.to_string()),
@@ -121,10 +121,6 @@ fn reaction_user_info_from_raw(value: &Value) -> Option<ReactionUserInfo> {
         user_id,
         display_name,
     })
-}
-
-pub(super) fn reaction_route_component(emoji: &ReactionEmoji) -> String {
-    emoji.route_component()
 }
 
 /// Read from the last raw entry rather than the parsed users, so a user we could

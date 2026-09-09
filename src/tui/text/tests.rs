@@ -1,11 +1,65 @@
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, render_user_mentions,
-    render_user_mentions_in_rendered_text, replace_custom_emoji_markup,
-    replace_custom_emoji_markup_in_rendered, replace_custom_emoji_markup_in_rendered_with_images,
-    sanitize_for_display_width, truncate_display_width, truncate_text,
+    InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, TextReplacement,
+    remap_text_offset, render_user_mentions, render_user_mentions_in_rendered_text,
+    replace_custom_emoji_markup, replace_custom_emoji_markup_in_rendered,
+    replace_custom_emoji_markup_in_rendered_with_images, sanitize_for_display_width,
+    truncate_display_width, truncate_text,
 };
+
+#[test]
+fn text_replacements_remap_metadata_across_growing_and_shrinking_utf8_ranges() {
+    let replacements = [
+        TextReplacement {
+            input_start: 3,
+            input_end: 5,
+            output_start: 3,
+            output_len: 4,
+        },
+        TextReplacement {
+            input_start: 8,
+            input_end: 12,
+            output_start: 10,
+            output_len: 1,
+        },
+    ];
+
+    for (position, expected) in [
+        (2, 2),
+        (3, 3),
+        (4, 4),
+        (5, 7),
+        (8, 10),
+        (10, 11),
+        (12, 11),
+        (15, 14),
+    ] {
+        assert_eq!(remap_text_offset(&replacements, position), expected);
+    }
+
+    let mut rendered = RenderedText {
+        text: "한글ab🙂tail".to_owned(),
+        highlights: vec![TextHighlight {
+            start: 5,
+            end: 12,
+            kind: TextHighlightKind::Timestamp,
+        }],
+        emoji_slots: vec![InlineEmojiSlot {
+            byte_start: 15,
+            byte_len: 1,
+            display_width: 1,
+            url: "emoji".to_owned(),
+        }],
+    };
+    rendered.remap_metadata(&replacements);
+
+    assert_eq!(
+        (rendered.highlights[0].start, rendered.highlights[0].end),
+        (7, 11)
+    );
+    assert_eq!(rendered.emoji_slots[0].byte_start, 14);
+}
 
 #[test]
 fn mention_rendering_preserves_existing_semantic_highlights() {
@@ -46,37 +100,37 @@ fn mention_rendering_preserves_existing_semantic_highlights() {
 }
 
 #[test]
-fn rendered_replacer_emits_text_fallback_and_records_slot() {
-    let rendered = RenderedText {
-        text: "hi <:emoji_48:1146289325491892225>!".to_owned(),
-        highlights: Vec::new(),
-        emoji_slots: Vec::new(),
-    };
-    let out = replace_custom_emoji_markup_in_rendered(rendered);
-    assert_eq!(out.text, "hi :emoji_48:!");
-    assert_eq!(out.emoji_slots.len(), 1);
-    let slot = &out.emoji_slots[0];
-    assert_eq!(slot.byte_start, "hi ".len());
-    assert_eq!(slot.byte_len, ":emoji_48:".len());
-    assert_eq!(slot.display_width, ":emoji_48:".len() as u16);
-    assert_eq!(
-        slot.url,
-        "https://cdn.discordapp.com/emojis/1146289325491892225.png"
-    );
-}
+fn rendered_emoji_fallback_preserves_slot_metadata() {
+    let cases = [
+        (
+            "static",
+            "hi <:emoji_48:1146289325491892225>!",
+            "hi :emoji_48:!",
+            "hi ".len(),
+            ":emoji_48:".len(),
+            "https://cdn.discordapp.com/emojis/1146289325491892225.png",
+        ),
+        (
+            "animated",
+            "<a:wave:42>",
+            ":wave:",
+            0,
+            ":wave:".len(),
+            "https://cdn.discordapp.com/emojis/42.webp?animated=true",
+        ),
+    ];
 
-#[test]
-fn rendered_replacer_uses_animated_webp_for_animated_emoji() {
-    let rendered = RenderedText {
-        text: "<a:wave:42>".to_owned(),
-        ..Default::default()
-    };
-    let out = replace_custom_emoji_markup_in_rendered(rendered);
-    assert_eq!(out.text, ":wave:");
-    assert_eq!(
-        out.emoji_slots[0].url,
-        "https://cdn.discordapp.com/emojis/42.webp?animated=true"
-    );
+    for (name, input, expected_text, byte_start, byte_len, expected_url) in cases {
+        let out = replace_custom_emoji_markup_in_rendered(RenderedText::from(input));
+
+        assert_eq!(out.text, expected_text, "{name}");
+        assert_eq!(out.emoji_slots.len(), 1, "{name}");
+        let slot = &out.emoji_slots[0];
+        assert_eq!(slot.byte_start, byte_start, "{name}");
+        assert_eq!(slot.byte_len, byte_len, "{name}");
+        assert_eq!(slot.display_width, byte_len as u16, "{name}");
+        assert_eq!(slot.url, expected_url, "{name}");
+    }
 }
 
 #[test]

@@ -355,10 +355,7 @@ impl DiscordState {
         guild_id: Id<GuildMarker>,
         user_id: Id<UserMarker>,
     ) -> Option<&str> {
-        self.guild_details
-            .members
-            .get(&guild_id)
-            .and_then(|members| members.get(&user_id))
+        self.member_for_guild(guild_id, user_id)
             .map(|member| member.display_name.as_str())
     }
 

@@ -225,7 +225,9 @@ fn syntax_highlight_cache_stores_cached_elements() {
 }
 
 #[test]
-fn syntax_lookup_token_maps_typescript_aliases_to_javascript() {
+fn syntax_aliases_preserve_lookup_and_highlight_output() {
+    let code = ["const value: string = 'hello';".to_owned()];
+    let javascript = do_highlight(&code, "js");
     for language in [
         "ts",
         "tsx",
@@ -236,17 +238,11 @@ fn syntax_lookup_token_maps_typescript_aliases_to_javascript() {
         "typescript ignore",
     ] {
         assert_eq!(syntax_lookup_token(language), "js");
+        assert_eq!(do_highlight(&code, language), javascript, "{language}");
     }
 
     assert_eq!(syntax_lookup_token("rust"), "rust");
     assert_eq!(syntax_lookup_token("javascript"), "javascript");
-}
-
-#[test]
-fn syntax_highlight_uses_javascript_for_typescript_aliases() {
-    let code = ["const value: string = 'hello';".to_string()];
-    assert_eq!(do_highlight(&code, "typescript"), do_highlight(&code, "js"));
-    assert_eq!(do_highlight(&code, "tsx"), do_highlight(&code, "js"));
 }
 
 #[test]

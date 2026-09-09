@@ -311,7 +311,7 @@ fn notification_inbox_card_lines(
     selected: bool,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let marker = selectable_popup_marker(selected);
+    let marker = selection_marker(selected);
     let marker_width = marker.content.width();
     let marker_placeholder = " ".repeat(marker_width);
     let card_width = width.saturating_sub(marker_width).max(4);

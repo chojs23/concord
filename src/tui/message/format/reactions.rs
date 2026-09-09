@@ -21,22 +21,12 @@ pub(in crate::tui) fn format_message_reaction_lines(
         .into_iter()
         .enumerate()
         .map(|(line_index, text)| {
-            let mut line = MessageContentLine::styled_text(
+            styled_reaction_line(
                 text,
+                &self_ranges,
+                line_index,
                 theme::current().style(theme::HighlightGroup::Reaction),
-                Vec::new(),
-            );
-            for range in self_ranges
-                .iter()
-                .filter(|range| range.line as usize == line_index)
-            {
-                line.styled_range(
-                    range.start,
-                    range.len,
-                    theme::current().style(theme::HighlightGroup::SelfReaction),
-                );
-            }
-            line
+            )
         })
         .collect()
 }
@@ -47,7 +37,16 @@ pub(crate) fn reaction_line_spans(
     line_index: usize,
     default_style: Style,
 ) -> Vec<Span<'static>> {
-    let mut line = MessageContentLine::styled_text(text.to_owned(), default_style, Vec::new());
+    styled_reaction_line(text.to_owned(), ranges, line_index, default_style).spans()
+}
+
+fn styled_reaction_line(
+    text: String,
+    ranges: &[ReactionStyleRange],
+    line_index: usize,
+    default_style: Style,
+) -> MessageContentLine {
+    let mut line = MessageContentLine::styled_text(text, default_style, Vec::new());
     for range in ranges
         .iter()
         .filter(|range| range.line as usize == line_index)
@@ -58,7 +57,7 @@ pub(crate) fn reaction_line_spans(
             theme::current().style(theme::HighlightGroup::SelfReaction),
         );
     }
-    line.spans()
+    line
 }
 
 #[cfg(test)]

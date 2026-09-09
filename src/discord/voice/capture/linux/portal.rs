@@ -6,7 +6,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, Sender, SyncSender},
+        mpsc::{self, Sender, SyncSender},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -28,7 +28,7 @@ use super::super::{
         CaptureColorInfo, CaptureColorMatrix, CaptureColorPrimaries, CaptureColorRange,
         CapturePixelFormat, CapturePlane, CaptureTransferFunction, convert_capture_frame,
     },
-    send_capture_result,
+    send_capture_result, wait_for_capture_start,
 };
 use crate::{
     discord::voice::{StreamCaptureTarget, StreamCaptureTargetKind},
@@ -188,7 +188,15 @@ pub(super) fn start_capture(
         }
     };
 
-    match wait_for_pipewire_start(&ready_rx, stop) {
+    match wait_for_capture_start(
+        &ready_rx,
+        stop,
+        START_TIMEOUT,
+        Duration::from_millis(20),
+        "screen cast portal selection was cancelled",
+        "PipeWire video capture did not start in time",
+        "PipeWire video capture stopped during startup",
+    ) {
         Ok(()) => Ok((
             CaptureSession {
                 stop_tx,
@@ -208,30 +216,6 @@ pub(super) fn start_capture(
             let _ = worker.join();
             let _ = runtime.block_on(portal_session.close());
             Err(error)
-        }
-    }
-}
-
-fn wait_for_pipewire_start(
-    ready_rx: &Receiver<Result<(), String>>,
-    stop: &AtomicBool,
-) -> Result<(), String> {
-    let deadline = Instant::now() + START_TIMEOUT;
-    loop {
-        if stop.load(Ordering::Acquire) {
-            return Err("screen cast portal selection was cancelled".to_owned());
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            return Err("PipeWire video capture did not start in time".to_owned());
-        }
-        let wait = (deadline - now).min(Duration::from_millis(20));
-        match ready_rx.recv_timeout(wait) {
-            Ok(result) => return result,
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("PipeWire video capture stopped during startup".to_owned());
-            }
         }
     }
 }

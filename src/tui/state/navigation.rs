@@ -1,7 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
 use crate::config::{DEFAULT_CHANNEL_LIST_WIDTH, DEFAULT_MEMBER_LIST_WIDTH, DEFAULT_SERVER_WIDTH};
-use crate::discord::PresenceStatus;
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker},
@@ -13,8 +12,8 @@ use super::scroll::{
     move_index_up, move_index_up_by, pane_content_height, scroll_list_down, scroll_list_up,
 };
 use super::{
-    ChannelPaneEntry, ChannelPaneRow, DashboardState, FocusPane, MemberEntry, MemberGroup,
-    PaneFilterState,
+    ChannelPaneEntry, ChannelPaneRow, DashboardState, FocusPane, MemberGroup, MemberRow,
+    MemberRows, PaneFilterState,
 };
 use crate::tui::text_input::TextInputState;
 
@@ -772,12 +771,9 @@ impl DashboardState {
     fn select_visible_channel_row(&mut self, row: usize) -> bool {
         let target_line = self.navigation.channels.list.scroll.saturating_add(row);
         let rows = self.channel_pane_rows();
-        let Some(ChannelPaneRow::Entry { entry_index, entry }) = rows.get(target_line) else {
+        let Some(ChannelPaneRow::Entry { entry_index, .. }) = rows.get(target_line) else {
             return false;
         };
-        if !entry.is_selectable() {
-            return false;
-        }
 
         self.navigation.channels.list.selected = *entry_index;
         self.navigation.channels.list.keep_selection_visible();
@@ -786,14 +782,20 @@ impl DashboardState {
 
     fn select_visible_member_line(&mut self, row: usize) -> bool {
         let target_line = self.navigation.members.list.scroll.saturating_add(row);
-        for (member_index, line_index) in self.member_line_indices() {
-            if line_index == target_line {
-                self.navigation.members.list.selected = member_index;
-                self.navigation.members.list.keep_selection_visible();
-                return true;
-            }
-        }
-        false
+        let groups = self.members_grouped();
+        let member_index =
+            MemberRows::new(self, &groups)
+                .nth(target_line)
+                .and_then(|row| match row {
+                    MemberRow::Member { member_index, .. } => Some(member_index),
+                    MemberRow::Gap | MemberRow::GroupHeader(_) | MemberRow::Activity { .. } => None,
+                });
+        let Some(member_index) = member_index else {
+            return false;
+        };
+        self.navigation.members.list.selected = member_index;
+        self.navigation.members.list.keep_selection_visible();
+        true
     }
 
     pub(super) fn clamp_selection_indices(&mut self) {
@@ -935,17 +937,13 @@ impl DashboardState {
             ChannelLineDirection::Forward => rows
                 .iter()
                 .skip(target_line)
-                .find(|row| row.is_entry() && row.entry().is_selectable())
-                .or_else(|| {
-                    rows.iter()
-                        .rev()
-                        .find(|row| row.is_entry() && row.entry().is_selectable())
-                }),
+                .find(|row| row.is_entry())
+                .or_else(|| rows.iter().rev().find(|row| row.is_entry())),
             ChannelLineDirection::Backward => rows
                 .iter()
                 .take(target_line.saturating_add(1))
                 .rev()
-                .find(|row| row.entry().is_selectable()),
+                .find(|row| row.is_entry()),
         };
 
         if let Some(row) = candidate {
@@ -966,61 +964,39 @@ impl DashboardState {
             return None;
         }
         let selected_member = self.navigation.members.list.selected.min(members_len - 1);
-        let mut member_index = 0usize;
-        let mut line_index = 0usize;
-        for group in groups {
-            if line_index > 0 {
-                line_index += 1;
-            }
-            line_index += 1;
-            for member in &group.entries {
-                if member_index == selected_member {
-                    return Some(line_index);
+        MemberRows::new(self, groups)
+            .enumerate()
+            .find_map(|(line_index, row)| match row {
+                MemberRow::Member { member_index, .. } if member_index == selected_member => {
+                    Some(line_index)
                 }
-                member_index += 1;
-                line_index += 1;
-                if self.member_has_activity_row(*member) {
-                    line_index += 1;
-                }
-            }
-        }
-        None
+                _ => None,
+            })
     }
 
     fn select_member_near_line(&mut self, target_line: usize) {
+        let groups = self.members_grouped();
         let mut last_member = None;
-        for (member_index, line_index) in self.member_line_indices() {
+        let mut selected = None;
+        for (line_index, row) in MemberRows::new(self, &groups).enumerate() {
+            let member_index = match row {
+                MemberRow::Member { member_index, .. } => member_index,
+                MemberRow::Activity { member_index, .. } => {
+                    last_member = Some(member_index);
+                    continue;
+                }
+                MemberRow::Gap | MemberRow::GroupHeader(_) => continue,
+            };
             if line_index >= target_line {
-                self.navigation.members.list.selected = member_index;
-                return;
+                selected = Some(member_index);
+                break;
             }
             last_member = Some(member_index);
         }
 
-        if let Some(member_index) = last_member {
+        if let Some(member_index) = selected.or(last_member) {
             self.navigation.members.list.selected = member_index;
         }
-    }
-
-    fn member_line_indices(&self) -> Vec<(usize, usize)> {
-        let mut indices = Vec::new();
-        let mut member_index = 0usize;
-        let mut line_index = 0usize;
-        for group in self.members_grouped() {
-            if line_index > 0 {
-                line_index += 1;
-            }
-            line_index += 1;
-            for member in group.entries {
-                indices.push((member_index, line_index));
-                member_index += 1;
-                line_index += 1;
-                if self.member_has_activity_row(member) {
-                    line_index += 1;
-                }
-            }
-        }
-        indices
     }
 
     fn count_member_lines(&self) -> usize {
@@ -1029,31 +1005,6 @@ impl DashboardState {
     }
 
     fn count_member_lines_in_groups(&self, groups: &[MemberGroup<'_>]) -> usize {
-        let mut lines = 0usize;
-        for group in groups {
-            if lines > 0 {
-                lines += 1;
-            }
-            lines += 1;
-            for member in &group.entries {
-                lines += 1;
-                if self.member_has_activity_row(*member) {
-                    lines += 1;
-                }
-            }
-        }
-        lines
-    }
-
-    /// Must mirror `tui::ui::panes::render_members`. Line counting and
-    /// selection drift apart silently if the predicates diverge.
-    fn member_has_activity_row(&self, member: MemberEntry<'_>) -> bool {
-        if matches!(
-            member.status(),
-            PresenceStatus::Offline | PresenceStatus::Unknown
-        ) {
-            return false;
-        }
-        !self.user_activities(member.user_id()).is_empty()
+        MemberRows::new(self, groups).count()
     }
 }

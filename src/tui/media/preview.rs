@@ -150,64 +150,30 @@ impl ImagePreviewCache {
                 .prepared_specs
                 .get(&key)
                 .expect("prepared preview key has render specs");
+            let reservation = PreviewProtocolReservation {
+                key: &key,
+                generation: *generation,
+                image,
+                picker,
+            };
             let current_frame_index = image.current_frame_index();
-            let mut current_missing = false;
-            for render_spec in specs {
-                let protocol_key = PreviewFrameProtocolKey {
-                    render_spec: *render_spec,
-                    frame_index: current_frame_index,
-                };
-                if protocols.get(&protocol_key).is_some()
-                    || protocols.is_terminally_failed(&protocol_key)
-                {
-                    continue;
-                }
-                current_missing = true;
-                if let Some(request) = protocols.request_protected_build(&protocol_key) {
-                    self.protocol_jobs.push(
-                        MediaProtocolBuildJob::preview(
-                            key.clone(),
-                            *generation,
-                            *render_spec,
-                            current_frame_index,
-                            picker.clone(),
-                            image.frame_shared(current_frame_index),
-                        )
-                        .with_request(request),
-                    );
-                }
-                break;
-            }
+            let current_missing = reservation.reserve_first_missing(
+                protocols,
+                specs,
+                current_frame_index,
+                &mut self.protocol_jobs,
+            );
             if current_missing || image.frame_count() < ANIMATION_PROTOCOL_WINDOW_FRAMES {
                 continue;
             }
 
             let next_frame_index = image.frame_index_with_offset(1);
-            for render_spec in specs {
-                let protocol_key = PreviewFrameProtocolKey {
-                    render_spec: *render_spec,
-                    frame_index: next_frame_index,
-                };
-                if protocols.get(&protocol_key).is_some()
-                    || protocols.is_terminally_failed(&protocol_key)
-                {
-                    continue;
-                }
-                if let Some(request) = protocols.request_protected_build(&protocol_key) {
-                    self.protocol_jobs.push(
-                        MediaProtocolBuildJob::preview(
-                            key.clone(),
-                            *generation,
-                            *render_spec,
-                            next_frame_index,
-                            picker.clone(),
-                            image.frame_shared(next_frame_index),
-                        )
-                        .with_request(request),
-                    );
-                }
-                break;
-            }
+            reservation.reserve_first_missing(
+                protocols,
+                specs,
+                next_frame_index,
+                &mut self.protocol_jobs,
+            );
         }
         self.prune_to_limit(targets);
         self.protocol_jobs.retain(|job| !job.is_cancelled());
@@ -755,6 +721,50 @@ impl ImagePreviewCache {
             .map(ImagePreviewEntry::filename)
             .unwrap_or("image")
             .to_owned()
+    }
+}
+
+struct PreviewProtocolReservation<'a> {
+    key: &'a ImagePreviewKey,
+    generation: u64,
+    image: &'a DecodedMediaImage,
+    picker: &'a Picker,
+}
+
+impl PreviewProtocolReservation<'_> {
+    fn reserve_first_missing(
+        &self,
+        protocols: &mut RenderProtocolCache<PreviewFrameProtocolKey>,
+        specs: &HashSet<MediaProtocolRenderSpec>,
+        frame_index: usize,
+        jobs: &mut Vec<MediaProtocolBuildJob>,
+    ) -> bool {
+        for render_spec in specs {
+            let protocol_key = PreviewFrameProtocolKey {
+                render_spec: *render_spec,
+                frame_index,
+            };
+            if protocols.get(&protocol_key).is_some()
+                || protocols.is_terminally_failed(&protocol_key)
+            {
+                continue;
+            }
+            if let Some(request) = protocols.request_protected_build(&protocol_key) {
+                jobs.push(
+                    MediaProtocolBuildJob::preview(
+                        self.key.clone(),
+                        self.generation,
+                        *render_spec,
+                        frame_index,
+                        self.picker.clone(),
+                        self.image.frame_shared(frame_index),
+                    )
+                    .with_request(request),
+                );
+            }
+            return true;
+        }
+        false
     }
 }
 

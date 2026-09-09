@@ -10,6 +10,10 @@ use std::{
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 
+use super::ShortcutMatcher;
+
+type PlatformShortcutMatcher = ShortcutMatcher<u16, u64>;
+
 const KEY_DOWN: u32 = 10;
 const KEY_UP: u32 = 11;
 const TAP_DISABLED_BY_TIMEOUT: u32 = u32::MAX - 1;
@@ -144,12 +148,12 @@ impl Drop for PushToTalkListener {
 
 struct EventTapContext {
     event_tap: CFMachPortRef,
-    matcher: ShortcutMatcher,
+    matcher: PlatformShortcutMatcher,
     events: mpsc::Sender<bool>,
 }
 
 fn run_event_tap(
-    matcher: ShortcutMatcher,
+    matcher: PlatformShortcutMatcher,
     events: mpsc::Sender<bool>,
     stop_requested: Arc<AtomicBool>,
     startup: mpsc::SyncSender<Result<(), String>>,
@@ -248,48 +252,22 @@ unsafe extern "C" fn event_tap_callback(
         return event;
     };
     let flags = unsafe { CGEventGetFlags(event) };
-    if let Some(pressed) = context.matcher.transition(event_type, key_code, flags) {
+    let pressed = match event_type {
+        KEY_DOWN => true,
+        KEY_UP => false,
+        _ => return event,
+    };
+    if let Some(pressed) =
+        context
+            .matcher
+            .transition(pressed, key_code, flags & SHORTCUT_MODIFIER_FLAGS)
+    {
         let _ = context.events.send(pressed);
     }
 
     // A listen-only tap observes input. Returning the original event also makes
     // the pass-through intent explicit if the tap options change later.
     event
-}
-
-#[derive(Clone, Copy)]
-struct ShortcutMatcher {
-    key_code: u16,
-    modifier_flags: u64,
-    pressed: bool,
-}
-
-impl ShortcutMatcher {
-    const fn new(key_code: u16, modifier_flags: u64) -> Self {
-        Self {
-            key_code,
-            modifier_flags,
-            pressed: false,
-        }
-    }
-
-    fn transition(&mut self, event_type: u32, key_code: u16, flags: u64) -> Option<bool> {
-        if key_code != self.key_code {
-            return None;
-        }
-
-        match event_type {
-            KEY_DOWN if !self.pressed && flags & SHORTCUT_MODIFIER_FLAGS == self.modifier_flags => {
-                self.pressed = true;
-                Some(true)
-            }
-            KEY_UP if self.pressed => {
-                self.pressed = false;
-                Some(false)
-            }
-            _ => None,
-        }
-    }
 }
 
 const fn event_mask(event_type: u32) -> u64 {
@@ -428,15 +406,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bare_key_tracks_press_and_release_without_modifiers() {
-        let mut matcher = ShortcutMatcher::new(
-            key_to_macos_key_code(Code::Digit1).expect("digit has a macOS key code"),
-            0,
-        );
-
-        assert_eq!(matcher.transition(KEY_DOWN, 0x12, 0), Some(true));
-        assert_eq!(matcher.transition(KEY_DOWN, 0x12, 0), None);
-        assert_eq!(matcher.transition(KEY_UP, 0x12, 0), Some(false));
-        assert_eq!(matcher.transition(KEY_DOWN, 0x12, SHIFT_FLAG), None);
+    fn macos_digit_one_maps_to_native_code() {
+        assert_eq!(key_to_macos_key_code(Code::Digit1), Some(0x12));
     }
 }

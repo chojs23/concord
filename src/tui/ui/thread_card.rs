@@ -308,17 +308,75 @@ fn thread_card_tag_spans(post: &ChannelThreadItem, inner_width: usize) -> Vec<Sp
     // The tags row is only rendered for tagged posts.
     debug_assert!(!post.applied_tags.is_empty());
     let mut spans = Vec::new();
-    let mut used_width = 0usize;
-    for tag in &post.applied_tags {
-        push_forum_metadata_part(
-            &mut spans,
-            &mut used_width,
-            inner_width,
-            thread_card_tag_text(tag),
-            theme::current().style(theme::HighlightGroup::Tag),
-        );
+    for part in ThreadCardTagParts::new(&post.applied_tags, inner_width) {
+        if let Some(separator) = part.separator {
+            spans.push(Span::styled(
+                separator,
+                theme::current().style(theme::HighlightGroup::Decoration),
+            ));
+        }
+        if !part.text.is_empty() {
+            spans.push(Span::styled(
+                part.text,
+                theme::current().style(theme::HighlightGroup::Tag),
+            ));
+        }
     }
     spans
+}
+
+struct ThreadCardTagPart<'a> {
+    separator: Option<String>,
+    text: String,
+    start: usize,
+    custom_emoji_url: Option<&'a str>,
+}
+
+struct ThreadCardTagParts<'a> {
+    tags: std::slice::Iter<'a, AppliedForumTag>,
+    max_width: usize,
+    used_width: usize,
+}
+
+impl<'a> ThreadCardTagParts<'a> {
+    fn new(tags: &'a [AppliedForumTag], max_width: usize) -> Self {
+        Self {
+            tags: tags.iter(),
+            max_width,
+            used_width: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for ThreadCardTagParts<'a> {
+    type Item = ThreadCardTagPart<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let tag = self.tags.next()?;
+        if self.used_width >= self.max_width {
+            return None;
+        }
+        let separator = (self.used_width > 0)
+            .then(|| truncate_display_width(" · ", self.max_width.saturating_sub(self.used_width)));
+        self.used_width = self.used_width.saturating_add(
+            separator
+                .as_deref()
+                .map(UnicodeWidthStr::width)
+                .unwrap_or_default(),
+        );
+        let start = self.used_width;
+        let text = truncate_display_width(
+            &thread_card_tag_text(tag),
+            self.max_width.saturating_sub(self.used_width),
+        );
+        self.used_width = self.used_width.saturating_add(text.width());
+        Some(ThreadCardTagPart {
+            separator,
+            text,
+            start,
+            custom_emoji_url: tag.custom_emoji_url.as_deref(),
+        })
+    }
 }
 
 /// Text for one tag chip (`# name`). A custom emoji reserves a fixed-width blank
@@ -794,39 +852,15 @@ fn thread_card_tag_image_slots(
     post: &ChannelThreadItem,
     inner_width: usize,
 ) -> Vec<(usize, String)> {
-    let mut slots = Vec::new();
-    let mut used_width = 0usize;
-    for tag in &post.applied_tags {
-        let text = thread_card_tag_text(tag);
-        if used_width >= inner_width {
-            break;
-        }
-        if used_width > 0 {
-            let separator = " · ";
-            let remaining = inner_width.saturating_sub(used_width);
-            if remaining == 0 {
-                break;
-            }
-            let separator = truncate_display_width(separator, remaining);
-            used_width = used_width.saturating_add(separator.width());
-        }
-        let remaining = inner_width.saturating_sub(used_width);
-        if remaining == 0 {
-            break;
-        }
-        let truncated = truncate_display_width(&text, remaining);
-        let chip_start = used_width;
-        used_width = used_width.saturating_add(truncated.width());
-        // The placeholder gap sits at `# ` (two columns) into the chip. Only
-        // record it when the truncated chip still includes that gap.
-        if let Some(url) = tag.custom_emoji_url.as_deref() {
-            let emoji_col = chip_start.saturating_add("# ".width());
-            if emoji_col + usize::from(EmojiImageSize::Compact.width()) <= used_width {
-                slots.push((emoji_col, url.to_owned()));
-            }
-        }
-    }
-    slots
+    ThreadCardTagParts::new(&post.applied_tags, inner_width)
+        .filter_map(|part| {
+            let url = part.custom_emoji_url?;
+            let emoji_col = part.start.saturating_add("# ".width());
+            (emoji_col + usize::from(EmojiImageSize::Compact.width())
+                <= part.start.saturating_add(part.text.width()))
+            .then(|| (emoji_col, url.to_owned()))
+        })
+        .collect()
 }
 
 /// Overlays custom tag-emoji images on each visible card's tags row.

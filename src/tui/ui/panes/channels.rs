@@ -54,12 +54,6 @@ pub(in crate::tui::ui) fn render_channels(
     let channel_scroll = state.channel_scroll();
     let content_height = state.channel_content_height();
     let selected_line = state.focused_channel_selection_line(&channel_entries);
-    let entries: Vec<_> = channel_rows
-        .iter()
-        .enumerate()
-        .skip(channel_scroll)
-        .take(content_height)
-        .collect();
     let scrollbar_width = usize::from(vertical_scrollbar_visible(
         list_area,
         list_area.height as usize,
@@ -70,8 +64,11 @@ pub(in crate::tui::ui) fn render_channels(
     let max_width = available_width.saturating_sub(selection_marker_width);
     let horizontal_scroll = state.channel_horizontal_scroll();
     let mut emoji_line_urls: Vec<(usize, usize, String)> = Vec::new();
-    let items: Vec<ListItem> = entries
+    let items: Vec<ListItem> = channel_rows
         .iter()
+        .enumerate()
+        .skip(channel_scroll)
+        .take(content_height)
         .map(|(line_index, row)| {
             if let ChannelPaneRow::Activity {
                 entry, activity, ..
@@ -98,7 +95,7 @@ pub(in crate::tui::ui) fn render_channels(
                     horizontal_scroll,
                 );
                 if let Some(image) = activity_line.image {
-                    emoji_line_urls.push((*line_index, image.column, image.url));
+                    emoji_line_urls.push((line_index, image.column, image.url));
                 }
                 return ListItem::new(activity_line.line);
             }
@@ -106,7 +103,7 @@ pub(in crate::tui::ui) fn render_channels(
             let ChannelPaneRow::Entry { entry, .. } = row else {
                 unreachable!("activity rows return before entry rendering");
             };
-            let is_selected = selected_line == Some(*line_index);
+            let is_selected = selected_line == Some(line_index);
             let is_active = dashboard.is_active_channel_entry(entry);
             styled_list_item(
                 match entry {

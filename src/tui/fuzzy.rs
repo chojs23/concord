@@ -66,17 +66,23 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<FuzzyScore> {
 
     let value_chars: Vec<char> = value.chars().collect();
     let query_chars: Vec<char> = query.chars().collect();
-
-    let value_lower: Vec<char> = value.chars().flat_map(char::to_lowercase).collect();
-
-    let query_lower: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+    let value_lower = lowercase_chars_with_source_indices(&value_chars);
+    let query_lower = lowercase_chars_with_source_indices(&query_chars);
+    let value_folded = value_lower
+        .iter()
+        .map(|character| character.value)
+        .collect::<Vec<_>>();
+    let query_folded = query_lower
+        .iter()
+        .map(|character| character.value)
+        .collect::<Vec<_>>();
 
     // Fast paths.
-    if value_lower == query_lower {
+    if value_folded == query_folded {
         return Some(FuzzyScore(FuzzyScore::EXACT));
     }
 
-    if value_lower.starts_with(&query_lower) {
+    if value_folded.starts_with(&query_folded) {
         return Some(FuzzyScore(FuzzyScore::PREFIX - value_chars.len() as i32));
     }
 
@@ -85,19 +91,25 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<FuzzyScore> {
     // dp[q][v] = best score matching query[..=q]
     //            ending exactly at value[v]
     //
-    let mut dp = vec![vec![i32::MIN; value_chars.len()]; query_chars.len()];
+    let mut dp = vec![vec![i32::MIN; value_lower.len()]; query_lower.len()];
 
-    for v in 0..value_chars.len() {
-        if value_lower[v] != query_lower[0] {
+    for v in 0..value_lower.len() {
+        if value_lower[v].value != query_lower[0].value {
             continue;
         }
 
-        dp[0][v] = character_score(&value_chars, &query_chars, v, 0, true);
+        dp[0][v] = character_score(
+            &value_chars,
+            &query_chars,
+            value_lower[v].source_index,
+            query_lower[0].source_index,
+            true,
+        );
     }
 
-    for q in 1..query_chars.len() {
-        for v in q..value_chars.len() {
-            if value_lower[v] != query_lower[q] {
+    for q in 1..query_lower.len() {
+        for v in q..value_lower.len() {
+            if value_lower[v].value != query_lower[q].value {
                 continue;
             }
 
@@ -123,7 +135,13 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<FuzzyScore> {
                         score -= (gap as i32) * 3;
                     }
 
-                    score += character_score(&value_chars, &query_chars, v, q, false);
+                    score += character_score(
+                        &value_chars,
+                        &query_chars,
+                        value_lower[v].source_index,
+                        query_lower[q].source_index,
+                        false,
+                    );
 
                     best = best.max(score);
                 });
@@ -134,7 +152,7 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<FuzzyScore> {
 
     let mut best = None;
 
-    for &score in &dp[query_chars.len() - 1][0..value_chars.len()] {
+    for &score in &dp[query_lower.len() - 1][0..value_lower.len()] {
         if score == i32::MIN {
             continue;
         }
@@ -146,6 +164,25 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<FuzzyScore> {
     }
 
     best.map(FuzzyScore)
+}
+
+#[derive(Clone, Copy)]
+struct LowercaseChar {
+    value: char,
+    source_index: usize,
+}
+
+fn lowercase_chars_with_source_indices(chars: &[char]) -> Vec<LowercaseChar> {
+    chars
+        .iter()
+        .enumerate()
+        .flat_map(|(source_index, value)| {
+            value.to_lowercase().map(move |value| LowercaseChar {
+                value,
+                source_index,
+            })
+        })
+        .collect()
 }
 
 fn character_score(
@@ -212,6 +249,11 @@ mod tests {
         assert!(fuzzy_text_score("GitDiffFile", "gdf").is_some());
 
         assert_eq!(fuzzy_text_score("general", "xyz"), None);
+    }
+
+    #[test]
+    fn lowercase_expansion_keeps_later_characters_searchable() {
+        assert!(fuzzy_text_score("İx", "x").is_some());
     }
 
     #[test]

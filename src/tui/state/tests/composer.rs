@@ -569,7 +569,7 @@ fn forum_post_attachment_preview_waits_for_runtime_result() {
 
     assert!(matches!(
         state.forum_post_attachment_previews().first(),
-        Some(LocalUploadPreviewView::Loading { filename }) if filename == "screenshot.png"
+        Some(LocalUploadPreviewView::Loading { filename }) if *filename == "screenshot.png"
     ));
     let (attachment_index, generation, filename, upload) = state
         .take_pending_forum_post_attachment_preview()
@@ -587,7 +587,7 @@ fn forum_post_attachment_preview_waits_for_runtime_result() {
     assert!(matches!(
         state.forum_post_attachment_previews().first(),
         Some(LocalUploadPreviewView::Failed { filename, message })
-            if filename == "screenshot.png" && message == "decode failed"
+            if *filename == "screenshot.png" && *message == "decode failed"
     ));
 }
 
@@ -643,7 +643,7 @@ fn reopened_forum_composer_ignores_previous_preview_results() {
         }
         assert!(matches!(
             state.forum_post_attachment_previews().first(),
-            Some(LocalUploadPreviewView::Failed { message, .. }) if message == "new result"
+            Some(LocalUploadPreviewView::Failed { message, .. }) if *message == "new result"
         ));
         assert_eq!(
             state
@@ -773,6 +773,50 @@ fn forum_post_editing_body(state: &mut DashboardState, title: &str) {
     state.activate_forum_post_composer(); // commit Title
     state.cycle_forum_post_field_next(); // Title -> Body
     state.activate_forum_post_composer(); // start editing Body
+}
+
+#[test]
+fn queued_forum_body_paste_does_not_move_to_title() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::tui::input::handle_key;
+
+    let mut state = state_with_forum_post_channel(false);
+    forum_post_editing_body(&mut state, "Title");
+    let paste = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+
+    handle_key(&mut state, paste);
+    let first_request = state
+        .take_paste_clipboard_request()
+        .expect("Body requests a paste");
+    assert!(state.start_clipboard_paste(first_request));
+
+    // Keep the first read active while another request is queued in Body.
+    handle_key(&mut state, paste);
+    handle_key(&mut state, enter);
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+    );
+    assert!(!state.finish_clipboard_paste(first_request));
+
+    handle_key(&mut state, enter);
+    assert_eq!(
+        state
+            .forum_post_composer_view()
+            .map(|view| view.editing_field),
+        Some(Some(ForumPostComposerField::Title)),
+    );
+    assert_eq!(state.take_paste_clipboard_request(), None);
+
+    // Discarding the stale Body request must not block a fresh Title paste.
+    handle_key(&mut state, paste);
+    let title_request = state
+        .take_paste_clipboard_request()
+        .expect("Title requests its own paste");
+    assert!(state.start_clipboard_paste(title_request));
+    assert!(state.finish_clipboard_paste(title_request));
 }
 
 #[test]
@@ -1990,11 +2034,18 @@ fn cancel_composer_clears_pending_upload_state() {
 
     let mut processing = state_with_messages(1);
     processing.start_composer();
-    assert!(processing.begin_clipboard_paste());
+    processing.request_paste_clipboard();
+    let request_id = processing
+        .take_paste_clipboard_request()
+        .expect("clipboard paste request");
+    assert!(processing.start_clipboard_paste(request_id));
+    assert!(processing.begin_clipboard_paste(request_id));
 
     processing.cancel_composer();
+    processing.start_composer();
 
     assert!(!processing.clipboard_paste_pending());
+    assert!(!processing.finish_clipboard_paste(request_id));
 }
 
 #[test]
@@ -2010,7 +2061,7 @@ fn composer_attachment_preview_waits_for_runtime_result() {
 
     assert!(matches!(
         state.composer_attachment_previews().first(),
-        Some(LocalUploadPreviewView::Loading { filename }) if filename == "screenshot.png"
+        Some(LocalUploadPreviewView::Loading { filename }) if *filename == "screenshot.png"
     ));
     let (attachment_index, generation, filename, upload) = state
         .take_pending_composer_attachment_preview()
@@ -2028,7 +2079,7 @@ fn composer_attachment_preview_waits_for_runtime_result() {
     assert!(matches!(
         state.composer_attachment_previews().first(),
         Some(LocalUploadPreviewView::Failed { filename, message })
-            if filename == "screenshot.png" && message == "decode failed"
+            if *filename == "screenshot.png" && *message == "decode failed"
     ));
 }
 
@@ -2055,7 +2106,7 @@ fn composer_attachment_preview_refreshes_when_images_are_enabled() {
     assert!(state.show_images());
     assert!(matches!(
         state.composer_attachment_previews().first(),
-        Some(LocalUploadPreviewView::Loading { filename }) if filename == "cat.png"
+        Some(LocalUploadPreviewView::Loading { filename }) if *filename == "cat.png"
     ));
 }
 

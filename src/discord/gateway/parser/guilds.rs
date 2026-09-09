@@ -17,7 +17,7 @@ use super::{
     channels::{parse_channel_info, parse_thread_gateway_info},
     members::parse_member_info,
     presence::parse_presence_entry,
-    shared::{parse_id, parse_nonnegative_i64},
+    shared::{parse_id, parse_mute_config, parse_nonnegative_i64},
 };
 
 pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
@@ -381,13 +381,14 @@ fn parse_user_guild_settings_info(value: &Value) -> Option<UserGuildSettingsInfo
 fn parse_user_guild_notification_settings(value: &Value) -> Option<GuildNotificationSettingsInfo> {
     let guild_id = parse_user_guild_settings_guild_id(value.get("guild_id"))?;
     let channel_overrides = parse_channel_notification_overrides(value.get("channel_overrides"));
+    let (mute_end_time, selected_time_window) = parse_mute_config(value);
 
     Some(GuildNotificationSettingsInfo {
         guild_id,
         message_notifications: parse_notification_level(value.get("message_notifications")),
         muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
-        mute_end_time: parse_mute_end_time(value),
-        selected_time_window: parse_selected_time_window(value),
+        mute_end_time,
+        selected_time_window,
         suppress_everyone: value
             .get("suppress_everyone")
             .and_then(Value::as_bool)
@@ -446,60 +447,43 @@ fn parse_channel_notification_overrides(
 }
 
 fn parse_channel_notification_override(value: &Value) -> Option<ChannelNotificationOverrideInfo> {
-    Some(ChannelNotificationOverrideInfo {
-        channel_id: value
-            .get("channel_id")
-            .and_then(parse_id::<ChannelMarker>)?,
+    let channel_id = value
+        .get("channel_id")
+        .and_then(parse_id::<ChannelMarker>)?;
+    Some(channel_notification_override(channel_id, value))
+}
+
+fn channel_notification_override(
+    channel_id: Id<ChannelMarker>,
+    value: &Value,
+) -> ChannelNotificationOverrideInfo {
+    let (mute_end_time, selected_time_window) = parse_mute_config(value);
+    ChannelNotificationOverrideInfo {
+        channel_id,
         message_notifications: parse_notification_level(value.get("message_notifications")),
         muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
-        mute_end_time: parse_mute_end_time(value),
-        selected_time_window: parse_selected_time_window(value),
+        mute_end_time,
+        selected_time_window,
         collapsed: value
             .get("collapsed")
             .and_then(Value::as_bool)
             .unwrap_or(false),
         flags: value.get("flags").and_then(Value::as_u64).unwrap_or(0),
-    })
+    }
 }
 
 fn parse_channel_notification_override_with_key(
     channel_id: &str,
     value: &Value,
 ) -> Option<ChannelNotificationOverrideInfo> {
-    Some(ChannelNotificationOverrideInfo {
-        channel_id: channel_id.parse::<u64>().ok().and_then(Id::new_checked)?,
-        message_notifications: parse_notification_level(value.get("message_notifications")),
-        muted: value.get("muted").and_then(Value::as_bool).unwrap_or(false),
-        mute_end_time: parse_mute_end_time(value),
-        selected_time_window: parse_selected_time_window(value),
-        collapsed: value
-            .get("collapsed")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        flags: value.get("flags").and_then(Value::as_u64).unwrap_or(0),
-    })
+    let channel_id = channel_id.parse::<u64>().ok().and_then(Id::new_checked)?;
+    Some(channel_notification_override(channel_id, value))
 }
 
 fn parse_notification_level(value: Option<&Value>) -> Option<NotificationLevel> {
     value
         .and_then(Value::as_u64)
         .and_then(NotificationLevel::from_code)
-}
-
-fn parse_mute_end_time(value: &Value) -> Option<String> {
-    value
-        .get("mute_config")
-        .and_then(|config| config.get("end_time"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
-fn parse_selected_time_window(value: &Value) -> Option<i64> {
-    value
-        .get("mute_config")
-        .and_then(|config| config.get("selected_time_window"))
-        .and_then(Value::as_i64)
 }
 
 fn guild_field<'a>(data: &'a Value, key: &str) -> Option<&'a Value> {

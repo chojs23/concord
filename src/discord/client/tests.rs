@@ -199,103 +199,65 @@ async fn publish_event_sends_matching_snapshot_and_effect_revisions() {
 }
 
 #[tokio::test]
-async fn message_create_publishes_matching_snapshot_and_effect_revisions() {
+async fn message_create_revision_areas_follow_author_and_mentions() {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    let mut effects = client.take_effects();
-    let mut snapshots = client.subscribe_snapshots();
+    let cases = [
+        ("other author", None, false, [1, 1, 1, 0]),
+        ("current user author", Some(99), false, [2, 2, 2, 2]),
+        ("current user mention", Some(42), true, [2, 2, 2, 2]),
+    ];
 
-    client.publish_event(message_create_event(1)).await;
+    for (name, current_user_id, mentioned, expected) in cases {
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let mut snapshots = client.subscribe_snapshots();
 
-    snapshots.changed().await.expect("snapshot is published");
-    let snapshot = *snapshots.borrow_and_update();
-    let effect = effects.recv().await.expect("effect is published");
+        if let Some(user_id) = current_user_id {
+            client
+                .publish_event(AppEvent::Ready {
+                    user: "neo".to_owned(),
+                    user_id: Some(Id::new(user_id)),
+                })
+                .await;
+            snapshots
+                .changed()
+                .await
+                .expect("ready snapshot is published");
+            drop(snapshots.borrow_and_update());
+        }
 
-    assert_eq!(snapshot.global, 1);
-    assert_eq!(snapshot.navigation, 1);
-    assert_eq!(snapshot.message, 1);
-    assert_eq!(snapshot.detail, 0);
-    assert_eq!(effect.revision, 1);
-    assert!(matches!(effect.event, AppEvent::MessageCreate { .. }));
-}
+        let mut event = message_create_event(1);
+        if mentioned && let AppEvent::MessageCreate { message } = &mut event {
+            message.content = Some("hello <@42>".to_owned());
+            message
+                .mentions
+                .push(MentionInfo::test(Id::new(42), "neo".to_owned()));
+        }
+        client.publish_event(event).await;
 
-#[tokio::test]
-async fn current_user_message_create_advances_detail_revision() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    let mut effects = client.take_effects();
-    let mut snapshots = client.subscribe_snapshots();
+        snapshots
+            .changed()
+            .await
+            .expect("message snapshot is published");
+        let snapshot = *snapshots.borrow_and_update();
+        let effect = effects.recv().await.expect("message effect is published");
 
-    client
-        .publish_event(AppEvent::Ready {
-            user: "neo".to_owned(),
-            user_id: Some(Id::new(99)),
-        })
-        .await;
-    snapshots
-        .changed()
-        .await
-        .expect("ready snapshot is published");
-    drop(snapshots.borrow_and_update());
-
-    client.publish_event(message_create_event(1)).await;
-
-    snapshots
-        .changed()
-        .await
-        .expect("message snapshot is published");
-    let snapshot = *snapshots.borrow_and_update();
-    let effect = effects.recv().await.expect("message effect is published");
-
-    assert_eq!(snapshot.global, 2);
-    assert_eq!(snapshot.navigation, 2);
-    assert_eq!(snapshot.message, 2);
-    assert_eq!(snapshot.detail, 2);
-    assert_eq!(effect.revision, 2);
-    assert!(matches!(effect.event, AppEvent::MessageCreate { .. }));
-}
-
-#[tokio::test]
-async fn mentioned_message_create_advances_detail_revision() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
-    let mut effects = client.take_effects();
-    let mut snapshots = client.subscribe_snapshots();
-
-    client
-        .publish_event(AppEvent::Ready {
-            user: "neo".to_owned(),
-            user_id: Some(Id::new(42)),
-        })
-        .await;
-    snapshots
-        .changed()
-        .await
-        .expect("ready snapshot is published");
-    drop(snapshots.borrow_and_update());
-
-    let mut event = message_create_event(1);
-    if let AppEvent::MessageCreate { message } = &mut event {
-        message.content = Some("hello <@42>".to_owned());
-        message
-            .mentions
-            .push(MentionInfo::test(Id::new(42), "neo".to_owned()));
+        assert_eq!(
+            [
+                snapshot.global,
+                snapshot.navigation,
+                snapshot.message,
+                snapshot.detail,
+            ],
+            expected,
+            "{name}"
+        );
+        assert_eq!(effect.revision, expected[0], "{name}");
+        assert!(
+            matches!(effect.event, AppEvent::MessageCreate { .. }),
+            "{name}"
+        );
     }
-    client.publish_event(event).await;
-
-    snapshots
-        .changed()
-        .await
-        .expect("message snapshot is published");
-    let snapshot = *snapshots.borrow_and_update();
-    let effect = effects.recv().await.expect("message effect is published");
-
-    assert_eq!(snapshot.global, 2);
-    assert_eq!(snapshot.navigation, 2);
-    assert_eq!(snapshot.message, 2);
-    assert_eq!(snapshot.detail, 2);
-    assert_eq!(effect.revision, 2);
-    assert!(matches!(effect.event, AppEvent::MessageCreate { .. }));
 }
 
 #[tokio::test]

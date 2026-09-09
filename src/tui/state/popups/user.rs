@@ -29,17 +29,8 @@ impl DashboardState {
     /// Direct shortcut from the member pane: open the profile popup for the
     /// currently selected member without going through Leader Actions.
     pub fn show_selected_member_profile(&mut self) -> Option<AppCommand> {
-        if self.navigation.focus != FocusPane::Members {
-            return None;
-        }
-        let entries = self.flattened_members();
-        let entry = entries.get(self.selected_member())?;
-        let user_id = entry.user_id();
-        let guild_id = match self.navigation.guilds.active {
-            ActiveGuildScope::Guild(guild_id) => Some(guild_id),
-            ActiveGuildScope::DirectMessages | ActiveGuildScope::Unset => None,
-        };
-        self.open_user_profile_popup(user_id, guild_id)
+        let context = self.selected_member_action_context()?;
+        self.open_user_profile_popup(context.user_id, context.guild_id)
     }
 
     pub fn open_current_user_profile_popup(&mut self) -> Option<AppCommand> {
@@ -162,6 +153,7 @@ impl DashboardState {
         user_id: Id<UserMarker>,
         guild_id: Option<Id<GuildMarker>>,
     ) -> Option<AppCommand> {
+        self.cancel_clipboard_paste();
         self.popups
             .set_modal(ModalPopup::UserProfile(UserProfilePopupState {
                 user_id,
@@ -177,6 +169,7 @@ impl DashboardState {
     pub fn close_user_profile_popup(&mut self) {
         if self.is_active_modal_popup(ActiveModalPopupKind::UserProfile) {
             self.popups.clear_modal();
+            self.cancel_clipboard_paste();
         }
     }
 
@@ -198,6 +191,7 @@ impl DashboardState {
         {
             popup.settings.edit_input.clear();
             popup.pending_scroll_reveal = true;
+            self.cancel_clipboard_paste();
             return;
         }
         self.close_user_profile_popup();

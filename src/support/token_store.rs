@@ -21,11 +21,7 @@ pub enum TokenSaveLocation {
 /// to the configured store.
 pub fn env_token() -> Option<String> {
     let token = std::env::var(ENV_TOKEN_VAR).ok()?;
-    let token = token.trim();
-    if token.is_empty() {
-        return None;
-    }
-    Some(token.to_owned())
+    normalized_token(&token)
 }
 
 pub fn load_token(store: CredentialStoreMode) -> Result<Option<String>> {
@@ -72,17 +68,16 @@ pub fn delete_token(store: CredentialStoreMode) -> Result<()> {
         CredentialStoreMode::Auto => {
             let keychain_result = delete_keychain_token(&account_id)
                 .map_err(|source| AppError::CredentialKeychain { source });
-            let fallback_result = delete_fallback_token(&account_id);
 
-            fallback_result?;
-            keychain_result
+            // Both stores can hold a token, so attempt both deletions and report any failure.
+            resolve_auto_delete(keychain_result, delete_fallback_token(&account_id))
         }
         CredentialStoreMode::Keychain => {
             delete_keychain_token(&account_id)
                 .map_err(|source| AppError::CredentialKeychain { source })?;
             Ok(())
         }
-        CredentialStoreMode::Plain => delete_fallback_token(&account_id),
+        CredentialStoreMode::Plain => delete_fallback_token(&account_id).map(|_| ()),
     }
 }
 
@@ -210,17 +205,26 @@ fn save_fallback_token(account_id: &str, token: &str) -> Result<()> {
     write_credential_file(&credentials)
 }
 
-fn delete_fallback_token(account_id: &str) -> Result<()> {
+fn delete_fallback_token(account_id: &str) -> Result<bool> {
     let Some(mut credentials) = read_credential_file()? else {
-        return Ok(());
+        return Ok(false);
     };
     if !credentials.remove_token(account_id) {
-        return Ok(());
+        return Ok(false);
     }
     if credentials.accounts.is_empty() {
-        return remove_credential_file();
+        remove_credential_file()?;
+    } else {
+        write_credential_file(&credentials)?;
     }
-    write_credential_file(&credentials)
+    Ok(true)
+}
+
+fn resolve_auto_delete<E>(
+    keychain_result: std::result::Result<(), E>,
+    fallback_result: std::result::Result<bool, E>,
+) -> std::result::Result<(), E> {
+    keychain_result.and(fallback_result.map(|_| ()))
 }
 
 fn remove_credential_file() -> Result<()> {
@@ -257,12 +261,12 @@ fn write_credential_file(credentials: &CredentialFile) -> Result<()> {
 }
 
 fn normalize_token(token: &str) -> std::result::Result<String, AppError> {
-    let token = token.trim();
-    if token.is_empty() {
-        return Err(AppError::EmptyDiscordToken);
-    }
+    normalized_token(token).ok_or(AppError::EmptyDiscordToken)
+}
 
-    Ok(token.to_owned())
+fn normalized_token(token: &str) -> Option<String> {
+    let token = token.trim();
+    (!token.is_empty()).then(|| token.to_owned())
 }
 
 fn normalized_account_id(account_id: &str) -> Option<String> {
@@ -282,7 +286,7 @@ fn default_account_id() -> String {
 mod tests {
     use crate::{
         AppError,
-        token_store::{CredentialFile, StoredAccount, normalize_token},
+        token_store::{CredentialFile, StoredAccount, normalize_token, resolve_auto_delete},
     };
 
     #[test]
@@ -382,5 +386,40 @@ mod tests {
             credentials.token_for_account("personal").as_deref(),
             Some("personal-token")
         );
+    }
+
+    #[test]
+    fn auto_delete_requires_both_stores_to_succeed() {
+        let cases = [
+            (Ok(()), Ok(false), Ok(())),
+            (Ok(()), Ok(true), Ok(())),
+            (
+                Err("keychain unavailable"),
+                Ok(true),
+                Err("keychain unavailable"),
+            ),
+            (
+                Err("keychain unavailable"),
+                Ok(false),
+                Err("keychain unavailable"),
+            ),
+            (
+                Ok(()),
+                Err("fallback unavailable"),
+                Err("fallback unavailable"),
+            ),
+            (
+                Err("keychain unavailable"),
+                Err("fallback unavailable"),
+                Err("keychain unavailable"),
+            ),
+        ];
+
+        for (keychain_result, fallback_result, expected) in cases {
+            assert_eq!(
+                resolve_auto_delete(keychain_result, fallback_result),
+                expected
+            );
+        }
     }
 }

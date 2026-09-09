@@ -157,48 +157,55 @@ mod tests {
     }
 
     #[test]
-    fn vertical_scroll_changes_preview_placement() {
-        let target = preview_target(1, 0);
-        let mut previous = FramePlacements::default();
-        previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
-
-        let mut current = FramePlacements::default();
-        // Same image, same key, but a vertical scroll moved its screen rect.
-        current.insert_preview(&target, Rect::new(10, 3, 20, 10));
-
-        let diff = current.diff(&previous);
-        assert!(diff.need_clear);
-        assert!(!diff.unchanged_previews.contains(&target.fragment_key()));
-    }
-
-    #[test]
-    fn identical_frame_needs_no_clear() {
+    fn placement_diff_tracks_preview_lifecycle() {
         let target = preview_target(1, 0);
         let mut previous = FramePlacements::default();
         previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
         previous.insert_avatar("avatar".to_owned(), 4, (3, 0, false));
 
-        let mut current = FramePlacements::default();
-        current.insert_preview(&target, Rect::new(10, 5, 20, 10));
-        current.insert_avatar("avatar".to_owned(), 4, (3, 0, false));
+        for (name, rect, keep_avatar, need_clear, preview_unchanged) in [
+            (
+                "vertical scroll",
+                Some(Rect::new(10, 3, 20, 10)),
+                false,
+                true,
+                false,
+            ),
+            (
+                "identical frame",
+                Some(Rect::new(10, 5, 20, 10)),
+                true,
+                false,
+                true,
+            ),
+            ("removed preview", None, false, true, false),
+        ] {
+            let mut current = FramePlacements::default();
+            if let Some(rect) = rect {
+                current.insert_preview(&target, rect);
+            }
+            if keep_avatar {
+                current.insert_avatar("avatar".to_owned(), 4, (3, 0, false));
+            }
 
-        let diff = current.diff(&previous);
-        assert!(!diff.need_clear);
-        assert!(diff.unchanged_previews.contains(&target.fragment_key()));
-        assert!(diff.unchanged_avatars.contains(&("avatar".to_owned(), 4)));
-        assert!(diff.popup_avatar_unchanged);
-    }
-
-    #[test]
-    fn removed_preview_forces_clear() {
-        let target = preview_target(1, 0);
-        let mut previous = FramePlacements::default();
-        previous.insert_preview(&target, Rect::new(10, 5, 20, 10));
-
-        let current = FramePlacements::default();
-        let diff = current.diff(&previous);
-        assert!(diff.need_clear);
-        assert!(diff.unchanged_previews.is_empty());
+            let diff = current.diff(&previous);
+            assert_eq!(diff.need_clear, need_clear, "{name}");
+            assert_eq!(
+                diff.unchanged_previews.contains(&target.fragment_key()),
+                preview_unchanged,
+                "{name}"
+            );
+            if rect.is_none() {
+                assert!(diff.unchanged_previews.is_empty(), "{name}");
+            }
+            if keep_avatar {
+                assert!(
+                    diff.unchanged_avatars.contains(&("avatar".to_owned(), 4)),
+                    "{name}"
+                );
+                assert!(diff.popup_avatar_unchanged, "{name}");
+            }
+        }
     }
 
     #[test]

@@ -18,8 +18,8 @@ use super::{
     message::format::{
         MessageContentLine, ReactionLayout, WrappedTextLine, embed_color,
         format_message_content_sections_with_loaded_custom_emoji_urls, format_message_relative_age,
-        lay_out_reaction_chips_with_custom_emoji_images, reaction_line_spans, wrap_text_lines,
-        wrap_text_with_metadata,
+        lay_out_reaction_chips_with_custom_emoji_images, reaction_line_spans,
+        wrap_plain_text_at_words, wrap_text_lines, wrap_text_with_metadata,
     },
     message::layout::MessageViewportPlan,
     state::{
@@ -69,9 +69,8 @@ use self::panes::{
 #[cfg(test)]
 use self::panes::{
     composer_cursor_position, composer_lines, composer_lines_with_loaded_custom_emoji_urls,
-    composer_text, emoji_picker_lines, member_display_label, member_name_style,
-    mention_picker_lines_for_test, primary_activity_summary, render_composer,
-    verification_composer_text,
+    emoji_picker_lines, member_display_label, member_name_style, mention_picker_lines_for_test,
+    primary_activity_summary, render_composer, verification_composer_text,
 };
 #[cfg(test)]
 use self::popups::user_profile_popup_text;
@@ -104,24 +103,19 @@ use self::types::{
 #[cfg(test)]
 use self::{
     message::list::{
-        date_separator_line, format_message_sent_time, inline_image_preview_row,
-        message_author_style, message_body_custom_emoji_rows, message_item_lines,
-        message_viewport_layout, message_viewport_lines, new_messages_notice_line,
-        selected_avatar_x_offset, selected_message_card_width, selected_message_content_x_offset,
+        date_separator_line, message_author_style, message_item_lines, message_viewport_layout,
+        message_viewport_lines, new_messages_notice_line, selected_message_card_width,
     },
     popups::{
-        centered_viewer_preview_area, channel_action_menu_lines_for_test,
-        channel_switcher_cursor_position, channel_switcher_lines, emoji_reaction_picker_lines,
-        emoji_reaction_picker_lines_for_width, emoji_reaction_picker_lines_with_own_reactions,
-        filtered_emoji_reaction_picker_lines, folder_settings_input_line_for_test,
-        keymap_help_popup_lines, long_message_confirmation_lines_for_test,
-        message_action_menu_lines, message_action_menu_lines_with_keymap_options,
-        message_delete_confirmation_lines, message_pin_confirmation_lines,
-        message_remove_embeds_confirmation_lines, message_url_picker_lines_for_width,
-        options_popup_lines, poll_vote_picker_lines, quit_confirmation_lines,
-        reaction_list_lines_with_ready_urls, reaction_users_popup_lines, stream_info_area,
-        stream_info_lines, stream_info_lines_for_width, toast_line, user_profile_popup_lines,
-        user_profile_popup_lines_with_activities,
+        EmojiReactionPickerRenderOptions, centered_viewer_preview_area,
+        channel_action_menu_lines_for_test, channel_switcher_cursor_position,
+        channel_switcher_lines, emoji_reaction_picker_lines_with_custom_emoji_images,
+        folder_settings_input_line_for_test, keymap_help_popup_lines,
+        long_message_confirmation_lines, message_action_menu_lines,
+        message_action_menu_lines_with_keymap_options, message_confirmation_lines,
+        options_popup_lines, poll_vote_picker_lines, quit_confirmation_popup_lines,
+        reaction_list_lines, reaction_user_lines, stream_info_area, stream_info_lines,
+        stream_info_lines_for_width, toast_line,
     },
     thread_card::{
         thread_card_reaction_summary, thread_card_tag_rows_for_test, thread_card_viewport_lines,

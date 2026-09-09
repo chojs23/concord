@@ -21,33 +21,166 @@ struct ComposerKeyBinding {
     shortcuts: Vec<KeyChord>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-enum ComposerShortcutAction {
-    OpenEditor,
-    PasteClipboard,
-    InsertNewline,
-    Submit,
-    Close,
-    ClearInput,
-    RemoveLastAttachment,
-    DeletePreviousChar,
-    DeletePreviousWord,
-    DeleteToLineStart,
-    DeleteToLineEnd,
-    MoveCursorUp,
-    MoveCursorDown,
-    MoveCursorWordLeft,
-    MoveCursorLeft,
-    MoveCursorWordRight,
-    MoveCursorRight,
-    MoveCursorHome,
-    MoveCursorEnd,
-    ToggleReplyPing,
+// Composer actions have four views: the configured name, aliases, runtime
+// action, and default shortcuts. Keeping them in one declaration prevents a
+// new action from being accepted by only part of the composer keymap.
+macro_rules! define_composer_actions {
+    (
+        $(
+            $variant:ident => (
+                aliases: [$($alias:literal),* $(,)?],
+                action: $action:expr,
+                defaults: $defaults:expr
+            )
+        ),* $(,)?
+    ) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        enum ComposerShortcutAction {
+            $($variant),*
+        }
+
+        impl ComposerShortcutAction {
+            fn from_keymap_name(name: &str) -> Option<Self> {
+                match name {
+                    $(stringify!($variant) $(| $alias)* => Some(Self::$variant),)*
+                    _ => None,
+                }
+            }
+
+            fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => stringify!($variant),)*
+                }
+            }
+
+            fn to_composer_action(self) -> ComposerAction {
+                match self {
+                    $(Self::$variant => $action,)*
+                }
+            }
+
+            fn defaults() -> BTreeMap<Self, Vec<KeyChord>> {
+                BTreeMap::from([$( (Self::$variant, $defaults), )*])
+            }
+        }
+    };
+}
+
+define_composer_actions! {
+    OpenEditor => (
+        aliases: ["OpenInEditor"],
+        action: ComposerAction::OpenInEditor,
+        defaults: vec![ctrl_chord('e')]
+    ),
+    PasteClipboard => (
+        aliases: [],
+        action: ComposerAction::PasteClipboard,
+        defaults: vec![ctrl_chord('v')]
+    ),
+    InsertNewline => (
+        aliases: [],
+        action: ComposerAction::InsertNewline,
+        defaults: vec![
+            ctrl_chord('j'),
+            modified_key_chord(KeyCode::Enter, KeyModifiers::SHIFT),
+            modified_key_chord(KeyCode::Enter, KeyModifiers::CONTROL),
+            modified_key_chord(KeyCode::Enter, KeyModifiers::ALT),
+        ]
+    ),
+    Submit => (
+        aliases: [],
+        action: ComposerAction::Submit,
+        defaults: vec![key_chord(KeyCode::Enter)]
+    ),
+    Close => (
+        aliases: [],
+        action: ComposerAction::Close,
+        defaults: vec![key_chord(KeyCode::Esc)]
+    ),
+    ClearInput => (
+        aliases: [],
+        action: ComposerAction::ClearInput,
+        defaults: vec![ctrl_chord('c')]
+    ),
+    RemoveLastAttachment => (
+        aliases: [],
+        action: ComposerAction::RemoveLastAttachment,
+        defaults: vec![key_chord(KeyCode::Delete)]
+    ),
+    DeletePreviousChar => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::DeletePreviousChar),
+        defaults: vec![key_chord(KeyCode::Backspace)]
+    ),
+    DeletePreviousWord => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::DeletePreviousWord),
+        defaults: vec![
+            modified_key_chord(KeyCode::Backspace, KeyModifiers::ALT),
+            modified_key_chord(KeyCode::Backspace, KeyModifiers::CONTROL),
+            ctrl_chord('w'),
+        ]
+    ),
+    DeleteToLineStart => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::DeleteToLineStart),
+        defaults: vec![ctrl_chord('u')]
+    ),
+    DeleteToLineEnd => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::DeleteToLineEnd),
+        defaults: vec![ctrl_chord('k')]
+    ),
+    MoveCursorUp => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::MoveCursorUp),
+        defaults: vec![key_chord(KeyCode::Up)]
+    ),
+    MoveCursorDown => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::MoveCursorDown),
+        defaults: vec![key_chord(KeyCode::Down)]
+    ),
+    MoveCursorWordLeft => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::MoveCursorWordLeft),
+        defaults: vec![modified_key_chord(KeyCode::Left, KeyModifiers::CONTROL)]
+    ),
+    MoveCursorLeft => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::MoveCursorLeft),
+        defaults: vec![key_chord(KeyCode::Left)]
+    ),
+    MoveCursorWordRight => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::MoveCursorWordRight),
+        defaults: vec![modified_key_chord(KeyCode::Right, KeyModifiers::CONTROL)]
+    ),
+    MoveCursorRight => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::MoveCursorRight),
+        defaults: vec![key_chord(KeyCode::Right)]
+    ),
+    MoveCursorHome => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::MoveCursorHome),
+        defaults: vec![key_chord(KeyCode::Home)]
+    ),
+    MoveCursorEnd => (
+        aliases: [],
+        action: ComposerAction::EditText(TextEditAction::MoveCursorEnd),
+        defaults: vec![key_chord(KeyCode::End)]
+    ),
+    ToggleReplyPing => (
+        aliases: [],
+        action: ComposerAction::ToggleReplyPing,
+        defaults: vec![modified_key_chord(KeyCode::Char('p'), KeyModifiers::ALT)]
+    ),
 }
 
 impl Default for ComposerKeyBindings {
     fn default() -> Self {
-        Self::from_specs(default_composer_key_bindings())
+        Self::from_specs(ComposerShortcutAction::defaults())
     }
 }
 
@@ -71,7 +204,7 @@ impl ComposerKeyBindings {
             }
         }
 
-        let mut specs = default_composer_key_bindings();
+        let mut specs = ComposerShortcutAction::defaults();
         remove_default_composer_conflicts(&mut specs, &configured);
         specs.extend(configured);
         Self::from_specs(specs)
@@ -95,7 +228,7 @@ impl ComposerKeyBindings {
             return Err("keymap.composer contains conflicting shortcuts".to_owned());
         }
 
-        let mut specs = default_composer_key_bindings();
+        let mut specs = ComposerShortcutAction::defaults();
         remove_default_composer_conflicts(&mut specs, &configured);
         specs.extend(configured);
         Ok(Self::from_specs(specs))
@@ -130,92 +263,6 @@ impl ComposerKeyBindings {
                 keys: key_labels(&binding.shortcuts),
             })
             .collect()
-    }
-}
-
-impl ComposerShortcutAction {
-    fn from_keymap_name(name: &str) -> Option<Self> {
-        match name {
-            "OpenEditor" | "OpenInEditor" => Some(Self::OpenEditor),
-            "PasteClipboard" => Some(Self::PasteClipboard),
-            "InsertNewline" => Some(Self::InsertNewline),
-            "Submit" => Some(Self::Submit),
-            "Close" => Some(Self::Close),
-            "ClearInput" => Some(Self::ClearInput),
-            "RemoveLastAttachment" => Some(Self::RemoveLastAttachment),
-            "DeletePreviousChar" => Some(Self::DeletePreviousChar),
-            "DeletePreviousWord" => Some(Self::DeletePreviousWord),
-            "DeleteToLineStart" => Some(Self::DeleteToLineStart),
-            "DeleteToLineEnd" => Some(Self::DeleteToLineEnd),
-            "MoveCursorUp" => Some(Self::MoveCursorUp),
-            "MoveCursorDown" => Some(Self::MoveCursorDown),
-            "MoveCursorWordLeft" => Some(Self::MoveCursorWordLeft),
-            "MoveCursorLeft" => Some(Self::MoveCursorLeft),
-            "MoveCursorWordRight" => Some(Self::MoveCursorWordRight),
-            "MoveCursorRight" => Some(Self::MoveCursorRight),
-            "MoveCursorHome" => Some(Self::MoveCursorHome),
-            "MoveCursorEnd" => Some(Self::MoveCursorEnd),
-            "ToggleReplyPing" => Some(Self::ToggleReplyPing),
-            _ => None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::OpenEditor => "OpenEditor",
-            Self::PasteClipboard => "PasteClipboard",
-            Self::InsertNewline => "InsertNewline",
-            Self::Submit => "Submit",
-            Self::Close => "Close",
-            Self::ClearInput => "ClearInput",
-            Self::RemoveLastAttachment => "RemoveLastAttachment",
-            Self::DeletePreviousChar => "DeletePreviousChar",
-            Self::DeletePreviousWord => "DeletePreviousWord",
-            Self::DeleteToLineStart => "DeleteToLineStart",
-            Self::DeleteToLineEnd => "DeleteToLineEnd",
-            Self::MoveCursorUp => "MoveCursorUp",
-            Self::MoveCursorDown => "MoveCursorDown",
-            Self::MoveCursorWordLeft => "MoveCursorWordLeft",
-            Self::MoveCursorLeft => "MoveCursorLeft",
-            Self::MoveCursorWordRight => "MoveCursorWordRight",
-            Self::MoveCursorRight => "MoveCursorRight",
-            Self::MoveCursorHome => "MoveCursorHome",
-            Self::MoveCursorEnd => "MoveCursorEnd",
-            Self::ToggleReplyPing => "ToggleReplyPing",
-        }
-    }
-
-    fn to_composer_action(self) -> ComposerAction {
-        match self {
-            Self::OpenEditor => ComposerAction::OpenInEditor,
-            Self::PasteClipboard => ComposerAction::PasteClipboard,
-            Self::InsertNewline => ComposerAction::InsertNewline,
-            Self::Submit => ComposerAction::Submit,
-            Self::Close => ComposerAction::Close,
-            Self::ClearInput => ComposerAction::ClearInput,
-            Self::RemoveLastAttachment => ComposerAction::RemoveLastAttachment,
-            Self::DeletePreviousChar => {
-                ComposerAction::EditText(TextEditAction::DeletePreviousChar)
-            }
-            Self::DeletePreviousWord => {
-                ComposerAction::EditText(TextEditAction::DeletePreviousWord)
-            }
-            Self::DeleteToLineStart => ComposerAction::EditText(TextEditAction::DeleteToLineStart),
-            Self::DeleteToLineEnd => ComposerAction::EditText(TextEditAction::DeleteToLineEnd),
-            Self::MoveCursorUp => ComposerAction::EditText(TextEditAction::MoveCursorUp),
-            Self::MoveCursorDown => ComposerAction::EditText(TextEditAction::MoveCursorDown),
-            Self::MoveCursorWordLeft => {
-                ComposerAction::EditText(TextEditAction::MoveCursorWordLeft)
-            }
-            Self::MoveCursorLeft => ComposerAction::EditText(TextEditAction::MoveCursorLeft),
-            Self::MoveCursorWordRight => {
-                ComposerAction::EditText(TextEditAction::MoveCursorWordRight)
-            }
-            Self::MoveCursorRight => ComposerAction::EditText(TextEditAction::MoveCursorRight),
-            Self::MoveCursorHome => ComposerAction::EditText(TextEditAction::MoveCursorHome),
-            Self::MoveCursorEnd => ComposerAction::EditText(TextEditAction::MoveCursorEnd),
-            Self::ToggleReplyPing => ComposerAction::ToggleReplyPing,
-        }
     }
 }
 
@@ -255,91 +302,6 @@ fn parse_composer_shortcut_key(value: &str) -> std::result::Result<KeyChord, Str
         return Err("composer shortcut must be a single key".to_owned());
     };
     Ok(key.canonical())
-}
-
-fn default_composer_key_bindings() -> BTreeMap<ComposerShortcutAction, Vec<KeyChord>> {
-    BTreeMap::from([
-        (ComposerShortcutAction::OpenEditor, vec![ctrl_chord('e')]),
-        (
-            ComposerShortcutAction::PasteClipboard,
-            vec![ctrl_chord('v')],
-        ),
-        (
-            ComposerShortcutAction::InsertNewline,
-            vec![
-                ctrl_chord('j'),
-                modified_key_chord(KeyCode::Enter, KeyModifiers::SHIFT),
-                modified_key_chord(KeyCode::Enter, KeyModifiers::CONTROL),
-                modified_key_chord(KeyCode::Enter, KeyModifiers::ALT),
-            ],
-        ),
-        (
-            ComposerShortcutAction::Submit,
-            vec![key_chord(KeyCode::Enter)],
-        ),
-        (ComposerShortcutAction::Close, vec![key_chord(KeyCode::Esc)]),
-        (ComposerShortcutAction::ClearInput, vec![ctrl_chord('c')]),
-        (
-            ComposerShortcutAction::RemoveLastAttachment,
-            vec![key_chord(KeyCode::Delete)],
-        ),
-        (
-            ComposerShortcutAction::DeletePreviousChar,
-            vec![key_chord(KeyCode::Backspace)],
-        ),
-        (
-            ComposerShortcutAction::DeletePreviousWord,
-            vec![
-                modified_key_chord(KeyCode::Backspace, KeyModifiers::ALT),
-                modified_key_chord(KeyCode::Backspace, KeyModifiers::CONTROL),
-                ctrl_chord('w'),
-            ],
-        ),
-        (
-            ComposerShortcutAction::DeleteToLineStart,
-            vec![ctrl_chord('u')],
-        ),
-        (
-            ComposerShortcutAction::DeleteToLineEnd,
-            vec![ctrl_chord('k')],
-        ),
-        (
-            ComposerShortcutAction::MoveCursorUp,
-            vec![key_chord(KeyCode::Up)],
-        ),
-        (
-            ComposerShortcutAction::MoveCursorDown,
-            vec![key_chord(KeyCode::Down)],
-        ),
-        (
-            ComposerShortcutAction::MoveCursorWordLeft,
-            vec![modified_key_chord(KeyCode::Left, KeyModifiers::CONTROL)],
-        ),
-        (
-            ComposerShortcutAction::MoveCursorLeft,
-            vec![key_chord(KeyCode::Left)],
-        ),
-        (
-            ComposerShortcutAction::MoveCursorWordRight,
-            vec![modified_key_chord(KeyCode::Right, KeyModifiers::CONTROL)],
-        ),
-        (
-            ComposerShortcutAction::MoveCursorRight,
-            vec![key_chord(KeyCode::Right)],
-        ),
-        (
-            ComposerShortcutAction::MoveCursorHome,
-            vec![key_chord(KeyCode::Home)],
-        ),
-        (
-            ComposerShortcutAction::MoveCursorEnd,
-            vec![key_chord(KeyCode::End)],
-        ),
-        (
-            ComposerShortcutAction::ToggleReplyPing,
-            vec![modified_key_chord(KeyCode::Char('p'), KeyModifiers::ALT)],
-        ),
-    ])
 }
 
 fn remove_default_composer_conflicts(

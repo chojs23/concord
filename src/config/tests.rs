@@ -1,14 +1,13 @@
-use std::{
-    fs,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs, path::PathBuf};
+
+use tempfile::TempDir;
 
 use super::{
     AnimatePreviews, AppOptions, BorderShape, BorderSurface, ComposerOptions, CredentialOptions,
     CredentialStoreMode, DisplayOptions, HighlightGroup, ImagePreviewQualityPreset,
-    ImageProtocolPreference, KeymapBinding, KeymapFileOptions, KeymapOptions, NotificationOptions,
-    PresenceOptions, ThemeOptions, VoiceOptions, load_keymap_options_from_path,
-    load_options_from_path, parse_app_options, parse_theme_options, save_options_to_path,
+    ImageProtocolPreference, KeymapBinding, KeymapOptions, NotificationOptions, PresenceOptions,
+    ThemeOptions, VoiceOptions, load_keymap_options_from_path, load_options_from_path,
+    parse_app_options, parse_theme_options, save_options_to_path,
 };
 use crate::discord::{MicrophoneSensitivityDb, VoiceParticipantVolumePercent, VoiceVolumePercent};
 
@@ -55,210 +54,81 @@ fn app_config_parses_partial_toml_with_defaults() {
     let cases = [
         (
             "[display]\ndisable_image_preview = true\n",
-            true,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| options.display.disable_image_preview = true),
         ),
         (
             "[display]\nimage_preview_quality = \"original\"\n",
-            false,
-            ImagePreviewQualityPreset::Original,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| {
+                options.display.image_preview_quality = ImagePreviewQualityPreset::Original;
+            }),
         ),
         (
             "[display]\nmedia_playback = true\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            true,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| options.display.media_playback = true),
         ),
         (
             "[voice]\nself_mute = true\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            true,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| options.voice.self_mute = true),
         ),
         (
             "[voice]\nallow_microphone_transmit = true\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            true,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| options.voice.allow_microphone_transmit = true),
         ),
         (
             "[voice]\nmicrophone_sensitivity = -70\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::new(-70),
+            app_options_with(|options| {
+                options.voice.microphone_sensitivity = MicrophoneSensitivityDb::new(-70);
+            }),
         ),
         (
             "[voice]\nmicrophone_sensitivity = 10\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::new(0),
+            app_options_with(|options| {
+                options.voice.microphone_sensitivity = MicrophoneSensitivityDb::new(0);
+            }),
         ),
         (
             "[voice]\nmicrophone_sensitivity = -500\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::new(-100),
+            app_options_with(|options| {
+                options.voice.microphone_sensitivity = MicrophoneSensitivityDb::new(-100);
+            }),
         ),
         (
             "[notifications]\ndesktop_notifications = false\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| options.notifications.desktop_notifications = false),
         ),
         (
             "[notifications]\nvoice_join_sound = \"/tmp/join.wav\"\nvoice_leave_sound = \"/tmp/leave.wav\"\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| {
+                options.notifications.voice_join_sound = Some(PathBuf::from("/tmp/join.wav"));
+                options.notifications.voice_leave_sound = Some(PathBuf::from("/tmp/leave.wav"));
+            }),
         ),
         (
             "[notifications]\nnotification_sound = \"/tmp/message.wav\"\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| {
+                options.notifications.notification_sound = Some(PathBuf::from("/tmp/message.wav"));
+            }),
         ),
         (
             "[composer]\nemojis_as_links = true\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| options.composer.emojis_as_links = true),
         ),
         (
             "[credentials]\nstore = \"plain\"\n",
-            false,
-            ImagePreviewQualityPreset::Balanced,
-            false,
-            false,
-            false,
-            false,
-            MicrophoneSensitivityDb::default(),
+            app_options_with(|options| options.credentials.store = CredentialStoreMode::Plain),
         ),
     ];
 
-    for (
-        toml,
-        disable_image_preview,
-        image_preview_quality,
-        self_mute,
-        self_deaf,
-        media_playback,
-        allow_microphone_transmit,
-        microphone_sensitivity,
-    ) in cases
-    {
+    for (toml, expected) in cases {
         let config: AppOptions = toml::from_str(toml).expect("partial config should parse");
-        assert_eq!(config.display.disable_image_preview, disable_image_preview);
-        assert!(config.display.show_avatars);
-        assert!(config.display.show_images);
-        assert_eq!(config.display.media_playback, media_playback);
-        assert_eq!(config.display.image_preview_quality, image_preview_quality);
-        assert_eq!(config.display.image_protocol, ImageProtocolPreference::Auto);
-        assert!(config.display.show_custom_emoji);
-        assert!(!config.display.circular_avatars);
-        let expected_desktop_notifications =
-            !toml.contains("[notifications]\ndesktop_notifications = false");
-        assert_eq!(
-            config.notifications.desktop_notifications,
-            expected_desktop_notifications
-        );
-        if toml.contains("notification_sound") {
-            assert_eq!(
-                config.notifications.notification_sound.as_deref(),
-                Some(std::path::Path::new("/tmp/message.wav"))
-            );
-        } else {
-            assert!(config.notifications.notification_sound.is_none());
-        }
-        if toml.contains("voice_join_sound") {
-            assert_eq!(
-                config.notifications.voice_join_sound.as_deref(),
-                Some(std::path::Path::new("/tmp/join.wav"))
-            );
-            assert_eq!(
-                config.notifications.voice_leave_sound.as_deref(),
-                Some(std::path::Path::new("/tmp/leave.wav"))
-            );
-        } else {
-            assert!(config.notifications.voice_join_sound.is_none());
-            assert!(config.notifications.voice_leave_sound.is_none());
-        }
-        assert_eq!(config.voice.self_mute, self_mute);
-        assert_eq!(config.voice.self_deaf, self_deaf);
-        assert_eq!(
-            config.voice.allow_microphone_transmit,
-            allow_microphone_transmit
-        );
-        assert!(config.voice.noise_suppression);
-        assert_eq!(config.voice.microphone_sensitivity, microphone_sensitivity);
-        assert_eq!(
-            config.voice.microphone_volume,
-            VoiceVolumePercent::default()
-        );
-        assert_eq!(
-            config.voice.voice_output_volume,
-            VoiceVolumePercent::default()
-        );
-        assert_eq!(
-            config.composer.emojis_as_links,
-            toml.contains("emojis_as_links")
-        );
-        let expected_credential_store = if toml.contains("store = \"plain\"") {
-            CredentialStoreMode::Plain
-        } else {
-            CredentialStoreMode::Auto
-        };
-        assert_eq!(config.credentials.store, expected_credential_store);
+        assert_eq!(config, expected, "{toml}");
     }
+}
+
+fn app_options_with(update: impl FnOnce(&mut AppOptions)) -> AppOptions {
+    let mut options = AppOptions::default();
+    update(&mut options);
+    options
 }
 
 #[test]
@@ -291,7 +161,7 @@ fn display_image_protocol_parses_supported_values() {
 }
 
 #[test]
-fn invalid_value_is_skipped_without_discarding_the_rest() {
+fn invalid_app_values_are_skipped_without_discarding_valid_siblings() {
     let (options, warnings) = parse_app_options(
             "[display]\nshow_avatars = false\nimage_protocol = \"bogus\"\nshow_images = \"yes\"\n\n[voice]\nself_mute = true\n",
         )
@@ -314,7 +184,10 @@ fn invalid_value_is_skipped_without_discarding_the_rest() {
     assert_eq!(warnings.len(), 2, "one warning per skipped value");
     assert!(warnings.iter().any(|w| w.contains("image_protocol")));
     assert!(warnings.iter().any(|w| w.contains("show_images")));
+}
 
+#[test]
+fn invalid_theme_values_warn_without_discarding_valid_colors_and_borders() {
     let (theme, warnings) = parse_theme_options(
         "[highlight.Selection]\nforeground = {}\nbackground = \"#112233\"\nstrikethrough = \"yes\"\n\n[ui.border]\npane = 7\ncomposer = \"curved\"\nmodal = \"double\"\n",
     )
@@ -337,7 +210,10 @@ fn invalid_value_is_skipped_without_discarding_the_rest() {
     );
     assert!(warnings.iter().any(|warning| warning.contains("curved")));
     assert!(warnings.iter().any(|warning| warning.contains("pane")));
+}
 
+#[test]
+fn unknown_theme_fields_warn_and_leave_the_default_theme() {
     let (theme, warnings) = parse_theme_options(
         "[theme]\nborder = \"red\"\n\n[highlight.FutureGroup]\nforeground = \"red\"\n\n[highlight.Selection]\nfuture = true\n\n[ui]\nfuture = true\n\n[ui.border]\nfuture = \"plain\"\n",
     )
@@ -375,15 +251,6 @@ fn valid_config_reports_no_warnings() {
         theme.border_shapes().get(BorderSurface::Modal),
         Some(BorderShape::Thick)
     );
-    assert_eq!(theme.selection_marker(), Some("❯ "));
-    assert!(warnings.is_empty());
-}
-
-#[test]
-fn theme_selection_marker_parses_from_ui_indicator() {
-    let (theme, warnings) = parse_theme_options("[ui.indicator]\nselection = \"❯ \"\n")
-        .expect("selection marker config should parse");
-
     assert_eq!(theme.selection_marker(), Some("❯ "));
     assert!(warnings.is_empty());
 }
@@ -707,7 +574,7 @@ fn voice_audio_sources_default_to_system_and_preserve_selected_device_ids() {
 
 #[test]
 fn options_save_and_load_round_trip() {
-    let path = test_config_path();
+    let (_directory, path) = test_file_path("config.toml");
     let options = AppOptions {
         display: DisplayOptions {
             disable_image_preview: true,
@@ -762,21 +629,12 @@ fn options_save_and_load_round_trip() {
     let (loaded, warnings) = load_options_from_path(&path).expect("config should load");
     assert!(warnings.is_empty());
 
-    assert_eq!(loaded.display, options.display);
-    assert_eq!(loaded.composer, options.composer);
-    assert_eq!(loaded.reactions, options.reactions);
-    assert_eq!(loaded.notifications, options.notifications);
-    assert_eq!(loaded.voice, options.voice);
-    assert_eq!(loaded.presence, options.presence);
-    let _ = fs::remove_file(&path);
-    if let Some(parent) = path.parent() {
-        let _ = fs::remove_dir_all(parent);
-    }
+    assert_eq!(loaded, options);
 }
 
 #[test]
 fn keymap_options_load_from_path_defaults_when_missing() {
-    let path = test_keymap_path();
+    let (_directory, path) = test_file_path("keymap.toml");
 
     let (loaded, warnings) =
         load_keymap_options_from_path(&path).expect("missing keymap should load");
@@ -787,10 +645,7 @@ fn keymap_options_load_from_path_defaults_when_missing() {
 
 #[test]
 fn keymap_options_load_from_path_reads_keymap_file() {
-    let path = test_keymap_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("test keymap parent should be created");
-    }
+    let (_directory, path) = test_file_path("keymap.toml");
     fs::write(&path, "[keymap]\nStartComposer = { keys = [\"c\"] }\n")
         .expect("test keymap should be written");
 
@@ -803,36 +658,21 @@ fn keymap_options_load_from_path_reads_keymap_file() {
             description: None,
         })
     );
-    let _ = fs::remove_file(&path);
-    if let Some(parent) = path.parent() {
-        let _ = fs::remove_dir_all(parent);
-    }
 }
 
-fn test_config_path() -> std::path::PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after Unix epoch")
-        .as_nanos();
-    std::env::temp_dir()
-        .join(format!("concord-config-test-{unique}"))
-        .join("config.toml")
-}
-
-fn test_keymap_path() -> std::path::PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after Unix epoch")
-        .as_nanos();
-    std::env::temp_dir()
-        .join(format!("concord-keymap-test-{unique}"))
-        .join("keymap.toml")
+fn test_file_path(name: &str) -> (TempDir, PathBuf) {
+    let directory = tempfile::tempdir().expect("temporary config directory should be created");
+    let path = directory.path().join(name);
+    (directory, path)
 }
 
 fn parse_keymap_options(toml: &str) -> KeymapOptions {
-    toml::from_str::<KeymapFileOptions>(toml)
-        .expect("keymap config should parse")
-        .keymap
+    let root = toml::from_str::<toml::Table>(toml).expect("keymap config should parse");
+    root.get("keymap")
+        .cloned()
+        .expect("keymap table should exist")
+        .try_into()
+        .expect("keymap options should parse")
 }
 
 #[test]

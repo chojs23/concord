@@ -229,7 +229,7 @@ impl DiscordRest {
                 .error_for_status_ref()
                 .expect_err("429 response has an error status");
             let headers = response.headers().clone();
-            let retry_after_header = retry_after_header(&headers);
+            let retry_after_header = header_f64(&headers, RETRY_AFTER.as_str());
             let body = response.text().await.ok();
             let parsed_body = body
                 .as_deref()
@@ -951,7 +951,7 @@ async fn request_error(
     label: &str,
 ) -> AppError {
     let status = response.status();
-    let retry_after_header = retry_after_header(response.headers());
+    let retry_after_header = header_f64(response.headers(), RETRY_AFTER.as_str());
     let body = response.text().await.ok();
     let parsed_body = body
         .as_deref()
@@ -1021,13 +1021,6 @@ fn request_error_from_parts(
         Some(detail) => AppError::DiscordRequest(format!("{label} failed: {error}: {detail}")),
         None => AppError::DiscordRequest(format!("{label} failed: {error}")),
     }
-}
-
-fn retry_after_header(headers: &HeaderMap) -> Option<f64> {
-    headers
-        .get(RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<f64>().ok())
 }
 
 fn rest_rate_limit_body(parsed_body: Option<&Value>) -> RestRateLimitBody {

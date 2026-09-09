@@ -264,6 +264,18 @@ pub(in crate::tui) fn remap_text_offset(
     }
 }
 
+impl RenderedText {
+    pub(in crate::tui) fn remap_metadata(&mut self, replacements: &[TextReplacement]) {
+        for highlight in &mut self.highlights {
+            highlight.start = remap_text_offset(replacements, highlight.start);
+            highlight.end = remap_text_offset(replacements, highlight.end);
+        }
+        for slot in &mut self.emoji_slots {
+            slot.byte_start = remap_text_offset(replacements, slot.byte_start);
+        }
+    }
+}
+
 impl From<String> for RenderedText {
     fn from(text: String) -> Self {
         Self {
@@ -400,13 +412,7 @@ where
     }
     rendered.push_str(&value[cursor..]);
 
-    for highlight in &mut input.highlights {
-        highlight.start = remap_text_offset(&replacements, highlight.start);
-        highlight.end = remap_text_offset(&replacements, highlight.end);
-    }
-    for slot in &mut input.emoji_slots {
-        slot.byte_start = remap_text_offset(&replacements, slot.byte_start);
-    }
+    input.remap_metadata(&replacements);
     input.highlights.extend(mention_highlights);
     input
         .highlights

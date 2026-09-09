@@ -891,30 +891,14 @@ impl KeyBindings {
         "Enter verify | Esc choose method | Ctrl-C quit"
     }
 
-    pub fn channel_action_shortcuts(
-        &self,
-        actions: &[ChannelActionItem],
-        index: usize,
-    ) -> Vec<KeyChord> {
-        scoped_action_shortcuts(
-            index,
-            actions.iter().map(|item| item.kind),
-            &self.action_shortcuts.channel,
-            |kind| self.default_channel_action_shortcut(kind),
-        )
-    }
-
-    pub fn channel_action_label(&self, action: &ChannelActionItem) -> String {
-        action_label(&self.action_shortcuts.channel, action.kind, &action.label)
-    }
-
-    pub fn channel_action_shortcut_label(
-        &self,
-        actions: &[ChannelActionItem],
-        index: usize,
-    ) -> String {
-        key_chord_list_label(&self.channel_action_shortcuts(actions, index))
-    }
+    define_action_menu_scope!(
+        channel,
+        ChannelActionItem,
+        channel_action_shortcuts,
+        channel_action_label,
+        default_channel_action_shortcut,
+        channel_action_shortcut_label
+    );
 
     fn default_channel_action_shortcut(&self, kind: ChannelActionKind) -> Vec<KeyChord> {
         match kind {

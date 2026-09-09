@@ -296,6 +296,41 @@ impl<K> Drop for RenderProtocolCache<K> {
     }
 }
 
+pub(super) trait MediaProtocolCachePayload {
+    fn retained_bytes(&self) -> u64;
+}
+
+impl<K> MediaProtocolCachePayload for RenderProtocolCache<K>
+where
+    K: Clone + Eq + Hash,
+{
+    fn retained_bytes(&self) -> u64 {
+        self.retained_bytes()
+    }
+}
+
+/// Shared lifecycle for media whose cache entries differ only by the protocol
+/// payload kept after decoding. Preview entries stay separate because they
+/// also carry filenames and layout-specific failure details.
+pub(super) enum MediaImageEntry<P> {
+    Loading {
+        last_used: u64,
+    },
+    Decoding {
+        generation: u64,
+        last_used: u64,
+    },
+    Ready {
+        generation: u64,
+        image: DecodedMediaImage,
+        protocols: Box<P>,
+        last_used: u64,
+    },
+    Failed {
+        last_used: u64,
+    },
+}
+
 pub(super) trait MediaImageCacheEntry {
     fn last_used(&self) -> u64;
     fn decoded_image(&self) -> Option<&DecodedMediaImage>;
@@ -314,6 +349,65 @@ pub(super) trait MediaImageCacheEntry {
     /// cannot see. Zero for entries that do not cache protocols.
     fn retained_protocol_bytes(&self) -> u64 {
         0
+    }
+}
+
+impl<P> MediaImageCacheEntry for MediaImageEntry<P>
+where
+    P: MediaProtocolCachePayload,
+{
+    fn last_used(&self) -> u64 {
+        match self {
+            Self::Loading { last_used }
+            | Self::Decoding { last_used, .. }
+            | Self::Ready { last_used, .. }
+            | Self::Failed { last_used } => *last_used,
+        }
+    }
+
+    fn decoded_image(&self) -> Option<&DecodedMediaImage> {
+        match self {
+            Self::Ready { image, .. } => Some(image),
+            Self::Loading { .. } | Self::Decoding { .. } | Self::Failed { .. } => None,
+        }
+    }
+
+    fn decoded_image_mut(&mut self) -> Option<&mut DecodedMediaImage> {
+        match self {
+            Self::Ready { image, .. } => Some(image),
+            Self::Loading { .. } | Self::Decoding { .. } | Self::Failed { .. } => None,
+        }
+    }
+
+    fn touch(&mut self, tick: u64) {
+        match self {
+            Self::Loading { last_used }
+            | Self::Decoding { last_used, .. }
+            | Self::Ready { last_used, .. }
+            | Self::Failed { last_used } => *last_used = tick,
+        }
+    }
+
+    fn is_loading(&self) -> bool {
+        matches!(self, Self::Loading { .. })
+    }
+
+    fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    fn decoding_generation(&self) -> Option<u64> {
+        match self {
+            Self::Decoding { generation, .. } => Some(*generation),
+            Self::Loading { .. } | Self::Ready { .. } | Self::Failed { .. } => None,
+        }
+    }
+
+    fn retained_protocol_bytes(&self) -> u64 {
+        match self {
+            Self::Ready { protocols, .. } => protocols.retained_bytes(),
+            _ => 0,
+        }
     }
 }
 

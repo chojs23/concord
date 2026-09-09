@@ -9,7 +9,24 @@ use crate::discord::{
     StreamCaptureTargetsRequestId, VoiceScope,
 };
 
-use super::{AttachmentDownloadProgressView, DashboardState, ToastKind};
+use super::{
+    AttachmentDownloadProgressView, DashboardState, ForumPostComposerField, ToastKind,
+    UserProfileSettingsField,
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ClipboardPasteTarget {
+    Composer,
+    ForumPost(Option<ForumPostComposerField>),
+    UserProfileAvatar,
+    UserProfileText(UserProfileSettingsField),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ClipboardPasteRequest {
+    pub(super) request_id: u64,
+    pub(super) target: ClipboardPasteTarget,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ToastMessage {
@@ -77,9 +94,10 @@ pub(super) struct RuntimeUiState {
     pub(super) voice_connection: Option<VoiceConnectionUiState>,
     pub(super) open_composer_in_editor_requested: bool,
     pub(super) open_forum_post_body_in_editor_requested: bool,
-    pub(super) paste_clipboard_requested: bool,
+    pub(super) paste_clipboard_requested: Option<ClipboardPasteRequest>,
     pub(super) terminal_refresh_requested: bool,
     pub(super) clipboard_paste_pending: bool,
+    pub(super) clipboard_paste_request: Option<ClipboardPasteRequest>,
     /// Pending clipboard copy: the text plus the success toast to show. Used by
     /// message copy, forum post link/id copy, and similar one-shot copies.
     pub(super) copy_text_requested: Option<(String, &'static str)>,
@@ -87,6 +105,7 @@ pub(super) struct RuntimeUiState {
     pub(super) next_attachment_download_id: u64,
     pub(super) next_media_playback_request_id: u64,
     pub(super) next_stream_capture_targets_request_id: u64,
+    pub(super) next_clipboard_paste_request_id: u64,
     /// Shared clock used by deterministic animated TUI components.
     pub(super) animation_frame: usize,
     pub(super) should_quit: bool,

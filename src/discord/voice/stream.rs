@@ -21,6 +21,7 @@ use super::media::{
     GatewayChildTasks, annex_b_nals, build_rtcp_sender_report, current_unix_time,
     packetize_h264_payloads,
 };
+use super::rtp::{RtcpPacketError, RtcpPackets};
 use super::runtime::MAX_VOICE_RECONNECT_ATTEMPTS;
 use super::*;
 
@@ -602,7 +603,13 @@ async fn connect_stream_gateway(
                 let value: Value = serde_json::from_str(&text)
                     .map_err(|error| format!("stream websocket JSON parse failed: {error}"))?;
                 gateway_control.record_sequence(&value).await;
-                let opcode = value.get("op").and_then(Value::as_u64).unwrap_or_default() as u8;
+                let Some(opcode) = gateway::voice_gateway_opcode(&value) else {
+                    logging::debug(
+                        "stream",
+                        "ignored stream gateway payload with invalid opcode",
+                    );
+                    continue;
+                };
                 match opcode {
                     VOICE_OP_READY => {
                         let ready = gateway::parse_voice_ready_payload(&value)?;
@@ -1053,43 +1060,33 @@ fn parse_stream_rtcp_sender_reports(
     compound: &[u8],
 ) -> Result<Vec<StreamRtcpSenderReport>, String> {
     let mut reports = Vec::new();
-    let mut offset = 0usize;
-    while offset < compound.len() {
-        let remaining = compound.len() - offset;
-        if remaining < 4 {
-            return Err("RTCP compound packet has a truncated header".to_owned());
-        }
-        if compound[offset] >> 6 != RTP_VERSION {
-            return Err("RTCP packet has an invalid version".to_owned());
-        }
-        let length_words_minus_one =
-            u16::from_be_bytes([compound[offset + 2], compound[offset + 3]]);
-        let packet_len = (usize::from(length_words_minus_one) + 1)
-            .checked_mul(4)
-            .ok_or_else(|| "RTCP packet length overflowed".to_owned())?;
-        let packet_end = offset
-            .checked_add(packet_len)
-            .filter(|end| *end <= compound.len())
-            .ok_or_else(|| "RTCP packet length exceeds the compound packet".to_owned())?;
-
-        if compound[offset + 1] == RTCP_SENDER_REPORT {
-            let report_count = usize::from(compound[offset] & 0x1f);
-            let minimum_len = 28 + report_count * 24;
-            if packet_len < minimum_len {
+    for packet in RtcpPackets::new(compound) {
+        let packet = packet.map_err(|error| match error {
+            RtcpPacketError::TruncatedHeader => {
+                "RTCP compound packet has a truncated header".to_owned()
+            }
+            RtcpPacketError::InvalidVersion => "RTCP packet has an invalid version".to_owned(),
+            RtcpPacketError::LengthExceedsData => {
+                "RTCP packet length exceeds the compound packet".to_owned()
+            }
+        })?;
+        if packet.packet_type() == RTCP_SENDER_REPORT {
+            let packet = packet.bytes();
+            let report_count = usize::from(packet[0] & 0x1f);
+            if packet.len() < 28 + report_count * 24 {
                 return Err("RTCP sender report is truncated".to_owned());
             }
-            let sender_ssrc = rtcp_u32(compound, offset + 4);
-            let ntp_seconds = rtcp_u32(compound, offset + 8);
-            let ntp_fraction = rtcp_u32(compound, offset + 12);
+            let sender_ssrc = rtcp_u32(packet, 4);
+            let ntp_seconds = rtcp_u32(packet, 8);
+            let ntp_fraction = rtcp_u32(packet, 12);
             reports.push(StreamRtcpSenderReport {
                 sender_ssrc,
                 ntp_timestamp: (u64::from(ntp_seconds) << 32) | u64::from(ntp_fraction),
-                rtp_timestamp: rtcp_u32(compound, offset + 16),
-                packet_count: rtcp_u32(compound, offset + 20),
-                octet_count: rtcp_u32(compound, offset + 24),
+                rtp_timestamp: rtcp_u32(packet, 16),
+                packet_count: rtcp_u32(packet, 20),
+                octet_count: rtcp_u32(packet, 24),
             });
         }
-        offset = packet_end;
     }
     Ok(reports)
 }
@@ -3532,7 +3529,6 @@ fn append_annex_b_nal(frame: &mut Vec<u8>, nal: &[u8]) {
 
 fn h264_nal_types(frame: &[u8]) -> Vec<u8> {
     annex_b_nals(frame)
-        .into_iter()
         .filter_map(|nal| nal.first().map(|byte| byte & 0x1f))
         .collect()
 }
@@ -4238,38 +4234,39 @@ mod tests {
     }
 
     #[test]
-    fn stream_video_starts_at_idr_with_cached_parameter_sets() {
-        let parameter_sets = vec![0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22];
-        let predicted = vec![0, 0, 0, 1, 0x41, 0x33];
-        let idr = vec![0, 0, 0, 1, 0x65, 0x44];
-        let mut gate = H264StartupGate::default();
+    fn stream_video_startup_requires_cached_parameter_sets_and_idr() {
+        {
+            let parameter_sets = vec![0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22];
+            let predicted = vec![0, 0, 0, 1, 0x41, 0x33];
+            let idr = vec![0, 0, 0, 1, 0x65, 0x44];
+            let mut gate = H264StartupGate::default();
 
-        assert_eq!(gate.accept(parameter_sets), None);
-        assert_eq!(gate.accept(predicted.clone()), None);
+            assert_eq!(gate.accept(parameter_sets), None);
+            assert_eq!(gate.accept(predicted.clone()), None);
 
-        let startup = gate
-            .accept(idr)
-            .expect("IDR should start local video playback");
-        assert_eq!(h264_nal_types(&startup), vec![7, 8, 5]);
-        assert!(gate.is_started());
-        assert_eq!(gate.accept(predicted.clone()), Some(predicted));
-    }
+            let startup = gate
+                .accept(idr)
+                .expect("IDR should start local video playback");
+            assert_eq!(h264_nal_types(&startup), vec![7, 8, 5]);
+            assert!(gate.is_started());
+            assert_eq!(gate.accept(predicted.clone()), Some(predicted));
+        }
 
-    #[test]
-    fn stream_video_waits_for_parameter_sets_before_accepting_idr() {
-        let idr = vec![0, 0, 0, 1, 0x65, 0x44];
-        let parameter_sets = vec![0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22];
-        let mut gate = H264StartupGate::default();
+        {
+            let idr = vec![0, 0, 0, 1, 0x65, 0x44];
+            let parameter_sets = vec![0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22];
+            let mut gate = H264StartupGate::default();
 
-        assert_eq!(gate.accept(idr.clone()), None);
-        assert!(!gate.is_started());
-        assert_eq!(gate.accept(parameter_sets), None);
+            assert_eq!(gate.accept(idr.clone()), None);
+            assert!(!gate.is_started());
+            assert_eq!(gate.accept(parameter_sets), None);
 
-        let startup = gate
-            .accept(idr)
-            .expect("IDR should start after parameter sets arrive");
-        assert_eq!(h264_nal_types(&startup), vec![7, 8, 5]);
-        assert!(gate.is_started());
+            let startup = gate
+                .accept(idr)
+                .expect("IDR should start after parameter sets arrive");
+            assert_eq!(h264_nal_types(&startup), vec![7, 8, 5]);
+            assert!(gate.is_started());
+        }
     }
 
     #[test]
@@ -4392,25 +4389,29 @@ mod tests {
     }
 
     #[test]
-    fn stream_keyframe_request_uses_encrypted_compound_rtcp() {
-        let sender_ssrc = 0x0102_0304;
-        let media_ssrc = 0x0506_0708;
-        let pli = build_rtcp_pli(sender_ssrc, media_ssrc);
-        let feedback = build_stream_rtcp_compound(sender_ssrc, None, Some(&pli));
-        assert_eq!(&feedback[..4], &[0x80, 201, 0, 1]);
-        assert_eq!(&feedback[4..8], &sender_ssrc.to_be_bytes());
+    fn stream_compound_rtcp_reports_source_and_round_trips() {
+        let keyframe_sender_ssrc = 0x0102_0304;
+        let keyframe_media_ssrc = 0x0506_0708;
+        let keyframe_pli = build_rtcp_pli(keyframe_sender_ssrc, keyframe_media_ssrc);
+        let keyframe_feedback =
+            build_stream_rtcp_compound(keyframe_sender_ssrc, None, Some(&keyframe_pli));
+        assert_eq!(&keyframe_feedback[..4], &[0x80, 201, 0, 1]);
+        assert_eq!(
+            &keyframe_feedback[4..8],
+            &keyframe_sender_ssrc.to_be_bytes()
+        );
 
         for mode in [AEAD_AES256_GCM_RTPSIZE, AEAD_XCHACHA20_POLY1305_RTPSIZE] {
             let key = [0x42; 32];
             let encryptor =
                 VoiceRtpEncryptor::new(mode, &key).expect("feedback encryptor should initialize");
             let encrypted = encryptor
-                .encrypt_rtcp_feedback(&feedback, 9u32.to_be_bytes())
+                .encrypt_rtcp_feedback(&keyframe_feedback, 9u32.to_be_bytes())
                 .expect("RTCP feedback should encrypt");
-            assert_eq!(&encrypted[..8], &feedback[..8]);
+            assert_eq!(&encrypted[..8], &keyframe_feedback[..8]);
             assert_eq!(
                 encrypted.len(),
-                feedback.len() + RTP_AEAD_TAG_BYTES + RTP_AEAD_NONCE_SUFFIX_BYTES
+                keyframe_feedback.len() + RTP_AEAD_TAG_BYTES + RTP_AEAD_NONCE_SUFFIX_BYTES
             );
 
             let decryptor =
@@ -4418,12 +4419,9 @@ mod tests {
             let decrypted = decryptor
                 .decrypt_rtcp_feedback(&encrypted)
                 .expect("RTCP feedback body should decrypt");
-            assert_eq!(decrypted, feedback);
+            assert_eq!(decrypted, keyframe_feedback);
         }
-    }
 
-    #[test]
-    fn stream_compound_rtcp_reports_source_and_round_trips() {
         let sender_ssrc = 7;
         let media_ssrc = 42;
         let mut control = StreamRtcpControl::default();
@@ -4560,31 +4558,79 @@ mod tests {
             30,
             45_000,
         ));
+        compound.extend_from_slice(&build_rtcp_sender_report(
+            0x0506_0708,
+            Duration::new(2, 0),
+            180_000,
+            60,
+            90_000,
+        ));
+        compound.extend_from_slice(&build_rtcp_receiver_report(8, None));
 
         let reports = parse_stream_rtcp_sender_reports(&compound)
             .expect("compound RTCP should contain a valid sender report");
 
         assert_eq!(
             reports,
-            vec![StreamRtcpSenderReport {
-                sender_ssrc,
-                ntp_timestamp: (u64::from(2_208_988_801u32) << 32) | 0x8000_0000,
-                rtp_timestamp: 90_000,
-                packet_count: 30,
-                octet_count: 45_000,
-            }]
+            vec![
+                StreamRtcpSenderReport {
+                    sender_ssrc,
+                    ntp_timestamp: (u64::from(2_208_988_801u32) << 32) | 0x8000_0000,
+                    rtp_timestamp: 90_000,
+                    packet_count: 30,
+                    octet_count: 45_000,
+                },
+                StreamRtcpSenderReport {
+                    sender_ssrc: 0x0506_0708,
+                    ntp_timestamp: u64::from(2_208_988_802u32) << 32,
+                    rtp_timestamp: 180_000,
+                    packet_count: 60,
+                    octet_count: 90_000,
+                },
+            ]
         );
     }
 
     #[test]
-    fn stream_rejects_a_truncated_rtcp_sender_report() {
-        let mut report = build_rtcp_sender_report(42, Duration::from_secs(1), 90_000, 30, 45_000);
-        report[2..4].copy_from_slice(&100u16.to_be_bytes());
+    fn stream_rtcp_parser_keeps_empty_and_non_sender_packets_ignored() {
+        assert_eq!(parse_stream_rtcp_sender_reports(&[]), Ok(Vec::new()));
+        for packet in [[0x80, 100, 0, 0], [0x80, RTCP_RECEIVER_REPORT, 0, 0]] {
+            assert_eq!(parse_stream_rtcp_sender_reports(&packet), Ok(Vec::new()));
+        }
+    }
 
-        assert_eq!(
-            parse_stream_rtcp_sender_reports(&report),
-            Err("RTCP packet length exceeds the compound packet".to_owned())
-        );
+    #[test]
+    fn stream_rejects_malformed_compound_rtcp() {
+        let mut oversized =
+            build_rtcp_sender_report(42, Duration::from_secs(1), 90_000, 30, 45_000).to_vec();
+        oversized[2..4].copy_from_slice(&100u16.to_be_bytes());
+        let mut truncated_report_block =
+            build_rtcp_sender_report(42, Duration::from_secs(1), 90_000, 30, 45_000).to_vec();
+        truncated_report_block[0] |= 1;
+        let mut truncated_trailing_header = build_rtcp_receiver_report(7, None);
+        truncated_trailing_header.extend_from_slice(&[0x80, RTCP_RECEIVER_REPORT, 0]);
+
+        for (packet, expected) in [
+            (
+                vec![0x80, RTCP_RECEIVER_REPORT, 0],
+                "RTCP compound packet has a truncated header",
+            ),
+            (
+                truncated_trailing_header,
+                "RTCP compound packet has a truncated header",
+            ),
+            (
+                vec![0x40, RTCP_RECEIVER_REPORT, 0, 0],
+                "RTCP packet has an invalid version",
+            ),
+            (oversized, "RTCP packet length exceeds the compound packet"),
+            (truncated_report_block, "RTCP sender report is truncated"),
+        ] {
+            assert_eq!(
+                parse_stream_rtcp_sender_reports(&packet),
+                Err(expected.to_owned())
+            );
+        }
     }
 
     #[test]

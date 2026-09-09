@@ -44,7 +44,7 @@ pub(in crate::tui::ui) fn message_url_picker_lines(
             let style = selectable_popup_label_style(selected, true);
             selected_row_line(
                 Line::from(vec![
-                    selectable_popup_marker(selected),
+                    selection_marker(selected),
                     selectable_popup_shortcut_span(shortcut),
                     Span::styled(item.label.to_owned(), style),
                 ]),
@@ -52,21 +52,4 @@ pub(in crate::tui::ui) fn message_url_picker_lines(
             )
         })
         .collect()
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn message_url_picker_lines_for_width(
-    urls: &[MessageUrlItem],
-    selected: usize,
-    width: usize,
-) -> Vec<Line<'static>> {
-    truncate_message_url_picker_lines(message_url_picker_lines(urls, selected), width)
-}
-
-#[cfg(test)]
-fn truncate_message_url_picker_lines(
-    lines: Vec<Line<'static>>,
-    width: usize,
-) -> Vec<Line<'static>> {
-    truncate_popup_lines(lines, width.max(1))
 }

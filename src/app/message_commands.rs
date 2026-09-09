@@ -24,10 +24,20 @@ pub(super) async fn send_message(
     reply_to: Option<ReplyReference>,
     attachments: Vec<MessageAttachmentUpload>,
 ) {
-    match client
+    let result = client
         .send_message(channel_id, nonce, &content, reply_to, &attachments)
-        .await
-    {
+        .await;
+    handle_message_send_result(&client, channel_id, nonce, "send message failed", result).await;
+}
+
+async fn handle_message_send_result(
+    client: &DiscordClient,
+    channel_id: Id<ChannelMarker>,
+    nonce: Id<MessageMarker>,
+    context: &str,
+    result: crate::Result<MessageInfo>,
+) {
+    match result {
         Ok(mut message) => {
             message.nonce = Some(nonce);
             client.publish_event(message_create_event(message)).await;
@@ -36,7 +46,7 @@ pub(super) async fn send_message(
             client
                 .publish_event(AppEvent::MessageSendFailed { channel_id, nonce })
                 .await;
-            publish_message_send_error(&client, channel_id, "send message failed", &error).await
+            publish_message_send_error(client, channel_id, context, &error).await
         }
     }
 }
@@ -53,18 +63,15 @@ pub(super) async fn send_tts_message(
     nonce: Id<MessageMarker>,
     content: String,
 ) {
-    match client.send_tts_message(channel_id, nonce, &content).await {
-        Ok(mut message) => {
-            message.nonce = Some(nonce);
-            client.publish_event(message_create_event(message)).await;
-        }
-        Err(error) => {
-            client
-                .publish_event(AppEvent::MessageSendFailed { channel_id, nonce })
-                .await;
-            publish_message_send_error(&client, channel_id, "send tts message failed", &error).await
-        }
-    }
+    let result = client.send_tts_message(channel_id, nonce, &content).await;
+    handle_message_send_result(
+        &client,
+        channel_id,
+        nonce,
+        "send tts message failed",
+        result,
+    )
+    .await;
 }
 
 pub(super) async fn create_forum_post(client: DiscordClient, post: ForumPostCreate) {
@@ -504,6 +511,62 @@ fn message_update_event(message: MessageInfo) -> AppEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn message_send_result_preserves_nonce_and_failure_event_order() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+        let mut effects = client.take_effects();
+        let channel_id = Id::new(1);
+        let nonce = Id::new(2);
+
+        handle_message_send_result(
+            &client,
+            channel_id,
+            nonce,
+            "send message failed",
+            Ok(MessageInfo::test(channel_id, Id::new(3))),
+        )
+        .await;
+        let AppEvent::MessageCreate { message } = effects
+            .recv()
+            .await
+            .expect("message create event should be published")
+            .event
+        else {
+            panic!("expected message create event");
+        };
+        assert_eq!(message.nonce, Some(nonce));
+
+        handle_message_send_result(
+            &client,
+            channel_id,
+            nonce,
+            "send tts message failed",
+            Err(AppError::DiscordRequest("network unavailable".to_owned())),
+        )
+        .await;
+        assert!(matches!(
+            effects
+                .recv()
+                .await
+                .expect("send failure event should be published first")
+                .event,
+            AppEvent::MessageSendFailed {
+                channel_id: event_channel_id,
+                nonce: event_nonce,
+            } if event_channel_id == channel_id && event_nonce == nonce
+        ));
+        assert!(matches!(
+            effects
+                .recv()
+                .await
+                .expect("error event should follow send failure")
+                .event,
+            AppEvent::GatewayError { message }
+                if message == "send tts message failed: Discord request failed: network unavailable"
+        ));
+    }
 
     #[tokio::test]
     async fn typing_in_an_uncached_channel_reports_the_block_instead_of_sending() {

@@ -787,7 +787,7 @@ fn selected_grouped_continuation_stamps_time_on_border() {
     });
     let texts = line_texts_from_ratatui(&lines);
 
-    let sent_time = format_message_sent_time(Id::new(2), true);
+    let sent_time = format_message_local_time(Id::new(2), true);
     assert!(texts[3].starts_with("╔"));
     assert!(texts[4].starts_with("║ "));
     assert!(texts[4].contains("follow-up"));
@@ -827,7 +827,7 @@ fn selected_multiline_continuation_keeps_time_off_content_lines() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    let sent_time = format_message_sent_time(Id::new(2), true);
+    let sent_time = format_message_local_time(Id::new(2), true);
     let content_lines: Vec<&String> = texts.iter().filter(|line| line.starts_with("│ ")).collect();
 
     assert!(
@@ -875,22 +875,28 @@ fn avatars_off_collapses_message_gutter() {
 }
 
 #[test]
-fn grouped_continuation_custom_emoji_image_uses_body_row() {
+fn message_viewport_plan_places_grouped_custom_emoji_on_body_row() {
     let mut state = state_with_message();
     push_message(&mut state, 2, "<:long_custom:42>text");
     state.jump_top();
     let messages = state.messages();
-    let rows = message_body_custom_emoji_rows(
-        &messages,
+    let plan = MessageViewportPlan::new(&messages, None, &state, 200, 16, 3);
+    let row = plan.row(1).expect("continuation has a viewport row");
+    let body_lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+        row.message,
         &state,
         200,
-        None,
         &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
-        16,
-        3,
     );
+    let image_line = body_lines
+        .iter()
+        .position(|line| !line.image_slots.is_empty())
+        .expect("custom emoji has an image slot");
 
-    assert_eq!(rows, vec![3]);
+    assert_eq!(
+        row.body_top + row.metrics.header_rows as isize + image_line as isize,
+        3
+    );
 }
 
 #[test]
@@ -1186,16 +1192,6 @@ fn no_role_offline_member_name_uses_normal_foreground_and_dim() {
 }
 
 #[test]
-fn message_sent_time_formats_with_timezone_offset() {
-    let kst = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("KST offset should be valid");
-
-    assert_eq!(
-        format_unix_millis_with_offset(discord_epoch_unix_millis(), kst),
-        Some("09:00".to_owned())
-    );
-}
-
-#[test]
 fn selected_message_media_moves_inside_border() {
     let message = message_with_content(Some("a".repeat(73)));
     let messages = [&message];
@@ -1215,7 +1211,6 @@ fn selected_message_media_moves_inside_border() {
         &[],
     ));
 
-    assert_eq!(selected_message_content_x_offset(true), 0);
     let selected_content_col = selected[1]
         .split('a')
         .next()
@@ -1230,28 +1225,7 @@ fn selected_message_media_moves_inside_border() {
 }
 
 #[test]
-fn second_inline_preview_slot_uses_album_column_offset() {
-    let area = Rect::new(10, 5, 80, 18);
-    let mut message = message_with_attachment(Some("one".to_owned()), image_attachment());
-    let mut second = image_attachment();
-    second.id = Id::new(4);
-    second.filename = "dog.png".to_owned();
-    second.url = "https://cdn.discordapp.com/dog.png".to_owned();
-    second.proxy_url = "https://media.discordapp.net/dog.png".to_owned();
-    message.attachments.push(second);
-    let messages = [&message];
-    let state = DashboardState::new();
-    let row = inline_image_preview_row(&messages, &state, 0, 200, 0, 0);
-
-    assert_eq!(row, 3);
-    assert_eq!(
-        inline_image_preview_area(area, row, 8, 8, 3, None, MESSAGE_AVATAR_OFFSET),
-        Some(Rect::new(26, 9, 8, 3))
-    );
-}
-
-#[test]
-fn forwarded_card_rows_push_inline_preview_slot_down() {
+fn message_viewport_plan_places_forwarded_card_before_inline_preview() {
     let mut snapshot = forwarded_snapshot(Some("hello"), vec![image_attachment()]);
     snapshot.source_channel_id = Some(Id::new(9));
     snapshot.timestamp = Some("2026-04-30T12:34:56.000000+00:00".to_owned());
@@ -1259,7 +1233,13 @@ fn forwarded_card_rows_push_inline_preview_slot_down() {
     let messages = [&message];
     let state = DashboardState::new();
 
-    assert_eq!(inline_image_preview_row(&messages, &state, 0, 200, 0, 0), 4);
+    let plan = MessageViewportPlan::new(&messages, None, &state, 200, 16, 3);
+    assert_eq!(
+        plan.row(0)
+            .expect("message has a viewport row")
+            .image_preview_row(None, 0),
+        4
+    );
 }
 
 #[test]

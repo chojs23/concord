@@ -4,9 +4,11 @@ use crate::discord::ids::{
 };
 
 use crate::discord::{
-    ChannelRecipientState, ChannelState, GuildMemberListEntry, GuildMemberState, RoleState,
+    ChannelRecipientState, ChannelState, GuildMemberListEntry, GuildMemberState, PresenceStatus,
+    RoleState,
 };
 
+use super::DashboardState;
 use super::presentation::{is_direct_message_channel, member_status_rank, sort_recipient_entries};
 
 #[derive(Debug)]
@@ -21,6 +23,102 @@ pub struct MemberGroup<'a> {
 pub enum MemberEntry<'a> {
     Guild(&'a GuildMemberState),
     Recipient(&'a ChannelRecipientState),
+}
+
+pub(in crate::tui) enum MemberRow<'groups, 'members> {
+    Gap,
+    GroupHeader(&'groups MemberGroup<'members>),
+    Member {
+        member_index: usize,
+        entry: MemberEntry<'members>,
+    },
+    Activity {
+        member_index: usize,
+        entry: MemberEntry<'members>,
+    },
+}
+
+pub(in crate::tui) struct MemberRows<'state, 'groups, 'members> {
+    state: &'state DashboardState,
+    groups: &'groups [MemberGroup<'members>],
+    group_index: usize,
+    entry_index: usize,
+    member_index: usize,
+    emit_gap: bool,
+    emit_header: bool,
+    pending_activity: Option<(usize, MemberEntry<'members>)>,
+}
+
+impl<'state, 'groups, 'members> MemberRows<'state, 'groups, 'members> {
+    pub(in crate::tui) fn new(
+        state: &'state DashboardState,
+        groups: &'groups [MemberGroup<'members>],
+    ) -> Self {
+        Self {
+            state,
+            groups,
+            group_index: 0,
+            entry_index: 0,
+            member_index: 0,
+            emit_gap: false,
+            emit_header: true,
+            pending_activity: None,
+        }
+    }
+}
+
+impl<'groups, 'members> Iterator for MemberRows<'_, 'groups, 'members> {
+    type Item = MemberRow<'groups, 'members>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some((member_index, entry)) = self.pending_activity.take() {
+                self.entry_index += 1;
+                self.member_index += 1;
+                return Some(MemberRow::Activity {
+                    member_index,
+                    entry,
+                });
+            }
+
+            let group = self.groups.get(self.group_index)?;
+            if self.emit_gap {
+                self.emit_gap = false;
+                self.emit_header = true;
+                return Some(MemberRow::Gap);
+            }
+            if self.emit_header {
+                self.emit_header = false;
+                return Some(MemberRow::GroupHeader(group));
+            }
+            if let Some(entry) = group.entries.get(self.entry_index).copied() {
+                let member_index = self.member_index;
+                if member_has_activity_row(self.state, entry) {
+                    self.pending_activity = Some((member_index, entry));
+                } else {
+                    self.entry_index += 1;
+                    self.member_index += 1;
+                }
+                return Some(MemberRow::Member {
+                    member_index,
+                    entry,
+                });
+            }
+
+            self.group_index += 1;
+            self.entry_index = 0;
+            if self.group_index < self.groups.len() {
+                self.emit_gap = true;
+            }
+        }
+    }
+}
+
+pub(super) fn member_has_activity_row(state: &DashboardState, member: MemberEntry<'_>) -> bool {
+    !matches!(
+        member.status(),
+        PresenceStatus::Offline | PresenceStatus::Unknown
+    ) && !state.user_activities(member.user_id()).is_empty()
 }
 
 impl MemberEntry<'_> {

@@ -364,10 +364,6 @@ pub(crate) enum VoiceRuntimeEvent {
         stream_key: String,
         error: String,
     },
-    #[cfg(test)]
-    BroadcastStreamCancelled {
-        stream_key: String,
-    },
     BroadcastStreamStopRequested {
         stream_key: String,
     },

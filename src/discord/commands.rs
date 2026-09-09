@@ -456,6 +456,7 @@ pub enum AppCommand {
         before: Option<String>,
     },
     SearchMessages {
+        request_id: u64,
         query: MessageSearchQuery,
     },
     LoadGuildMembersByIds {

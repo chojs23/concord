@@ -101,6 +101,7 @@ pub(in crate::tui::state) struct SearchPopupState {
     has_more: bool,
     dirty: bool,
     last_query: Option<MessageSearchQuery>,
+    request_id: Option<u64>,
 }
 
 impl SearchPopupState {
@@ -122,6 +123,7 @@ impl SearchPopupState {
             has_more: false,
             dirty: true,
             last_query: None,
+            request_id: None,
         }
     }
 
@@ -140,6 +142,7 @@ impl SearchPopupState {
             has_more: false,
             dirty: false,
             last_query: None,
+            request_id: None,
         }
     }
 
@@ -416,6 +419,8 @@ impl DashboardState {
             edit(field);
             search.dirty = true;
             search.error = None;
+            search.loading = false;
+            search.request_id = None;
             search.selection.select(0);
         }
         if mode == Some(SearchPopupMode::Member) {
@@ -451,9 +456,15 @@ impl DashboardState {
 
     pub fn record_search_event(&mut self, event: &AppEvent) {
         match event {
-            AppEvent::MessageSearchLoaded { page } => self.record_message_search_page(page),
-            AppEvent::MessageSearchLoadFailed { query, message } => {
-                self.record_message_search_error(query, message)
+            AppEvent::MessageSearchLoaded { request_id, page } => {
+                self.record_message_search_page(*request_id, page)
+            }
+            AppEvent::MessageSearchLoadFailed {
+                request_id,
+                query,
+                message,
+            } => {
+                self.record_message_search_error(*request_id, query, message);
             }
             _ => {}
         }
@@ -566,6 +577,8 @@ impl DashboardState {
             search.suggestion_selection.select(0);
             search.dirty = true;
             search.error = None;
+            search.loading = false;
+            search.request_id = None;
             return true;
         }
         false
@@ -587,6 +600,7 @@ impl DashboardState {
             }
             return None;
         }
+        let request_id = self.next_message_search_request_id();
         if let Some(search) = self.popups.search_popup_mut() {
             if offset == 0 {
                 search.results.clear();
@@ -598,8 +612,17 @@ impl DashboardState {
             search.has_more = false;
             search.dirty = false;
             search.last_query = Some(query.clone());
+            search.request_id = Some(request_id);
         }
-        Some(AppCommand::SearchMessages { query })
+        Some(AppCommand::SearchMessages { request_id, query })
+    }
+
+    fn next_message_search_request_id(&mut self) -> u64 {
+        self.popups.message_search_request_generation = self
+            .popups
+            .message_search_request_generation
+            .wrapping_add(1);
+        self.popups.message_search_request_generation
     }
 
     fn load_next_message_search_page(&mut self) -> Option<AppCommand> {
@@ -704,7 +727,10 @@ impl DashboardState {
         None
     }
 
-    fn record_message_search_page(&mut self, page: &MessageSearchPage) {
+    fn record_message_search_page(&mut self, request_id: u64, page: &MessageSearchPage) {
+        if !self.message_search_request_matches(request_id) {
+            return;
+        }
         let mut items = page
             .messages
             .iter()
@@ -724,18 +750,34 @@ impl DashboardState {
             search.total_results = page.total_results;
             search.has_more = page.has_more;
             search.last_query = Some(page.query.clone());
+            search.request_id = None;
         }
     }
 
-    fn record_message_search_error(&mut self, _query: &MessageSearchQuery, message: &str) {
+    fn record_message_search_error(
+        &mut self,
+        request_id: u64,
+        _query: &MessageSearchQuery,
+        message: &str,
+    ) {
+        if !self.message_search_request_matches(request_id) {
+            return;
+        }
         if let Some(search) = self.popups.search_popup_mut()
             && search.mode == SearchPopupMode::Message
         {
             search.loading = false;
             search.error = Some(message.to_owned());
             search.dirty = true;
+            search.request_id = None;
         }
         self.show_error_toast(message, std::time::Instant::now());
+    }
+
+    fn message_search_request_matches(&self, request_id: u64) -> bool {
+        self.popups.search_popup().is_some_and(|search| {
+            search.mode == SearchPopupMode::Message && search.request_id == Some(request_id)
+        })
     }
 
     fn refresh_message_search_suggestions(&mut self) {

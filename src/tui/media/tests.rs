@@ -164,46 +164,6 @@ fn image_preview_targets_keep_background_previews_while_modal_is_open() {
 }
 
 #[test]
-fn image_preview_targets_include_multiple_attachments_from_one_message() {
-    let mut state = state_with_image_messages(0, &[]);
-    push_media_message(
-        &mut state,
-        MessageCreateFixture {
-            message_id: Id::new(1),
-            content: Some("album".to_owned()),
-            attachments: vec![image_attachment(1), image_attachment(2)],
-            ..guild_message_create_fixture()
-        },
-    );
-
-    let targets = visible_image_preview_targets(&state, layout(12));
-
-    assert_eq!(target_message_ids(&targets), vec![Id::new(1), Id::new(1)]);
-    assert_eq!(
-        targets
-            .iter()
-            .map(|target| target.url.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            "https://cdn.discordapp.com/image-1.png",
-            "https://cdn.discordapp.com/image-2.png",
-        ]
-    );
-    assert_eq!(
-        targets
-            .iter()
-            .map(|target| (
-                target.preview_x_offset_columns,
-                target.preview_y_offset_rows,
-                target.preview_width,
-                target.preview_height,
-            ))
-            .collect::<Vec<_>>(),
-        vec![(0, 0, 8, 3), (8, 0, 8, 3)]
-    );
-}
-
-#[test]
 fn image_preview_quality_rewrites_attachment_preview_urls() {
     let cases = [
         (
@@ -280,6 +240,51 @@ fn image_preview_quality_rewrites_attachment_preview_urls() {
             .expect("image attachment should produce preview target");
 
         assert_eq!(target.url, expected_url);
+    }
+
+    for (case, proxy_url, expected_url) in [
+        (
+            "attachment media proxy route",
+            concat!(
+                "https://media.discordapp.net/attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&format=png&width=4000&height=3000"
+            ),
+            concat!(
+                "https://media.discordapp.net/attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&format=webp&width=320&height=240"
+            ),
+        ),
+        (
+            "ephemeral attachment media proxy route",
+            concat!(
+                "https://media.discordapp.net/ephemeral-attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&width=4000&height=3000"
+            ),
+            concat!(
+                "https://media.discordapp.net/ephemeral-attachments/691/150/photo.png",
+                "?ex=abc&is=def&hm=123&format=webp&width=320&height=240"
+            ),
+        ),
+    ] {
+        let mut state = state_with_image_messages(0, &[]);
+        let mut attachment = image_attachment(1);
+        attachment.proxy_url = proxy_url.to_owned();
+        push_media_message(
+            &mut state,
+            MessageCreateFixture {
+                message_id: Id::new(1),
+                content: Some("photo".to_owned()),
+                attachments: vec![attachment],
+                ..guild_message_create_fixture()
+            },
+        );
+
+        let target = visible_image_preview_targets(&state, layout(12))
+            .into_iter()
+            .next()
+            .expect("image attachment should produce preview target");
+
+        assert_eq!(target.url, expected_url, "{case}");
     }
 }
 
@@ -396,12 +401,14 @@ fn image_preview_quality_does_not_change_avatar_or_custom_emoji_requests() {
 
 #[test]
 fn image_preview_targets_choose_embed_media_url() {
-    for (name, embed, content, expected_url) in [
+    for (name, embed, content, expected_url, expected_filename, playable) in [
         (
             "youtube thumbnail is downgraded to a preview size",
             youtube_embed(),
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+            "embed-thumbnail",
+            true,
         ),
         (
             "youtube thumbnail that is already small is kept",
@@ -413,6 +420,8 @@ fn image_preview_targets_choose_embed_media_url() {
             },
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg",
+            "embed-thumbnail",
+            true,
         ),
         (
             "media proxy is resized",
@@ -432,6 +441,8 @@ fn image_preview_targets_choose_embed_media_url() {
                 "https://media.discordapp.net/external/cache-key/https/example.com/photo.png",
                 "?ex=abc&is=def&hm=123&format=webp&width=240&height=180"
             ),
+            "embed-thumbnail",
+            true,
         ),
         (
             "images-ext proxy is resized",
@@ -451,6 +462,8 @@ fn image_preview_targets_choose_embed_media_url() {
                 "https://images-ext-1.discordapp.net/external/cache-key/https/example.com/photo.png",
                 "?format=webp&width=240&height=180"
             ),
+            "embed-thumbnail",
+            true,
         ),
         (
             "proxy outside the resizable routes falls back to the source url",
@@ -463,6 +476,40 @@ fn image_preview_targets_choose_embed_media_url() {
             },
             "https://example.com/post",
             "https://example.com/photo.png",
+            "embed-thumbnail",
+            true,
+        ),
+        (
+            "image_preview_targets_do_not_mark_plain_image_embed_thumbnail_as_playable",
+            EmbedInfo {
+                thumbnail_url: Some("https://example.com/photo.png".to_owned()),
+                thumbnail_width: Some(640),
+                thumbnail_height: Some(480),
+                ..EmbedInfo::test()
+            },
+            "https://example.com/post",
+            "https://example.com/photo.png",
+            "embed-thumbnail",
+            false,
+        ),
+        (
+            "image_preview_targets_downscale_youtube_embed_image_url",
+            EmbedInfo {
+                thumbnail_url: None,
+                thumbnail_width: None,
+                thumbnail_height: None,
+                image_url: Some(
+                    "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg?token=abc"
+                        .to_owned(),
+                ),
+                image_width: Some(1280),
+                image_height: Some(720),
+                ..youtube_embed()
+            },
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg?token=abc",
+            "embed-image",
+            true,
         ),
     ] {
         let mut state = state_with_image_messages(1, &[]);
@@ -480,8 +527,8 @@ fn image_preview_targets_choose_embed_media_url() {
 
         assert_eq!(target_message_ids(&targets), vec![Id::new(2)], "{name}");
         assert_eq!(targets[0].url, expected_url, "{name}");
-        assert_eq!(targets[0].filename, "embed-thumbnail", "{name}");
-        assert!(targets[0].show_play_marker, "{name}");
+        assert_eq!(targets[0].filename, expected_filename, "{name}");
+        assert_eq!(targets[0].show_play_marker, playable, "{name}");
     }
 
     let mut state = state_with_image_messages(1, &[]);
@@ -725,31 +772,6 @@ fn image_preview_targets_preserve_non_giphy_gifv_thumbnail_animation() {
 }
 
 #[test]
-fn image_preview_targets_do_not_mark_plain_image_embed_thumbnail_as_playable() {
-    let mut state = state_with_image_messages(1, &[]);
-    push_media_message(
-        &mut state,
-        MessageCreateFixture {
-            message_id: Id::new(2),
-            content: Some("https://example.com/post".to_owned()),
-            embeds: vec![EmbedInfo {
-                thumbnail_url: Some("https://example.com/photo.png".to_owned()),
-                thumbnail_width: Some(640),
-                thumbnail_height: Some(480),
-                ..EmbedInfo::test()
-            }],
-            ..guild_message_create_fixture()
-        },
-    );
-
-    let targets = visible_image_preview_targets(&state, layout(8));
-
-    assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
-    assert_eq!(targets[0].filename, "embed-thumbnail");
-    assert!(!targets[0].show_play_marker);
-}
-
-#[test]
 fn image_preview_targets_layout_album_grids() {
     let portrait_album = {
         let mut first = image_attachment(1);
@@ -762,10 +784,17 @@ fn image_preview_targets_layout_album_grids() {
     };
     let cases = [
         (
+            "image_preview_targets_include_multiple_attachments_from_one_message",
+            vec![image_attachment(1), image_attachment(2)],
+            vec![(0, 0, 0, 8, 3), (1, 8, 0, 8, 3)],
+        ),
+        (
+            "three image album",
             (1..=3).map(image_attachment).collect::<Vec<_>>(),
             vec![(0, 0, 0, 8, 3), (1, 8, 0, 8, 2), (2, 8, 2, 4, 1)],
         ),
         (
+            "four image album",
             (1..=4).map(image_attachment).collect::<Vec<_>>(),
             vec![
                 (0, 0, 0, 8, 2),
@@ -775,6 +804,7 @@ fn image_preview_targets_layout_album_grids() {
             ],
         ),
         (
+            "five image album is capped at four previews",
             (1..=5).map(image_attachment).collect::<Vec<_>>(),
             vec![
                 (0, 0, 0, 8, 2),
@@ -783,10 +813,14 @@ fn image_preview_targets_layout_album_grids() {
                 (3, 4, 2, 4, 1),
             ],
         ),
-        (portrait_album, vec![(0, 0, 0, 5, 3), (1, 5, 0, 5, 3)]),
+        (
+            "portrait album",
+            portrait_album,
+            vec![(0, 0, 0, 5, 3), (1, 5, 0, 5, 3)],
+        ),
     ];
 
-    for (attachments, expected_geometry) in cases {
+    for (case, attachments, expected_geometry) in cases {
         let mut state = state_with_image_messages(0, &[]);
         push_media_message(
             &mut state,
@@ -801,6 +835,21 @@ fn image_preview_targets_layout_album_grids() {
         let targets = visible_image_preview_targets(&state, layout(12));
 
         assert_eq!(
+            target_message_ids(&targets),
+            vec![Id::new(1); expected_geometry.len()],
+            "{case}"
+        );
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.url.as_str())
+                .collect::<Vec<_>>(),
+            (1..=expected_geometry.len())
+                .map(|id| format!("https://cdn.discordapp.com/image-{id}.png"))
+                .collect::<Vec<_>>(),
+            "{case}"
+        );
+        assert_eq!(
             targets
                 .iter()
                 .map(|target| (
@@ -811,7 +860,8 @@ fn image_preview_targets_layout_album_grids() {
                     target.preview_height,
                 ))
                 .collect::<Vec<_>>(),
-            expected_geometry
+            expected_geometry,
+            "{case}"
         );
     }
 }
@@ -1238,38 +1288,6 @@ fn original_quality_video_attachment_still_uses_proxy_webp_thumbnail() {
 }
 
 #[test]
-fn image_preview_targets_downscale_youtube_embed_image_url() {
-    let mut embed = youtube_embed();
-    embed.thumbnail_url = None;
-    embed.thumbnail_width = None;
-    embed.thumbnail_height = None;
-    embed.image_url =
-        Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg?token=abc".to_owned());
-    embed.image_width = Some(1280);
-    embed.image_height = Some(720);
-    let mut state = state_with_image_messages(1, &[]);
-    push_media_message(
-        &mut state,
-        MessageCreateFixture {
-            message_id: Id::new(2),
-            content: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_owned()),
-            embeds: vec![embed],
-            ..guild_message_create_fixture()
-        },
-    );
-
-    let targets = visible_image_preview_targets(&state, layout(8));
-
-    assert_eq!(target_message_ids(&targets), vec![Id::new(2)]);
-    assert_eq!(
-        targets[0].url,
-        "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg?token=abc"
-    );
-    assert_eq!(targets[0].filename, "embed-image");
-    assert!(targets[0].show_play_marker);
-}
-
-#[test]
 fn image_preview_targets_include_forwarded_image_attachments() {
     let mut state = state_with_image_messages(1, &[]);
     push_media_message(
@@ -1289,53 +1307,40 @@ fn image_preview_targets_include_forwarded_image_attachments() {
 }
 
 #[test]
-fn image_preview_targets_include_guild_stickers() {
-    let mut state = state_with_image_messages(0, &[]);
-    push_media_message(
-        &mut state,
-        MessageCreateFixture {
-            message_id: Id::new(1),
-            content: Some(String::new()),
-            stickers: vec![StickerInfo::new(Id::new(11), "Laugh", StickerFormat::Png)],
-            ..guild_message_create_fixture()
-        },
-    );
+fn image_preview_targets_include_supported_stickers() {
+    for (case, id, name, format, expected_url) in [
+        (
+            "image_preview_targets_include_guild_stickers",
+            11,
+            "Laugh",
+            StickerFormat::Png,
+            "https://media.discordapp.net/stickers/11.png?size=160&passthrough=false",
+        ),
+        (
+            "image_preview_targets_include_lottie_stickers",
+            12,
+            "Wumpus",
+            StickerFormat::Lottie,
+            "https://cdn.discordapp.com/stickers/12.json",
+        ),
+    ] {
+        let mut state = state_with_image_messages(0, &[]);
+        push_media_message(
+            &mut state,
+            MessageCreateFixture {
+                message_id: Id::new(1),
+                content: Some(String::new()),
+                stickers: vec![StickerInfo::new(Id::new(id), name, format)],
+                ..guild_message_create_fixture()
+            },
+        );
 
-    let targets = visible_image_preview_targets(&state, layout(12));
+        let targets = visible_image_preview_targets(&state, layout(12));
 
-    assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
-    assert_eq!(
-        targets[0].url,
-        "https://media.discordapp.net/stickers/11.png?size=160&passthrough=false"
-    );
-    assert_eq!(targets[0].filename, "Laugh");
-}
-
-#[test]
-fn image_preview_targets_include_lottie_stickers() {
-    let mut state = state_with_image_messages(0, &[]);
-    push_media_message(
-        &mut state,
-        MessageCreateFixture {
-            message_id: Id::new(1),
-            content: Some(String::new()),
-            stickers: vec![StickerInfo::new(
-                Id::new(12),
-                "Wumpus",
-                StickerFormat::Lottie,
-            )],
-            ..guild_message_create_fixture()
-        },
-    );
-
-    let targets = visible_image_preview_targets(&state, layout(12));
-
-    assert_eq!(target_message_ids(&targets), vec![Id::new(1)]);
-    assert_eq!(
-        targets[0].url,
-        "https://cdn.discordapp.com/stickers/12.json"
-    );
-    assert_eq!(targets[0].filename, "Wumpus");
+        assert_eq!(target_message_ids(&targets), vec![Id::new(1)], "{case}");
+        assert_eq!(targets[0].url, expected_url, "{case}");
+        assert_eq!(targets[0].filename, name, "{case}");
+    }
 }
 
 #[test]
@@ -4008,41 +4013,5 @@ fn image_preview_targets_track_the_visible_message_window() {
             vec![Id::new(expected)],
             "{label}"
         );
-    }
-}
-
-#[test]
-fn image_preview_targets_resize_every_media_proxy_url_shape() {
-    let cases = [
-        (
-            "https://media.discordapp.net/attachments/691/150/photo.png?ex=abc&is=def&hm=123&format=png&width=4000&height=3000",
-            "https://media.discordapp.net/attachments/691/150/photo.png?ex=abc&is=def&hm=123&format=webp&width=320&height=240",
-        ),
-        (
-            "https://media.discordapp.net/ephemeral-attachments/691/150/photo.png?ex=abc&is=def&hm=123&width=4000&height=3000",
-            "https://media.discordapp.net/ephemeral-attachments/691/150/photo.png?ex=abc&is=def&hm=123&format=webp&width=320&height=240",
-        ),
-    ];
-
-    for (proxy_url, expected) in cases {
-        let mut state = state_with_image_messages(0, &[]);
-        let mut attachment = image_attachment(1);
-        attachment.proxy_url = proxy_url.to_owned();
-        push_media_message(
-            &mut state,
-            MessageCreateFixture {
-                message_id: Id::new(1),
-                content: Some("photo".to_owned()),
-                attachments: vec![attachment],
-                ..guild_message_create_fixture()
-            },
-        );
-
-        let target = visible_image_preview_targets(&state, layout(12))
-            .into_iter()
-            .next()
-            .expect("image attachment should produce preview target");
-
-        assert_eq!(target.url, expected, "{proxy_url}");
     }
 }

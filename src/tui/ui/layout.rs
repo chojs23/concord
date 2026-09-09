@@ -229,7 +229,7 @@ pub(super) fn composer_height(area: Rect, state: &DashboardState) -> u16 {
 }
 
 fn composer_placeholder_line_count(state: &DashboardState, width: u16) -> u16 {
-    let text = composer_text(state, width);
+    let text = composer_text(state);
     (wrap_text_lines(&text, usize::from(width.max(1))).len() as u16).max(1)
 }
 

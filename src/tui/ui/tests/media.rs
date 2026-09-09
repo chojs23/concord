@@ -108,7 +108,7 @@ fn selected_author_group_keeps_avatar_body_inside_border() {
         super::narrow_message_viewport_layout(20),
         &[],
     );
-    let sent_time = format_message_sent_time(Id::new(1), true);
+    let sent_time = format_message_local_time(Id::new(1), true);
 
     let texts = line_texts_from_ratatui(&lines);
 
@@ -146,13 +146,7 @@ fn selected_author_group_keeps_avatar_body_inside_border() {
     );
 }
 
-#[test]
-fn selected_message_avatar_stays_in_fixed_gutter() {
-    assert_eq!(selected_avatar_x_offset(Some(0), 0), 2);
-    assert_eq!(selected_avatar_x_offset(Some(1), 0), 2);
-}
-
-// The three rects are only readable next to each other. An embed accent bar
+// These rects are only readable next to each other. An embed accent bar
 // pushes x from 18 to 22, and a negative row offset clips height instead of
 // moving the preview above the list.
 #[test]
@@ -178,7 +172,7 @@ fn inline_image_preview_area_places_the_preview_in_the_content_column() {
             "selected row keeps the same content column",
             Rect::new(10, 5, 80, 12),
             2,
-            selected_message_content_x_offset(true),
+            0,
             None,
             Rect::new(18, 8, 72, 4),
         ),
@@ -189,6 +183,14 @@ fn inline_image_preview_area_places_the_preview_in_the_content_column() {
             0,
             None,
             Rect::new(18, 5, 72, 3),
+        ),
+        (
+            "preview clips at the list bottom",
+            Rect::new(10, 5, 80, 6),
+            3,
+            0,
+            None,
+            Rect::new(18, 9, 72, 2),
         ),
     ] {
         assert_eq!(
@@ -208,36 +210,77 @@ fn inline_image_preview_area_places_the_preview_in_the_content_column() {
 }
 
 #[test]
-fn later_image_preview_slot_accounts_for_prior_preview_rows() {
-    let area = Rect::new(10, 5, 80, 18);
-    let messages = [
-        message_with_attachment(Some("one".to_owned()), image_attachment()),
-        message_with_attachment(Some("two".to_owned()), image_attachment()),
-        message_with_attachment(Some("three".to_owned()), image_attachment()),
-    ];
-    let messages = messages.iter().collect::<Vec<_>>();
-    let state = DashboardState::new();
-    let row = inline_image_preview_row(&messages, &state, 2, 200, 0, 4);
+fn message_viewport_plan_places_album_previews_after_prior_preview_rows() {
+    {
+        let case = "later message follows prior preview rows";
+        let area = Rect::new(10, 5, 80, 18);
+        let messages = [
+            message_with_attachment(Some("one".to_owned()), image_attachment()),
+            message_with_attachment(Some("two".to_owned()), image_attachment()),
+            message_with_attachment(Some("three".to_owned()), image_attachment()),
+        ];
+        let messages = messages.iter().collect::<Vec<_>>();
+        let state = DashboardState::new();
+        let plan = MessageViewportPlan::new(&messages, None, &state, 200, 16, 3);
+        let row = plan
+            .row(2)
+            .expect("third message has a viewport row")
+            .image_preview_row(None, 0);
 
-    assert_eq!(row, 14);
-    assert_eq!(
-        inline_image_preview_area(area, row, 0, 77, 4, None, MESSAGE_AVATAR_OFFSET),
-        Some(Rect::new(18, 20, 72, 3))
-    );
-}
+        assert_eq!(row, 16, "{case}");
+        assert_eq!(
+            inline_image_preview_area(area, row, 0, 77, 4, None, MESSAGE_AVATAR_OFFSET),
+            Some(Rect::new(18, 22, 72, 1)),
+            "{case}"
+        );
+    }
 
-#[test]
-fn inline_image_preview_row_ignores_reaction_footer_for_current_message() {
-    let mut message = message_with_attachment(Some("one".to_owned()), image_attachment());
-    message.reactions = vec![ReactionInfo {
-        count: 3,
-        me: true,
-        ..ReactionInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-    }];
-    let messages = [&message];
-    let state = DashboardState::new();
+    {
+        let case = "reaction footer follows the current preview";
+        let mut message = message_with_attachment(Some("one".to_owned()), image_attachment());
+        message.reactions = vec![ReactionInfo {
+            count: 3,
+            me: true,
+            ..ReactionInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
+        }];
+        let messages = [&message];
+        let state = DashboardState::new();
 
-    assert_eq!(inline_image_preview_row(&messages, &state, 0, 200, 0, 0), 2);
+        let plan = MessageViewportPlan::new(&messages, None, &state, 200, 0, 0);
+        assert_eq!(
+            plan.row(0)
+                .expect("message has a viewport row")
+                .image_preview_row(None, 0),
+            2,
+            "{case}"
+        );
+    }
+
+    {
+        let case = "second album item uses its column offset";
+        let area = Rect::new(10, 5, 80, 18);
+        let mut message = message_with_attachment(Some("one".to_owned()), image_attachment());
+        let mut second = image_attachment();
+        second.id = Id::new(4);
+        second.filename = "dog.png".to_owned();
+        second.url = "https://cdn.discordapp.com/dog.png".to_owned();
+        second.proxy_url = "https://media.discordapp.net/dog.png".to_owned();
+        message.attachments.push(second);
+        let messages = [&message];
+        let state = DashboardState::new();
+        let plan = MessageViewportPlan::new(&messages, None, &state, 200, 16, 3);
+        let row = plan
+            .row(0)
+            .expect("message has a viewport row")
+            .image_preview_row(None, 0);
+
+        assert_eq!(row, 3, "{case}");
+        assert_eq!(
+            inline_image_preview_area(area, row, 8, 8, 3, None, MESSAGE_AVATAR_OFFSET),
+            Some(Rect::new(26, 9, 8, 3)),
+            "{case}"
+        );
+    }
 }
 
 #[test]
@@ -291,21 +334,5 @@ fn loading_image_preview_at_message_offset(preview_y_offset_rows: usize) -> Imag
         state: ImagePreviewState::Loading {
             filename: "cat.png".to_owned(),
         },
-    }
-}
-
-#[test]
-fn inline_image_preview_area_follows_content_and_clips_at_the_list_bottom() {
-    let cases = [
-        (Rect::new(10, 5, 80, 12), 2, Rect::new(18, 8, 72, 4)),
-        (Rect::new(10, 5, 80, 6), 3, Rect::new(18, 9, 72, 2)),
-    ];
-
-    for (area, row, expected) in cases {
-        assert_eq!(
-            inline_image_preview_area(area, row, 0, 77, 4, None, MESSAGE_AVATAR_OFFSET),
-            Some(expected),
-            "{area:?} row {row}"
-        );
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::discord::AppCommand;
 
 const VIEW_CHANNEL: u64 = 0x0000_0000_0000_0400;
 const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
@@ -218,7 +219,7 @@ fn create_post_body_scrolls_inside_a_bounded_editor_and_fields_remain_reachable(
 
 #[test]
 fn long_message_confirmation_explains_the_file_fallback() {
-    let lines = long_message_confirmation_lines_for_test(2_001, 2_000);
+    let lines = long_message_confirmation_lines(2_001, 2_000, ConfirmationButton::default());
     let rendered = line_texts_from_ratatui(&lines);
 
     assert_eq!(
@@ -409,10 +410,12 @@ fn options_popup_lines_show_selected_toggle_state() {
 
 #[test]
 fn message_delete_confirmation_lines_show_controls_and_excerpt() {
-    let lines = message_delete_confirmation_lines(
+    let lines = message_confirmation_lines(
+        MessageConfirmationKind::Delete,
         "neo",
         Some("a very important message that should be deleted"),
         80,
+        ConfirmationButton::default(),
     );
 
     assert_eq!(lines[0].spans[0].content, "Delete this message?");
@@ -425,20 +428,37 @@ fn message_delete_confirmation_lines_show_controls_and_excerpt() {
 
 #[test]
 fn message_pin_confirmation_lines_show_action_and_excerpt() {
-    let pin_lines = message_pin_confirmation_lines(true, "neo", Some("pin this"), 80);
+    let pin_lines = message_confirmation_lines(
+        MessageConfirmationKind::Pin { pinned: true },
+        "neo",
+        Some("pin this"),
+        80,
+        ConfirmationButton::default(),
+    );
     assert_eq!(pin_lines[0].spans[0].content, "Pin this message?");
     let pin_texts = line_texts_from_ratatui(&pin_lines);
     assert_eq!(pin_texts[4], "› [y] confirm");
     assert_eq!(pin_texts[5], "  [n] cancel");
 
-    let unpin_lines = message_pin_confirmation_lines(false, "neo", Some("unpin this"), 80);
+    let unpin_lines = message_confirmation_lines(
+        MessageConfirmationKind::Pin { pinned: false },
+        "neo",
+        Some("unpin this"),
+        80,
+        ConfirmationButton::default(),
+    );
     assert_eq!(unpin_lines[0].spans[0].content, "Unpin this message?");
     let unpin_texts = line_texts_from_ratatui(&unpin_lines);
     assert_eq!(unpin_texts[4], "› [y] confirm");
     assert_eq!(unpin_texts[5], "  [n] cancel");
 
-    let remove_lines =
-        message_remove_embeds_confirmation_lines("neo", Some("remove embeds from this"), 80);
+    let remove_lines = message_confirmation_lines(
+        MessageConfirmationKind::RemoveEmbeds,
+        "neo",
+        Some("remove embeds from this"),
+        80,
+        ConfirmationButton::default(),
+    );
     assert_eq!(
         remove_lines[0].spans[0].content,
         "Remove embeds from this message?"
@@ -450,7 +470,7 @@ fn message_pin_confirmation_lines_show_action_and_excerpt() {
 
 #[test]
 fn quit_confirmation_lines_show_controls() {
-    let lines = quit_confirmation_lines();
+    let lines = quit_confirmation_popup_lines(ConfirmationButton::default());
 
     assert_eq!(lines[0].spans[0].content, "Quit Concord?");
     assert_eq!(lines[1].spans[0].content, "");
@@ -534,8 +554,16 @@ fn search_popup_message_results_show_sent_time() {
     let message_id = test_message_id_for_unix_millis(discord_epoch_unix_millis());
     let mut state = state_with_message_id(message_id, "seed");
     state.open_search_popup_for_focus(FocusPane::Messages);
+    state.push_search_char('n');
+    let AppCommand::SearchMessages { request_id, .. } = state
+        .activate_search_popup()
+        .expect("message search command")
+    else {
+        panic!("expected message search command");
+    };
 
     state.push_event(AppEvent::MessageSearchLoaded {
+        request_id,
         page: MessageSearchPage {
             query: MessageSearchQuery {
                 guild_id: Some(Id::new(1)),
@@ -556,7 +584,7 @@ fn search_popup_message_results_show_sent_time() {
 
     let dump = render_dashboard_dump(120, 28, &mut state);
     let rendered = dump.join("\n");
-    let expected_time = format_message_sent_time(message_id, true);
+    let expected_time = format_message_local_time(message_id, true);
 
     assert!(
         rendered.contains(&format!("#general neo {expected_time}: needle result")),
@@ -679,7 +707,8 @@ fn user_profile_popup_keeps_name_on_terminal_foreground() {
     let profile = user_profile_info(10, "neo");
     let state = DashboardState::new();
 
-    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Idle);
+    let lines =
+        user_profile_popup_text(&profile, &state, 40, PresenceStatus::Idle, &[], &[], false).lines;
 
     assert_eq!(lines[0].spans[0].style.fg, None);
     assert!(
@@ -714,7 +743,16 @@ fn current_user_profile_settings_render_contract() {
     });
     state.open_current_user_profile_popup();
 
-    let lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let lines = user_profile_popup_text(
+        &profile,
+        &state,
+        60,
+        PresenceStatus::DoNotDisturb,
+        &[],
+        &[],
+        false,
+    )
+    .lines;
     let texts = line_texts_from_ratatui(&lines);
     assert_eq!(lines[0].spans[0].content, "Neo Global");
 
@@ -772,8 +810,16 @@ fn current_user_profile_settings_render_contract() {
         guild_id: None,
         profile: profile.clone(),
     });
-    let wrapped_lines =
-        user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let wrapped_lines = user_profile_popup_text(
+        &profile,
+        &state,
+        60,
+        PresenceStatus::DoNotDisturb,
+        &[],
+        &[],
+        false,
+    )
+    .lines;
     let wrapped_texts = line_texts_from_ratatui(&wrapped_lines);
     let wrapped_pronouns_index = wrapped_texts
         .iter()
@@ -797,12 +843,18 @@ fn current_user_profile_settings_render_contract() {
 
     state.next_user_profile_settings_field();
     state.next_user_profile_settings_field();
-    let avatar_text = line_texts_from_ratatui(&user_profile_popup_lines(
-        &profile,
-        &state,
-        60,
-        PresenceStatus::DoNotDisturb,
-    ))
+    let avatar_text = line_texts_from_ratatui(
+        &user_profile_popup_text(
+            &profile,
+            &state,
+            60,
+            PresenceStatus::DoNotDisturb,
+            &[],
+            &[],
+            false,
+        )
+        .lines,
+    )
     .join("\n");
     assert!(
         avatar_text.contains("Avatar image path or paste image"),
@@ -848,8 +900,16 @@ fn current_user_profile_settings_render_contract() {
     });
 
     let _ = state.start_or_commit_user_profile_edit();
-    let editing_lines =
-        user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let editing_lines = user_profile_popup_text(
+        &profile,
+        &state,
+        60,
+        PresenceStatus::DoNotDisturb,
+        &[],
+        &[],
+        false,
+    )
+    .lines;
     let editing_texts = line_texts_from_ratatui(&editing_lines);
     let editing_label = editing_texts
         .iter()
@@ -865,7 +925,16 @@ fn current_user_profile_settings_render_contract() {
         state.push_user_profile_edit_char(value);
     }
     let _ = state.start_or_commit_user_profile_edit();
-    let dirty_lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let dirty_lines = user_profile_popup_text(
+        &profile,
+        &state,
+        60,
+        PresenceStatus::DoNotDisturb,
+        &[],
+        &[],
+        false,
+    )
+    .lines;
     let dirty_texts = line_texts_from_ratatui(&dirty_lines);
 
     assert!(dirty_texts.iter().any(|line| line.contains("[s] Save")));
@@ -883,7 +952,16 @@ fn current_user_profile_settings_render_contract() {
         dirty_lines[sign_out_row].spans[1].style,
         theme::current().style(theme::HighlightGroup::Shortcut)
     );
-    let narrow_lines = user_profile_popup_lines(&profile, &state, 24, PresenceStatus::DoNotDisturb);
+    let narrow_lines = user_profile_popup_text(
+        &profile,
+        &state,
+        24,
+        PresenceStatus::DoNotDisturb,
+        &[],
+        &[],
+        false,
+    )
+    .lines;
     let narrow_texts = line_texts_from_ratatui(&narrow_lines);
     assert!(narrow_texts.iter().any(|line| line.contains("[s] Save")));
     assert!(narrow_texts.iter().any(|line| line.contains("[q] Close")));
@@ -898,7 +976,16 @@ fn current_user_profile_settings_render_contract() {
     state.next_user_profile_settings_field();
     let _ = state.start_or_commit_user_profile_edit();
     state.move_user_profile_status_picker_up();
-    let picker_lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::DoNotDisturb);
+    let picker_lines = user_profile_popup_text(
+        &profile,
+        &state,
+        60,
+        PresenceStatus::DoNotDisturb,
+        &[],
+        &[],
+        false,
+    )
+    .lines;
     let picker_texts = line_texts_from_ratatui(&picker_lines);
 
     assert!(picker_texts.iter().any(|line| line.contains("Status")));
@@ -1090,13 +1177,16 @@ fn user_profile_popup_renders_activity_section() {
         ActivityInfo::test(ActivityKind::Playing, "Concord"),
     ];
 
-    let lines = user_profile_popup_lines_with_activities(
+    let lines = user_profile_popup_text(
         &profile,
         &state,
         60,
         PresenceStatus::Online,
         &activities,
-    );
+        &[],
+        false,
+    )
+    .lines;
     let texts = line_texts_from_ratatui(&lines);
 
     assert!(
@@ -1184,7 +1274,16 @@ fn guild_user_profile_popup_renders_sectioned_profile() {
     });
     state.open_user_profile_popup(user_id, Some(guild_id));
 
-    let lines = user_profile_popup_lines(&profile, &state, 40, PresenceStatus::Online);
+    let lines = user_profile_popup_text(
+        &profile,
+        &state,
+        40,
+        PresenceStatus::Online,
+        &[],
+        &[],
+        false,
+    )
+    .lines;
     let texts = line_texts_from_ratatui(&lines);
     let rendered = texts.join("\n");
 
@@ -1272,7 +1371,16 @@ fn guild_user_profile_popup_renders_sectioned_profile() {
         for (relationship, label, expected, expect_dim) in cases {
             let mut profile = user_profile_info(10, "neo");
             profile.friend_status = relationship;
-            let lines = user_profile_popup_lines(&profile, &state, 60, PresenceStatus::Online);
+            let lines = user_profile_popup_text(
+                &profile,
+                &state,
+                60,
+                PresenceStatus::Online,
+                &[],
+                &[],
+                false,
+            )
+            .lines;
             let relationship = lines
                 .iter()
                 .flat_map(|line| &line.spans)
@@ -1381,43 +1489,41 @@ fn popup_lists_use_the_configured_selection_marker() {
 }
 
 #[test]
-fn message_url_picker_truncates_fragment_urls_to_menu_width() {
-    let urls = vec![super::super::MessageUrlItem {
-        url: "https://thisis.com/a.test?with=querystrings#page".to_owned(),
-        label: "https://thisis.com/a.test?with=querystrings#page".to_owned(),
-    }];
-
-    let lines = message_url_picker_lines_for_width(&urls, 0, 30);
-
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["▸ [1] https://thisis.com/a...."]
+fn message_url_picker_render_truncates_fragment_urls_to_inner_width() {
+    let mut state = seed_channel_message(
+        DashboardState::new(),
+        Id::new(1),
+        "https://thisis.com/a.test?with=querystrings#page https://two.example",
     );
-}
+    assert_eq!(state.direct_open_selected_message_url(), None);
 
-#[test]
-fn emoji_reaction_picker_marks_selected_reaction() {
-    let reactions = vec![
-        EmojiReactionItem {
-            label: "Thumbs up".to_owned(),
-            ..EmojiReactionItem::test(ReactionEmoji::Unicode("👍".to_owned()))
-        },
-        EmojiReactionItem {
-            label: "Party".to_owned(),
-            ..EmojiReactionItem::test(ReactionEmoji::Custom {
-                id: Id::new(42),
-                name: Some("party".to_owned()),
-                animated: false,
-            })
-        },
-    ];
+    let backend = TestBackend::new(30, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal should build");
+    terminal
+        .draw(|frame| {
+            let area = frame.area();
+            render_message_url_picker(frame, area, &state);
+        })
+        .expect("URL picker should render");
 
-    let lines = emoji_reaction_picker_lines(&reactions, 1, 10, 0, &[]);
+    let buffer = terminal.backend().buffer();
+    let rendered = (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let selected = rendered
+        .iter()
+        .find(|line| line.contains("▸ [1]"))
+        .expect("selected URL row should render");
 
-    assert_eq!(
-        line_texts_from_ratatui(&lines),
-        vec!["  [1] 👍 Thumbs up", "▸ [2] :party: Party",]
+    assert!(
+        selected.contains("▸ [1] https://thisis.c..."),
+        "rendered URL row: {selected:?}"
     );
+    assert!(!selected.contains("querystrings#page"));
 }
 
 #[test]
@@ -1434,8 +1540,21 @@ fn emoji_reaction_picker_uses_reaction_colors_and_selected_background() {
     ];
     let own_reactions = vec![ReactionEmoji::Unicode("❤️".to_owned())];
 
-    let lines =
-        emoji_reaction_picker_lines_with_own_reactions(&reactions, &own_reactions, 0, 10, &[]);
+    let key_bindings = crate::tui::keybindings::KeyBindings::default();
+    let lines = emoji_reaction_picker_lines_with_custom_emoji_images(
+        &reactions,
+        0,
+        EmojiReactionPickerRenderOptions {
+            key_bindings: &key_bindings,
+            max_visible_items: 10,
+            scroll: 0,
+            thumbnail_urls: &[],
+            own_reactions: &own_reactions,
+            show_custom_emoji: true,
+            filter: None,
+            max_width: usize::MAX,
+        },
+    );
 
     assert_eq!(
         lines[0].spans[2].style.fg,
@@ -1456,6 +1575,39 @@ fn emoji_reaction_picker_uses_reaction_colors_and_selected_background() {
             .bg
     );
     assert_eq!(lines[1].spans[2].style.bg, None);
+
+    let custom_reactions = vec![
+        EmojiReactionItem {
+            label: "Thumbs up".to_owned(),
+            ..EmojiReactionItem::test(ReactionEmoji::Unicode("👍".to_owned()))
+        },
+        EmojiReactionItem {
+            label: "Party".to_owned(),
+            ..EmojiReactionItem::test(ReactionEmoji::Custom {
+                id: Id::new(42),
+                name: Some("party".to_owned()),
+                animated: false,
+            })
+        },
+    ];
+    let custom_lines = emoji_reaction_picker_lines_with_custom_emoji_images(
+        &custom_reactions,
+        1,
+        EmojiReactionPickerRenderOptions {
+            key_bindings: &key_bindings,
+            max_visible_items: 10,
+            scroll: 0,
+            thumbnail_urls: &[],
+            own_reactions: &[],
+            show_custom_emoji: true,
+            filter: None,
+            max_width: usize::MAX,
+        },
+    );
+    assert_eq!(
+        line_texts_from_ratatui(&custom_lines),
+        vec!["  [1] 👍 Thumbs up", "▸ [2] :party: Party"]
+    );
 }
 
 #[test]
@@ -1510,7 +1662,7 @@ fn reaction_users_popup_lists_reactions() {
         ],
     );
 
-    let lines = reaction_users_popup_lines(&popup, 0, 10, 56);
+    let lines = reaction_list_lines(popup.entries(), popup.list_selected(), 0, 10, true, &[], 56);
 
     let trimmed = line_texts_from_ratatui(&lines)
         .into_iter()
@@ -1539,12 +1691,28 @@ fn reaction_list_reserves_image_cell_for_ready_custom_emoji() {
         .expect("custom emoji has a thumbnail url");
 
     // No thumbnail ready yet -> text fallback shows `:party:`.
-    let fallback = reaction_list_lines_with_ready_urls(&popup, &[], 56);
+    let fallback = reaction_list_lines(
+        popup.entries(),
+        popup.list_selected(),
+        popup.list_scroll(),
+        usize::MAX,
+        true,
+        &[],
+        56,
+    );
     assert!(line_texts_from_ratatui(&fallback)[0].contains(":party:"));
 
     // Thumbnail ready -> the emoji cell is blanked so the overlaid image shows,
     // exactly like the message view and picker.
-    let with_image = reaction_list_lines_with_ready_urls(&popup, std::slice::from_ref(&url), 56);
+    let with_image = reaction_list_lines(
+        popup.entries(),
+        popup.list_selected(),
+        popup.list_scroll(),
+        usize::MAX,
+        true,
+        std::slice::from_ref(&url),
+        56,
+    );
     assert!(!line_texts_from_ratatui(&with_image)[0].contains(":party:"));
 }
 
@@ -1565,7 +1733,7 @@ fn reaction_users_popup_scrolls_long_lists() {
         0,
     );
 
-    let lines = reaction_users_popup_lines(&popup, 3, 3, 56);
+    let lines = reaction_user_lines(&popup, 3, 3, 56, |user| user.display_name.clone());
 
     let trimmed = line_texts_from_ratatui(&lines)
         .into_iter()
@@ -1577,6 +1745,30 @@ fn reaction_users_popup_scrolls_long_lists() {
 #[test]
 fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
     use crate::tui::keybindings::SelectionAction;
+
+    let narrow_popup = ReactionUsersPopupState::test_viewing(
+        Id::new(2),
+        Id::new(1),
+        vec![(
+            ReactionEmoji::Unicode("❤️".to_owned()),
+            2,
+            vec![
+                ReactionUserInfo::test(Id::new(1), "won"),
+                ReactionUserInfo::test(Id::new(2), "파닥파닥( 40%..? )"),
+            ],
+            None,
+        )],
+        0,
+    );
+    let narrow_lines =
+        reaction_user_lines(&narrow_popup, 0, 4, 12, |user| user.display_name.clone());
+    for line in &narrow_lines {
+        assert!(
+            line.width() <= 12,
+            "line {:?} exceeded inner width",
+            line_texts_from_ratatui(std::slice::from_ref(line))
+        );
+    }
 
     let mut state = DashboardState::new();
     state.push_event(guild_create_event(GuildCreateFixture {
@@ -1671,38 +1863,6 @@ fn reaction_users_popup_buffer_renders_without_wrap_artifacts() {
 }
 
 #[test]
-fn reaction_users_popup_truncates_long_lines_to_fit_width() {
-    let popup = ReactionUsersPopupState::test_viewing(
-        Id::new(2),
-        Id::new(1),
-        vec![(
-            ReactionEmoji::Unicode("❤️".to_owned()),
-            2,
-            vec![
-                ReactionUserInfo::test(Id::new(1), "won"),
-                ReactionUserInfo::test(Id::new(2), "파닥파닥( 40%..? )"),
-            ],
-            None,
-        )],
-        0,
-    );
-
-    // Inner width that is narrower than the long Korean+ASCII display name
-    // forces the popup logic to truncate. Without truncation, ratatui's
-    // wrap would split the long name and the wrap continuation would bleed
-    // onto adjacent rows.
-    let lines = reaction_users_popup_lines(&popup, 0, 4, 12);
-
-    for line in &lines {
-        assert!(
-            line.width() <= 12,
-            "line {:?} exceeded inner width",
-            line_texts_from_ratatui(std::slice::from_ref(line))
-        );
-    }
-}
-
-#[test]
 fn reaction_users_popup_reserves_border_space_in_short_areas() {
     assert_eq!(reaction_users_visible_line_count(Rect::new(0, 0, 20, 5)), 1);
     assert_eq!(reaction_users_visible_line_count(Rect::new(0, 0, 20, 6)), 2);
@@ -1723,12 +1883,21 @@ fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
         })
     }];
 
-    let lines = emoji_reaction_picker_lines(
+    let thumbnail_urls = ["https://cdn.discordapp.com/emojis/42.png".to_owned()];
+    let key_bindings = crate::tui::keybindings::KeyBindings::default();
+    let lines = emoji_reaction_picker_lines_with_custom_emoji_images(
         &reactions,
         0,
-        10,
-        0,
-        &["https://cdn.discordapp.com/emojis/42.png".to_owned()],
+        EmojiReactionPickerRenderOptions {
+            key_bindings: &key_bindings,
+            max_visible_items: 10,
+            scroll: 0,
+            thumbnail_urls: &thumbnail_urls,
+            own_reactions: &[],
+            show_custom_emoji: true,
+            filter: None,
+            max_width: usize::MAX,
+        },
     );
 
     assert_eq!(line_texts_from_ratatui(&lines), vec!["▸ [1]    Party"]);
@@ -1745,7 +1914,21 @@ fn emoji_reaction_picker_truncates_long_rows_to_inner_width() {
         })
     }];
 
-    let lines = emoji_reaction_picker_lines_for_width(&reactions, 0, 10, &[], 24);
+    let key_bindings = crate::tui::keybindings::KeyBindings::default();
+    let lines = emoji_reaction_picker_lines_with_custom_emoji_images(
+        &reactions,
+        0,
+        EmojiReactionPickerRenderOptions {
+            key_bindings: &key_bindings,
+            max_visible_items: 10,
+            scroll: 0,
+            thumbnail_urls: &[],
+            own_reactions: &[],
+            show_custom_emoji: true,
+            filter: None,
+            max_width: 24,
+        },
+    );
 
     for line in &lines {
         assert!(
@@ -1774,7 +1957,21 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
         .collect::<Vec<_>>();
 
     // At scroll 10 the selected row 12 keeps rows 13 and 14 visible below it.
-    let lines = emoji_reaction_picker_lines(&reactions, 12, 5, 10, &[]);
+    let key_bindings = crate::tui::keybindings::KeyBindings::default();
+    let lines = emoji_reaction_picker_lines_with_custom_emoji_images(
+        &reactions,
+        12,
+        EmojiReactionPickerRenderOptions {
+            key_bindings: &key_bindings,
+            max_visible_items: 5,
+            scroll: 10,
+            thumbnail_urls: &[],
+            own_reactions: &[],
+            show_custom_emoji: true,
+            filter: None,
+            max_width: usize::MAX,
+        },
+    );
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
@@ -1799,7 +1996,21 @@ fn emoji_reaction_picker_shows_active_filter() {
         })
     }];
 
-    let lines = filtered_emoji_reaction_picker_lines(&reactions, 0, 10, &[], "thi");
+    let key_bindings = crate::tui::keybindings::KeyBindings::default();
+    let lines = emoji_reaction_picker_lines_with_custom_emoji_images(
+        &reactions,
+        0,
+        EmojiReactionPickerRenderOptions {
+            key_bindings: &key_bindings,
+            max_visible_items: 10,
+            scroll: 0,
+            thumbnail_urls: &[],
+            own_reactions: &[],
+            show_custom_emoji: true,
+            filter: Some("thi"),
+            max_width: usize::MAX,
+        },
+    );
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
@@ -2034,8 +2245,15 @@ fn leader_action_popup_matches_the_focused_pane() {
             FocusPane::Guilds,
             &["Server actions", "Mark server as read"][..],
         ),
+        (FocusPane::Members, &["Member actions", "Show profile"][..]),
     ] {
-        let mut state = state_with_message();
+        let mut state = if pane == FocusPane::Members {
+            let mut state = state_with_member(42, "Neo");
+            state.confirm_selected_guild();
+            state
+        } else {
+            state_with_message()
+        };
         state.focus_pane(pane);
         state.open_leader();
         state.open_focused_pane_actions();
@@ -2129,21 +2347,6 @@ fn folder_settings_popup_renders_name_and_color_inputs() {
 }
 
 #[test]
-fn leader_action_popup_from_members_uses_member_action_title() {
-    let mut state = state_with_member(42, "Neo");
-    state.confirm_selected_guild();
-    state.focus_pane(FocusPane::Members);
-    state.open_leader();
-    state.open_focused_pane_actions();
-
-    let dump = render_dashboard_dump(120, 20, &mut state);
-    let rendered = dump.join("\n");
-
-    assert!(rendered.contains("Member actions"), "{rendered}");
-    assert!(rendered.contains("Show profile"), "{rendered}");
-}
-
-#[test]
 fn focused_pane_actions_on_empty_panes_open_nothing() {
     for pane in [FocusPane::Channels, FocusPane::Messages, FocusPane::Members] {
         let mut state = DashboardState::new();
@@ -2187,7 +2390,7 @@ fn keymap_popup_lines_show_help_content() {
         assert_eq!(help_lines[1].spans[0].style.fg, Some(Color::LightMagenta));
         assert_eq!(help_lines[4].spans[0].style.fg, Some(Color::LightMagenta));
 
-        let confirmation_lines = quit_confirmation_lines();
+        let confirmation_lines = quit_confirmation_popup_lines(ConfirmationButton::default());
         assert_eq!(
             confirmation_lines[3].spans[1].style.fg,
             Some(Color::LightMagenta)

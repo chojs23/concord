@@ -15,7 +15,7 @@ pub(in crate::tui) use attachments::format_attachment_summary;
 use attachments::format_attachment_summary_lines;
 use components::{ComponentFormatContext, format_component_lines};
 pub(in crate::tui) use embed::embed_color;
-use embed::format_embed_lines;
+use embed::{EmbedFormatContext, format_embed_lines};
 use markdown::wrap_markdown_message_lines_with_loaded_custom_emoji_urls;
 use polls::format_poll_lines;
 #[cfg(test)]
@@ -52,7 +52,7 @@ use crate::tui::{
     state::{DashboardState, apply_discord_foreground, discord_role_mention_background},
     text::{
         EmojiImageSize, InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind,
-        detected_url_ranges, truncate_display_width, truncate_text,
+        TextReplacement, detected_url_ranges, truncate_display_width, truncate_text,
     },
     theme,
 };
@@ -234,35 +234,6 @@ impl MessageContentLine {
     }
 }
 
-struct LoadedEmojiReplacement {
-    start: usize,
-    end: usize,
-    new_start: usize,
-    new_len: usize,
-}
-
-fn remap_loaded_emoji_offset(replacements: &[LoadedEmojiReplacement], position: usize) -> usize {
-    let mut delta = 0isize;
-    for replacement in replacements {
-        if position < replacement.start {
-            break;
-        }
-        if position < replacement.end {
-            let inside = position.saturating_sub(replacement.start);
-            return replacement
-                .new_start
-                .saturating_add(inside.min(replacement.new_len));
-        }
-        delta += replacement.new_len as isize - (replacement.end - replacement.start) as isize;
-    }
-
-    if delta < 0 {
-        position.saturating_sub(delta.unsigned_abs())
-    } else {
-        position.saturating_add(delta as usize)
-    }
-}
-
 impl StyledPrefix {
     fn contains(&self, start: usize, end: usize) -> bool {
         self.start <= start && end <= self.start.saturating_add(self.len)
@@ -416,11 +387,13 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
     if !is_components_v2 {
         lines.extend(format_embed_lines(
             &message.embeds,
-            message.content.as_deref(),
-            state.show_custom_emoji(),
-            state.hour_format_24(),
-            width,
-            loaded_custom_emoji_urls,
+            &EmbedFormatContext {
+                message_content: message.content.as_deref(),
+                show_custom_emoji: state.show_custom_emoji(),
+                hour_format_24: state.hour_format_24(),
+                width,
+                loaded_custom_emoji_urls,
+            },
         ));
     }
     let mut next_section_thumbnail_index = 0;
@@ -750,11 +723,11 @@ fn rendered_text_with_loaded_custom_emoji_placeholders(
         if loaded_custom_emoji_urls.iter().any(|url| url == &slot.url) {
             let placeholder = " ".repeat(usize::from(EmojiImageSize::Compact.width()));
             output.push_str(&placeholder);
-            replacements.push(LoadedEmojiReplacement {
-                start,
-                end,
-                new_start,
-                new_len: placeholder.len(),
+            replacements.push(TextReplacement {
+                input_start: start,
+                input_end: end,
+                output_start: new_start,
+                output_len: placeholder.len(),
             });
             slot_updates[index] = Some(InlineEmojiSlot {
                 byte_start: new_start,
@@ -783,34 +756,18 @@ fn rendered_text_with_loaded_custom_emoji_placeholders(
     }
 
     output.push_str(&text[cursor..]);
-    let highlights = highlights
-        .into_iter()
-        .map(|highlight| TextHighlight {
-            start: remap_loaded_emoji_offset(&replacements, highlight.start),
-            end: remap_loaded_emoji_offset(&replacements, highlight.end),
-            kind: highlight.kind,
-        })
-        .collect();
-    let emoji_slots = emoji_slots
-        .into_iter()
-        .enumerate()
-        .map(|(index, slot)| {
-            slot_updates[index]
-                .clone()
-                .unwrap_or_else(|| InlineEmojiSlot {
-                    byte_start: remap_loaded_emoji_offset(&replacements, slot.byte_start),
-                    byte_len: slot.byte_len,
-                    display_width: slot.display_width,
-                    url: slot.url,
-                })
-        })
-        .collect();
-
-    RenderedText {
+    let mut rendered = RenderedText {
         text: output,
         highlights,
         emoji_slots,
+    };
+    rendered.remap_metadata(&replacements);
+    for (slot, update) in rendered.emoji_slots.iter_mut().zip(slot_updates) {
+        if let Some(update) = update {
+            *slot = update;
+        }
     }
+    rendered
 }
 
 fn rendered_text_line(rendered: RenderedText, style: Style) -> MessageContentLine {

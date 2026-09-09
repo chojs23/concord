@@ -48,14 +48,39 @@ fn media_client() -> &'static reqwest::Client {
 }
 
 pub(super) async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, String> {
-    fetch_limited_bytes(
-        url,
-        MAX_ATTACHMENT_PREVIEW_BYTES,
-        "image preview",
-        "download image preview failed",
-        "read image preview failed",
-    )
-    .await
+    let response = media_client()
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("download image preview failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("download image preview failed: {error}"))?;
+
+    if let Some(length) = response.content_length()
+        && length > MAX_ATTACHMENT_PREVIEW_BYTES as u64
+    {
+        return Err(format!(
+            "image preview is too large: {length} bytes (max {MAX_ATTACHMENT_PREVIEW_BYTES})"
+        ));
+    }
+
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("read image preview failed: {error}"))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > MAX_ATTACHMENT_PREVIEW_BYTES {
+            return Err(format!(
+                "image preview is too large: {} bytes (max {MAX_ATTACHMENT_PREVIEW_BYTES})",
+                bytes.len().saturating_add(chunk.len())
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    Ok(bytes)
 }
 
 pub(super) async fn download_attachment(
@@ -130,48 +155,6 @@ pub(super) async fn download_attachment(
             .await;
     }
     persist_unique_download_file(&directory, &filename, temp_path)
-}
-
-async fn fetch_limited_bytes(
-    url: &str,
-    max_bytes: usize,
-    size_label: &str,
-    download_error: &str,
-    read_error: &str,
-) -> std::result::Result<Vec<u8>, String> {
-    let response = media_client()
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| format!("{download_error}: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("{download_error}: {error}"))?;
-
-    if let Some(length) = response.content_length()
-        && length > max_bytes as u64
-    {
-        return Err(format!(
-            "{size_label} is too large: {length} bytes (max {max_bytes})"
-        ));
-    }
-
-    let mut response = response;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("{read_error}: {error}"))?
-    {
-        if bytes.len().saturating_add(chunk.len()) > max_bytes {
-            return Err(format!(
-                "{size_label} is too large: {} bytes (max {max_bytes})",
-                bytes.len().saturating_add(chunk.len())
-            ));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-
-    Ok(bytes)
 }
 
 fn downloads_directory() -> std::result::Result<PathBuf, String> {
@@ -271,7 +254,7 @@ pub(super) async fn play_media(
 ) -> io::Result<()> {
     let ipc_endpoint = MediaPlayerIpcEndpoint::unique();
     ipc_endpoint.prepare()?;
-    let spec = media_player_command_spec_for_url_with_ipc(url, Some(ipc_endpoint.server_arg()))?;
+    let spec = media_player_command_spec_for_url(url, ipc_endpoint.server_arg())?;
     let mut command = TokioCommand::new(spec.program);
     command
         .args(spec.args)
@@ -384,22 +367,18 @@ fn media_player_spawn_error(error: io::Error) -> io::Error {
     error
 }
 
-#[cfg(test)]
-fn media_player_command_spec_for_url(url: &str) -> io::Result<MediaPlayerCommandSpec> {
-    media_player_command_spec_for_url_with_ipc(url, None)
-}
-
-fn media_player_command_spec_for_url_with_ipc(
+fn media_player_command_spec_for_url(
     url: &str,
-    ipc_server: Option<&str>,
+    ipc_server: &str,
 ) -> io::Result<MediaPlayerCommandSpec> {
     let url = normalize_openable_url(url).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "unsupported media URL scheme")
     })?;
-    let mut args = vec!["--no-terminal".to_owned(), "--force-window".to_owned()];
-    if let Some(ipc_server) = ipc_server {
-        args.push(format!("--input-ipc-server={ipc_server}"));
-    }
+    let mut args = vec![
+        "--no-terminal".to_owned(),
+        "--force-window".to_owned(),
+        format!("--input-ipc-server={ipc_server}"),
+    ];
     args.extend(["--".to_owned(), url]);
     Ok(MediaPlayerCommandSpec {
         program: "mpv",
@@ -527,42 +506,30 @@ fn windows_open_url_command_spec(url: &str) -> UrlOpenCommandSpec {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Write, process};
+    use std::{fs, io::Write};
 
     use super::{
-        media_player_command_spec_for_url, media_player_command_spec_for_url_with_ipc,
-        media_player_spawn_error, mpv_video_output_response_readiness, open_url,
-        persist_unique_download_file, sanitize_filename, wait_for_mpv_video_output_ready,
-        windows_open_url_command_spec,
+        media_player_command_spec_for_url, media_player_spawn_error,
+        mpv_video_output_response_readiness, open_url, persist_unique_download_file,
+        sanitize_filename, wait_for_mpv_video_output_ready, windows_open_url_command_spec,
     };
     use serde_json::{Value, json};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    fn unix_timestamp_nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or_default()
-    }
-
     #[test]
     fn persist_unique_download_file_uses_next_available_name() {
-        let directory = std::env::temp_dir().join(format!(
-            "concord-download-test-{}-{}",
-            process::id(),
-            unix_timestamp_nanos()
-        ));
-        fs::create_dir_all(&directory).expect("test directory should be created");
-        let existing = directory.join("cat.png");
+        let directory =
+            tempfile::tempdir().expect("temporary download directory should be created");
+        let existing = directory.path().join("cat.png");
         fs::write(&existing, b"old").expect("existing file should be written");
         let mut temp = tempfile::Builder::new()
-            .tempfile_in(&directory)
+            .tempfile_in(directory.path())
             .expect("temporary file should be created");
         temp.write_all(b"new")
             .expect("temporary file should be written");
         let temp_path = temp.into_temp_path();
 
-        let path = persist_unique_download_file(&directory, "cat.png", temp_path)
+        let path = persist_unique_download_file(directory.path(), "cat.png", temp_path)
             .expect("download file should be written");
 
         assert_eq!(
@@ -574,8 +541,6 @@ mod tests {
             b"old"
         );
         assert_eq!(fs::read(&path).expect("new file should be written"), b"new");
-
-        fs::remove_dir_all(&directory).expect("test directory should be removed");
     }
 
     #[test]
@@ -592,34 +557,18 @@ mod tests {
 
     #[test]
     fn media_player_rejects_non_web_schemes_before_spawning_player() {
-        let error = media_player_command_spec_for_url("file:///etc/passwd")
-            .expect_err("file URLs should be rejected");
+        let error =
+            media_player_command_spec_for_url("file:///etc/passwd", "/tmp/concord-mpv.sock")
+                .expect_err("file URLs should be rejected");
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]
-    fn media_player_uses_mpv_without_shell_parsing() {
-        let spec = media_player_command_spec_for_url("https://example.com/video.mp4?x=1&y=2")
-            .expect("https media URLs should be accepted");
-
-        assert_eq!(spec.program, "mpv");
-        assert_eq!(
-            spec.args,
-            vec![
-                "--no-terminal".to_owned(),
-                "--force-window".to_owned(),
-                "--".to_owned(),
-                "https://example.com/video.mp4?x=1&y=2".to_owned(),
-            ]
-        );
-    }
-
-    #[test]
-    fn media_player_command_can_enable_json_ipc() {
-        let spec = media_player_command_spec_for_url_with_ipc(
-            "https://example.com/video.mp4",
-            Some("/tmp/concord-mpv.sock"),
+    fn media_player_command_preserves_url_and_configures_ipc() {
+        let spec = media_player_command_spec_for_url(
+            "https://example.com/video.mp4?x=1&y=2",
+            "/tmp/concord-mpv.sock",
         )
         .expect("https media URLs should be accepted");
 
@@ -631,7 +580,7 @@ mod tests {
                 "--force-window".to_owned(),
                 "--input-ipc-server=/tmp/concord-mpv.sock".to_owned(),
                 "--".to_owned(),
-                "https://example.com/video.mp4".to_owned(),
+                "https://example.com/video.mp4?x=1&y=2".to_owned(),
             ]
         );
     }

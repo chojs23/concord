@@ -32,6 +32,7 @@ impl<'a> ChannelPaneRow<'a> {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::tui) fn entry(&self) -> &ChannelPaneEntry<'a> {
         match self {
             Self::Entry { entry, .. } | Self::Activity { entry, .. } => entry,

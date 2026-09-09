@@ -9,7 +9,7 @@ use tokio::task::AbortHandle;
 
 use crate::{
     DiscordClient,
-    discord::{AppCommand, VoiceAudioSettings},
+    discord::{AppCommand, VoiceAudioSettings, VoiceAudioSources},
 };
 
 use super::{
@@ -142,8 +142,8 @@ impl CommandDispatcher {
                 )
                 .await;
             }
-            AppCommand::SearchMessages { query } => {
-                history_commands::search_messages(self.client.clone(), query).await;
+            AppCommand::SearchMessages { request_id, query } => {
+                history_commands::search_messages(self.client.clone(), request_id, query).await;
             }
             AppCommand::LoadInboxChannelHistory {
                 channel_id,
@@ -230,13 +230,17 @@ impl CommandDispatcher {
                         channel_id,
                         self_mute,
                         self_deaf,
-                        input_source,
-                        output_source,
-                        allow_microphone_transmit,
-                        noise_suppression,
-                        microphone_sensitivity,
-                        microphone_volume,
-                        voice_output_volume,
+                        audio_sources: VoiceAudioSources {
+                            input: input_source,
+                            output: output_source,
+                        },
+                        audio_settings: VoiceAudioSettings {
+                            allow_microphone_transmit,
+                            noise_suppression,
+                            microphone_sensitivity,
+                            microphone_volume,
+                            voice_output_volume,
+                        },
                         participant_playback_settings,
                     },
                 )
@@ -286,7 +290,7 @@ impl CommandDispatcher {
             } => {
                 voice_commands::update_audio_sources(
                     &self.client,
-                    crate::discord::VoiceAudioSources {
+                    VoiceAudioSources {
                         input: input_source,
                         output: output_source,
                     },

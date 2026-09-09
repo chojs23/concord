@@ -268,28 +268,34 @@ fn validate_runtime_fallback_frame(encoded: Option<&EncodedH264Frame>) -> Result
     validate_parameterized_h264_idr(encoded, "OpenH264 runtime fallback")
 }
 
-fn h264_nal_types(frame: &[u8]) -> Vec<u8> {
-    crate::discord::voice::media::annex_b_nals(frame)
-        .into_iter()
-        .filter_map(|nal| nal.first().map(|header| header & 0x1f))
-        .collect()
-}
-
 fn validate_parameterized_h264_idr(encoded: &EncodedH264Frame, source: &str) -> Result<(), String> {
-    let nal_types = h264_nal_types(&encoded.annex_b);
-    if encoded.is_keyframe
-        && nal_types.contains(&7)
-        && nal_types.contains(&8)
-        && nal_types.contains(&5)
-    {
+    let has_sps = annex_b_contains_nal_type(&encoded.annex_b, 7);
+    let has_pps = annex_b_contains_nal_type(&encoded.annex_b, 8);
+    let has_idr = annex_b_contains_nal_type(&encoded.annex_b, 5);
+    if encoded.is_keyframe && has_sps && has_pps && has_idr {
         return Ok(());
     }
 
+    let nal_types = AnnexBNalTypes(&encoded.annex_b);
     Err(format!(
         "{source} did not produce a parameterized IDR frame: keyframe={} nal_types={nal_types:?} bytes={}",
         encoded.is_keyframe,
         encoded.annex_b.len()
     ))
+}
+
+struct AnnexBNalTypes<'a>(&'a [u8]);
+
+impl std::fmt::Debug for AnnexBNalTypes<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_list()
+            .entries(
+                crate::discord::voice::media::annex_b_nals(self.0)
+                    .filter_map(|nal| nal.first().map(|header| header & 0x1f)),
+            )
+            .finish()
+    }
 }
 
 pub(super) struct OpenH264Encoder {
@@ -951,9 +957,9 @@ fn normalize_h264_access_unit(frame: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(any(test, target_os = "windows"))]
 fn contains_only_valid_annex_b_nals(frame: &[u8]) -> bool {
-    let nals = super::super::media::annex_b_nals(frame);
-    !nals.is_empty()
-        && nals.iter().all(|nal| {
+    let mut nals = super::super::media::annex_b_nals(frame).peekable();
+    nals.peek().is_some()
+        && nals.all(|nal| {
             nal.first()
                 .is_some_and(|header| header & 0x80 == 0 && matches!(header & 0x1f, 1..=23))
         })
@@ -961,9 +967,15 @@ fn contains_only_valid_annex_b_nals(frame: &[u8]) -> bool {
 
 #[cfg(any(test, target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn annex_b_contains_idr(frame: &[u8]) -> bool {
-    super::super::media::annex_b_nals(frame)
-        .into_iter()
-        .any(|nal| nal.first().is_some_and(|header| header & 0x1f == 5))
+    annex_b_contains_nal_type(frame, 5)
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn annex_b_contains_nal_type(frame: &[u8], expected_type: u8) -> bool {
+    super::super::media::annex_b_nals(frame).any(|nal| {
+        nal.first()
+            .is_some_and(|header| header & 0x1f == expected_type)
+    })
 }
 
 #[cfg(test)]
@@ -971,13 +983,6 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
-
-    #[test]
-    fn screen_content_encoder_configuration_initializes_cleanly() {
-        let _encoder =
-            Encoder::with_api_config(OpenH264API::from_source(), openh264_encoder_config())
-                .expect("screen content encoder configuration should initialize");
-    }
 
     #[test]
     fn screen_content_encoder_keeps_bitrate_and_uses_requested_intra_period() {

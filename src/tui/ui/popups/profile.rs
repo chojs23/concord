@@ -364,27 +364,6 @@ pub(in crate::tui::ui) fn user_profile_picker_list_layout(
     }
 }
 
-#[cfg(test)]
-pub(in crate::tui::ui) fn user_profile_popup_lines(
-    profile: &UserProfileInfo,
-    state: &DashboardState,
-    width: u16,
-    status: PresenceStatus,
-) -> Vec<Line<'static>> {
-    user_profile_popup_text(profile, state, width, status, &[], &[], false).lines
-}
-
-#[cfg(test)]
-pub(in crate::tui::ui) fn user_profile_popup_lines_with_activities(
-    profile: &UserProfileInfo,
-    state: &DashboardState,
-    width: u16,
-    status: PresenceStatus,
-    activities: &[ActivityInfo],
-) -> Vec<Line<'static>> {
-    user_profile_popup_text(profile, state, width, status, activities, &[], false).lines
-}
-
 pub(in crate::tui::ui) fn user_profile_popup_text(
     profile: &UserProfileInfo,
     state: &DashboardState,
@@ -626,7 +605,7 @@ fn push_profile_status_picker_lines(
     )));
     for (status, selected) in rows {
         let style = selected_presence_style(*selected, *status);
-        let marker = selectable_popup_marker(*selected);
+        let marker = selection_marker(*selected);
         let label_width = width.saturating_sub(marker.content.width());
         lines.push(selected_row_line(
             Line::from(vec![
@@ -649,7 +628,7 @@ fn push_profile_activity_picker_lines(
         theme::current().style(theme::HighlightGroup::Heading),
     )));
     for (label, selected) in rows {
-        let marker = selectable_popup_marker(*selected);
+        let marker = selection_marker(*selected);
         let label_width = width.saturating_sub(marker.content.width());
         lines.push(selected_row_line(
             Line::from(vec![
@@ -1251,7 +1230,7 @@ fn push_wrapped_paragraph(lines: &mut Vec<Line<'static>>, text: &str, width: usi
         if trimmed.is_empty() {
             lines.push(Line::from(Span::raw(String::new())));
         } else {
-            push_wrapped_styled_popup_text(lines, trimmed, width, Style::default());
+            lines.extend(wrapped_styled_popup_lines(trimmed, width, Style::default()));
         }
     }
 }

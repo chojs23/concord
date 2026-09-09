@@ -1797,34 +1797,30 @@ mod tests {
     }
 
     #[test]
-    fn image_target_slices_keep_visible_rows_above_bottom_overlay() {
-        let slices = visible_image_target_slices(
-            image_preview_target(),
-            Rect::new(10, 2, 20, 10),
-            &[Rect::new(0, 8, 80, 4)],
-        );
+    fn image_target_slices_exclude_occluded_rows() {
+        let cases = [
+            ("bottom overlay", Rect::new(0, 8, 80, 4), &[(0, 0, 6)][..]),
+            (
+                "middle overlay",
+                Rect::new(0, 5, 80, 3),
+                &[(0, 0, 3), (6, 6, 4)][..],
+            ),
+        ];
 
-        assert_eq!(slices.len(), 1);
-        assert_eq!(slices[0].preview_y_offset_rows, 0);
-        assert_eq!(slices[0].top_clip_rows, 0);
-        assert_eq!(slices[0].visible_preview_height, 6);
-    }
+        for (name, overlay, expected) in cases {
+            let slices = visible_image_target_slices(
+                image_preview_target(),
+                Rect::new(10, 2, 20, 10),
+                &[overlay],
+            );
 
-    #[test]
-    fn image_target_slices_keep_rows_around_middle_overlay() {
-        let slices = visible_image_target_slices(
-            image_preview_target(),
-            Rect::new(10, 2, 20, 10),
-            &[Rect::new(0, 5, 80, 3)],
-        );
-
-        assert_eq!(slices.len(), 2);
-        assert_eq!(slices[0].preview_y_offset_rows, 0);
-        assert_eq!(slices[0].top_clip_rows, 0);
-        assert_eq!(slices[0].visible_preview_height, 3);
-        assert_eq!(slices[1].preview_y_offset_rows, 6);
-        assert_eq!(slices[1].top_clip_rows, 6);
-        assert_eq!(slices[1].visible_preview_height, 4);
+            assert_eq!(slices.len(), expected.len(), "{name}");
+            for (slice, &(y_offset, top_clip, visible_height)) in slices.iter().zip(expected) {
+                assert_eq!(slice.preview_y_offset_rows, y_offset, "{name}");
+                assert_eq!(slice.top_clip_rows, top_clip, "{name}");
+                assert_eq!(slice.visible_preview_height, visible_height, "{name}");
+            }
+        }
     }
 
     fn image_preview_target() -> ImagePreviewTarget {

@@ -658,8 +658,6 @@ impl VoiceRuntimeState {
             | VoiceRuntimeEvent::BroadcastStreamConnectionEstablished { .. }
             | VoiceRuntimeEvent::BroadcastStreamConnectionStable { .. }
             | VoiceRuntimeEvent::BroadcastStreamConnectionEnded { .. } => {}
-            #[cfg(test)]
-            VoiceRuntimeEvent::BroadcastStreamCancelled { .. } => {}
             VoiceRuntimeEvent::ConnectionEstablished { connection_id } => {
                 if self
                     .active

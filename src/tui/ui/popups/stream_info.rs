@@ -95,41 +95,27 @@ pub(in crate::tui::ui) fn stream_info_lines_for_width(
 }
 
 fn wrap_stream_info_text(value: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut lines = Vec::new();
-    let mut current = String::new();
-
-    for word in value.split_whitespace() {
-        if word.width() > width {
-            if !current.is_empty() {
-                lines.push(std::mem::take(&mut current));
-            }
-            lines.extend(wrap_text_lines(word, width));
-            continue;
-        }
-
-        let next_width = if current.is_empty() {
-            word.width()
-        } else {
-            current
-                .width()
-                .saturating_add(1)
-                .saturating_add(word.width())
-        };
-        if next_width > width {
-            lines.push(std::mem::take(&mut current));
-        }
-        if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(word);
-    }
-
-    if !current.is_empty() {
-        lines.push(current);
-    }
+    let lines = wrap_plain_text_at_words(value, width.max(1));
     if lines.is_empty() {
-        lines.push(String::new());
+        vec![String::new()]
+    } else {
+        lines
     }
-    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_stream_info_text;
+
+    #[test]
+    fn stream_info_wrap_preserves_empty_spaces_and_long_unicode_words() {
+        for (value, width, expected) in [
+            ("", 4, vec![""]),
+            ("   ", 4, vec![""]),
+            ("alpha beta", 5, vec!["alpha", "beta"]),
+            ("가나다라마바사", 4, vec!["가나", "다라", "마바", "사"]),
+        ] {
+            assert_eq!(wrap_stream_info_text(value, width), expected, "{value:?}");
+        }
+    }
 }

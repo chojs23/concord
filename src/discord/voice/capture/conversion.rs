@@ -131,6 +131,21 @@ pub(super) struct CapturePlane<'a> {
     pub(super) stride: isize,
 }
 
+pub(super) fn packed_plane_buffer_length(
+    row_length: usize,
+    stride: usize,
+    height: usize,
+) -> Result<usize, String> {
+    if row_length == 0 || height == 0 || stride < row_length {
+        return Err("capture plane dimensions are invalid".to_owned());
+    }
+    // Only include the last row's pixels, not trailing padding that may be unmapped.
+    stride
+        .checked_mul(height - 1)
+        .and_then(|prefix| prefix.checked_add(row_length))
+        .ok_or_else(|| "capture plane length is too large".to_owned())
+}
+
 pub(super) fn convert_capture_frame(
     planes: &[CapturePlane<'_>],
     width: u32,
@@ -575,6 +590,35 @@ fn to_u8(value: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packed_plane_length_ends_at_the_last_pixel_and_checks_invalid_sizes() {
+        for (row_length, stride, height, expected) in [
+            (8, 12, 2, 20),
+            (8, 12, 1, 8),
+            (8, 8, 2, 16),
+            (1, usize::MAX, 1, 1),
+        ] {
+            assert_eq!(
+                packed_plane_buffer_length(row_length, stride, height),
+                Ok(expected),
+                "row_length={row_length}, stride={stride}, height={height}",
+            );
+        }
+
+        for (row_length, stride, height) in [
+            (0, 12, 2),
+            (8, 12, 0),
+            (8, 4, 2),
+            (1, usize::MAX, 2),
+            (1, usize::MAX, 3),
+        ] {
+            assert!(
+                packed_plane_buffer_length(row_length, stride, height).is_err(),
+                "row_length={row_length}, stride={stride}, height={height}",
+            );
+        }
+    }
 
     #[test]
     fn packed_rgb_formats_preserve_channel_order_and_quantize_ten_bit_values() {

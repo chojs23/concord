@@ -424,6 +424,7 @@ fn format_discord_error_response(status: reqwest::StatusCode, body: &str) -> Str
 
 fn sanitize_response_body(body: &str) -> String {
     const MAX_BODY_CHARS: usize = 1_200;
+    const OMITTED_BODY: &str = "[response body omitted]";
 
     let trimmed = body.trim();
     if trimmed.is_empty() {
@@ -433,9 +434,9 @@ fn sanitize_response_body(body: &str) -> String {
     let sanitized = match serde_json::from_str::<Value>(trimmed) {
         Ok(mut value) => {
             redact_sensitive_json(&mut value);
-            serde_json::to_string(&value).unwrap_or_else(|_| trimmed.to_string())
+            serde_json::to_string(&value).unwrap_or_else(|_| OMITTED_BODY.to_owned())
         }
-        Err(_) => trimmed.to_string(),
+        Err(_) => OMITTED_BODY.to_owned(),
     };
 
     truncate_chars(&sanitized, MAX_BODY_CHARS)
@@ -592,6 +593,14 @@ mod tests {
         assert!(!sanitized.contains("blob"));
         assert!(!sanitized.contains("\":\"session\""));
         assert!(sanitized.contains("[redacted]"));
+    }
+
+    #[test]
+    fn sanitize_response_body_omits_unstructured_server_text() {
+        let sanitized = sanitize_response_body("upstream failed with token secret-token");
+
+        assert_eq!(sanitized, "[response body omitted]");
+        assert!(!sanitized.contains("secret-token"));
     }
 
     #[test]

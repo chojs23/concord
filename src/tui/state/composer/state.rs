@@ -27,8 +27,8 @@ use crate::discord::{
 
 use super::super::MINIMUM_ESTABLISHED_DM_MESSAGES;
 use super::super::local_upload_preview::{
-    LocalUploadPreviewState, LocalUploadPreviewStatus, local_upload_preview_candidate,
-    local_upload_preview_view,
+    LocalUploadPreviewState, local_upload_preview_view, store_local_upload_preview_result,
+    sync_local_upload_previews, take_pending_local_upload_preview,
 };
 use super::super::popups::{LongMessageConfirmationState, ModalPopup};
 use super::super::request_tracking::LatestMessageHistoryState;
@@ -192,13 +192,11 @@ impl DashboardState {
         if !self.can_reply_to_selected_message() {
             return;
         }
-        self.composer.composer_input.clear();
-        self.composer.pending_composer_attachments.clear();
-        self.composer.pending_composer_attachment_previews.clear();
-        self.runtime.clipboard_paste_pending = false;
+        self.clear_composer_text();
+        self.clear_composer_attachments();
+        self.cancel_clipboard_paste();
         self.composer.reply_target_message_id = Some(message_id);
         self.composer.edit_target_message = None;
-        self.reset_mention_picker_state();
         self.composer.composer_active = true;
         self.navigation.focus = FocusPane::Messages;
     }
@@ -231,9 +229,8 @@ impl DashboardState {
         let channel_id = message.channel_id;
         let message_id = message.id;
         self.composer.composer_input.set_value(content);
-        self.composer.pending_composer_attachments.clear();
-        self.composer.pending_composer_attachment_previews.clear();
-        self.runtime.clipboard_paste_pending = false;
+        self.clear_composer_attachments();
+        self.cancel_clipboard_paste();
         self.composer.reply_target_message_id = None;
         self.composer.edit_target_message = Some((channel_id, message_id));
         self.reset_mention_picker_state();
@@ -359,37 +356,13 @@ impl DashboardState {
     }
 
     pub(in crate::tui::state) fn refresh_composer_attachment_previews(&mut self) {
-        if !self.show_images() {
-            self.composer.pending_composer_attachment_previews.clear();
-            return;
-        }
-        let mut previous = std::mem::take(&mut self.composer.pending_composer_attachment_previews);
-        let mut previews = Vec::new();
-        for (index, attachment) in self
-            .composer
-            .pending_composer_attachments
-            .iter()
-            .enumerate()
-            .filter(|(_, attachment)| local_upload_preview_candidate(attachment))
-        {
-            if let Some(previous_index) = previous.iter().position(|preview| {
-                preview.attachment_index == index && preview.filename == attachment.filename
-            }) {
-                previews.push(previous.remove(previous_index));
-                continue;
-            }
-            self.composer.pending_composer_attachment_preview_generation = self
-                .composer
-                .pending_composer_attachment_preview_generation
-                .saturating_add(1);
-            previews.push(LocalUploadPreviewState {
-                attachment_index: index,
-                generation: self.composer.pending_composer_attachment_preview_generation,
-                filename: attachment.filename.clone(),
-                state: LocalUploadPreviewStatus::Pending,
-            });
-        }
-        self.composer.pending_composer_attachment_previews = previews;
+        let enabled = self.show_images();
+        sync_local_upload_previews(
+            &self.composer.pending_composer_attachments,
+            &mut self.composer.pending_composer_attachment_previews,
+            &mut self.composer.pending_composer_attachment_preview_generation,
+            enabled,
+        );
     }
 
     pub(in crate::tui) fn take_pending_composer_attachment_preview(
@@ -398,23 +371,10 @@ impl DashboardState {
         if !self.show_images() {
             return None;
         }
-        let preview = self
-            .composer
-            .pending_composer_attachment_previews
-            .iter_mut()
-            .find(|preview| matches!(preview.state, LocalUploadPreviewStatus::Pending))?;
-        let attachment = self
-            .composer
-            .pending_composer_attachments
-            .get(preview.attachment_index)?
-            .clone();
-        preview.state = LocalUploadPreviewStatus::Loading;
-        Some((
-            preview.attachment_index,
-            preview.generation,
-            preview.filename.clone(),
-            attachment,
-        ))
+        take_pending_local_upload_preview(
+            &mut self.composer.pending_composer_attachment_previews,
+            &self.composer.pending_composer_attachments,
+        )
     }
 
     pub(in crate::tui) fn store_composer_attachment_preview_result(
@@ -424,21 +384,13 @@ impl DashboardState {
         filename: String,
         result: std::result::Result<ratatui_image::protocol::Protocol, String>,
     ) {
-        let Some(preview) = self
-            .composer
-            .pending_composer_attachment_previews
-            .iter_mut()
-            .find(|preview| {
-                preview.attachment_index == attachment_index && preview.generation == generation
-            })
-        else {
-            return;
-        };
-        preview.filename = filename;
-        preview.state = match result {
-            Ok(protocol) => LocalUploadPreviewStatus::Ready(protocol),
-            Err(message) => LocalUploadPreviewStatus::Failed(message),
-        };
+        store_local_upload_preview_result(
+            &mut self.composer.pending_composer_attachment_previews,
+            attachment_index,
+            generation,
+            filename,
+            result,
+        );
     }
 
     pub fn composer_is_editing_message(&self) -> bool {
@@ -711,13 +663,11 @@ impl DashboardState {
 
     pub fn cancel_composer(&mut self) {
         self.composer.composer_active = false;
-        self.composer.composer_input.clear();
-        self.composer.pending_composer_attachments.clear();
-        self.composer.pending_composer_attachment_previews.clear();
-        self.runtime.clipboard_paste_pending = false;
+        self.clear_composer_text();
+        self.clear_composer_attachments();
+        self.cancel_clipboard_paste();
         self.composer.reply_target_message_id = None;
         self.composer.edit_target_message = None;
-        self.reset_mention_picker_state();
     }
 
     pub fn close_composer(&mut self) {
@@ -728,16 +678,14 @@ impl DashboardState {
             return;
         }
         self.composer.composer_active = false;
-        self.runtime.clipboard_paste_pending = false;
+        self.cancel_clipboard_paste();
         self.reset_mention_picker_state();
     }
 
     pub fn clear_composer_input(&mut self) {
-        self.composer.composer_input.clear();
-        self.composer.pending_composer_attachments.clear();
-        self.composer.pending_composer_attachment_previews.clear();
-        self.runtime.clipboard_paste_pending = false;
-        self.reset_mention_picker_state();
+        self.clear_composer_text();
+        self.clear_composer_attachments();
+        self.cancel_clipboard_paste();
     }
 
     pub fn push_composer_char(&mut self, value: char) {
@@ -1098,7 +1046,7 @@ impl DashboardState {
         content: String,
         additional_attachment: Option<MessageAttachmentUpload>,
     ) -> AppCommand {
-        self.clear_submitted_composer_text();
+        self.clear_composer_text();
         let mention_author = self.options.composer_options.ping_on_reply;
         let reply_to = self
             .composer
@@ -1265,33 +1213,35 @@ impl DashboardState {
     }
 
     fn clear_submitted_composer(&mut self) {
-        self.clear_submitted_composer_text();
+        self.clear_composer_text();
         self.composer.reply_target_message_id = None;
-        self.composer.pending_composer_attachments.clear();
-        self.composer.pending_composer_attachment_previews.clear();
+        self.clear_composer_attachments();
     }
 
-    fn clear_submitted_composer_text(&mut self) {
+    fn clear_composer_text(&mut self) {
         self.composer.composer_input.clear();
         self.reset_mention_picker_state();
     }
 
+    fn clear_composer_attachments(&mut self) {
+        self.composer.pending_composer_attachments.clear();
+        self.composer.pending_composer_attachment_previews.clear();
+    }
+
     fn expanded_composer_command_content(&self) -> String {
-        let expanded = expand_composer_completions(
-            self.composer.composer_input.value(),
-            &self.composer.composer_mention_completions,
-            &self.composer.composer_emoji_completions,
-            MentionExpansionMode::Command,
-        );
-        expand_emoji_shortcodes(&expanded).trim().to_owned()
+        self.expanded_composer_content(MentionExpansionMode::Command)
     }
 
     fn expanded_composer_message_content(&self) -> String {
+        self.expanded_composer_content(MentionExpansionMode::Message)
+    }
+
+    fn expanded_composer_content(&self, mode: MentionExpansionMode) -> String {
         let expanded = expand_composer_completions(
             self.composer.composer_input.value(),
             &self.composer.composer_mention_completions,
             &self.composer.composer_emoji_completions,
-            MentionExpansionMode::Message,
+            mode,
         );
         expand_emoji_shortcodes(&expanded).trim().to_owned()
     }
@@ -2210,21 +2160,16 @@ impl DashboardState {
         replaced: Range<usize>,
         replacement_len: usize,
     ) {
-        let replaced_len = replaced.end - replaced.start;
-        let delta = replacement_len as isize - replaced_len as isize;
-        let mut completions = Vec::with_capacity(self.composer.composer_mention_completions.len());
-
-        for mut completion in self.composer.composer_mention_completions.drain(..) {
-            if completion.byte_end <= replaced.start {
-                completions.push(completion);
-            } else if completion.byte_start >= replaced.end {
-                completion.byte_start = shift_byte_index(completion.byte_start, delta);
-                completion.byte_end = shift_byte_index(completion.byte_end, delta);
-                completions.push(completion);
-            }
-        }
-
-        self.composer.composer_mention_completions = completions;
+        self.composer
+            .composer_mention_completions
+            .retain_mut(|completion| {
+                adjust_completion_range(
+                    &mut completion.byte_start,
+                    &mut completion.byte_end,
+                    &replaced,
+                    replacement_len,
+                )
+            });
     }
 
     fn adjust_emoji_completions_for_replace(
@@ -2232,21 +2177,16 @@ impl DashboardState {
         replaced: Range<usize>,
         replacement_len: usize,
     ) {
-        let replaced_len = replaced.end - replaced.start;
-        let delta = replacement_len as isize - replaced_len as isize;
-        let mut completions = Vec::with_capacity(self.composer.composer_emoji_completions.len());
-
-        for mut completion in self.composer.composer_emoji_completions.drain(..) {
-            if completion.byte_end <= replaced.start {
-                completions.push(completion);
-            } else if completion.byte_start >= replaced.end {
-                completion.byte_start = shift_byte_index(completion.byte_start, delta);
-                completion.byte_end = shift_byte_index(completion.byte_end, delta);
-                completions.push(completion);
-            }
-        }
-
-        self.composer.composer_emoji_completions = completions;
+        self.composer
+            .composer_emoji_completions
+            .retain_mut(|completion| {
+                adjust_completion_range(
+                    &mut completion.byte_start,
+                    &mut completion.byte_end,
+                    &replaced,
+                    replacement_len,
+                )
+            });
     }
 
     fn emoji_candidates_for_query(&self, query: &str) -> Vec<EmojiPickerEntry> {
@@ -2331,6 +2271,24 @@ fn shift_byte_index(index: usize, delta: isize) -> usize {
     } else {
         index.saturating_add(delta as usize)
     }
+}
+
+fn adjust_completion_range(
+    byte_start: &mut usize,
+    byte_end: &mut usize,
+    replaced: &Range<usize>,
+    replacement_len: usize,
+) -> bool {
+    if *byte_end <= replaced.start {
+        return true;
+    }
+    if *byte_start < replaced.end {
+        return false;
+    }
+    let delta = replacement_len as isize - (replaced.end - replaced.start) as isize;
+    *byte_start = shift_byte_index(*byte_start, delta);
+    *byte_end = shift_byte_index(*byte_end, delta);
+    true
 }
 
 fn composer_plus_colon_trigger_before_cursor(input: &str, cursor: usize) -> bool {

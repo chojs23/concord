@@ -10,7 +10,10 @@ use crate::{
 use super::{
     AVATAR_PREVIEW_HEIGHT, AVATAR_PREVIEW_WIDTH, AvatarTarget, MediaProtocolRenderSpec,
     PROFILE_POPUP_AVATAR_HEIGHT, PROFILE_POPUP_AVATAR_WIDTH, avatar_preview_url,
-    cache::{MediaCacheStats, MediaImageCacheCore, MediaImageCacheEntry, RenderProtocolCache},
+    cache::{
+        MediaCacheStats, MediaImageCacheCore, MediaImageCacheEntry, MediaImageEntry,
+        RenderProtocolCache,
+    },
     decode::{DecodedMediaImage, MediaImageDecodeKey, MediaImageDecodeRequest},
     estimated_media_protocol_bytes, picker_font_size,
     protocol_job::{MediaProtocolBuildJob, MediaProtocolBuildResult, MediaProtocolBuildTarget},
@@ -29,24 +32,7 @@ pub(in crate::tui) struct AvatarImageCache {
     pub(super) protocol_jobs: Vec<MediaProtocolBuildJob>,
 }
 
-pub(super) enum AvatarImageEntry {
-    Loading {
-        last_used: u64,
-    },
-    Decoding {
-        generation: u64,
-        last_used: u64,
-    },
-    Ready {
-        generation: u64,
-        image: DecodedMediaImage,
-        protocols: Box<RenderProtocolCache<AvatarFrameProtocolKey>>,
-        last_used: u64,
-    },
-    Failed {
-        last_used: u64,
-    },
-}
+pub(super) type AvatarImageEntry = MediaImageEntry<RenderProtocolCache<AvatarFrameProtocolKey>>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) struct AvatarProtocolKey {
@@ -102,68 +88,6 @@ impl AvatarProtocolKey {
             top_clip_rows: self.top_clip_rows,
             show_play_marker: false,
             mask_circular: self.circular,
-        }
-    }
-}
-
-impl MediaImageCacheEntry for AvatarImageEntry {
-    fn last_used(&self) -> u64 {
-        match self {
-            AvatarImageEntry::Loading { last_used }
-            | AvatarImageEntry::Decoding { last_used, .. }
-            | AvatarImageEntry::Ready { last_used, .. }
-            | AvatarImageEntry::Failed { last_used } => *last_used,
-        }
-    }
-
-    fn decoded_image(&self) -> Option<&DecodedMediaImage> {
-        match self {
-            AvatarImageEntry::Ready { image, .. } => Some(image),
-            AvatarImageEntry::Loading { .. }
-            | AvatarImageEntry::Decoding { .. }
-            | AvatarImageEntry::Failed { .. } => None,
-        }
-    }
-
-    fn decoded_image_mut(&mut self) -> Option<&mut DecodedMediaImage> {
-        match self {
-            AvatarImageEntry::Ready { image, .. } => Some(image),
-            AvatarImageEntry::Loading { .. }
-            | AvatarImageEntry::Decoding { .. }
-            | AvatarImageEntry::Failed { .. } => None,
-        }
-    }
-
-    fn touch(&mut self, tick: u64) {
-        match self {
-            AvatarImageEntry::Loading { last_used }
-            | AvatarImageEntry::Decoding { last_used, .. }
-            | AvatarImageEntry::Ready { last_used, .. }
-            | AvatarImageEntry::Failed { last_used } => *last_used = tick,
-        }
-    }
-
-    fn is_loading(&self) -> bool {
-        matches!(self, AvatarImageEntry::Loading { .. })
-    }
-
-    fn is_failed(&self) -> bool {
-        matches!(self, AvatarImageEntry::Failed { .. })
-    }
-
-    fn retained_protocol_bytes(&self) -> u64 {
-        match self {
-            AvatarImageEntry::Ready { protocols, .. } => protocols.retained_bytes(),
-            _ => 0,
-        }
-    }
-
-    fn decoding_generation(&self) -> Option<u64> {
-        match self {
-            AvatarImageEntry::Decoding { generation, .. } => Some(*generation),
-            AvatarImageEntry::Loading { .. }
-            | AvatarImageEntry::Ready { .. }
-            | AvatarImageEntry::Failed { .. } => None,
         }
     }
 }

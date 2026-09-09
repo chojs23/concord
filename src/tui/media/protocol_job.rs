@@ -50,6 +50,21 @@ pub(in crate::tui) struct MediaProtocolBuildResult {
 }
 
 impl MediaProtocolBuildJob {
+    fn new(
+        target: MediaProtocolBuildTarget,
+        generation: u64,
+        picker: Picker,
+        image: Arc<DynamicImage>,
+    ) -> Self {
+        Self {
+            target,
+            generation,
+            picker,
+            image,
+            request: None,
+        }
+    }
+
     pub(super) fn preview(
         key: ImagePreviewKey,
         generation: u64,
@@ -58,8 +73,8 @@ impl MediaProtocolBuildJob {
         picker: Picker,
         image: Arc<DynamicImage>,
     ) -> Self {
-        Self {
-            target: MediaProtocolBuildTarget::Preview {
+        Self::new(
+            MediaProtocolBuildTarget::Preview {
                 key,
                 render_spec,
                 frame_index,
@@ -67,8 +82,7 @@ impl MediaProtocolBuildJob {
             generation,
             picker,
             image,
-            request: None,
-        }
+        )
     }
 
     pub(super) fn avatar(
@@ -78,13 +92,12 @@ impl MediaProtocolBuildJob {
         picker: Picker,
         image: Arc<DynamicImage>,
     ) -> Self {
-        Self {
-            target: MediaProtocolBuildTarget::Avatar { url, key },
+        Self::new(
+            MediaProtocolBuildTarget::Avatar { url, key },
             generation,
             picker,
             image,
-            request: None,
-        }
+        )
     }
 
     pub(super) fn emoji(
@@ -95,8 +108,8 @@ impl MediaProtocolBuildJob {
         picker: Picker,
         image: Arc<DynamicImage>,
     ) -> Self {
-        Self {
-            target: MediaProtocolBuildTarget::Emoji {
+        Self::new(
+            MediaProtocolBuildTarget::Emoji {
                 url,
                 frame_index,
                 image_size,
@@ -104,8 +117,7 @@ impl MediaProtocolBuildJob {
             generation,
             picker,
             image,
-            request: None,
-        }
+        )
     }
 
     pub(super) fn with_request(mut self, request: MediaProtocolRequest) -> Self {

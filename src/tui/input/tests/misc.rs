@@ -60,21 +60,6 @@ fn question_mark_opens_current_keymap_popup_and_scrolls_within_bounds() {
 }
 
 #[test]
-fn backtick_types_while_composing() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
-
-    handle_key(&mut state, char_key('`'));
-
-    assert!(state.is_composing());
-    assert!(!state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::DebugLog));
-    assert_eq!(state.composer_input(), "`");
-}
-
-#[test]
 fn esc_closes_modal_before_returning_from_opened_thread() {
     let mut state = state_with_thread_created_message();
     state.focus_pane(FocusPane::Messages);
@@ -105,9 +90,12 @@ fn ctrl_v_requests_clipboard_paste_on_profile_avatar_field() {
 
     handle_key(&mut state, ctrl_key('v'));
 
-    assert!(state.take_paste_clipboard_request());
+    let request_id = state
+        .take_paste_clipboard_request()
+        .expect("clipboard paste request");
     assert!(state.accepts_clipboard_paste());
-    assert!(state.begin_clipboard_paste());
+    assert!(state.start_clipboard_paste(request_id));
+    assert!(state.begin_clipboard_paste(request_id));
     assert_eq!(
         state.user_profile_settings_status(),
         Some("Reading clipboard image...")
@@ -299,11 +287,14 @@ fn ctrl_v_pastes_text_into_profile_edit_field_at_cursor() {
     handle_key(&mut state, key(KeyCode::Left));
     handle_key(&mut state, ctrl_key('v'));
 
-    assert!(state.take_paste_clipboard_request());
+    let request_id = state
+        .take_paste_clipboard_request()
+        .expect("clipboard paste request");
     assert!(state.accepts_clipboard_paste());
-    assert!(state.begin_clipboard_paste());
+    assert!(state.start_clipboard_paste(request_id));
+    assert!(state.begin_clipboard_paste(request_id));
     assert!(handle_paste(&mut state, "b"));
-    state.finish_clipboard_paste();
+    assert!(state.finish_clipboard_paste(request_id));
 
     assert_eq!(
         state.user_profile_settings_field_value(

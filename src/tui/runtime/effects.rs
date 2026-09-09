@@ -92,7 +92,7 @@ pub(super) fn process_effect_event(
     let missing_members = missing_members_for_effect(&event, ctx.state, now);
 
     dispatch_runtime_side_effects(&event, ctx);
-    record_media_event(&event, ctx);
+    ctx.media_runtime.record_event(&event, ctx.media_decode_tx);
     push_dashboard_effect(event, ctx);
     enqueue_member_hydration_requests(missing_members, ctx, now);
 
@@ -115,6 +115,7 @@ fn missing_members_for_effect(
         | AppEvent::InboxChannelMessagesLoaded { messages, .. }
         | AppEvent::MessageSearchLoaded {
             page: crate::discord::MessageSearchPage { messages, .. },
+            ..
         }
         | AppEvent::PinnedMessagesLoaded { messages, .. } => Some(messages.as_slice()),
         _ => None,
@@ -158,10 +159,6 @@ fn dispatch_runtime_side_effects(event: &AppEvent, ctx: &EffectContext<'_>) {
     if let AppEvent::VoiceSound { kind } = event {
         dispatch_voice_sound(*kind, ctx.state.notification_options());
     }
-}
-
-fn record_media_event(event: &AppEvent, ctx: &mut EffectContext<'_>) {
-    ctx.media_runtime.record_event(event, ctx.media_decode_tx);
 }
 
 fn push_dashboard_effect(event: AppEvent, ctx: &mut EffectContext<'_>) {
@@ -219,7 +216,7 @@ fn dispatch_desktop_notification(notification: DesktopNotification, icon: Option
     }
 
     spawn_notification_task("notification", "desktop notification", move || {
-        deliver_desktop_notification(&title, &body, icon.as_deref())
+        deliver_platform_notification(&title, &body, icon.as_deref())
     });
 }
 
@@ -284,14 +281,6 @@ fn log_notification_failure_once(target: &str, message: String) {
     if !NOTIFICATION_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
         logging::error(target, message);
     }
-}
-
-fn deliver_desktop_notification(
-    title: &str,
-    body: &str,
-    icon: Option<&str>,
-) -> std::result::Result<(), String> {
-    deliver_platform_notification(title, body, icon)
 }
 
 fn play_voice_sound(

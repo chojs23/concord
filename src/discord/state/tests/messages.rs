@@ -339,13 +339,8 @@ fn current_user_poll_vote_update_refreshes_cached_poll_counts() {
     assert_eq!(poll.answers[1].vote_count, Some(1));
     assert!(!poll.answers[1].me_voted);
     assert_eq!(poll.total_votes, Some(2));
-}
 
-#[test]
-fn current_user_poll_vote_update_handles_missing_answer_counts() {
-    let channel_id: Id<ChannelMarker> = Id::new(10);
-    let message_id = Id::new(20);
-    let author_id = Id::new(99);
+    // A missing count is treated as zero before the current user's vote is added.
     let mut state = DiscordState::default();
     let mut poll = poll_info();
     poll.answers[1].vote_count = None;

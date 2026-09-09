@@ -223,11 +223,12 @@ mod tests {
             state.open_message_search_popup();
             state.push_search_char('x');
             let command = state.activate_search_popup().expect("search should start");
-            let AppCommand::SearchMessages { query } = command else {
+            let AppCommand::SearchMessages { request_id, query } = command else {
                 panic!("expected message search command");
             };
             assert_signature_changes("message search results", &mut state, |state| {
                 state.push_event(AppEvent::MessageSearchLoaded {
+                    request_id,
                     page: MessageSearchPage {
                         query,
                         messages: vec![MessageInfo::test(Id::new(20), Id::new(30))],

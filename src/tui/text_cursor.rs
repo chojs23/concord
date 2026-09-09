@@ -1,4 +1,5 @@
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 pub(in crate::tui) fn clamp_cursor_index(value: &str, index: usize) -> usize {
     let mut index = index.min(value.len());
@@ -66,10 +67,10 @@ pub(in crate::tui) fn vertical_cursor_target(
     cursor: usize,
     direction: isize,
 ) -> Option<usize> {
-    let cursor = clamp_cursor_index(input, cursor);
+    let cursor = grapheme_boundary_at_or_before(input, clamp_cursor_index(input, cursor));
     let line_start = line_start_before(input, cursor);
     let line_end = line_end_after(input, cursor);
-    let column = input[line_start..cursor].chars().count();
+    let column = UnicodeWidthStr::width(&input[line_start..cursor]);
 
     match direction {
         -1 => {
@@ -113,12 +114,38 @@ fn line_end_after(input: &str, index: usize) -> usize {
         .unwrap_or(input.len())
 }
 
+fn grapheme_boundary_at_or_before(input: &str, index: usize) -> usize {
+    if index == input.len() {
+        return index;
+    }
+    input
+        .grapheme_indices(true)
+        .map(|(start, _)| start)
+        .take_while(|start| *start <= index)
+        .last()
+        .unwrap_or(0)
+}
+
 fn byte_index_for_line_column(input: &str, start: usize, end: usize, column: usize) -> usize {
-    input[start..end]
-        .char_indices()
-        .nth(column)
-        .map(|(offset, _)| start + offset)
-        .unwrap_or(end)
+    let line = &input[start..end];
+    let mut width = 0usize;
+    let mut best_index = start;
+    let mut best_distance = column;
+
+    for (offset, grapheme) in line.grapheme_indices(true) {
+        let next_width = width.saturating_add(UnicodeWidthStr::width(grapheme));
+        let next_distance = next_width.abs_diff(column);
+        if next_distance <= best_distance {
+            best_index = start + offset + grapheme.len();
+            best_distance = next_distance;
+        }
+        if next_width >= column {
+            return best_index;
+        }
+        width = next_width;
+    }
+
+    end
 }
 
 #[cfg(test)]
@@ -135,5 +162,20 @@ mod tests {
         assert_eq!(next_char_boundary(value, "a".len()), flag_end);
         assert_eq!(previous_char_boundary(value, flag_end), "a".len());
         assert_eq!(previous_char_boundary(value, accent_end), flag_end);
+    }
+
+    #[test]
+    fn vertical_movement_uses_grapheme_and_display_columns() {
+        let combining = "x\ne\u{301}";
+        assert_eq!(
+            vertical_cursor_target(combining, "x".len(), 1),
+            Some(combining.len())
+        );
+
+        let wide = "界x\nab";
+        assert_eq!(
+            vertical_cursor_target(wide, "界".len(), 1),
+            Some("界x\nab".len())
+        );
     }
 }

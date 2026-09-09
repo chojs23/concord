@@ -195,14 +195,7 @@ fn flag_enabled(value: &str) -> bool {
 }
 
 #[cfg(any(all(target_os = "linux", feature = "stream-broadcast"), test))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NativeStderrLevel {
-    Debug,
-    Error,
-}
-
-#[cfg(any(all(target_os = "linux", feature = "stream-broadcast"), test))]
-fn classify_native_stderr(message: &str) -> NativeStderrLevel {
+fn classify_native_stderr(message: &str) -> Level {
     let message = message.trim_start().to_ascii_lowercase();
     let informational_prefixes = [
         "libva info:",
@@ -222,11 +215,11 @@ fn classify_native_stderr(message: &str) -> NativeStderrLevel {
         .iter()
         .any(|prefix| message.starts_with(prefix))
     {
-        NativeStderrLevel::Debug
+        Level::Debug
     } else {
         // stderr has no standard severity metadata. Unknown output stays in the
         // normal log so a native failure is not silently discarded.
-        NativeStderrLevel::Error
+        Level::Error
     }
 }
 
@@ -238,8 +231,8 @@ fn record_native_stderr(message: &str) {
     }
 
     match classify_native_stderr(message) {
-        NativeStderrLevel::Debug => debug(NATIVE_STDERR_TARGET, message),
-        NativeStderrLevel::Error => error(NATIVE_STDERR_TARGET, message),
+        Level::Debug => debug(NATIVE_STDERR_TARGET, message),
+        Level::Error => error(NATIVE_STDERR_TARGET, message),
     }
 }
 
@@ -389,36 +382,17 @@ fn format_log_timestamp(timestamp_millis: u128) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+    use std::fs;
 
     use super::{
-        FileLogger, Level, LogTail, MAX_LOG_TAIL_BYTES, MAX_LOG_TAIL_LINES, NativeStderrLevel,
-        classify_native_stderr,
+        FileLogger, Level, LogTail, MAX_LOG_TAIL_BYTES, MAX_LOG_TAIL_LINES, classify_native_stderr,
     };
-
-    static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
-
-    fn temp_path(name: &str) -> PathBuf {
-        let unique = NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "concord-logging-{}-{unique}-{name}",
-            std::process::id()
-        ))
-    }
-
-    fn remove_temp(path: &PathBuf) {
-        let _ = fs::remove_file(path);
-        let _ = fs::remove_dir(path);
-    }
 
     #[test]
     fn process_log_tail_captures_only_its_own_output_with_the_file_log_level_policy() {
         for debug_enabled in [false, true] {
-            let path = temp_path("write.log");
+            let directory = tempfile::tempdir().expect("temporary log directory should be created");
+            let path = directory.path().join("write.log");
             let previous = "previous process log\n";
             fs::write(&path, previous).expect("write previous process log");
             let logger = FileLogger {
@@ -464,26 +438,16 @@ mod tests {
                 lines,
                 "other writers cannot enter the buffer"
             );
-            remove_temp(&path);
         }
     }
 
     #[test]
     fn native_stderr_levels_follow_debug_and_error_policy() {
         for (message, expected) in [
-            (
-                "libva info: VA-API version 1.23.0",
-                NativeStderrLevel::Debug,
-            ),
-            (
-                "warning: optional encoder unavailable",
-                NativeStderrLevel::Debug,
-            ),
-            (
-                "libva error: driver initialization failed",
-                NativeStderrLevel::Error,
-            ),
-            ("unclassified native failure", NativeStderrLevel::Error),
+            ("libva info: VA-API version 1.23.0", Level::Debug),
+            ("warning: optional encoder unavailable", Level::Debug),
+            ("libva error: driver initialization failed", Level::Error),
+            ("unclassified native failure", Level::Error),
         ] {
             assert_eq!(classify_native_stderr(message), expected, "{message}");
         }
@@ -540,7 +504,8 @@ mod tests {
 
     #[test]
     fn process_log_tail_survives_file_changes_and_write_failures() {
-        let path = temp_path("updates.log");
+        let directory = tempfile::tempdir().expect("temporary log directory should be created");
+        let path = directory.path().join("updates.log");
         let logger = FileLogger {
             path: Some(path.clone()),
             ..Default::default()
@@ -557,8 +522,6 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0], initial[0]);
         assert!(lines[1].text.ends_with("still visible"));
-        remove_temp(&path);
-
         let logger = FileLogger::default();
         logger.record(Level::Error, "media", "no log path");
         assert_eq!(logger.recent_lines().len(), 1);

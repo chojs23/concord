@@ -48,6 +48,10 @@ use windows::{
 
 use super::{
     CaptureFrame, CaptureFrameBufferPool, CaptureOutput, capture_copy_dimensions,
+    conversion::{
+        CaptureColorInfo, CapturePixelFormat, CapturePlane, convert_capture_frame,
+        packed_plane_buffer_length,
+    },
     send_capture_result,
 };
 use crate::discord::voice::{StreamCaptureTarget, StreamCaptureTargetKind};
@@ -504,32 +508,39 @@ fn copy_mapped_bgra(
     height: u32,
     buffer_pool: &CaptureFrameBufferPool,
 ) -> Result<Vec<u8>, String> {
-    if mapped.pData.is_null() || mapped.RowPitch < width.saturating_mul(4) {
+    if mapped.pData.is_null() {
         return Err("WGC returned invalid mapped texture data".to_owned());
     }
     let row_length = usize::try_from(width)
         .ok()
         .and_then(|width| width.checked_mul(4))
         .ok_or_else(|| "WGC frame row size overflowed".to_owned())?;
+    let height = usize::try_from(height).map_err(|_| "WGC frame height is too large".to_owned())?;
+    let row_pitch = usize::try_from(mapped.RowPitch)
+        .map_err(|_| "WGC mapped texture stride is too large".to_owned())?;
+    let readable_length = packed_plane_buffer_length(row_length, row_pitch, height)
+        .map_err(|error| format!("WGC returned invalid mapped texture data: {error}"))?;
     let output_length = row_length
-        .checked_mul(height as usize)
+        .checked_mul(height)
         .ok_or_else(|| "WGC frame size overflowed".to_owned())?;
     let mut rgba = buffer_pool.take(output_length);
-    let source = mapped.pData.cast::<u8>();
-    for row in 0..height as usize {
-        let source = unsafe {
-            slice::from_raw_parts(source.add(row * mapped.RowPitch as usize), row_length)
-        };
-        let destination = &mut rgba[row * row_length..(row + 1) * row_length];
-        for (bgra, rgba) in source
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(destination.as_chunks_mut::<4>().0)
-        {
-            rgba.copy_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]);
-        }
-    }
+    // SAFETY: Map keeps these pixel rows readable until Unmap. The checked span
+    // ends at the last pixel and does not assume the final row's padding is mapped.
+    let source = unsafe { slice::from_raw_parts(mapped.pData.cast::<u8>(), readable_length) };
+    let stride = isize::try_from(row_pitch)
+        .map_err(|_| "WGC mapped texture stride is too large".to_owned())?;
+    convert_capture_frame(
+        &[CapturePlane {
+            bytes: source,
+            offset: 0,
+            stride,
+        }],
+        width,
+        u32::try_from(height).expect("height originated as u32"),
+        CapturePixelFormat::Bgra,
+        CaptureColorInfo::default(),
+        &mut rgba,
+    )?;
     Ok(rgba)
 }
 

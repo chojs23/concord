@@ -77,17 +77,25 @@ pub(super) fn avatar_preview_url(url: &str, width_columns: u16, height_rows: u16
     }
 
     let size = avatar_preview_size(width_columns, height_rows);
+    replace_url_query(url, &["size"], [format!("size={size}")])
+}
+
+pub(super) fn replace_url_query(
+    url: &str,
+    replaced_keys: &[&str],
+    replacements: impl IntoIterator<Item = String>,
+) -> String {
     let (base, query) = url.split_once('?').unwrap_or((url, ""));
-    let mut params = query
+    let params = query
         .split('&')
         .filter(|param| !param.is_empty())
         .filter(|param| {
             let key = param.split_once('=').map_or(*param, |(key, _)| key);
-            key != "size"
+            !replaced_keys.contains(&key)
         })
         .map(str::to_owned)
+        .chain(replacements)
         .collect::<Vec<_>>();
-    params.push(format!("size={size}"));
 
     format!("{base}?{}", params.join("&"))
 }

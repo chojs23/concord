@@ -8,11 +8,44 @@ use super::{
     ActiveModalPopupKind, ModalPopup, OptionsCategory, OptionsPopupState, SelectablePopupTarget,
 };
 
-const DISPLAY_OPTION_COUNT: usize = 10;
+const DISPLAY_OPTION_COUNT: usize = DisplayOption::ALL.len();
 const COMPOSER_OPTION_COUNT: usize = 1;
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = VoiceOption::ALL.len();
 const OPTION_CATEGORY_COUNT: usize = 4;
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DisplayOption {
+    DisableImagePreview,
+    ShowAvatars,
+    ShowImages,
+    ImagePreviewQuality,
+    AttachmentViewerQuality,
+    ShowCustomEmoji,
+    CircularAvatars,
+    MediaPlayback,
+    HourFormat24,
+    AnimatePreviews,
+}
+
+impl DisplayOption {
+    const ALL: [Self; 10] = [
+        Self::DisableImagePreview,
+        Self::ShowAvatars,
+        Self::ShowImages,
+        Self::ImagePreviewQuality,
+        Self::AttachmentViewerQuality,
+        Self::ShowCustomEmoji,
+        Self::CircularAvatars,
+        Self::MediaPlayback,
+        Self::HourFormat24,
+        Self::AnimatePreviews,
+    ];
+
+    fn at(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+}
 
 /// A row of the voice options popup.
 ///
@@ -212,9 +245,16 @@ impl DashboardState {
     }
 
     fn display_option_items_for_display(&self) -> Vec<DisplayOptionItem> {
+        DisplayOption::ALL
+            .iter()
+            .map(|option| self.display_option_item(*option))
+            .collect()
+    }
+
+    fn display_option_item(&self, option: DisplayOption) -> DisplayOptionItem {
         let options = self.options.display_options;
-        vec![
-            DisplayOptionItem {
+        match option {
+            DisplayOption::DisableImagePreview => DisplayOptionItem {
                 label: "Disable all image previews",
                 enabled: options.disable_image_preview,
                 value: None,
@@ -222,7 +262,7 @@ impl DashboardState {
                 effective: options.disable_image_preview,
                 description: "Master switch for avatars, images, and custom emoji images.",
             },
-            DisplayOptionItem {
+            DisplayOption::ShowAvatars => DisplayOptionItem {
                 label: "Show avatars",
                 enabled: options.show_avatars,
                 value: None,
@@ -230,7 +270,7 @@ impl DashboardState {
                 effective: options.avatars_visible(),
                 description: "Message and profile avatars.",
             },
-            DisplayOptionItem {
+            DisplayOption::ShowImages => DisplayOptionItem {
                 label: "Show images",
                 enabled: options.show_images,
                 value: None,
@@ -238,7 +278,7 @@ impl DashboardState {
                 effective: options.images_visible(),
                 description: "Attachment, embed, and attachment viewer previews.",
             },
-            DisplayOptionItem {
+            DisplayOption::ImagePreviewQuality => DisplayOptionItem {
                 label: "Image preview quality",
                 enabled: true,
                 value: Some(options.image_preview_quality.label().to_owned()),
@@ -246,7 +286,7 @@ impl DashboardState {
                 effective: options.images_visible(),
                 description: "Quality preset for attachment and embed.",
             },
-            DisplayOptionItem {
+            DisplayOption::AttachmentViewerQuality => DisplayOptionItem {
                 label: "Attachment viewer quality",
                 enabled: true,
                 value: Some(options.attachment_viewer_quality.label().to_owned()),
@@ -254,7 +294,7 @@ impl DashboardState {
                 effective: options.images_visible(),
                 description: "Quality preset for attachment viewer previews.",
             },
-            DisplayOptionItem {
+            DisplayOption::ShowCustomEmoji => DisplayOptionItem {
                 label: "Show custom emoji images",
                 enabled: options.show_custom_emoji,
                 value: None,
@@ -262,7 +302,7 @@ impl DashboardState {
                 effective: options.custom_emoji_visible(),
                 description: "When off, custom emoji are shown as their emoji id.",
             },
-            DisplayOptionItem {
+            DisplayOption::CircularAvatars => DisplayOptionItem {
                 label: "Circular avatars",
                 enabled: options.circular_avatars,
                 value: None,
@@ -270,7 +310,7 @@ impl DashboardState {
                 effective: options.avatars_visible() && options.circular_avatars,
                 description: "Mask message and profile avatars into a circle.",
             },
-            DisplayOptionItem {
+            DisplayOption::MediaPlayback => DisplayOptionItem {
                 label: "Media playback",
                 enabled: options.media_playback,
                 value: None,
@@ -278,7 +318,7 @@ impl DashboardState {
                 effective: options.media_playback_enabled(),
                 description: "Allow videos to open in the external media player.",
             },
-            DisplayOptionItem {
+            DisplayOption::HourFormat24 => DisplayOptionItem {
                 label: "24-hour time",
                 enabled: options.hour_format_24,
                 value: None,
@@ -286,7 +326,7 @@ impl DashboardState {
                 effective: options.hour_format_24,
                 description: "Use 24-hour time for message timestamps.",
             },
-            DisplayOptionItem {
+            DisplayOption::AnimatePreviews => DisplayOptionItem {
                 label: "Animate previews",
                 enabled: options.animate_previews != AnimatePreviews::Never,
                 value: Some(options.animate_previews.label().to_owned()),
@@ -295,7 +335,7 @@ impl DashboardState {
                     && options.animate_previews != AnimatePreviews::Never,
                 description: "Animated GIF and WebP previews: always, selected message only, or never.",
             },
-        ]
+        }
     }
 
     fn display_option_items_for_composer(&self) -> Vec<DisplayOptionItem> {
@@ -471,54 +511,18 @@ impl DashboardState {
 
         let images_visible_before = self.show_images();
 
-        match (category, selected) {
-            (OptionsCategory::Display, 0) => {
-                self.options.display_options.disable_image_preview =
-                    !self.options.display_options.disable_image_preview
+        match category {
+            OptionsCategory::Display => {
+                let Some(option) = DisplayOption::at(selected) else {
+                    return;
+                };
+                self.toggle_display_option(option);
             }
-            (OptionsCategory::Display, 1) => {
-                self.options.display_options.show_avatars =
-                    !self.options.display_options.show_avatars
-            }
-            (OptionsCategory::Display, 2) => {
-                self.options.display_options.show_images = !self.options.display_options.show_images
-            }
-            (OptionsCategory::Display, 3) => {
-                self.options.display_options.image_preview_quality =
-                    self.options.display_options.image_preview_quality.next()
-            }
-            (OptionsCategory::Display, 4) => {
-                self.options.display_options.attachment_viewer_quality = self
-                    .options
-                    .display_options
-                    .attachment_viewer_quality
-                    .next()
-            }
-            (OptionsCategory::Display, 5) => {
-                self.options.display_options.show_custom_emoji =
-                    !self.options.display_options.show_custom_emoji
-            }
-            (OptionsCategory::Display, 6) => {
-                self.options.display_options.circular_avatars =
-                    !self.options.display_options.circular_avatars
-            }
-            (OptionsCategory::Display, 7) => {
-                self.options.display_options.media_playback =
-                    !self.options.display_options.media_playback
-            }
-            (OptionsCategory::Display, 8) => {
-                self.options.display_options.hour_format_24 =
-                    !self.options.display_options.hour_format_24
-            }
-            (OptionsCategory::Display, 9) => {
-                self.options.display_options.animate_previews =
-                    self.options.display_options.animate_previews.next()
-            }
-            (OptionsCategory::Composer, 0) => {
+            OptionsCategory::Composer if selected == 0 => {
                 self.options.composer_options.emojis_as_links =
                     !self.options.composer_options.emojis_as_links
             }
-            (OptionsCategory::Notifications, 0) => {
+            OptionsCategory::Notifications if selected == 0 => {
                 self.options.notification_options.desktop_notifications =
                     !self.options.notification_options.desktop_notifications
             }
@@ -528,6 +532,32 @@ impl DashboardState {
             self.refresh_composer_attachment_previews();
         }
         self.mark_options_changed();
+    }
+
+    fn toggle_display_option(&mut self, option: DisplayOption) {
+        let options = &mut self.options.display_options;
+        match option {
+            DisplayOption::DisableImagePreview => {
+                options.disable_image_preview = !options.disable_image_preview
+            }
+            DisplayOption::ShowAvatars => options.show_avatars = !options.show_avatars,
+            DisplayOption::ShowImages => options.show_images = !options.show_images,
+            DisplayOption::ImagePreviewQuality => {
+                options.image_preview_quality = options.image_preview_quality.next()
+            }
+            DisplayOption::AttachmentViewerQuality => {
+                options.attachment_viewer_quality = options.attachment_viewer_quality.next()
+            }
+            DisplayOption::ShowCustomEmoji => {
+                options.show_custom_emoji = !options.show_custom_emoji
+            }
+            DisplayOption::CircularAvatars => options.circular_avatars = !options.circular_avatars,
+            DisplayOption::MediaPlayback => options.media_playback = !options.media_playback,
+            DisplayOption::HourFormat24 => options.hour_format_24 = !options.hour_format_24,
+            DisplayOption::AnimatePreviews => {
+                options.animate_previews = options.animate_previews.next()
+            }
+        }
     }
 
     /// Enter on a voice row. Toggles boolean rows and steps the cycled source

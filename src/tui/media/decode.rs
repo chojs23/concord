@@ -896,7 +896,11 @@ fn decode_animation_frames_with_limits(
 fn first_sampled_frame_fallback(
     frames: Vec<SampledAnimationFrame>,
 ) -> std::result::Result<DecodedMediaImage, String> {
-    first_frame_fallback(frames.into_iter().map(|sample| sample.frame).collect())
+    frames
+        .into_iter()
+        .next()
+        .map(|sample| DecodedMediaImage::still(Arc::unwrap_or_clone(sample.frame.image)))
+        .ok_or_else(|| "decode failed: animated image has no frames".to_owned())
 }
 
 fn finish_sampled_animation(

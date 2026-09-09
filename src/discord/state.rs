@@ -733,11 +733,8 @@ impl DiscordState {
                     });
                 }
             }
-            AppEvent::GuildMemberAdd { guild_id, member } => {
-                self.upsert_guild_member(*guild_id, member);
-                self.refresh_message_author_display_name(*guild_id, member);
-            }
-            AppEvent::GuildMemberUpsert { guild_id, member } => {
+            AppEvent::GuildMemberAdd { guild_id, member }
+            | AppEvent::GuildMemberUpsert { guild_id, member } => {
                 self.upsert_guild_member(*guild_id, member);
                 self.refresh_message_author_display_name(*guild_id, member);
             }
@@ -927,27 +924,7 @@ impl DiscordState {
                         if user.avatar_url.is_some() || member.avatar_url.is_none() {
                             member.avatar_url = user.avatar_url.clone();
                         }
-                        refreshed_members.push((
-                            *guild_id,
-                            MemberInfo {
-                                user_id: member.user_id,
-                                display_name: member.display_name.clone(),
-                                username: member.username.clone(),
-                                nickname: member.nickname.clone(),
-                                nickname_present: false,
-                                is_bot: member.is_bot,
-                                is_bot_present: true,
-                                avatar_url: member.avatar_url.clone(),
-                                avatar_url_present: true,
-                                role_ids: member.role_ids.clone(),
-                                role_ids_present: member.role_ids_known,
-                                joined_at: member.joined_at,
-                                flags: member.flags,
-                                pending: member.pending,
-                                communication_disabled_until: member.communication_disabled_until,
-                                communication_disabled_until_present: false,
-                            },
-                        ));
+                        refreshed_members.push((*guild_id, cached_member_info(member)));
                     }
                 }
                 for (guild_id, member) in refreshed_members {
@@ -1807,17 +1784,14 @@ impl DiscordState {
     }
 
     fn advance_read_state_version(&mut self, version: i64) {
-        let current = &mut self.notifications_mut().read_state_version;
-        if current.is_none_or(|current| version > current) {
-            *current = Some(version);
-        }
+        advance_optional_version(&mut self.notifications_mut().read_state_version, version);
     }
 
     fn advance_user_guild_settings_version(&mut self, version: i64) {
-        let current = &mut self.notifications_mut().user_guild_settings_version;
-        if current.is_none_or(|current| version > current) {
-            *current = Some(version);
-        }
+        advance_optional_version(
+            &mut self.notifications_mut().user_guild_settings_version,
+            version,
+        );
     }
 
     pub(in crate::discord) fn private_user_display_name(
@@ -2043,27 +2017,7 @@ impl DiscordState {
             {
                 member.display_name = display_name.clone();
             }
-            refreshed_members.push((
-                *guild_id,
-                MemberInfo {
-                    user_id: member.user_id,
-                    display_name: member.display_name.clone(),
-                    username: member.username.clone(),
-                    nickname: member.nickname.clone(),
-                    nickname_present: false,
-                    is_bot: member.is_bot,
-                    is_bot_present: true,
-                    avatar_url: member.avatar_url.clone(),
-                    avatar_url_present: true,
-                    role_ids: member.role_ids.clone(),
-                    role_ids_present: member.role_ids_known,
-                    joined_at: member.joined_at,
-                    flags: member.flags,
-                    pending: member.pending,
-                    communication_disabled_until: member.communication_disabled_until,
-                    communication_disabled_until_present: false,
-                },
-            ));
+            refreshed_members.push((*guild_id, cached_member_info(member)));
         }
         for (guild_id, member) in refreshed_members {
             self.refresh_message_author_display_name(guild_id, &member);
@@ -2116,6 +2070,33 @@ impl DiscordState {
                 member.status = status;
             }
         }
+    }
+}
+
+fn advance_optional_version(current: &mut Option<i64>, version: i64) {
+    if current.is_none_or(|current| version > current) {
+        *current = Some(version);
+    }
+}
+
+fn cached_member_info(member: &GuildMemberState) -> MemberInfo {
+    MemberInfo {
+        user_id: member.user_id,
+        display_name: member.display_name.clone(),
+        username: member.username.clone(),
+        nickname: member.nickname.clone(),
+        nickname_present: false,
+        is_bot: member.is_bot,
+        is_bot_present: true,
+        avatar_url: member.avatar_url.clone(),
+        avatar_url_present: true,
+        role_ids: member.role_ids.clone(),
+        role_ids_present: member.role_ids_known,
+        joined_at: member.joined_at,
+        flags: member.flags,
+        pending: member.pending,
+        communication_disabled_until: member.communication_disabled_until,
+        communication_disabled_until_present: false,
     }
 }
 

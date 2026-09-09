@@ -8,13 +8,15 @@ use crate::discord::{
     events::{AppEvent, PresenceEventFields},
     ids::{
         Id,
-        marker::{GuildMarker, RoleMarker, UserMarker},
+        marker::{GuildMarker, UserMarker},
     },
 };
 
 use super::{
     presence::{parse_activities, parse_presence_entry},
-    shared::{display_name_from_parts_or_unknown, extra_fields, parse_id, parse_status},
+    shared::{
+        display_name_from_parts_or_unknown, extra_fields, parse_id, parse_id_array, parse_status,
+    },
 };
 
 pub(super) fn parse_member_upsert(data: &Value) -> Option<AppEvent> {
@@ -165,13 +167,6 @@ fn clone_array(value: Option<&Value>) -> Vec<Value> {
     value
         .and_then(Value::as_array)
         .map(|values| values.to_vec())
-        .unwrap_or_default()
-}
-
-fn parse_id_array<T>(value: Option<&Value>) -> Vec<Id<T>> {
-    value
-        .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(parse_id::<T>).collect())
         .unwrap_or_default()
 }
 
@@ -330,11 +325,7 @@ pub(crate) fn parse_member_info(
         is_bot_present,
         avatar_url: member_avatar_url(guild_id, user_id, Some(value), user),
         avatar_url_present,
-        role_ids: value
-            .get("roles")
-            .and_then(Value::as_array)
-            .map(|roles| roles.iter().filter_map(parse_id::<RoleMarker>).collect())
-            .unwrap_or_default(),
+        role_ids: parse_id_array(value.get("roles")),
         role_ids_present,
         joined_at: value
             .get("joined_at")

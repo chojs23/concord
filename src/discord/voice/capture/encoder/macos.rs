@@ -251,7 +251,6 @@ fn configure_session(
 
 fn validate_discord_h264_profile(annex_b: &[u8]) -> Result<(), String> {
     let sps = crate::discord::voice::media::annex_b_nals(annex_b)
-        .into_iter()
         .find(|nal| nal.first().is_some_and(|header| header & 0x1f == 7))
         .ok_or_else(|| "VideoToolbox startup keyframe did not contain an SPS".to_owned())?;
     if sps.len() < 4 {
@@ -663,15 +662,17 @@ mod tests {
             .encode(frame, false)
             .expect("VideoToolbox should encode the first production frame")
             .expect("VideoToolbox should return the completed first frame");
-        let nal_types: Vec<u8> = crate::discord::voice::media::annex_b_nals(&encoded.annex_b)
-            .into_iter()
-            .filter_map(|nal| nal.first().map(|header| header & 0x1f))
-            .collect();
         assert!(encoded.is_keyframe);
-        assert!(nal_types.contains(&7), "IDR output should contain SPS");
-        assert!(nal_types.contains(&8), "IDR output should contain PPS");
         assert!(
-            nal_types.contains(&5),
+            super::super::annex_b_contains_nal_type(&encoded.annex_b, 7),
+            "IDR output should contain SPS"
+        );
+        assert!(
+            super::super::annex_b_contains_nal_type(&encoded.annex_b, 8),
+            "IDR output should contain PPS"
+        );
+        assert!(
+            super::super::annex_b_contains_nal_type(&encoded.annex_b, 5),
             "first frame should contain an IDR NAL"
         );
         validate_discord_h264_profile(&encoded.annex_b)

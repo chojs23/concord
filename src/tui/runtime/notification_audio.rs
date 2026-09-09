@@ -253,60 +253,40 @@ fn notification_play_duration(total_output_frames: usize, output_sample_rate: u3
 
 #[cfg(any(test, feature = "voice-playback"))]
 fn generated_voice_sound(kind: VoiceSoundKind) -> NotificationAudio {
-    let frame_count = (GENERATED_VOICE_SOUND_SAMPLE_RATE as f32
-        * GENERATED_VOICE_SOUND_DURATION.as_secs_f32()) as usize;
-    let mut samples = Vec::with_capacity(frame_count * usize::from(GENERATED_VOICE_SOUND_CHANNELS));
-    for frame in 0..frame_count {
-        let progress = frame as f32 / frame_count.max(1) as f32;
-        let frequency = generated_voice_sound_frequency(kind, progress);
-        let phase = frame as f32 * frequency * std::f32::consts::TAU
-            / GENERATED_VOICE_SOUND_SAMPLE_RATE as f32;
-        let envelope = generated_voice_sound_envelope(progress);
-        let sample = phase.sin() * 0.18 * envelope;
-        samples.push(sample);
-        samples.push(sample);
-    }
-    NotificationAudio {
-        sample_rate: GENERATED_VOICE_SOUND_SAMPLE_RATE,
-        channels: GENERATED_VOICE_SOUND_CHANNELS,
-        samples,
-    }
+    generated_stereo_tone(GENERATED_VOICE_SOUND_DURATION, 0.18, |progress| {
+        generated_voice_sound_frequency(kind, progress)
+    })
 }
 
 #[cfg(any(test, feature = "voice-playback"))]
 fn generated_notification_sound() -> NotificationAudio {
-    let frame_count = (GENERATED_VOICE_SOUND_SAMPLE_RATE as f32
-        * GENERATED_NOTIFICATION_SOUND_DURATION.as_secs_f32()) as usize;
-    let mut samples = Vec::with_capacity(frame_count * usize::from(GENERATED_VOICE_SOUND_CHANNELS));
-    for frame in 0..frame_count {
-        let progress = frame as f32 / frame_count.max(1) as f32;
-        let frequency = generated_notification_sound_frequency(progress);
-        let phase = frame as f32 * frequency * std::f32::consts::TAU
-            / GENERATED_VOICE_SOUND_SAMPLE_RATE as f32;
-        let envelope = generated_voice_sound_envelope(progress);
-        let sample = phase.sin() * 0.16 * envelope;
-        samples.push(sample);
-        samples.push(sample);
-    }
-    NotificationAudio {
-        sample_rate: GENERATED_VOICE_SOUND_SAMPLE_RATE,
-        channels: GENERATED_VOICE_SOUND_CHANNELS,
-        samples,
-    }
+    generated_stereo_tone(
+        GENERATED_NOTIFICATION_SOUND_DURATION,
+        0.16,
+        generated_notification_sound_frequency,
+    )
 }
 
 #[cfg(any(test, feature = "voice-playback"))]
 fn generated_push_to_talk_sound(pressed: bool) -> NotificationAudio {
-    let frame_count = (GENERATED_VOICE_SOUND_SAMPLE_RATE as f32
-        * GENERATED_PUSH_TO_TALK_SOUND_DURATION.as_secs_f32()) as usize;
     let frequency = if pressed { 1046.5 } else { 698.5 };
+    generated_stereo_tone(GENERATED_PUSH_TO_TALK_SOUND_DURATION, 0.13, |_| frequency)
+}
+
+#[cfg(any(test, feature = "voice-playback"))]
+fn generated_stereo_tone(
+    duration: Duration,
+    amplitude: f32,
+    frequency: impl Fn(f32) -> f32,
+) -> NotificationAudio {
+    let frame_count = (GENERATED_VOICE_SOUND_SAMPLE_RATE as f32 * duration.as_secs_f32()) as usize;
     let mut samples = Vec::with_capacity(frame_count * usize::from(GENERATED_VOICE_SOUND_CHANNELS));
     for frame in 0..frame_count {
         let progress = frame as f32 / frame_count.max(1) as f32;
-        let phase = frame as f32 * frequency * std::f32::consts::TAU
+        let phase = frame as f32 * frequency(progress) * std::f32::consts::TAU
             / GENERATED_VOICE_SOUND_SAMPLE_RATE as f32;
         let envelope = generated_voice_sound_envelope(progress);
-        let sample = phase.sin() * 0.13 * envelope;
+        let sample = phase.sin() * amplitude * envelope;
         samples.push(sample);
         samples.push(sample);
     }

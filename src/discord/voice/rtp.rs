@@ -14,6 +14,67 @@ use super::{
 const RTCP_FEEDBACK_AUTHENTICATED_HEADER_BYTES: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RtcpPacketError {
+    TruncatedHeader,
+    InvalidVersion,
+    LengthExceedsData,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct RtcpPacket<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> RtcpPacket<'a> {
+    pub(super) fn bytes(self) -> &'a [u8] {
+        self.bytes
+    }
+
+    pub(super) fn packet_type(self) -> u8 {
+        self.bytes[1]
+    }
+}
+
+pub(super) struct RtcpPackets<'a> {
+    remaining: &'a [u8],
+}
+
+impl<'a> RtcpPackets<'a> {
+    pub(super) fn new(packet: &'a [u8]) -> Self {
+        Self { remaining: packet }
+    }
+}
+
+impl<'a> Iterator for RtcpPackets<'a> {
+    type Item = Result<RtcpPacket<'a>, RtcpPacketError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining.is_empty() {
+            return None;
+        }
+        if self.remaining.len() < RTCP_MIN_PACKET_BYTES {
+            self.remaining = &[];
+            return Some(Err(RtcpPacketError::TruncatedHeader));
+        }
+        if self.remaining[0] >> 6 != RTP_VERSION {
+            self.remaining = &[];
+            return Some(Err(RtcpPacketError::InvalidVersion));
+        }
+
+        let packet_len =
+            (usize::from(u16::from_be_bytes([self.remaining[2], self.remaining[3]])) + 1) * 4;
+        if packet_len > self.remaining.len() {
+            self.remaining = &[];
+            return Some(Err(RtcpPacketError::LengthExceedsData));
+        }
+
+        let (packet, remaining) = self.remaining.split_at(packet_len);
+        self.remaining = remaining;
+        Some(Ok(RtcpPacket { bytes: packet }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RtpHeader {
     pub(super) has_padding: bool,
     pub(super) marker: bool,
@@ -427,26 +488,17 @@ fn validate_rtcp_compound_packet(packet: &[u8]) -> Result<(), String> {
         return Err("RTCP packet is empty".to_owned());
     }
 
-    // Each packet in a compound RTCP datagram declares only its own length.
-    // The datagram is valid when every subpacket ends at the next boundary.
-    let mut offset = 0usize;
-    while offset < packet.len() {
-        let remaining = &packet[offset..];
-        if remaining.len() < RTCP_MIN_PACKET_BYTES {
-            return Err("RTCP packet is shorter than its header".to_owned());
-        }
-        if remaining[0] >> 6 != RTP_VERSION {
-            return Err("RTCP packet has unsupported version".to_owned());
-        }
-        if !(192..=223).contains(&remaining[1]) {
+    for packet in RtcpPackets::new(packet) {
+        let packet = packet.map_err(|error| match error {
+            RtcpPacketError::TruncatedHeader => "RTCP packet is shorter than its header".to_owned(),
+            RtcpPacketError::InvalidVersion => "RTCP packet has unsupported version".to_owned(),
+            RtcpPacketError::LengthExceedsData => {
+                "RTCP packet length exceeds received data".to_owned()
+            }
+        })?;
+        if !(192..=223).contains(&packet.packet_type()) {
             return Err("RTCP packet has invalid packet type".to_owned());
         }
-
-        let packet_len = (usize::from(u16::from_be_bytes([remaining[2], remaining[3]])) + 1) * 4;
-        if packet_len > remaining.len() {
-            return Err("RTCP packet length exceeds received data".to_owned());
-        }
-        offset += packet_len;
     }
 
     Ok(())
@@ -469,22 +521,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compound_rtcp_validation_rejects_malformed_subpackets() {
+    fn compound_rtcp_validation_preserves_feedback_packet_policy() {
         let valid_pli = [0x81, 206, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2];
+        let with_trailing = |suffix: &[u8]| {
+            let mut packet = valid_pli.to_vec();
+            packet.extend_from_slice(suffix);
+            packet
+        };
         let cases = [
-            ("truncated header", vec![0x80, 206, 0]),
-            ("unsupported version", vec![0x40, 206, 0, 0]),
-            ("invalid packet type", vec![0x80, 100, 0, 0]),
-            ("truncated body", vec![0x80, 206, 0, 2]),
+            ("empty", Vec::new(), Some("RTCP packet is empty")),
+            ("valid", valid_pli.to_vec(), None),
+            (
+                "truncated first header",
+                vec![0x80, 206, 0],
+                Some("RTCP packet is shorter than its header"),
+            ),
+            (
+                "truncated trailing header",
+                with_trailing(&[0x80, 206, 0]),
+                Some("RTCP packet is shorter than its header"),
+            ),
+            (
+                "unsupported first version",
+                vec![0x40, 206, 0, 0],
+                Some("RTCP packet has unsupported version"),
+            ),
+            (
+                "unsupported trailing version",
+                with_trailing(&[0x40, 206, 0, 0]),
+                Some("RTCP packet has unsupported version"),
+            ),
+            (
+                "invalid first packet type",
+                vec![0x80, 100, 0, 0],
+                Some("RTCP packet has invalid packet type"),
+            ),
+            (
+                "invalid trailing packet type",
+                with_trailing(&[0x80, 100, 0, 0]),
+                Some("RTCP packet has invalid packet type"),
+            ),
+            (
+                "first length exceeds data",
+                vec![0x80, 206, 0, 2],
+                Some("RTCP packet length exceeds received data"),
+            ),
+            (
+                "trailing length exceeds data",
+                with_trailing(&[0x80, 206, 0, 2]),
+                Some("RTCP packet length exceeds received data"),
+            ),
         ];
 
-        for (case, suffix) in cases {
-            let mut packet = valid_pli.to_vec();
-            packet.extend_from_slice(&suffix);
-
-            assert!(
-                validate_rtcp_compound_packet(&packet).is_err(),
-                "{case} should be rejected"
+        for (case, packet, expected_error) in cases {
+            assert_eq!(
+                validate_rtcp_compound_packet(&packet).err().as_deref(),
+                expected_error,
+                "{case}"
             );
         }
     }

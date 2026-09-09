@@ -127,7 +127,6 @@ fn composer_lines_show_saved_draft_when_not_composing() {
 
     state.close_composer();
 
-    assert_eq!(composer_text(&state, 80), "> draft");
     assert_eq!(
         line_texts_from_ratatui(&composer_lines(&state, 80)),
         vec!["> draft"]
@@ -217,7 +216,7 @@ fn message_history_statuses_override_a_saved_draft() {
 }
 
 #[test]
-fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
+fn reply_composer_hint_line_shows_dim_excerpt_and_semantic_ping_indicator() {
     let mut state = state_with_message();
     state.direct_reply_to_selected_message();
     push_message(&mut state, 2, "newer selected message");
@@ -228,14 +227,6 @@ fn reply_composer_text_uses_original_reply_target_after_selection_changes() {
             .and_then(|message| message.content.as_deref()),
         Some("newer selected message")
     );
-
-    assert_eq!(composer_text(&state, 80), "reply to hello  @ on\n> ");
-}
-
-#[test]
-fn reply_composer_hint_line_shows_dim_excerpt_and_semantic_ping_indicator() {
-    let mut state = state_with_message();
-    state.direct_reply_to_selected_message();
 
     let lines = composer_lines(&state, 80);
 
@@ -385,7 +376,12 @@ fn composer_lines_show_pending_upload_rows_above_input() {
     let mut processing = state_with_message();
     processing.start_composer();
 
-    assert!(processing.begin_clipboard_paste());
+    processing.request_paste_clipboard();
+    let request_id = processing
+        .take_paste_clipboard_request()
+        .expect("clipboard paste request");
+    assert!(processing.start_clipboard_paste(request_id));
+    assert!(processing.begin_clipboard_paste(request_id));
 
     let processing_lines = composer_lines(&processing, 80);
 

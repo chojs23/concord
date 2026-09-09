@@ -298,10 +298,34 @@ pub(super) fn build_voice_input_stream(
     samples_tx: Option<mpsc::Sender<VoiceMicrophoneFrame>>,
 ) -> Result<cpal::Stream, String> {
     match sample_format {
-        cpal::SampleFormat::F32 => build_voice_input_stream_f32(device, config, stats, samples_tx),
-        cpal::SampleFormat::U8 => build_voice_input_stream_u8(device, config, stats, samples_tx),
-        cpal::SampleFormat::I16 => build_voice_input_stream_i16(device, config, stats, samples_tx),
-        cpal::SampleFormat::U16 => build_voice_input_stream_u16(device, config, stats, samples_tx),
+        cpal::SampleFormat::F32 => build_typed_voice_input_stream(
+            device,
+            config,
+            stats,
+            samples_tx,
+            voice_input_f32_to_stereo_i16,
+        ),
+        cpal::SampleFormat::U8 => build_typed_voice_input_stream(
+            device,
+            config,
+            stats,
+            samples_tx,
+            voice_input_u8_to_stereo_i16,
+        ),
+        cpal::SampleFormat::I16 => build_typed_voice_input_stream(
+            device,
+            config,
+            stats,
+            samples_tx,
+            voice_input_i16_to_stereo_i16,
+        ),
+        cpal::SampleFormat::U16 => build_typed_voice_input_stream(
+            device,
+            config,
+            stats,
+            samples_tx,
+            voice_input_u16_to_stereo_i16,
+        ),
         other => Err(format!(
             "unsupported voice microphone input sample format: {other:?}"
         )),
@@ -309,11 +333,12 @@ pub(super) fn build_voice_input_stream(
 }
 
 #[cfg(feature = "voice-playback")]
-pub(super) fn build_voice_input_stream_f32(
+fn build_typed_voice_input_stream<T: cpal::SizedSample + 'static>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     stats: Arc<VoiceMicrophoneCaptureStats>,
     samples_tx: Option<mpsc::Sender<VoiceMicrophoneFrame>>,
+    convert: fn(&[T], usize) -> Vec<i16>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels);
     let pcm_frames = samples_tx.map(|tx| {
@@ -326,114 +351,12 @@ pub(super) fn build_voice_input_stream_f32(
     device
         .build_input_stream(
             *config,
-            move |input: &[f32], _| {
+            move |input: &[T], _| {
                 record_voice_input_chunk(input.len(), channels, &stats);
                 if let Some(pcm_frames) = pcm_frames.as_ref()
                     && let Ok(mut pcm_frames) = pcm_frames.lock()
                 {
-                    let samples = voice_input_f32_to_stereo_i16(input, channels);
-                    record_voice_input_pcm_stats(&samples, &stats);
-                    pcm_frames.push_stereo_samples(&samples);
-                }
-            },
-            log_voice_input_stream_error,
-            None,
-        )
-        .map_err(|error| format!("voice microphone input stream build failed: {error}"))
-}
-
-#[cfg(feature = "voice-playback")]
-pub(super) fn build_voice_input_stream_i16(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<mpsc::Sender<VoiceMicrophoneFrame>>,
-) -> Result<cpal::Stream, String> {
-    let channels = usize::from(config.channels);
-    let pcm_frames = samples_tx.map(|tx| {
-        Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
-            tx,
-            Arc::clone(&stats),
-            config.sample_rate,
-        )))
-    });
-    device
-        .build_input_stream(
-            *config,
-            move |input: &[i16], _| {
-                record_voice_input_chunk(input.len(), channels, &stats);
-                if let Some(pcm_frames) = pcm_frames.as_ref()
-                    && let Ok(mut pcm_frames) = pcm_frames.lock()
-                {
-                    let samples = voice_input_i16_to_stereo_i16(input, channels);
-                    record_voice_input_pcm_stats(&samples, &stats);
-                    pcm_frames.push_stereo_samples(&samples);
-                }
-            },
-            log_voice_input_stream_error,
-            None,
-        )
-        .map_err(|error| format!("voice microphone input stream build failed: {error}"))
-}
-
-#[cfg(feature = "voice-playback")]
-pub(super) fn build_voice_input_stream_u16(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<mpsc::Sender<VoiceMicrophoneFrame>>,
-) -> Result<cpal::Stream, String> {
-    let channels = usize::from(config.channels);
-    let pcm_frames = samples_tx.map(|tx| {
-        Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
-            tx,
-            Arc::clone(&stats),
-            config.sample_rate,
-        )))
-    });
-    device
-        .build_input_stream(
-            *config,
-            move |input: &[u16], _| {
-                record_voice_input_chunk(input.len(), channels, &stats);
-                if let Some(pcm_frames) = pcm_frames.as_ref()
-                    && let Ok(mut pcm_frames) = pcm_frames.lock()
-                {
-                    let samples = voice_input_u16_to_stereo_i16(input, channels);
-                    record_voice_input_pcm_stats(&samples, &stats);
-                    pcm_frames.push_stereo_samples(&samples);
-                }
-            },
-            log_voice_input_stream_error,
-            None,
-        )
-        .map_err(|error| format!("voice microphone input stream build failed: {error}"))
-}
-
-#[cfg(feature = "voice-playback")]
-pub(super) fn build_voice_input_stream_u8(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    stats: Arc<VoiceMicrophoneCaptureStats>,
-    samples_tx: Option<mpsc::Sender<VoiceMicrophoneFrame>>,
-) -> Result<cpal::Stream, String> {
-    let channels = usize::from(config.channels);
-    let pcm_frames = samples_tx.map(|tx| {
-        Arc::new(StdMutex::new(VoiceMicrophonePcmFrames::new(
-            tx,
-            Arc::clone(&stats),
-            config.sample_rate,
-        )))
-    });
-    device
-        .build_input_stream(
-            *config,
-            move |input: &[u8], _| {
-                record_voice_input_chunk(input.len(), channels, &stats);
-                if let Some(pcm_frames) = pcm_frames.as_ref()
-                    && let Ok(mut pcm_frames) = pcm_frames.lock()
-                {
-                    let samples = voice_input_u8_to_stereo_i16(input, channels);
+                    let samples = convert(input, channels);
                     record_voice_input_pcm_stats(&samples, &stats);
                     pcm_frames.push_stereo_samples(&samples);
                 }

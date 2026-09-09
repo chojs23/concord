@@ -404,32 +404,8 @@ impl KeyMap {
         sequence: &[KeyChord],
         scope: PopupKeymapScope,
     ) -> Option<PopupKeyMapLookup> {
-        let mut exact_action = None;
-        let mut pending = false;
-        for action in PopupAction::ALL
-            .iter()
-            .copied()
-            .filter(|action| action.is_allowed_in(scope))
-        {
-            let Some(spec) = self.specs.get(&action.ui_action()) else {
-                continue;
-            };
-            for candidate in &spec.sequences {
-                if sequence.len() > candidate.len()
-                    || !sequence
-                        .iter()
-                        .zip(candidate)
-                        .all(|(actual, expected)| actual.matches_chord(*expected))
-                {
-                    continue;
-                }
-                if sequence.len() == candidate.len() {
-                    exact_action = Some(action);
-                    continue;
-                }
-                pending = true;
-            }
-        }
+        let (exact, pending) = self.matching_popup_action(sequence, scope);
+        let exact_action = exact.map(|(action, _)| action);
         exact_action
             .map(PopupKeyMapLookup::Action)
             .or_else(|| pending.then_some(PopupKeyMapLookup::Pending))
@@ -449,40 +425,13 @@ impl KeyMap {
             .filter_map(|child| {
                 let mut child_sequence = sequence.to_vec();
                 child_sequence.push(child.key);
-                let mut exact = None;
-                let mut has_children = false;
-
-                for action in PopupAction::ALL
-                    .iter()
-                    .copied()
-                    .filter(|action| action.is_allowed_in(scope))
-                {
-                    let ui_action = action.ui_action();
-                    let Some(spec) = self.specs.get(&ui_action) else {
-                        continue;
-                    };
-                    for candidate in &spec.sequences {
-                        if candidate.len() < child_sequence.len()
-                            || !child_sequence
-                                .iter()
-                                .zip(candidate)
-                                .all(|(actual, expected)| actual.matches_chord(*expected))
-                        {
-                            continue;
-                        }
-                        if candidate.len() == child_sequence.len() {
-                            exact = Some((ui_action, spec.label.clone()));
-                        } else {
-                            has_children = true;
-                        }
-                    }
-                }
+                let (exact, has_children) = self.matching_popup_action(&child_sequence, scope);
 
                 if exact.is_none() && !has_children {
                     return None;
                 }
                 let (action, label) = exact
-                    .map(|(action, label)| (Some(action), label))
+                    .map(|(action, label)| (Some(action.ui_action()), label.to_owned()))
                     .unwrap_or_else(|| {
                         (
                             None,
@@ -498,6 +447,43 @@ impl KeyMap {
                 })
             })
             .collect()
+    }
+
+    /// Matches the popup command and its visible children from the same set of
+    /// configured sequences. Runtime dispatch and WhichKey must agree when a
+    /// sequence is exact, a prefix, or both.
+    fn matching_popup_action(
+        &self,
+        sequence: &[KeyChord],
+        scope: PopupKeymapScope,
+    ) -> (Option<(PopupAction, &str)>, bool) {
+        let mut exact = None;
+        let mut has_children = false;
+        for action in PopupAction::ALL
+            .iter()
+            .copied()
+            .filter(|action| action.is_allowed_in(scope))
+        {
+            let Some(spec) = self.specs.get(&action.ui_action()) else {
+                continue;
+            };
+            for candidate in &spec.sequences {
+                if candidate.len() < sequence.len()
+                    || !sequence
+                        .iter()
+                        .zip(candidate)
+                        .all(|(actual, expected)| actual.matches_chord(*expected))
+                {
+                    continue;
+                }
+                if candidate.len() == sequence.len() {
+                    exact = Some((action, spec.label.as_str()));
+                } else {
+                    has_children = true;
+                }
+            }
+        }
+        (exact, has_children)
     }
 
     fn children(&self, sequence: &[KeyChord]) -> Vec<LeaderShortcutItem> {

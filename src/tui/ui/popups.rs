@@ -231,9 +231,7 @@ pub(super) use confirmation::{
 };
 #[cfg(test)]
 pub(super) use confirmation::{
-    long_message_confirmation_lines_for_test, message_delete_confirmation_lines,
-    message_pin_confirmation_lines, message_remove_embeds_confirmation_lines,
-    quit_confirmation_lines,
+    long_message_confirmation_lines, message_confirmation_lines, quit_confirmation_popup_lines,
 };
 pub(super) use debug_panel::{debug_panel_area, render_debug_panel, sync_debug_panel};
 #[cfg(test)]
@@ -262,20 +260,17 @@ pub(super) use options::{options_popup_area, options_popup_list_layout, render_o
 #[cfg(test)]
 pub(super) use polls::poll_vote_picker_lines;
 pub(super) use polls::{poll_vote_picker_popup_area, render_poll_vote_picker};
+#[cfg(test)]
+pub(super) use profile::user_profile_popup_text;
 pub(super) use profile::{
     render_user_profile_popup, user_profile_picker_list_layout, user_profile_popup_has_avatar,
     user_profile_popup_metrics, user_profile_popup_text_geometry,
 };
 pub(in crate::tui) use profile::{user_profile_popup_area, user_profile_popup_avatar_viewport};
 #[cfg(test)]
-pub(super) use profile::{
-    user_profile_popup_lines, user_profile_popup_lines_with_activities, user_profile_popup_text,
-};
-#[cfg(test)]
 pub(super) use reactions::{
-    emoji_reaction_picker_lines, emoji_reaction_picker_lines_for_width,
-    emoji_reaction_picker_lines_with_own_reactions, filtered_emoji_reaction_picker_lines,
-    reaction_list_lines_with_ready_urls, reaction_users_popup_lines,
+    EmojiReactionPickerRenderOptions, emoji_reaction_picker_lines_with_custom_emoji_images,
+    reaction_list_lines, reaction_user_lines,
 };
 pub(super) use reactions::{
     emoji_reaction_picker_list_layout, emoji_reaction_picker_popup_area_for_state,
@@ -295,8 +290,6 @@ pub(super) use thread_edit::{
 #[cfg(test)]
 pub(super) use toast::toast_line;
 pub(super) use toast::{render_toast, toast_area};
-#[cfg(test)]
-pub(super) use url_picker::message_url_picker_lines_for_width;
 pub(super) use url_picker::{message_url_picker_popup_area, render_message_url_picker};
 pub(super) use voice_participant_audio::{
     render_voice_participant_audio_popup, voice_participant_audio_list_layout,
@@ -788,19 +781,6 @@ fn wrapped_styled_popup_lines(text: &str, width: usize, style: Style) -> Vec<Lin
     lines
 }
 
-fn push_wrapped_styled_popup_text(
-    lines: &mut Vec<Line<'static>>,
-    text: &str,
-    width: usize,
-    style: Style,
-) {
-    lines.extend(wrapped_styled_popup_lines(text, width, style));
-}
-
-fn selectable_popup_marker(selected: bool) -> Span<'static> {
-    selection_marker(selected)
-}
-
 fn editable_field_marker(active: bool) -> &'static str {
     if active { "› " } else { "  " }
 }
@@ -942,12 +922,11 @@ fn popup_form_summary_line(
 }
 
 fn push_popup_form_inline_status(lines: &mut Vec<Line<'static>>, status: &str, width: usize) {
-    push_wrapped_styled_popup_text(
-        lines,
+    lines.extend(wrapped_styled_popup_lines(
         &format!("  {status}"),
         width,
         theme::current().style(theme::HighlightGroup::Error),
-    );
+    ));
 }
 
 fn selectable_popup_shortcut_span(shortcut: impl Into<String>) -> Span<'static> {

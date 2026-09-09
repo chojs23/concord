@@ -17,6 +17,20 @@ struct GatewayChildTask {
 }
 
 impl GatewayChildTask {
+    fn new(task: JoinHandle<()>) -> Self {
+        Self {
+            task,
+            graceful_stop: None,
+        }
+    }
+
+    fn graceful(task: JoinHandle<()>, graceful_stop: oneshot::Sender<()>) -> Self {
+        Self {
+            task,
+            graceful_stop: Some(graceful_stop),
+        }
+    }
+
     fn abort(mut self) {
         self.graceful_stop.take();
         self.task.abort();
@@ -42,36 +56,15 @@ impl GatewayChildTasks {
     }
 
     pub(super) async fn replace_heartbeat(&mut self, task: JoinHandle<()>) {
-        Self::replace(
-            &mut self.heartbeat,
-            GatewayChildTask {
-                task,
-                graceful_stop: None,
-            },
-        )
-        .await;
+        Self::replace(&mut self.heartbeat, GatewayChildTask::new(task)).await;
     }
 
     pub(super) async fn replace_udp_ping(&mut self, task: JoinHandle<()>) {
-        Self::replace(
-            &mut self.udp_ping,
-            GatewayChildTask {
-                task,
-                graceful_stop: None,
-            },
-        )
-        .await;
+        Self::replace(&mut self.udp_ping, GatewayChildTask::new(task)).await;
     }
 
     pub(super) async fn replace_media(&mut self, task: JoinHandle<()>) {
-        Self::replace(
-            &mut self.media,
-            GatewayChildTask {
-                task,
-                graceful_stop: None,
-            },
-        )
-        .await;
+        Self::replace(&mut self.media, GatewayChildTask::new(task)).await;
     }
 
     pub(super) async fn shutdown_media(&mut self) {
@@ -89,10 +82,7 @@ impl GatewayChildTasks {
             self.media.is_none(),
             "media task must be stopped before install"
         );
-        self.media = Some(GatewayChildTask {
-            task,
-            graceful_stop: Some(stop_tx),
-        });
+        self.media = Some(GatewayChildTask::graceful(task, stop_tx));
     }
 
     async fn replace(slot: &mut Option<GatewayChildTask>, task: GatewayChildTask) {
@@ -171,36 +161,38 @@ pub(super) fn packetize_h264_payloads(frame: &[u8], max_payload_bytes: usize) ->
     payloads
 }
 
-pub(super) fn annex_b_nals(frame: &[u8]) -> Vec<&[u8]> {
-    let mut starts = Vec::new();
-    let mut index = 0usize;
-    while index + 3 <= frame.len() {
-        let start_len = if frame.get(index..index + 4) == Some(&[0, 0, 0, 1]) {
-            4
-        } else if frame.get(index..index + 3) == Some(&[0, 0, 1]) {
-            3
-        } else {
-            index += 1;
-            continue;
-        };
-        starts.push((index, start_len));
-        index += start_len;
-    }
-    if starts.is_empty() {
-        return (!frame.is_empty()).then_some(frame).into_iter().collect();
-    }
-    starts
-        .iter()
-        .enumerate()
-        .filter_map(|(position, (start, start_len))| {
+pub(super) fn annex_b_nals(frame: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut next_start = find_annex_b_start(frame, 0);
+    let mut raw_frame_pending = next_start.is_none() && !frame.is_empty();
+    std::iter::from_fn(move || {
+        loop {
+            let Some((start, start_len)) = next_start.take() else {
+                return raw_frame_pending.then(|| {
+                    raw_frame_pending = false;
+                    frame
+                });
+            };
             let nal_start = start + start_len;
-            let nal_end = starts
-                .get(position + 1)
-                .map(|(next, _)| *next)
-                .unwrap_or(frame.len());
-            (nal_start < nal_end).then_some(&frame[nal_start..nal_end])
-        })
-        .collect()
+            next_start = find_annex_b_start(frame, nal_start);
+            let nal_end = next_start.map_or(frame.len(), |(next, _)| next);
+            if nal_start < nal_end {
+                return Some(&frame[nal_start..nal_end]);
+            }
+        }
+    })
+}
+
+fn find_annex_b_start(frame: &[u8], mut index: usize) -> Option<(usize, usize)> {
+    while index + 3 <= frame.len() {
+        if frame.get(index..index + 4) == Some(&[0, 0, 0, 1]) {
+            return Some((index, 4));
+        }
+        if frame.get(index..index + 3) == Some(&[0, 0, 1]) {
+            return Some((index, 3));
+        }
+        index += 1;
+    }
+    None
 }
 
 pub(super) fn current_unix_time() -> Duration {
@@ -235,4 +227,30 @@ pub(super) fn build_rtcp_sender_report(
     report[20..24].copy_from_slice(&packet_count.to_be_bytes());
     report[24..28].copy_from_slice(&octet_count.to_be_bytes());
     report
+}
+
+#[cfg(test)]
+mod tests {
+    use super::annex_b_nals;
+
+    #[test]
+    fn annex_b_iterator_handles_three_and_four_byte_start_codes() {
+        let frame = [0, 0, 1, 0x67, 1, 0, 0, 0, 1, 0x68, 2, 0, 0, 1, 0x65, 3];
+        let mut nals = annex_b_nals(&frame);
+
+        assert_eq!(nals.next(), Some([0x67, 1].as_slice()));
+        assert_eq!(nals.next(), Some([0x68, 2].as_slice()));
+        assert_eq!(nals.next(), Some([0x65, 3].as_slice()));
+        assert_eq!(nals.next(), None);
+    }
+
+    #[test]
+    fn annex_b_iterator_preserves_raw_nal_fallback() {
+        let frame = [0x65, 1, 2];
+        let mut nals = annex_b_nals(&frame);
+
+        assert_eq!(nals.next(), Some(frame.as_slice()));
+        assert_eq!(nals.next(), None);
+        assert_eq!(annex_b_nals(&[]).next(), None);
+    }
 }
