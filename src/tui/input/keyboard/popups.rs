@@ -3,9 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::discord::AppCommand;
 use crate::tui::keybindings::{
     AttachmentViewerAction, ChannelSwitcherAction, ComposerAction, EmojiReactionPickerAction,
-    KeyChord, NotificationInboxAction, OptionsPopupAction, PollVotePickerAction, PopupKeyMapLookup,
-    PopupListAction, ProfilePopupAction, ProfilePopupTabAction, ReactionUsersPopupAction,
-    ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
+    KeyChord, NotificationInboxAction, OptionsPopupAction, PollVotePickerAction, PopupAction,
+    PopupKeyMapLookup, PopupListAction, ProfilePopupAction, ProfilePopupTabAction,
+    ReactionUsersPopupAction, ScrollAction, SearchPopupAction, SelectionAction, SelectionKeySet,
     VoiceParticipantAudioPopupAction, push_to_talk_shortcut_from_key,
 };
 use crate::tui::state::{
@@ -69,6 +69,19 @@ pub(super) fn handle_popup_key(
     {
         state.close_key_sequence();
         return Some(command);
+    }
+
+    // Resolve fixed row movement once for every routed popup. The active popup
+    // policy decides whether that means selecting a row or scrolling a document.
+    if keymap_context.is_some()
+        && let Some(action) = state.key_bindings().fixed_selection_action(key)
+    {
+        let action = match action {
+            SelectionAction::Next => PopupAction::SelectNext,
+            SelectionAction::Previous => PopupAction::SelectPrevious,
+        };
+        state.close_key_sequence();
+        return Some(state.execute_popup_keymap_action(action));
     }
 
     let close_key = match policy.input_mode {
@@ -466,8 +479,8 @@ fn handle_forum_post_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
         return handle_forum_post_composer_edit_key(state, key);
     }
 
-    // The scroll keys (J/K and the arrows) pan the viewport without moving the
-    // field selection, so long bodies stay readable.
+    // Viewport scroll actions pan the form without moving the field selection,
+    // so long bodies stay readable.
     if let Some(action) = state.key_bindings().scroll_action(key) {
         state.scroll_forum_post_composer(action);
         return None;
@@ -606,9 +619,8 @@ fn handle_thread_edit_key(state: &mut DashboardState, key: KeyEvent) -> Option<A
         return handle_thread_edit_title_key(state, key);
     }
 
-    // The scroll keys (J/K and the arrows) pan the viewport without moving the
-    // field selection. The selectors claim Left/Right and h/l below before this
-    // runs.
+    // Viewport scroll actions pan the form without moving the field selection.
+    // The selectors claim Left/Right and h/l below before this runs.
     if !matches!(
         key.code,
         KeyCode::Left | KeyCode::Right | KeyCode::Char('h') | KeyCode::Char('l')

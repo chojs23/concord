@@ -116,13 +116,17 @@ fn profile_navigation_routes_selection_keys_and_picker_enter() {
         user_id: Some(Id::new(10)),
     });
     state.open_current_user_profile_popup();
-    handle_key(&mut state, char_key('j'));
-    handle_key(&mut state, char_key('j'));
-    handle_key(&mut state, char_key('j'));
+
+    // Up and Down are fixed aliases, so this round trip returns to the first row.
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Up));
+    for _ in 0..3 {
+        handle_key(&mut state, key(KeyCode::Down));
+    }
     handle_key(&mut state, key(KeyCode::Enter));
     assert!(state.is_user_profile_status_picker_open());
 
-    handle_key(&mut state, char_key('j'));
+    handle_key(&mut state, key(KeyCode::Down));
     assert_eq!(
         handle_key(&mut state, key(KeyCode::Enter)),
         Some(AppCommand::UpdateCurrentUserStatus {

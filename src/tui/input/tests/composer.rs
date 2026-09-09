@@ -49,10 +49,10 @@ fn thread_edit_shortcuts_cycle_selectors_submit_and_cancel() {
     let mut state = state_with_forum_channel_posts();
     state.open_thread_edit(Id::new(31));
 
-    // Focus the auto-archive selector: Title -> Tags -> SlowMode -> AutoArchive.
-    handle_key(&mut state, key(KeyCode::Tab));
-    handle_key(&mut state, key(KeyCode::Tab));
-    handle_key(&mut state, key(KeyCode::Tab));
+    // Fixed arrow keys move the field selection even though the form can scroll.
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Down));
 
     let initial = state
         .thread_edit_view()
@@ -93,7 +93,7 @@ fn page_keys_move_nested_tag_pickers_with_the_shared_list_viewport() {
         let mut state = state_with_forum_channel_posts();
         handle_key(&mut state, char_key('i'));
         for _ in 0..3 {
-            handle_key(&mut state, key(KeyCode::Tab));
+            handle_key(&mut state, key(KeyCode::Down));
         }
         handle_key(&mut state, key(KeyCode::Enter));
         crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
@@ -121,7 +121,7 @@ fn page_keys_move_nested_tag_pickers_with_the_shared_list_viewport() {
     {
         let mut state = state_with_forum_channel_posts();
         state.open_thread_edit(Id::new(31));
-        handle_key(&mut state, key(KeyCode::Tab));
+        handle_key(&mut state, key(KeyCode::Down));
         handle_key(&mut state, key(KeyCode::Enter));
         crate::tui::ui::sync_view_heights(dashboard_area(), &mut state);
 

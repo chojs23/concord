@@ -1,6 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::tui::keybindings::{KeyMapLookup, PaneFilterAction, SelectionAction, SelectionKeySet};
+use crate::tui::keybindings::{
+    DashboardAction, KeyMapLookup, PaneFilterAction, SelectionAction, SelectionKeySet,
+};
 
 use super::super::state::{DashboardState, FocusPane};
 use crate::discord::AppCommand;
@@ -61,6 +63,12 @@ pub fn handle_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppComman
     if is_keymap_help_key(key) {
         state.open_keymap_help_popup();
         return None;
+    }
+
+    // Fixed row movement must not change meaning when the same chord appears
+    // in the configurable dashboard keymap.
+    if let Some(action) = state.key_bindings().fixed_selection_action(key) {
+        return handle_dashboard_action(state, focus, DashboardAction::Select(action));
     }
 
     match state.key_bindings().keymap_lookup_root_key(key) {
