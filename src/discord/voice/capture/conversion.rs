@@ -131,6 +131,7 @@ pub(super) struct CapturePlane<'a> {
     pub(super) stride: isize,
 }
 
+#[cfg(any(test, target_os = "macos", target_os = "windows"))]
 pub(super) fn packed_plane_buffer_length(
     row_length: usize,
     stride: usize,
