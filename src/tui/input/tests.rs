@@ -39,7 +39,7 @@ use crate::{
     },
     tui::state::{
         ChannelPaneEntry, DashboardState, FocusPane, GuildPaneEntry, MessageActionKind,
-        SelectablePopupTarget,
+        MessagePaneSource, SelectablePopupTarget,
     },
 };
 

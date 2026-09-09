@@ -1101,6 +1101,15 @@ impl DashboardState {
         selectable_channel_index_near(entries, self.navigation.channels.list.selected).unwrap_or(0)
     }
 
+    /// Resolves the selection against the same filtered list used for rendering
+    /// and navigation. Callers must not apply this index to `channel_pane_entries`
+    /// because filtering changes both the order and the set of entries.
+    pub(super) fn selected_channel_pane_entry(&self) -> Option<ChannelPaneEntry<'_>> {
+        let entries = self.channel_pane_filtered_entries();
+        let selected = self.selected_channel_from_entries(&entries);
+        entries.get(selected).cloned()
+    }
+
     pub(super) fn move_channel_selection_down(&mut self) {
         let selected = self.selected_channel();
         self.select_channel_entry_near(selected.saturating_add(1));
@@ -1135,9 +1144,8 @@ impl DashboardState {
     }
 
     pub(super) fn selected_channel_cursor(&self) -> Option<ChannelPaneCursor> {
-        self.channel_pane_entries()
-            .get(self.selected_channel())
-            .map(ChannelPaneEntry::cursor)
+        self.selected_channel_pane_entry()
+            .map(|entry| entry.cursor())
     }
 
     #[cfg(test)]
@@ -1354,19 +1362,13 @@ impl DashboardState {
             VoiceParticipant,
         }
 
-        let selected = self
-            .channel_pane_entries()
-            .get(self.selected_channel())
-            .map(|entry| match entry {
-                ChannelPaneEntry::CategoryHeader { .. } => SelectedChannelPaneEntry::Category,
-                ChannelPaneEntry::Channel { state, .. }
-                | ChannelPaneEntry::Thread { state, .. } => {
-                    SelectedChannelPaneEntry::Channel(state.id)
-                }
-                ChannelPaneEntry::VoiceParticipant { .. } => {
-                    SelectedChannelPaneEntry::VoiceParticipant
-                }
-            });
+        let selected = self.selected_channel_pane_entry().map(|entry| match entry {
+            ChannelPaneEntry::CategoryHeader { .. } => SelectedChannelPaneEntry::Category,
+            ChannelPaneEntry::Channel { state, .. } | ChannelPaneEntry::Thread { state, .. } => {
+                SelectedChannelPaneEntry::Channel(state.id)
+            }
+            ChannelPaneEntry::VoiceParticipant { .. } => SelectedChannelPaneEntry::VoiceParticipant,
+        });
 
         match selected {
             Some(SelectedChannelPaneEntry::Category) => {
