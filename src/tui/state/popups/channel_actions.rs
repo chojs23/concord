@@ -21,15 +21,15 @@ impl DashboardState {
         if self.navigation.focus != FocusPane::Channels {
             return None;
         }
-        match self.channel_pane_entries().get(self.selected_channel())? {
+        match self.selected_channel_pane_entry()? {
             ChannelPaneEntry::VoiceParticipant {
                 channel_id,
                 participant,
                 ..
             } => Some(ChannelActionMenuState::ParticipantActions {
-                channel_id: *channel_id,
+                channel_id,
                 user_id: participant.user_id,
-                display_name: participant.display_name.clone(),
+                display_name: participant.display_name,
                 selection: Default::default(),
             }),
             ChannelPaneEntry::CategoryHeader { state, .. }

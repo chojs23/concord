@@ -1310,17 +1310,52 @@ fn enter_opens_message_action_menu_and_space_opens_leader() {
 }
 
 #[test]
-fn leader_a_p_enters_pinned_message_view_from_channel_pane() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, char_key(' '));
-    handle_key(&mut state, char_key('a'));
+fn leader_channel_views_target_the_highlighted_filtered_channel() {
+    let target_channel_id = Id::new(12);
+    let cases = [
+        (
+            'p',
+            MessagePaneSource::PinnedMessages {
+                channel_id: target_channel_id,
+            },
+        ),
+        (
+            't',
+            MessagePaneSource::ChannelThreads {
+                channel_id: target_channel_id,
+            },
+        ),
+    ];
 
-    let command = handle_key(&mut state, char_key('p'));
+    for (shortcut, expected_source) in cases {
+        let mut state = state_with_channel_tree();
+        state.focus_pane(FocusPane::Channels);
+        handle_key(&mut state, char_key('/'));
+        for value in "random".chars() {
+            handle_key(&mut state, char_key(value));
+        }
+        handle_key(&mut state, key(KeyCode::Enter));
 
-    assert_eq!(command, None);
-    assert!(state.is_pinned_message_view());
-    assert!(!state.is_leader_active());
+        assert_eq!(state.selected_channel(), 0);
+        assert_eq!(
+            state.channel_pane_filtered_entries()[0].channel_id(),
+            Some(target_channel_id)
+        );
+
+        handle_key(&mut state, char_key(' '));
+        handle_key(&mut state, char_key('a'));
+        let command = handle_key(&mut state, char_key(shortcut));
+
+        assert_eq!(command, None);
+        assert_eq!(state.message_pane_source(), Some(expected_source));
+        assert!(!state.is_leader_active());
+        if shortcut == 'p' {
+            assert_eq!(state.selected_message(), 0);
+            assert_eq!(state.message_scroll(), 0);
+            assert_eq!(state.message_line_scroll(), 0);
+            assert!(!state.message_auto_follow());
+        }
+    }
 }
 
 #[test]

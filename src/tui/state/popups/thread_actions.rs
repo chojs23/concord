@@ -47,8 +47,8 @@ impl DashboardState {
                 Some((guild_id, item.channel_id))
             }
             FocusPane::Channels => {
-                let entries = self.channel_pane_entries();
-                let channel = entries.get(self.selected_channel())?.channel_state()?;
+                let entry = self.selected_channel_pane_entry()?;
+                let channel = entry.channel_state()?;
                 let guild_id = channel.guild_id?;
                 // Any focused thread opens the action menu. A forum post is just a
                 // thread whose parent happens to be a forum; the forum-specific

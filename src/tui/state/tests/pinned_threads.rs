@@ -50,29 +50,6 @@ fn state_with_thread_created_message_after_regular_message() -> DashboardState {
 }
 
 #[test]
-fn channel_show_pinned_messages_action_enters_pinned_message_view() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Channels);
-    state.open_selected_channel_actions();
-    state.select_channel_action_row(3);
-
-    let command = state.activate_selected_channel_action();
-
-    assert_eq!(command, None);
-    assert!(state.is_pinned_message_view());
-    assert_eq!(
-        state.message_pane_source(),
-        Some(MessagePaneSource::PinnedMessages {
-            channel_id: Id::new(2)
-        })
-    );
-    assert!(!state.is_channel_action_menu_active());
-    assert_eq!(state.selected_message(), 0);
-    assert_eq!(state.message_scroll(), 0);
-    assert_eq!(state.message_line_scroll(), 0);
-    assert!(!state.message_auto_follow());
-}
-#[test]
 fn pinned_message_view_title_mentions_channel_and_pins() {
     let mut state = state_with_messages(1);
 
