@@ -698,15 +698,23 @@ impl KeyBindings {
         key: KeyEvent,
         key_set: SelectionKeySet,
     ) -> Option<SelectionAction> {
+        if let Some(action) = self.fixed_selection_action(key) {
+            return Some(action);
+        }
+        if key_set == SelectionKeySet::Navigation || !is_text_entry_character(key) {
+            return self.keymap_selection_action(key);
+        }
+        None
+    }
+
+    /// Row movement aliases that keep their meaning outside text entry modes.
+    pub(in crate::tui) fn fixed_selection_action(&self, key: KeyEvent) -> Option<SelectionAction> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Down => Some(SelectionAction::Next),
             KeyCode::Up => Some(SelectionAction::Previous),
             KeyCode::Char('n') if ctrl => Some(SelectionAction::Next),
             KeyCode::Char('p') if ctrl => Some(SelectionAction::Previous),
-            _ if key_set == SelectionKeySet::Navigation || !is_text_entry_character(key) => {
-                self.keymap_selection_action(key)
-            }
             _ => None,
         }
     }
@@ -817,21 +825,16 @@ impl KeyBindings {
     }
 
     pub(in crate::tui) fn scroll_action(&self, key: KeyEvent) -> Option<ScrollAction> {
-        match key.code {
-            KeyCode::Down => Some(ScrollAction::Down),
-            KeyCode::Up => Some(ScrollAction::Up),
-            _ => self
-                .keymap_single_key_shortcuts(UiAction::ScrollViewportDown)
-                .iter()
-                .any(|shortcut| shortcut.matches(key))
-                .then_some(ScrollAction::Down)
-                .or_else(|| {
-                    self.keymap_single_key_shortcuts(UiAction::ScrollViewportUp)
-                        .iter()
-                        .any(|shortcut| shortcut.matches(key))
-                        .then_some(ScrollAction::Up)
-                }),
-        }
+        self.keymap_single_key_shortcuts(UiAction::ScrollViewportDown)
+            .iter()
+            .any(|shortcut| shortcut.matches(key))
+            .then_some(ScrollAction::Down)
+            .or_else(|| {
+                self.keymap_single_key_shortcuts(UiAction::ScrollViewportUp)
+                    .iter()
+                    .any(|shortcut| shortcut.matches(key))
+                    .then_some(ScrollAction::Up)
+            })
     }
 
     pub fn start_composer_key_label(&self) -> String {

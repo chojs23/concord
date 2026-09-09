@@ -320,17 +320,29 @@ fn navigation_selection_ignores_modified_j_and_k() {
 
 #[test]
 fn navigation_selection_uses_configured_row_movement_keys() {
-    let mut state = state_with_keymap(KeymapOptions {
-        mappings: [
-            ("SelectNext".to_owned(), KeymapBinding::one("n")),
-            ("SelectPrevious".to_owned(), KeymapBinding::one("p")),
-            ("JumpTop".to_owned(), KeymapBinding::one("z z")),
-            ("JumpBottom".to_owned(), KeymapBinding::one("Z")),
-        ]
-        .into_iter()
-        .collect(),
-        ..Default::default()
-    });
+    let mut state = state_with_messages_from_state(
+        state_with_keymap(KeymapOptions {
+            mappings: [
+                ("SelectNext".to_owned(), KeymapBinding::one("n")),
+                ("SelectPrevious".to_owned(), KeymapBinding::one("p")),
+                ("HalfPageDown".to_owned(), KeymapBinding::one("down")),
+                ("HalfPageUp".to_owned(), KeymapBinding::one("up")),
+                ("JumpTop".to_owned(), KeymapBinding::one("z z")),
+                ("JumpBottom".to_owned(), KeymapBinding::one("Z")),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        }),
+        2,
+    );
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, key(KeyCode::Down));
+    assert_eq!(state.selected_message(), 1);
+    handle_key(&mut state, key(KeyCode::Up));
+    assert_eq!(state.selected_message(), 0);
+
     state.open_options_popup();
 
     handle_key(&mut state, char_key('j'));
@@ -340,6 +352,12 @@ fn navigation_selection_uses_configured_row_movement_keys() {
     assert_eq!(state.selected_option_index(), Some(1));
 
     handle_key(&mut state, char_key('p'));
+    assert_eq!(state.selected_option_index(), Some(0));
+
+    handle_key(&mut state, key(KeyCode::Down));
+    assert_eq!(state.selected_option_index(), Some(1));
+
+    handle_key(&mut state, key(KeyCode::Up));
     assert_eq!(state.selected_option_index(), Some(0));
 
     handle_key(&mut state, ctrl_key('n'));
