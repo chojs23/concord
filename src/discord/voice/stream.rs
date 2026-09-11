@@ -514,10 +514,14 @@ async fn connect_stream_gateway(
 ) -> Result<VoiceConnectionEnd, StreamConnectionFailure> {
     let url = gateway::voice_gateway_url(&session.endpoint)?;
     logging::debug("stream", format!("connecting stream websocket: {url}"));
-    let (ws, response) = timeout(VOICE_WEBSOCKET_CONNECT_TIMEOUT, connect_async(&url))
-        .await
-        .map_err(|_| "stream websocket connect timed out after 10s".to_owned())?
-        .map_err(|error| format!("stream websocket connect failed: {error}"))?;
+    let connector = tls::websocket_connector()?;
+    let (ws, response) = timeout(
+        VOICE_WEBSOCKET_CONNECT_TIMEOUT,
+        connect_async_tls_with_config(&url, None, false, Some(connector)),
+    )
+    .await
+    .map_err(|_| "stream websocket connect timed out after 10s".to_owned())?
+    .map_err(|error| format!("stream websocket connect failed: {error}"))?;
     logging::debug(
         "stream",
         format!("stream websocket connected: status={}", response.status()),

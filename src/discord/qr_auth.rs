@@ -12,9 +12,11 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::{
-    connect_async,
+    connect_async_tls_with_config,
     tungstenite::{Message, client::IntoClientRequest, handshake::client::Request},
 };
+
+use crate::support::tls;
 
 use super::{
     DiscordAuthSession,
@@ -115,7 +117,10 @@ async fn run_connection(
 
     let request = remote_auth_request(auth_session.fingerprint())?;
 
-    let (ws, _) = connect_async(request).await.map_err(err)?;
+    let connector = tls::websocket_connector()?;
+    let (ws, _) = connect_async_tls_with_config(request, None, false, Some(connector))
+        .await
+        .map_err(err)?;
     let (mut writer, mut reader) = ws.split();
 
     let _ = tx

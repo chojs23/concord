@@ -4,9 +4,12 @@ use std::{
     time::Duration,
 };
 
-use crate::discord::ids::{
-    Id,
-    marker::{ChannelMarker, GuildMarker, UserMarker},
+use crate::{
+    discord::ids::{
+        Id,
+        marker::{ChannelMarker, GuildMarker, UserMarker},
+    },
+    support::tls,
 };
 use flate2::{Decompress, FlushDecompress, Status};
 use futures::{SinkExt, StreamExt};
@@ -16,7 +19,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::{Instant, sleep, timeout};
 use tokio_tungstenite::{
-    connect_async_with_config,
+    connect_async_tls_with_config,
     tungstenite::{
         Message as WsMessage,
         client::IntoClientRequest,
@@ -1102,17 +1105,23 @@ async fn connect_and_run(
 
     let request = gateway_request(&connection.url, fingerprint)
         .map_err(|error| gateway_setup_failure(session, &connection.handshake, publish, error))?;
-    let (ws, _response) =
-        connect_async_with_config(request, Some(gateway_websocket_config()), false)
-            .await
-            .map_err(|error| {
-                gateway_setup_failure(
-                    session,
-                    &connection.handshake,
-                    publish,
-                    format!("websocket connect failed: {error}"),
-                )
-            })?;
+    let connector = tls::websocket_connector()
+        .map_err(|error| gateway_setup_failure(session, &connection.handshake, publish, error))?;
+    let (ws, _response) = connect_async_tls_with_config(
+        request,
+        Some(gateway_websocket_config()),
+        false,
+        Some(connector),
+    )
+    .await
+    .map_err(|error| {
+        gateway_setup_failure(
+            session,
+            &connection.handshake,
+            publish,
+            format!("websocket connect failed: {error}"),
+        )
+    })?;
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
     let (sender, mut gateway_send_error_rx, gateway_writer_task) =

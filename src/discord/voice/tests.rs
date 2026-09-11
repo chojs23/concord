@@ -2948,9 +2948,10 @@ fn encrypt_test_rtp_payload(
             let cipher = Aes256Gcm::new_from_slice(key).expect("test key is valid");
             let mut nonce = [0u8; 12];
             nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(&nonce_suffix);
+            let nonce = AesGcmNonce::from(nonce);
             cipher
                 .encrypt(
-                    AesGcmNonce::from_slice(&nonce),
+                    &nonce,
                     Payload {
                         msg: plaintext,
                         aad,
@@ -2962,9 +2963,10 @@ fn encrypt_test_rtp_payload(
             let cipher = XChaCha20Poly1305::new_from_slice(key).expect("test key is valid");
             let mut nonce = [0u8; 24];
             nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(&nonce_suffix);
+            let nonce = XNonce::from(nonce);
             cipher
                 .encrypt(
-                    XNonce::from_slice(&nonce),
+                    &nonce,
                     Payload {
                         msg: plaintext,
                         aad,

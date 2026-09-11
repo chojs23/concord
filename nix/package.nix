@@ -37,9 +37,10 @@ let
       nasm
     ];
 
-    # Networking uses rustls + webpki-roots, so we do not need openssl or a
-    # system CA bundle here. Darwin stdenv provides the SDK by default, so avoid
-    # legacy darwin.apple_sdk framework stubs.
+    # Networking uses rustls with the platform certificate verifier, so
+    # OpenSSL is not a build dependency. Linux reads the host CA bundle at
+    # runtime. Darwin stdenv provides the SDK by default, so avoid legacy
+    # darwin.apple_sdk framework stubs.
     buildInputs = lib.optionals stdenv.isLinux [
       alsa-lib
       pipewire

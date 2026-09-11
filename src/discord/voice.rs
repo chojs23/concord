@@ -119,13 +119,13 @@ use tokio::{
     task::JoinHandle,
     time::{sleep, timeout},
 };
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message as WsMessage};
 
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, UserMarker},
 };
-use crate::logging;
+use crate::{logging, support::tls};
 pub use levels::{
     MicrophoneSensitivityDb, VoiceParticipantPlaybackSettings, VoiceParticipantVolumePercent,
     VoiceVolumePercent,

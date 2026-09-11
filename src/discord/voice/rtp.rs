@@ -228,9 +228,10 @@ impl VoiceRtpDecryptor {
             Self::Aes256Gcm(cipher) => {
                 let mut nonce = [0u8; 12];
                 nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(nonce_suffix);
+                let nonce = AesGcmNonce::from(nonce);
                 cipher
                     .decrypt(
-                        AesGcmNonce::from_slice(&nonce),
+                        &nonce,
                         Payload {
                             msg: sealed_payload,
                             aad,
@@ -241,9 +242,10 @@ impl VoiceRtpDecryptor {
             Self::XChaCha20Poly1305(cipher) => {
                 let mut nonce = [0u8; 24];
                 nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(nonce_suffix);
+                let nonce = XNonce::from(nonce);
                 cipher
                     .decrypt(
-                        XNonce::from_slice(&nonce),
+                        &nonce,
                         Payload {
                             msg: sealed_payload,
                             aad,
@@ -351,9 +353,10 @@ impl VoiceRtpEncryptor {
             Self::Aes256Gcm(cipher) => {
                 let mut nonce = [0u8; 12];
                 nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(&nonce_suffix);
+                let nonce = AesGcmNonce::from(nonce);
                 cipher
                     .encrypt(
-                        AesGcmNonce::from_slice(&nonce),
+                        &nonce,
                         Payload {
                             msg: plaintext,
                             aad,
@@ -364,9 +367,10 @@ impl VoiceRtpEncryptor {
             Self::XChaCha20Poly1305(cipher) => {
                 let mut nonce = [0u8; 24];
                 nonce[..RTP_AEAD_NONCE_SUFFIX_BYTES].copy_from_slice(&nonce_suffix);
+                let nonce = XNonce::from(nonce);
                 cipher
                     .encrypt(
-                        XNonce::from_slice(&nonce),
+                        &nonce,
                         Payload {
                             msg: plaintext,
                             aad,

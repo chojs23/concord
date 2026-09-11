@@ -16,7 +16,7 @@ use tokio::{
     task::JoinHandle,
     time::{Instant as TokioInstant, sleep, sleep_until, timeout},
 };
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message as WsMessage};
 use uuid::Uuid;
 
 use super::media::{
@@ -50,6 +50,7 @@ use crate::{
         voice::VoiceStateInfo,
     },
     logging,
+    support::tls,
 };
 
 const STREAM_RID: &str = "100";
@@ -689,10 +690,14 @@ async fn connect_stream_broadcast(
 ) -> Result<VoiceConnectionEnd, BroadcastConnectionFailure> {
     let url = gateway::voice_gateway_url(&session.endpoint)?;
     logging::debug("stream", format!("connecting broadcast websocket: {url}"));
-    let (ws, response) = timeout(VOICE_WEBSOCKET_CONNECT_TIMEOUT, connect_async(&url))
-        .await
-        .map_err(|_| "broadcast websocket connect timed out after 10s".to_owned())?
-        .map_err(|error| format!("broadcast websocket connect failed: {error}"))?;
+    let connector = tls::websocket_connector()?;
+    let (ws, response) = timeout(
+        VOICE_WEBSOCKET_CONNECT_TIMEOUT,
+        connect_async_tls_with_config(&url, None, false, Some(connector)),
+    )
+    .await
+    .map_err(|_| "broadcast websocket connect timed out after 10s".to_owned())?
+    .map_err(|error| format!("broadcast websocket connect failed: {error}"))?;
     logging::debug(
         "stream",
         format!(

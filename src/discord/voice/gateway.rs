@@ -61,10 +61,14 @@ pub(super) async fn connect_voice_gateway(
     let url = voice_gateway_url(&session.endpoint)?;
     logging::debug("voice", format!("connecting voice websocket: {url}"));
     let connect_started = Instant::now();
-    let (ws, response) = timeout(VOICE_WEBSOCKET_CONNECT_TIMEOUT, connect_async(&url))
-        .await
-        .map_err(|_| "voice websocket connect timed out after 10s".to_owned())?
-        .map_err(|error| format!("voice websocket connect failed: {error}"))?;
+    let connector = tls::websocket_connector()?;
+    let (ws, response) = timeout(
+        VOICE_WEBSOCKET_CONNECT_TIMEOUT,
+        connect_async_tls_with_config(&url, None, false, Some(connector)),
+    )
+    .await
+    .map_err(|_| "voice websocket connect timed out after 10s".to_owned())?
+    .map_err(|error| format!("voice websocket connect failed: {error}"))?;
     logging::debug(
         "voice",
         format!(
@@ -739,10 +743,14 @@ async fn resume_voice_gateway(
     child_tasks.heartbeat.abort();
     heartbeat_ack.lock().await.reset();
 
-    let (ws, response) = timeout(VOICE_WEBSOCKET_CONNECT_TIMEOUT, connect_async(url))
-        .await
-        .map_err(|_| "voice resume websocket connect timed out after 10s".to_owned())?
-        .map_err(|error| format!("voice resume websocket connect failed: {error}"))?;
+    let connector = tls::websocket_connector()?;
+    let (ws, response) = timeout(
+        VOICE_WEBSOCKET_CONNECT_TIMEOUT,
+        connect_async_tls_with_config(url, None, false, Some(connector)),
+    )
+    .await
+    .map_err(|_| "voice resume websocket connect timed out after 10s".to_owned())?
+    .map_err(|error| format!("voice resume websocket connect failed: {error}"))?;
     logging::debug(
         "voice",
         format!(
