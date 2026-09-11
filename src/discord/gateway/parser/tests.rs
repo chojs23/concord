@@ -56,6 +56,16 @@ fn guild_parsers_preserve_feature_names_from_lazy_properties() {
 }
 
 #[test]
+fn guild_update_parser_preserves_explicit_null_icon_as_a_clear() {
+    let event =
+        parse_guild_update(&json!({"id": "10", "icon": null})).expect("guild update should parse");
+    let AppEvent::GuildUpdate { icon_hash, .. } = event else {
+        panic!("expected guild update event");
+    };
+    assert_eq!(icon_hash, Some(String::new()));
+}
+
+#[test]
 fn guild_create_parser_preserves_complete_onboarding_payload() {
     let raw_onboarding = json!({
         "guild_id": "10",
