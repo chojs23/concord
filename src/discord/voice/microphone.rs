@@ -69,29 +69,10 @@ pub(super) fn build_preferred_voice_input_stream(
     let supported_config = select_voice_input_config(device)?;
     let sample_format = supported_config.sample_format();
     let mut stream_config = supported_config.config();
-    stream_config.buffer_size = voice_input_buffer_size(supported_config.buffer_size());
+    stream_config.buffer_size = voice_input_buffer_size();
 
-    match build_voice_input_stream(
-        device,
-        &stream_config,
-        sample_format,
-        Arc::clone(&stats),
-        samples_tx.clone(),
-    ) {
-        Ok(stream) => Ok((stream, stream_config, sample_format)),
-        Err(error) if stream_config.buffer_size != cpal::BufferSize::Default => {
-            logging::debug(
-                "voice",
-                format!(
-                    "voice fixed microphone input buffer failed, retrying default buffer: {error}"
-                ),
-            );
-            stream_config.buffer_size = cpal::BufferSize::Default;
-            build_voice_input_stream(device, &stream_config, sample_format, stats, samples_tx)
-                .map(|stream| (stream, stream_config, sample_format))
-        }
-        Err(error) => Err(error),
-    }
+    build_voice_input_stream(device, &stream_config, sample_format, stats, samples_tx)
+        .map(|stream| (stream, stream_config, sample_format))
 }
 
 #[cfg(feature = "voice-playback")]
@@ -156,13 +137,10 @@ pub(super) fn voice_input_sample_format_rank(format: cpal::SampleFormat) -> u8 {
 }
 
 #[cfg(feature = "voice-playback")]
-pub(super) fn voice_input_buffer_size(supported: &cpal::SupportedBufferSize) -> cpal::BufferSize {
-    match supported {
-        cpal::SupportedBufferSize::Range { min, max } => {
-            cpal::BufferSize::Fixed(VOICE_MIC_PREFERRED_BUFFER_FRAMES.clamp(*min, *max))
-        }
-        cpal::SupportedBufferSize::Unknown => cpal::BufferSize::Default,
-    }
+pub(super) fn voice_input_buffer_size() -> cpal::BufferSize {
+    // Reported ranges do not guarantee that a small fixed callback is stable
+    // on the active device and audio server. Let the host negotiate it.
+    cpal::BufferSize::Default
 }
 
 #[cfg(feature = "voice-playback")]
