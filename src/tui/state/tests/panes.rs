@@ -355,6 +355,53 @@ fn channel_tree_groups_category_children() {
 }
 
 #[test]
+fn channel_filter_preserves_highlight_across_background_events() {
+    let guild_id = Id::new(1);
+    let category_id = Id::new(10);
+    let highlighted_channel_id = Id::new(11);
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(
+        guild_id,
+        "guild",
+        vec![
+            category_channel_info(guild_id, category_id, "Text Channels", 0),
+            child_text_channel_info(
+                guild_id,
+                highlighted_channel_id,
+                category_id,
+                "alpha-one",
+                0,
+            ),
+            child_text_channel_info(guild_id, Id::new(12), category_id, "general", 1),
+            child_text_channel_info(guild_id, Id::new(13), category_id, "alpha-two", 2),
+        ],
+    ));
+    state.activate_guild(ActiveGuildScope::Guild(guild_id));
+    state.open_channel_pane_filter();
+    for value in "alpha".chars() {
+        state.push_channel_pane_filter_char(value);
+    }
+
+    assert_eq!(
+        state
+            .selected_channel_pane_entry()
+            .and_then(|entry| entry.channel_id()),
+        Some(highlighted_channel_id)
+    );
+
+    state.push_event(AppEvent::CurrentUserCapabilities {
+        premium_tier: PremiumTier::None,
+    });
+
+    assert_eq!(
+        state
+            .selected_channel_pane_entry()
+            .and_then(|entry| entry.channel_id()),
+        Some(highlighted_channel_id)
+    );
+}
+
+#[test]
 fn channel_tree_keeps_empty_categories_for_channel_managers() {
     let current_user_id = Id::new(99);
     let manager_role_id = Id::new(50);
