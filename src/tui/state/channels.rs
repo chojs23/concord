@@ -1172,18 +1172,32 @@ impl DashboardState {
     }
 
     pub(super) fn restore_channel_cursor(&mut self, channel_id: Option<Id<ChannelMarker>>) {
-        self.restore_channel_pane_cursor(channel_id.map(ChannelPaneCursor::Channel));
+        let Some(channel_id) = channel_id else {
+            return;
+        };
+        let cursor = ChannelPaneCursor::Channel(channel_id);
+        // Explicit navigation can target a channel that does not match an active
+        // pane filter, so resolve it against the complete channel tree.
+        let index = self
+            .channel_pane_entries()
+            .iter()
+            .position(|entry| entry.cursor() == cursor);
+        if let Some(index) = index {
+            self.navigation.channels.list.selected = index;
+        }
     }
 
     pub(super) fn restore_channel_pane_cursor(&mut self, cursor: Option<ChannelPaneCursor>) {
         let Some(cursor) = cursor else {
             return;
         };
-        if let Some(index) = self
-            .channel_pane_entries()
+        // Event repair preserves the highlighted row from the rendered pane.
+        // Its index must come from the same filtered entries as the captured cursor.
+        let index = self
+            .channel_pane_filtered_entries()
             .iter()
-            .position(|entry| entry.cursor() == cursor)
-        {
+            .position(|entry| entry.cursor() == cursor);
+        if let Some(index) = index {
             self.navigation.channels.list.selected = index;
         }
     }
