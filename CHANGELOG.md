@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.19] - 2026-09-12
+
+### Bug Fixes
+
+- _(voice)_ Use the host-default buffer for all microphone input streams (#356) in [#356](https://github.com/chojs23/concord/pull/356) by @chojs23
+- _(voice)_ Enable CPAL real-time audio thread priority (#357) in [#357](https://github.com/chojs23/concord/pull/357) by @chojs23
+- _(tui)_ Fix filtered channel highlight restoration after background events (#358) in [#358](https://github.com/chojs23/concord/pull/358) by @chojs23
+
+### Documentation
+
+- Update debug mode instruction by @chojs23
+
+### Miscellaneous Tasks
+
+- _(deps)_ Update crates and unify TLS verification by @chojs23
+
 ## [2.5.18] - 2026-09-09
 
 ### Bug Fixes
