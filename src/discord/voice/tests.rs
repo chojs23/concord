@@ -2858,7 +2858,7 @@ fn voice_input_buffer_size_uses_auto_or_configured_duration() {
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn automatic_microphone_buffers_reject_excessive_negotiated_size() {
+fn automatic_microphone_buffers_reject_excessive_reported_size() {
     let requested = MicrophoneBufferMs::new(40);
 
     assert!(

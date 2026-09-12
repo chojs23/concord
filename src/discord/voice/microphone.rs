@@ -71,13 +71,13 @@ impl VoiceMicrophoneCapture {
             .stream
             .play()
             .map_err(|error| format!("voice microphone input stream start failed: {error}"))?;
-        let negotiated_buffer_ms = input_stream
-            .negotiated_buffer_frames
+        let stream_reported_buffer_ms = input_stream
+            .stream_reported_buffer_frames
             .map(|frames| voice_buffer_duration_ms(frames, input_stream.stream_config.sample_rate));
         logging::debug(
             "voice",
             format!(
-                "voice microphone capture started: host={} sample_rate={} channels={} format={:?} buffer_mode={:?} requested_buffer={:?} negotiated_buffer_frames={} negotiated_buffer_ms={}",
+                "voice microphone capture started: host={} sample_rate={} channels={} format={:?} buffer_mode={:?} requested_buffer={:?} stream_reported_buffer_frames={} stream_reported_buffer_ms={}",
                 host.id(),
                 input_stream.stream_config.sample_rate,
                 input_stream.stream_config.channels,
@@ -85,9 +85,9 @@ impl VoiceMicrophoneCapture {
                 input_stream.buffer_mode,
                 input_stream.stream_config.buffer_size,
                 input_stream
-                    .negotiated_buffer_frames
+                    .stream_reported_buffer_frames
                     .map_or_else(|| "unknown".to_owned(), |frames| frames.to_string()),
-                negotiated_buffer_ms
+                stream_reported_buffer_ms
                     .map_or_else(|| "unknown".to_owned(), |millis| millis.to_string()),
             ),
         );
@@ -214,11 +214,11 @@ fn build_configured_voice_input_stream(
             voice_input_buffer_size(Some(duration), stream_config.sample_rate);
         let (stream, processor) =
             build_voice_input_stream(device, stream_config, sample_format, stats, samples_tx)?;
-        let negotiated_buffer_frames = voice_negotiated_buffer_frames(&stream);
+        let stream_reported_buffer_frames = voice_stream_reported_buffer_frames(&stream);
         if matches!(buffer_mode, VoiceMicrophoneBufferMode::AutomaticFixed(_))
             && let Err(error) = validate_automatic_voice_input_buffer(
                 duration,
-                negotiated_buffer_frames,
+                stream_reported_buffer_frames,
                 stream_config.sample_rate,
             )
         {
@@ -232,7 +232,7 @@ fn build_configured_voice_input_stream(
             stream_config: *stream_config,
             sample_format,
             buffer_mode,
-            negotiated_buffer_frames,
+            stream_reported_buffer_frames,
         });
     }
 
@@ -244,25 +244,25 @@ fn build_configured_voice_input_stream(
         Arc::clone(&stats),
         samples_tx.clone(),
     )?;
-    let negotiated_buffer_frames = voice_negotiated_buffer_frames(&default_stream);
+    let stream_reported_buffer_frames = voice_stream_reported_buffer_frames(&default_stream);
     let maximum_frames =
         voice_frames_for_duration(stream_config.sample_rate, VOICE_MIC_MAX_BUFFER_DURATION);
-    if negotiated_buffer_frames.is_none_or(|frames| frames <= maximum_frames) {
+    if stream_reported_buffer_frames.is_none_or(|frames| frames <= maximum_frames) {
         return Ok(VoiceMicrophoneInputStream {
             stream: default_stream,
             processor: default_processor,
             stream_config: *stream_config,
             sample_format,
             buffer_mode: VoiceMicrophoneBufferMode::HostDefault,
-            negotiated_buffer_frames,
+            stream_reported_buffer_frames,
         });
     }
 
-    let excessive_frames = negotiated_buffer_frames.expect("excessive buffer is known");
+    let excessive_frames = stream_reported_buffer_frames.expect("excessive buffer is known");
     logging::debug(
         "voice",
         format!(
-            "voice host-default microphone buffer exceeds live limit: negotiated_frames={} negotiated_ms={} limit_ms={}",
+            "voice host-default microphone buffer exceeds live limit: stream_reported_frames={} stream_reported_ms={} limit_ms={}",
             excessive_frames,
             voice_buffer_duration_ms(excessive_frames, stream_config.sample_rate),
             VOICE_MIC_MAX_BUFFER_DURATION.as_millis(),
@@ -286,10 +286,10 @@ fn build_configured_voice_input_stream(
             samples_tx.clone(),
         ) {
             Ok((stream, processor)) => {
-                let negotiated_buffer_frames = voice_negotiated_buffer_frames(&stream);
+                let stream_reported_buffer_frames = voice_stream_reported_buffer_frames(&stream);
                 if let Err(error) = validate_automatic_voice_input_buffer(
                     duration,
-                    negotiated_buffer_frames,
+                    stream_reported_buffer_frames,
                     stream_config.sample_rate,
                 ) {
                     failures.push(error);
@@ -300,10 +300,10 @@ fn build_configured_voice_input_stream(
                 logging::debug(
                     "voice",
                     format!(
-                        "voice microphone capture selected bounded fixed buffer: requested_ms={} requested_frames={} negotiated_frames={}",
+                        "voice microphone capture selected bounded fixed buffer: requested_ms={} requested_frames={} stream_reported_frames={}",
                         duration.value(),
                         duration.frames(stream_config.sample_rate),
-                        negotiated_buffer_frames
+                        stream_reported_buffer_frames
                             .map_or_else(|| "unknown".to_owned(), |frames| frames.to_string(),),
                     ),
                 );
@@ -313,7 +313,7 @@ fn build_configured_voice_input_stream(
                     stream_config: *stream_config,
                     sample_format,
                     buffer_mode: VoiceMicrophoneBufferMode::AutomaticFixed(duration),
-                    negotiated_buffer_frames,
+                    stream_reported_buffer_frames,
                 });
             }
             Err(error) => failures.push(format!("{}ms: {error}", duration.value())),
@@ -404,22 +404,22 @@ pub(super) fn voice_buffer_duration_ms(frames: u32, sample_rate: u32) -> u128 {
 #[cfg(feature = "voice-playback")]
 pub(super) fn validate_automatic_voice_input_buffer(
     requested: MicrophoneBufferMs,
-    negotiated_frames: Option<u32>,
+    stream_reported_frames: Option<u32>,
     sample_rate: u32,
 ) -> Result<(), String> {
-    let Some(negotiated_frames) = negotiated_frames else {
+    let Some(stream_reported_frames) = stream_reported_frames else {
         return Ok(());
     };
     let maximum_frames = voice_frames_for_duration(sample_rate, VOICE_MIC_MAX_BUFFER_DURATION);
-    if negotiated_frames <= maximum_frames {
+    if stream_reported_frames <= maximum_frames {
         return Ok(());
     }
 
     Err(format!(
-        "{}ms automatic buffer negotiated {} frames ({}ms), above {} frames ({}ms) live limit",
+        "{}ms automatic buffer reports {} frames ({}ms), above {} frames ({}ms) live limit",
         requested.value(),
-        negotiated_frames,
-        voice_buffer_duration_ms(negotiated_frames, sample_rate),
+        stream_reported_frames,
+        voice_buffer_duration_ms(stream_reported_frames, sample_rate),
         maximum_frames,
         VOICE_MIC_MAX_BUFFER_DURATION.as_millis(),
     ))
@@ -448,13 +448,13 @@ pub(super) fn voice_microphone_recovery_buffers(
 }
 
 #[cfg(feature = "voice-playback")]
-fn voice_negotiated_buffer_frames(stream: &cpal::Stream) -> Option<u32> {
+fn voice_stream_reported_buffer_frames(stream: &cpal::Stream) -> Option<u32> {
     match stream.buffer_size() {
         Ok(frames) => Some(frames),
         Err(error) => {
             logging::debug(
                 "voice",
-                format!("voice microphone negotiated buffer query failed: {error}"),
+                format!("voice microphone reported buffer query failed: {error}"),
             );
             None
         }

@@ -916,7 +916,7 @@ struct VoiceMicrophoneInputStream {
     stream_config: cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     buffer_mode: VoiceMicrophoneBufferMode,
-    negotiated_buffer_frames: Option<u32>,
+    stream_reported_buffer_frames: Option<u32>,
 }
 
 #[cfg(feature = "voice-playback")]
