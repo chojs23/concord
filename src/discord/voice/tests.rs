@@ -2104,24 +2104,25 @@ fn microphone_pcm_frames_resample_44100_to_48000() {
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn microphone_pcm_frames_count_full_queue_drops() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+fn microphone_pcm_frames_keep_latest_audio_from_large_callbacks() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
     let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
     let mut frames =
         VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), DISCORD_VOICE_SAMPLE_RATE);
-    let samples = vec![1i16; DISCORD_OPUS_20MS_STEREO_SAMPLES * 2];
+    let callback_frames = VOICE_MIC_MAX_LIVE_FRAMES + 2;
+    let mut samples = Vec::with_capacity(DISCORD_OPUS_20MS_STEREO_SAMPLES * callback_frames);
+    for value in 0..callback_frames {
+        samples.extend(vec![value as i16; DISCORD_OPUS_20MS_STEREO_SAMPLES]);
+    }
 
     frames.push_stereo_samples(&samples, Instant::now());
 
-    assert_eq!(
-        rx.try_recv()
-            .expect("first frame should queue")
-            .samples
-            .len(),
-        DISCORD_OPUS_20MS_STEREO_SAMPLES
-    );
-    assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 1);
-    assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 1);
+    let queued = std::iter::from_fn(|| rx.try_recv().ok())
+        .map(|frame| frame.samples[0])
+        .collect::<Vec<_>>();
+    assert_eq!(queued, vec![2, 3, 4]);
+    assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 3);
+    assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 2);
 }
 
 #[cfg(feature = "voice-playback")]
@@ -2147,7 +2148,7 @@ fn microphone_pcm_frames_keep_20ms_capture_timeline_for_batched_input() {
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn microphone_input_drop_discards_incomplete_old_audio() {
+fn microphone_input_continues_with_fresh_audio_after_handoff_drop() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
     let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
     let mut frames =
@@ -2158,7 +2159,7 @@ fn microphone_input_drop_discards_incomplete_old_audio() {
         &vec![1i16; DISCORD_OPUS_20MS_STEREO_SAMPLES / 2],
         resumed_at - Duration::from_secs(1),
     );
-    frames.reset_after_input_drop();
+    frames.apply_input_drop(true);
     frames.push_stereo_samples(&vec![2i16; DISCORD_OPUS_20MS_STEREO_SAMPLES], resumed_at);
 
     let frame = rx.try_recv().expect("resumed frame should queue");
@@ -2432,7 +2433,6 @@ fn microphone_capture_stats_track_callback_size_and_clipping() {
     record_voice_input_chunk(
         960,
         2,
-        DISCORD_VOICE_SAMPLE_RATE,
         first_captured_at,
         first_captured_at + Duration::from_millis(10),
         &stats,
@@ -2440,7 +2440,6 @@ fn microphone_capture_stats_track_callback_size_and_clipping() {
     record_voice_input_chunk(
         480,
         2,
-        DISCORD_VOICE_SAMPLE_RATE,
         second_captured_at,
         second_captured_at + Duration::from_millis(5),
         &stats,
@@ -2453,328 +2452,6 @@ fn microphone_capture_stats_track_callback_size_and_clipping() {
     assert_eq!(stats.max_callback_frames.load(Ordering::Relaxed), 480);
     assert_eq!(stats.peak_sample.load(Ordering::Relaxed), 32767);
     assert_eq!(stats.clipped_samples.load(Ordering::Relaxed), 2);
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn repeated_oversized_microphone_callbacks_request_automatic_recovery() {
-    let stats = VoiceMicrophoneCaptureStats::default();
-    let oversized_frames =
-        voice_frames_for_duration(DISCORD_VOICE_SAMPLE_RATE, Duration::from_millis(80));
-    let mut captured_at = stats.started_at + Duration::from_millis(10);
-
-    for _ in 0..VOICE_MIC_UNHEALTHY_CALLBACK_THRESHOLD {
-        let callback_at = captured_at + Duration::from_millis(80);
-        let timing = record_voice_input_chunk(
-            oversized_frames as usize,
-            1,
-            DISCORD_VOICE_SAMPLE_RATE,
-            captured_at,
-            callback_at,
-            &stats,
-        );
-        record_voice_input_health(timing, None, callback_at, &stats);
-        captured_at += Duration::from_millis(80);
-    }
-
-    assert!(stats.restart_requested.load(Ordering::Acquire));
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_capture_clock_gap_preserves_44100_audio() {
-    let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-    let mut pcm_frames = VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), 44_100);
-    let input_frames = 883;
-    let callback_duration = Duration::from_micros(
-        u64::try_from(input_frames).expect("test frame count fits") * 1_000_000 / 44_100,
-    );
-    let samples = vec![1i16; input_frames * DISCORD_VOICE_CHANNELS_USIZE];
-    let initial_captured_at = stats.started_at + Duration::from_millis(10);
-
-    record_voice_input_chunk(
-        input_frames,
-        1,
-        44_100,
-        initial_captured_at,
-        initial_captured_at + callback_duration,
-        &stats,
-    );
-    pcm_frames.push_stereo_samples(&samples, initial_captured_at);
-    rx.try_recv().expect("initial resampled frame should queue");
-
-    let resumed_at = initial_captured_at + callback_duration + Duration::from_millis(100);
-    let mut fresh_frames = 0;
-    for index in 0..100u32 {
-        let captured_at = resumed_at + callback_duration.saturating_mul(index);
-        let timing = record_voice_input_chunk(
-            input_frames,
-            1,
-            44_100,
-            captured_at,
-            captured_at + callback_duration,
-            &stats,
-        );
-        pcm_frames.apply_capture_timing(timing);
-        let oldest_frame_at = pcm_frames.push_stereo_samples(&samples, captured_at);
-        record_voice_input_health(
-            timing,
-            oldest_frame_at,
-            captured_at + callback_duration,
-            &stats,
-        );
-        let frame = rx.try_recv().expect("resumed resampled frame should queue");
-        let (selected, dropped) =
-            select_fresh_voice_microphone_frame(frame, &mut rx, captured_at + callback_duration);
-        assert!(
-            selected.is_some(),
-            "resumed frame {index} should remain fresh"
-        );
-        assert_eq!(dropped, 0);
-        fresh_frames += 1;
-    }
-
-    assert_eq!(fresh_frames, 100);
-    assert!(
-        stats
-            .max_capture_clock_adjustment_us
-            .load(Ordering::Relaxed)
-            >= 100_000
-    );
-    assert!(!stats.restart_requested.load(Ordering::Acquire));
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_timeline_corrects_small_gaps_and_clock_drift() {
-    // Capture-clock changes must move the retained resampler timeline without
-    // discarding the partial source audio held between callbacks.
-    {
-        let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-        let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-        let mut pcm_frames = VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), 44_100);
-        let input_frames = 883;
-        let callback_duration = Duration::from_micros(
-            u64::try_from(input_frames).expect("test frame count fits") * 1_000_000 / 44_100,
-        );
-        let samples = vec![1i16; input_frames * DISCORD_VOICE_CHANNELS_USIZE];
-        let mut captured_at = stats.started_at + Duration::from_millis(10);
-
-        for index in 0..107 {
-            if index > 0 {
-                captured_at += callback_duration;
-                if index <= 7 {
-                    captured_at += Duration::from_millis(9);
-                }
-            }
-            let callback_at = captured_at + callback_duration;
-            let timing =
-                record_voice_input_chunk(input_frames, 1, 44_100, captured_at, callback_at, &stats);
-            pcm_frames.apply_capture_timing(timing);
-            let oldest_frame_at = pcm_frames.push_stereo_samples(&samples, captured_at);
-            record_voice_input_health(timing, oldest_frame_at, callback_at, &stats);
-
-            let mut frame = rx.try_recv().expect("resampled frame should queue");
-            while let Ok(newer) = rx.try_recv() {
-                frame = newer;
-            }
-            let frame_age = (callback_at + Duration::from_millis(15))
-                .saturating_duration_since(frame.captured_at);
-            assert!(
-                frame_age <= DISCORD_OPUS_FRAME_DURATION,
-                "frame {index} drifted by {}us",
-                frame_age.as_micros(),
-            );
-        }
-
-        assert!(!stats.restart_requested.load(Ordering::Acquire));
-    }
-
-    // A 100 ppm source clock difference is only 2us per 20ms callback. The
-    // individual differences are small, but the retained timeline must absorb
-    // all of them over a long session.
-    {
-        let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        let mut pcm_frames = VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), 44_100);
-        let timeline_start = stats.started_at + Duration::from_millis(20);
-        pcm_frames.output_pending_at = Some(timeline_start);
-        let mut captured_at = stats.started_at + Duration::from_millis(10);
-
-        let first = record_voice_input_chunk(
-            882,
-            1,
-            44_100,
-            captured_at,
-            captured_at + DISCORD_OPUS_FRAME_DURATION,
-            &stats,
-        );
-        pcm_frames.apply_capture_timing(first);
-        for _ in 0..40_000 {
-            captured_at += Duration::from_micros(20_002);
-            let timing = record_voice_input_chunk(
-                882,
-                1,
-                44_100,
-                captured_at,
-                captured_at + DISCORD_OPUS_FRAME_DURATION,
-                &stats,
-            );
-            pcm_frames.apply_capture_timing(timing);
-            record_voice_input_health(
-                timing,
-                None,
-                captured_at + DISCORD_OPUS_FRAME_DURATION,
-                &stats,
-            );
-        }
-
-        assert_eq!(
-            pcm_frames.output_pending_at,
-            Some(timeline_start + Duration::from_millis(80)),
-        );
-        assert!(!stats.restart_requested.load(Ordering::Acquire));
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_delivery_health_matches_completed_frame_age() {
-    assert_eq!(
-        VOICE_MIC_MAX_FRAME_AGE,
-        VOICE_MIC_CAPTURE_DELIVERY_BUDGET
-            .saturating_add(VOICE_MIC_TRANSMIT_WAIT_BUDGET)
-            .saturating_add(VOICE_MIC_PROCESSING_BUDGET),
-    );
-
-    // Use the assembler rather than assuming each callback completes a frame.
-    // The 882-frame input needs resampler lookahead and 720 frames span 15ms.
-    for (sample_rate, input_frames, capture_latency_ms, worker_delay_ms, needs_recovery) in [
-        (48_000, 960, 70, 0, false),
-        (44_100, 882, 50, 0, false),
-        (48_000, 720, 55, 0, false),
-        (48_000, 480, 60, 0, false),
-        (48_000, 2_880, 60, 0, false),
-        (48_000, 960, 100, 0, true),
-        (44_100, 882, 70, 0, true),
-        (48_000, 720, 65, 0, true),
-        (48_000, 480, 70, 0, true),
-        (48_000, 960, 60, 20, true),
-    ] {
-        let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-        let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-        let mut pcm_frames = VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), sample_rate);
-        let samples = vec![1i16; input_frames * DISCORD_VOICE_CHANNELS_USIZE];
-        let callback_duration = Duration::from_micros(
-            u64::try_from(input_frames).expect("test frame count fits") * 1_000_000
-                / u64::from(sample_rate),
-        );
-        let mut captured_at = stats.started_at + Duration::from_millis(10);
-        let mut accepted_frames = 0;
-        let mut dropped_frames = 0;
-
-        for _ in 0..100 {
-            let callback_at = captured_at + Duration::from_millis(capture_latency_ms);
-            let ready_at = callback_at + Duration::from_millis(worker_delay_ms);
-            let timing = record_voice_input_chunk(
-                input_frames,
-                1,
-                sample_rate,
-                captured_at,
-                callback_at,
-                &stats,
-            );
-            pcm_frames.apply_capture_timing(timing);
-            let oldest_frame_at = pcm_frames.push_stereo_samples(&samples, captured_at);
-            record_voice_input_health(timing, oldest_frame_at, ready_at, &stats);
-
-            let transmit_at =
-                ready_at + VOICE_MIC_TRANSMIT_WAIT_BUDGET + VOICE_MIC_PROCESSING_BUDGET;
-            while let Ok(frame) = rx.try_recv() {
-                let (selected, dropped) =
-                    select_fresh_voice_microphone_frame(frame, &mut rx, transmit_at);
-                accepted_frames += usize::from(selected.is_some());
-                dropped_frames += dropped;
-            }
-            captured_at += callback_duration;
-        }
-
-        assert_eq!(
-            stats.restart_requested.load(Ordering::Acquire),
-            needs_recovery,
-            "rate={sample_rate}, frames={input_frames}, capture={capture_latency_ms}ms, worker={worker_delay_ms}ms, dropped={dropped_frames}",
-        );
-        if needs_recovery {
-            assert!(dropped_frames > 0, "late frames must still be rejected");
-            assert!(stats.max_capture_delivery_age_us.load(Ordering::Relaxed) > 50_000);
-        } else {
-            assert!(accepted_frames > 0);
-            assert_eq!(dropped_frames, 0);
-            assert!(stats.max_capture_delivery_age_us.load(Ordering::Relaxed) <= 50_000);
-        }
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_health_counts_each_processed_chunk_once() {
-    for input_frames in [DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL / 2, 3_840] {
-        let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-        let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-        let mut pcm_frames =
-            VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), DISCORD_VOICE_SAMPLE_RATE);
-        let samples = vec![1i16; input_frames * DISCORD_VOICE_CHANNELS_USIZE];
-        let callback_duration = Duration::from_micros(
-            u64::try_from(input_frames).expect("test frame count fits") * 1_000_000
-                / u64::from(DISCORD_VOICE_SAMPLE_RATE),
-        );
-        let mut captured_at = stats.started_at + Duration::from_millis(10);
-
-        for index in 0..VOICE_MIC_UNHEALTHY_CALLBACK_THRESHOLD {
-            let previous_count = stats.unhealthy_callback_count.load(Ordering::Relaxed);
-            let callback_at = captured_at + callback_duration;
-            let timing = record_voice_input_chunk(
-                input_frames,
-                1,
-                DISCORD_VOICE_SAMPLE_RATE,
-                captured_at,
-                callback_at,
-                &stats,
-            );
-            // Recording the input must not update the worker-owned health window.
-            assert_eq!(
-                stats.unhealthy_callback_count.load(Ordering::Relaxed),
-                previous_count
-            );
-            pcm_frames.apply_capture_timing(timing);
-            let oldest_frame_at = pcm_frames.push_stereo_samples(&samples, captured_at);
-            record_voice_input_health(
-                timing,
-                oldest_frame_at,
-                callback_at + Duration::from_millis(100),
-                &stats,
-            );
-
-            if input_frames < DISCORD_OPUS_FRAME_SAMPLES_PER_CHANNEL {
-                // Incomplete audio is not a delivery event. Only the second
-                // callback completes a frame, so these three chunks count once.
-                assert_eq!(
-                    stats.unhealthy_callback_count.load(Ordering::Relaxed),
-                    u8::from(index > 0)
-                );
-                assert!(!stats.restart_requested.load(Ordering::Acquire));
-            } else {
-                // Four late frames and an oversized callback are still one event.
-                assert_eq!(
-                    stats.restart_requested.load(Ordering::Acquire),
-                    index + 1 == VOICE_MIC_UNHEALTHY_CALLBACK_THRESHOLD
-                );
-            }
-            while rx.try_recv().is_ok() {}
-            captured_at += callback_duration;
-        }
-    }
 }
 
 #[cfg(feature = "voice-playback")]
@@ -2818,86 +2495,60 @@ fn voice_input_config_prefers_mono_then_sample_format() {
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn voice_input_buffer_size_uses_auto_or_configured_duration() {
-    assert_eq!(
-        voice_input_buffer_size(None, DISCORD_VOICE_SAMPLE_RATE),
-        cpal::BufferSize::Default
-    );
-    assert_eq!(
-        voice_input_buffer_size(Some(MicrophoneBufferMs::new(40)), DISCORD_VOICE_SAMPLE_RATE,),
-        cpal::BufferSize::Fixed(1_920)
-    );
-    assert_eq!(
-        voice_buffer_duration_ms(96_000, DISCORD_VOICE_SAMPLE_RATE),
-        2_000
-    );
+fn automatic_microphone_buffer_uses_platform_period_and_supported_range() {
+    let callback_period_frames =
+        DISCORD_VOICE_SAMPLE_RATE / VOICE_MIC_AUTOMATIC_CALLBACKS_PER_SECOND;
 
     assert_eq!(
-        voice_microphone_recovery_buffers(VoiceMicrophoneBufferMode::HostDefault),
-        vec![MicrophoneBufferMs::new(40), MicrophoneBufferMs::new(60)]
+        automatic_voice_input_buffer_size(
+            &cpal::SupportedBufferSize::Range {
+                min: 128,
+                max: 8_192,
+            },
+            DISCORD_VOICE_SAMPLE_RATE,
+        ),
+        Some(cpal::BufferSize::Fixed(callback_period_frames))
     );
     assert_eq!(
-        voice_microphone_recovery_buffers(VoiceMicrophoneBufferMode::AutomaticFixed(
-            MicrophoneBufferMs::new(40)
-        )),
-        vec![MicrophoneBufferMs::new(60)]
+        automatic_voice_input_buffer_size(
+            &cpal::SupportedBufferSize::Range {
+                min: callback_period_frames + 1,
+                max: 8_192,
+            },
+            DISCORD_VOICE_SAMPLE_RATE,
+        ),
+        Some(cpal::BufferSize::Fixed(callback_period_frames + 1))
     );
     assert_eq!(
-        voice_microphone_recovery_buffers(VoiceMicrophoneBufferMode::AutomaticFixed(
-            MicrophoneBufferMs::new(60)
-        )),
-        Vec::<MicrophoneBufferMs>::new()
+        automatic_voice_input_buffer_size(
+            &cpal::SupportedBufferSize::Range {
+                min: 128,
+                max: callback_period_frames - 1,
+            },
+            DISCORD_VOICE_SAMPLE_RATE,
+        ),
+        Some(cpal::BufferSize::Fixed(callback_period_frames - 1))
     );
     assert_eq!(
-        voice_microphone_recovery_buffers(VoiceMicrophoneBufferMode::UserFixed(
-            MicrophoneBufferMs::new(40)
-        )),
-        Vec::<MicrophoneBufferMs>::new()
+        automatic_voice_input_buffer_size(
+            &cpal::SupportedBufferSize::Unknown,
+            DISCORD_VOICE_SAMPLE_RATE,
+        ),
+        None
     );
 }
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn automatic_microphone_buffers_reject_excessive_reported_size() {
-    let requested = MicrophoneBufferMs::new(40);
-
-    assert!(
-        validate_automatic_voice_input_buffer(requested, Some(2_880), DISCORD_VOICE_SAMPLE_RATE,)
-            .is_ok()
+fn configured_microphone_buffer_uses_requested_duration() {
+    assert_eq!(
+        voice_input_buffer_size(MicrophoneBufferMs::new(10), DISCORD_VOICE_SAMPLE_RATE),
+        cpal::BufferSize::Fixed(480)
     );
-    assert!(
-        validate_automatic_voice_input_buffer(requested, None, DISCORD_VOICE_SAMPLE_RATE,).is_ok()
+    assert_eq!(
+        voice_input_buffer_size(MicrophoneBufferMs::new(50), DISCORD_VOICE_SAMPLE_RATE),
+        cpal::BufferSize::Fixed(2_400)
     );
-    assert!(
-        validate_automatic_voice_input_buffer(requested, Some(96_000), DISCORD_VOICE_SAMPLE_RATE,)
-            .is_err()
-    );
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_recovery_failures_use_cooldown_and_then_exhaust() {
-    let mut recovery = VoiceMicrophoneRecoveryState::default();
-    let started_at = Instant::now();
-
-    assert!(recovery.permits_attempt(started_at));
-    assert!(!recovery.record_failed_sweep(started_at));
-    assert!(
-        !recovery
-            .permits_attempt(started_at + VOICE_MIC_RECOVERY_COOLDOWN - Duration::from_millis(1))
-    );
-
-    let second_attempt = started_at + VOICE_MIC_RECOVERY_COOLDOWN;
-    assert!(recovery.permits_attempt(second_attempt));
-    assert!(!recovery.record_failed_sweep(second_attempt));
-
-    let third_attempt = second_attempt + VOICE_MIC_RECOVERY_COOLDOWN;
-    assert!(recovery.permits_attempt(third_attempt));
-    assert!(recovery.record_failed_sweep(third_attempt));
-    assert!(!recovery.permits_attempt(third_attempt + Duration::from_secs(60)));
-
-    recovery = VoiceMicrophoneRecoveryState::default();
-    assert!(recovery.permits_attempt(third_attempt));
 }
 
 #[cfg(feature = "voice-playback")]
