@@ -369,6 +369,10 @@ impl DashboardState {
                                             .cache
                                             .can_transmit_microphone_in_voice_channel(channel)),
                                 noise_suppression: self.options.voice_options.noise_suppression,
+                                microphone_buffer_ms: self
+                                    .options
+                                    .voice_options
+                                    .microphone_buffer_ms,
                                 microphone_sensitivity: self
                                     .options
                                     .voice_options

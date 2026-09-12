@@ -588,6 +588,7 @@ impl DiscordClient {
                     self_deaf,
                     allow_microphone_transmit: audio_settings.allow_microphone_transmit,
                     noise_suppression: audio_settings.noise_suppression,
+                    microphone_buffer_ms: audio_settings.microphone_buffer_ms,
                     microphone_sensitivity: audio_settings.microphone_sensitivity,
                     microphone_volume: audio_settings.microphone_volume,
                     voice_output_volume: audio_settings.voice_output_volume,

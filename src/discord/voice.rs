@@ -110,9 +110,9 @@ use cpal::traits::{DeviceTrait, StreamTrait};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 #[cfg(feature = "voice-playback")]
-use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 #[cfg(feature = "voice-playback")]
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex as StdMutex};
 use tokio::{
     net::UdpSocket,
     sync::{Mutex, mpsc, watch},
@@ -127,8 +127,8 @@ use crate::discord::ids::{
 };
 use crate::{logging, support::tls};
 pub use levels::{
-    MicrophoneSensitivityDb, VoiceParticipantPlaybackSettings, VoiceParticipantVolumePercent,
-    VoiceVolumePercent,
+    MicrophoneBufferMs, MicrophoneSensitivityDb, VoiceParticipantPlaybackSettings,
+    VoiceParticipantVolumePercent, VoiceVolumePercent,
 };
 
 use super::{client::AppEventPublisher, events::AppEvent, gateway::GatewayCommand};
@@ -199,7 +199,30 @@ const VOICE_MIC_PCM_FRAME_QUEUE: usize = 16;
 #[cfg(feature = "voice-playback")]
 const VOICE_MIC_MAX_LIVE_FRAMES: usize = 3;
 #[cfg(feature = "voice-playback")]
-const VOICE_MIC_MAX_FRAME_AGE: Duration = Duration::from_millis(60);
+const VOICE_MIC_TARGET_BUFFER_DURATION: Duration = Duration::from_millis(40);
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_MAX_BUFFER_DURATION: Duration = Duration::from_millis(60);
+const VOICE_MIC_HEALTH_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_UNHEALTHY_CALLBACK_THRESHOLD: u8 = 3;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_UNHEALTHY_CALLBACK_WINDOW: Duration = Duration::from_secs(5);
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_CALLBACK_GAP_FLOOR: Duration = Duration::from_millis(200);
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_CAPTURE_DELIVERY_BUDGET: Duration = Duration::from_millis(50);
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_TRANSMIT_WAIT_BUDGET: Duration = DISCORD_OPUS_FRAME_DURATION;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_PROCESSING_BUDGET: Duration = Duration::from_millis(10);
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_MAX_FRAME_AGE: Duration = VOICE_MIC_CAPTURE_DELIVERY_BUDGET
+    .saturating_add(VOICE_MIC_TRANSMIT_WAIT_BUDGET)
+    .saturating_add(VOICE_MIC_PROCESSING_BUDGET);
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_RECOVERY_MAX_FAILED_SWEEPS: u8 = 3;
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_RECOVERY_COOLDOWN: Duration = Duration::from_secs(5);
 #[cfg(feature = "voice-playback")]
 const VOICE_TRANSMIT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(feature = "voice-playback")]
@@ -776,6 +799,8 @@ struct VoiceChildTasks {
     #[cfg(feature = "voice-playback")]
     microphone_source: Option<String>,
     #[cfg(feature = "voice-playback")]
+    microphone_buffer_ms: Option<MicrophoneBufferMs>,
+    #[cfg(feature = "voice-playback")]
     output_source: Option<String>,
     // Declared last so it is dropped after the task handles above — aborting
     // them before the runtime they ran on tears down.
@@ -836,6 +861,8 @@ impl Default for VoiceChildTasks {
             #[cfg(feature = "voice-playback")]
             microphone_source: None,
             #[cfg(feature = "voice-playback")]
+            microphone_buffer_ms: None,
+            #[cfg(feature = "voice-playback")]
             output_source: None,
             audio_runtime: None,
         }
@@ -848,6 +875,7 @@ struct VoiceCaptureGate {
     transmit_enabled: bool,
     use_voice_activity: bool,
     noise_suppression: bool,
+    microphone_buffer_ms: Option<MicrophoneBufferMs>,
     microphone_sensitivity: MicrophoneSensitivityDb,
     microphone_volume: VoiceVolumePercent,
 }
@@ -875,7 +903,70 @@ struct VoiceUdpTransmitContext {
 #[cfg(feature = "voice-playback")]
 struct VoiceMicrophoneCapture {
     _stream: cpal::Stream,
+    _processor: VoiceMicrophoneInputProcessor,
     stats: Arc<VoiceMicrophoneCaptureStats>,
+    buffer_mode: VoiceMicrophoneBufferMode,
+    recovery: VoiceMicrophoneRecoveryState,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceMicrophoneInputStream {
+    stream: cpal::Stream,
+    processor: VoiceMicrophoneInputProcessor,
+    stream_config: cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    buffer_mode: VoiceMicrophoneBufferMode,
+    stream_reported_buffer_frames: Option<u32>,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceMicrophoneInputProcessor {
+    shutdown: Option<Box<dyn FnOnce() + Send>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceMicrophoneInputChunk<T> {
+    samples: Vec<T>,
+    captured_at: Instant,
+    timing: VoiceMicrophoneCaptureTiming,
+}
+
+#[cfg(feature = "voice-playback")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct VoiceMicrophoneCaptureTiming {
+    input_dropped: bool,
+    timeline_adjustment_us: i64,
+    callback_unhealthy: bool,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceMicrophoneInputHandoff<T> {
+    state: StdMutex<VoiceMicrophoneInputHandoffState<T>>,
+    wake: Condvar,
+    input_dropped: AtomicBool,
+}
+
+#[cfg(feature = "voice-playback")]
+struct VoiceMicrophoneInputHandoffState<T> {
+    pending: Option<VoiceMicrophoneInputChunk<T>>,
+    stopped: bool,
+}
+
+#[cfg(feature = "voice-playback")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VoiceMicrophoneBufferMode {
+    HostDefault,
+    AutomaticFixed(MicrophoneBufferMs),
+    UserFixed(MicrophoneBufferMs),
+}
+
+#[cfg(feature = "voice-playback")]
+#[derive(Default)]
+struct VoiceMicrophoneRecoveryState {
+    failed_sweeps: u8,
+    retry_not_before: Option<Instant>,
+    exhausted: bool,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -885,6 +976,7 @@ struct VoiceMicrophonePcmFrames {
     source_sample_rate: u32,
     source_pending: Vec<i16>,
     output_pending: Vec<i16>,
+    output_pending_at: Option<Instant>,
     next_source_frame: f64,
 }
 
@@ -897,6 +989,7 @@ struct VoiceMicrophoneFrame {
 
 #[cfg(feature = "voice-playback")]
 struct VoiceMicrophoneCaptureStats {
+    started_at: Instant,
     chunks: AtomicU64,
     frames: AtomicU64,
     min_callback_frames: AtomicU64,
@@ -905,6 +998,18 @@ struct VoiceMicrophoneCaptureStats {
     dropped_frames: AtomicU64,
     peak_sample: AtomicU64,
     clipped_samples: AtomicU64,
+    last_callback_elapsed_us: AtomicU64,
+    max_callback_gap_ms: AtomicU64,
+    callback_handoff_drops: AtomicU64,
+    stream_errors: AtomicU64,
+    stream_xruns: AtomicU64,
+    last_capture_end_offset_us: AtomicI64,
+    max_capture_clock_adjustment_us: AtomicU64,
+    max_capture_latency_us: AtomicU64,
+    max_capture_delivery_age_us: AtomicU64,
+    unhealthy_callback_count: AtomicU8,
+    unhealthy_callback_window_started_us: AtomicU64,
+    restart_requested: AtomicBool,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -1029,6 +1134,7 @@ impl VoiceChildTasks {
                 transmit_enabled: false,
                 use_voice_activity: true,
                 noise_suppression: false,
+                microphone_buffer_ms: None,
                 microphone_sensitivity: MicrophoneSensitivityDb::default(),
                 microphone_volume: VoiceVolumePercent::default(),
             });
@@ -1106,23 +1212,70 @@ impl VoiceChildTasks {
     }
 
     #[allow(dead_code)]
-    fn set_microphone_capture_enabled(&mut self, enabled: bool) {
+    fn set_microphone_capture_enabled(
+        &mut self,
+        enabled: bool,
+        microphone_buffer_ms: Option<MicrophoneBufferMs>,
+    ) {
         #[cfg(feature = "voice-playback")]
         {
-            match (enabled, self.microphone_capture.is_some()) {
-                (true, false) => {
+            let buffer_changed = self.microphone_buffer_ms != microphone_buffer_ms;
+            let samples_tx = if enabled {
+                self.microphone_pcm_tx.clone()
+            } else {
+                None
+            };
+            match (
+                samples_tx,
+                self.microphone_capture.is_some(),
+                buffer_changed,
+            ) {
+                (Some(samples_tx), false, _) => {
                     match VoiceMicrophoneCapture::start(
-                        self.microphone_pcm_tx.clone(),
+                        samples_tx,
                         self.microphone_source.as_deref(),
+                        microphone_buffer_ms,
                     ) {
-                        Ok(capture) => self.microphone_capture = Some(capture),
+                        Ok(capture) => {
+                            self.microphone_capture = Some(capture);
+                            self.microphone_buffer_ms = microphone_buffer_ms;
+                        }
                         Err(error) => logging::error(
                             "voice",
                             format!("voice microphone capture unavailable: {error}"),
                         ),
                     }
                 }
-                (false, true) => {
+                (Some(samples_tx), true, true) => {
+                    if let Some(capture) = self.microphone_capture.as_mut() {
+                        capture.reset_recovery();
+                    }
+                    logging::debug(
+                        "voice",
+                        "starting replacement voice microphone capture for new buffer setting",
+                    );
+                    match VoiceMicrophoneCapture::start(
+                        samples_tx,
+                        self.microphone_source.as_deref(),
+                        microphone_buffer_ms,
+                    ) {
+                        Ok(capture) => {
+                            self.microphone_capture = Some(capture);
+                            self.microphone_buffer_ms = microphone_buffer_ms;
+                            logging::debug(
+                                "voice",
+                                "replaced voice microphone capture for new buffer setting",
+                            );
+                        }
+                        Err(error) => logging::error(
+                            "voice",
+                            format!(
+                                "voice microphone buffer change failed; previous capture remains active: {error}"
+                            ),
+                        ),
+                    }
+                }
+                (None, true, _) => {
                     logging::debug("voice", "stopping voice microphone capture");
                     self.microphone_capture = None;
                 }
@@ -1131,7 +1284,7 @@ impl VoiceChildTasks {
         }
         #[cfg(not(feature = "voice-playback"))]
         {
-            let _ = enabled;
+            let _ = (enabled, microphone_buffer_ms);
         }
     }
 
@@ -1142,7 +1295,8 @@ impl VoiceChildTasks {
                 let _ = gate.send(capture_gate);
             }
             self.set_microphone_capture_enabled(
-                capture_gate.capture_enabled && self.microphone_pcm_tx.is_some(),
+                capture_gate.capture_enabled,
+                capture_gate.microphone_buffer_ms,
             );
         }
         #[cfg(not(feature = "voice-playback"))]
@@ -1167,6 +1321,74 @@ impl VoiceChildTasks {
         }
     }
 
+    fn maintain_microphone_capture_health(&mut self) {
+        #[cfg(feature = "voice-playback")]
+        {
+            let recovery_started_at = Instant::now();
+            let (Some(capture), Some(samples_tx)) = (
+                self.microphone_capture.as_mut(),
+                self.microphone_pcm_tx.as_ref(),
+            ) else {
+                return;
+            };
+            let candidates = capture.take_restart_buffers(recovery_started_at);
+            if candidates.is_empty() {
+                return;
+            }
+
+            let mut failures = Vec::new();
+            for next_buffer in candidates {
+                logging::debug(
+                    "voice",
+                    format!(
+                        "voice microphone callback timing is unhealthy, retrying with {}ms fixed buffer",
+                        next_buffer.value(),
+                    ),
+                );
+                match VoiceMicrophoneCapture::start_automatic_fixed(
+                    samples_tx.clone(),
+                    self.microphone_source.as_deref(),
+                    next_buffer,
+                ) {
+                    Ok(capture) => {
+                        self.microphone_capture = Some(capture);
+                        logging::debug(
+                            "voice",
+                            format!(
+                                "replaced unhealthy voice microphone capture with {}ms compatibility buffer",
+                                next_buffer.value(),
+                            ),
+                        );
+                        return;
+                    }
+                    Err(error) => failures.push(format!("{}ms: {error}", next_buffer.value())),
+                }
+            }
+            let exhausted = self
+                .microphone_capture
+                .as_mut()
+                .is_some_and(|capture| capture.record_failed_recovery(Instant::now()));
+            let retry_status = if exhausted {
+                format!(
+                    "automatic recovery exhausted after {} failed sweeps",
+                    VOICE_MIC_RECOVERY_MAX_FAILED_SWEEPS,
+                )
+            } else {
+                format!(
+                    "next retry is delayed by {}ms",
+                    VOICE_MIC_RECOVERY_COOLDOWN.as_millis(),
+                )
+            };
+            logging::error(
+                "voice",
+                format!(
+                    "voice microphone compatibility buffers failed, previous capture remains active, {retry_status}: {}",
+                    failures.join("; "),
+                ),
+            );
+        }
+    }
+
     fn set_voice_audio_sources(
         &mut self,
         sources: VoiceAudioSources,
@@ -1176,20 +1398,25 @@ impl VoiceChildTasks {
         {
             let mut errors = Vec::new();
             if self.microphone_source != sources.input {
-                let capture_should_run =
-                    capture_gate.capture_enabled && self.microphone_pcm_tx.is_some();
-                if self.microphone_capture.is_some() || capture_should_run {
+                if let Some(capture) = self.microphone_capture.as_mut() {
+                    capture.reset_recovery();
+                }
+                if let Some(samples_tx) = self.microphone_pcm_tx.clone()
+                    && (self.microphone_capture.is_some() || capture_gate.capture_enabled)
+                {
                     logging::debug(
                         "voice",
                         "starting replacement voice microphone capture for new source",
                     );
                     match VoiceMicrophoneCapture::start(
-                        self.microphone_pcm_tx.clone(),
+                        samples_tx,
                         sources.input.as_deref(),
+                        capture_gate.microphone_buffer_ms,
                     ) {
                         Ok(capture) => {
                             self.microphone_capture = Some(capture);
                             self.microphone_source = sources.input;
+                            self.microphone_buffer_ms = capture_gate.microphone_buffer_ms;
                             logging::debug(
                                 "voice",
                                 "replaced voice microphone capture for new source",

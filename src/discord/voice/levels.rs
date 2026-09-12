@@ -16,6 +16,10 @@ pub struct VoiceVolumePercent(u8);
 #[serde(transparent)]
 pub struct VoiceParticipantVolumePercent(u16);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct MicrophoneBufferMs(u16);
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct VoiceParticipantPlaybackSettings {
@@ -32,6 +36,8 @@ const DEFAULT_VOICE_VOLUME_PERCENT: u8 = 100;
 const MIN_VOICE_PARTICIPANT_VOLUME_PERCENT: u16 = 0;
 const MAX_VOICE_PARTICIPANT_VOLUME_PERCENT: u16 = 200;
 const DEFAULT_VOICE_PARTICIPANT_VOLUME_PERCENT: u16 = 100;
+const MIN_MICROPHONE_BUFFER_MS: u16 = 10;
+const MAX_MICROPHONE_BUFFER_MS: u16 = 60;
 
 impl<'de> Deserialize<'de> for MicrophoneSensitivityDb {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
@@ -69,6 +75,15 @@ impl<'de> Deserialize<'de> for VoiceParticipantVolumePercent {
         D: serde::Deserializer<'de>,
     {
         Ok(Self::from_raw_percent(i64::deserialize(deserializer)?))
+    }
+}
+
+impl<'de> Deserialize<'de> for MicrophoneBufferMs {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self::from_raw_ms(i64::deserialize(deserializer)?))
     }
 }
 
@@ -182,5 +197,29 @@ impl VoiceParticipantVolumePercent {
 
     pub fn gain(self) -> f32 {
         f32::from(self.0) / 100.0
+    }
+}
+
+impl MicrophoneBufferMs {
+    pub fn new(value: u16) -> Self {
+        Self::from_raw_ms(i64::from(value))
+    }
+
+    fn from_raw_ms(value: i64) -> Self {
+        Self(value.clamp(
+            i64::from(MIN_MICROPHONE_BUFFER_MS),
+            i64::from(MAX_MICROPHONE_BUFFER_MS),
+        ) as u16)
+    }
+
+    pub fn value(self) -> u16 {
+        self.0
+    }
+
+    pub fn frames(self, sample_rate: u32) -> u32 {
+        u32::from(self.0)
+            .saturating_mul(sample_rate)
+            .saturating_add(500)
+            / 1_000
     }
 }
