@@ -4,7 +4,7 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crate::discord::{MicrophoneSensitivityDb, VoiceVolumePercent};
+use crate::discord::{MicrophoneBufferMs, MicrophoneSensitivityDb, VoiceVolumePercent};
 use crate::discord::{
     StreamCreateInfo, StreamUpdateInfo, VoiceScope, VoiceSoundKind, VoiceStateInfo,
 };
@@ -38,6 +38,7 @@ pub struct CurrentVoiceConnectionState {
     pub self_deaf: bool,
     pub allow_microphone_transmit: bool,
     pub noise_suppression: bool,
+    pub microphone_buffer_ms: Option<MicrophoneBufferMs>,
     pub microphone_sensitivity: MicrophoneSensitivityDb,
     pub microphone_volume: VoiceVolumePercent,
     pub voice_output_volume: VoiceVolumePercent,
@@ -49,6 +50,7 @@ pub struct CurrentVoiceConnectionState {
 pub struct VoiceAudioSettings {
     pub allow_microphone_transmit: bool,
     pub noise_suppression: bool,
+    pub microphone_buffer_ms: Option<MicrophoneBufferMs>,
     pub microphone_sensitivity: MicrophoneSensitivityDb,
     pub microphone_volume: VoiceVolumePercent,
     pub voice_output_volume: VoiceVolumePercent,
@@ -64,6 +66,7 @@ impl CurrentVoiceConnectionState {
         VoiceAudioSettings {
             allow_microphone_transmit: self.allow_microphone_transmit,
             noise_suppression: self.noise_suppression,
+            microphone_buffer_ms: self.microphone_buffer_ms,
             microphone_sensitivity: self.microphone_sensitivity,
             microphone_volume: self.microphone_volume,
             voice_output_volume: self.voice_output_volume,
@@ -73,6 +76,7 @@ impl CurrentVoiceConnectionState {
     pub(crate) fn set_audio_settings(&mut self, settings: VoiceAudioSettings) {
         self.allow_microphone_transmit = settings.allow_microphone_transmit;
         self.noise_suppression = settings.noise_suppression;
+        self.microphone_buffer_ms = settings.microphone_buffer_ms;
         self.microphone_sensitivity = settings.microphone_sensitivity;
         self.microphone_volume = settings.microphone_volume;
         self.voice_output_volume = settings.voice_output_volume;
@@ -90,6 +94,7 @@ impl CurrentVoiceConnectionState {
             self_deaf: false,
             allow_microphone_transmit: false,
             noise_suppression: false,
+            microphone_buffer_ms: None,
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
             microphone_volume: VoiceVolumePercent::default(),
             voice_output_volume: VoiceVolumePercent::default(),
@@ -132,6 +137,7 @@ impl DiscordState {
                     self_deaf: state.self_deaf,
                     allow_microphone_transmit: false,
                     noise_suppression: false,
+                    microphone_buffer_ms: None,
                     microphone_sensitivity: MicrophoneSensitivityDb::default(),
                     microphone_volume: VoiceVolumePercent::default(),
                     voice_output_volume: VoiceVolumePercent::default(),

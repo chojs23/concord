@@ -724,6 +724,7 @@ impl DashboardState {
             channel_id,
             allow_microphone_transmit: self.options.voice_options.allow_microphone_transmit,
             noise_suppression: self.options.voice_options.noise_suppression,
+            microphone_buffer_ms: self.options.voice_options.microphone_buffer_ms,
             microphone_sensitivity: self.options.voice_options.microphone_sensitivity,
             microphone_volume: self.options.voice_options.microphone_volume,
             voice_output_volume: self.options.voice_options.voice_output_volume,

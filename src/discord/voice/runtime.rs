@@ -824,6 +824,7 @@ impl VoiceRuntimeState {
             transmit_enabled: capture_enabled && (!self.push_to_talk || self.push_to_talk_pressed),
             use_voice_activity: !self.push_to_talk,
             noise_suppression: requested.noise_suppression,
+            microphone_buffer_ms: requested.microphone_buffer_ms,
             microphone_sensitivity: requested.microphone_sensitivity,
             microphone_volume: requested.microphone_volume,
         })
@@ -1064,6 +1065,7 @@ pub(crate) async fn run_voice_runtime(
                         transmit_enabled: false,
                         use_voice_activity: true,
                         noise_suppression: false,
+                        microphone_buffer_ms: None,
                         microphone_sensitivity: MicrophoneSensitivityDb::default(),
                         microphone_volume: VoiceVolumePercent::default(),
                     });

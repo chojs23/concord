@@ -106,6 +106,7 @@ pub(super) async fn connect_voice_gateway(
     child_tasks.audio_runtime = Some(audio_runtime);
     let mut speaking_tracker = VoiceSpeakingTracker::new(session.user_id);
     let mut speaking_sweep = tokio::time::interval(VOICE_REMOTE_SPEAKING_SWEEP_INTERVAL);
+    let mut microphone_health_sweep = tokio::time::interval(VOICE_MIC_HEALTH_SWEEP_INTERVAL);
     #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
     let (local_speaking_tx, mut local_speaking_rx) = mpsc::unbounded_channel();
     #[cfg_attr(not(feature = "voice-playback"), allow(unused_variables))]
@@ -142,6 +143,10 @@ pub(super) async fn connect_voice_gateway(
 
     loop {
         let frame = tokio::select! {
+            _ = microphone_health_sweep.tick() => {
+                child_tasks.maintain_microphone_capture_health();
+                continue;
+            }
             audio_sources = audio_sources_rx.changed() => {
                 match audio_sources {
                     Ok(()) => {
@@ -182,6 +187,7 @@ pub(super) async fn connect_voice_gateway(
                             transmit_enabled: false,
                             use_voice_activity: true,
                             noise_suppression: false,
+                            microphone_buffer_ms: None,
                             microphone_sensitivity: MicrophoneSensitivityDb::default(),
                             microphone_volume: VoiceVolumePercent::default(),
                         });

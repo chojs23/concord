@@ -9,7 +9,9 @@ use super::{
     ThemeOptions, VoiceOptions, load_keymap_options_from_path, load_options_from_path,
     parse_app_options, parse_theme_options, save_options_to_path,
 };
-use crate::discord::{MicrophoneSensitivityDb, VoiceParticipantVolumePercent, VoiceVolumePercent};
+use crate::discord::{
+    MicrophoneBufferMs, MicrophoneSensitivityDb, VoiceParticipantVolumePercent, VoiceVolumePercent,
+};
 
 #[test]
 fn display_options_default_to_all_media_enabled() {
@@ -540,6 +542,23 @@ fn noise_suppression_defaults_to_enabled_and_can_be_disabled() {
 }
 
 #[test]
+fn microphone_buffer_defaults_to_auto_and_clamps_explicit_duration() {
+    let automatic: AppOptions = toml::from_str("[voice]\n").expect("voice config should parse");
+    let cases = [(1, 10), (40, 40), (500, 60)];
+
+    assert_eq!(automatic.voice.microphone_buffer_ms, None);
+    for (configured, expected) in cases {
+        let options: AppOptions =
+            toml::from_str(&format!("[voice]\nmicrophone_buffer_ms = {configured}\n"))
+                .expect("microphone buffer config should parse");
+        assert_eq!(
+            options.voice.microphone_buffer_ms,
+            Some(MicrophoneBufferMs::new(expected)),
+        );
+    }
+}
+
+#[test]
 fn push_to_talk_defaults_to_disabled_and_can_be_enabled() {
     let defaults: AppOptions = toml::from_str("[voice]\n").expect("voice config should parse");
     let push_to_talk: AppOptions =
@@ -613,6 +632,7 @@ fn options_save_and_load_round_trip() {
             push_to_talk: true,
             push_to_talk_shortcut: "control+F8".to_owned(),
             noise_suppression: true,
+            microphone_buffer_ms: Some(MicrophoneBufferMs::new(40)),
             microphone_sensitivity: MicrophoneSensitivityDb::new(-50),
             microphone_volume: VoiceVolumePercent::new(80),
             voice_output_volume: VoiceVolumePercent::new(60),
