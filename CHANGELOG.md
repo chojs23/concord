@@ -2,7 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.5.19] - 2026-09-12
+## [2.5.20] - 2026-09-12
+
+### Bug Fixes
+
+- _(voice)_ Adapt microphone buffering to device behavior (#361) in [#361](https://github.com/chojs23/concord/pull/361) by @chojs23
+- _(voice)_ Replace adaptive microphone recovery with fixed platform buffers (#363) in [#363](https://github.com/chojs23/concord/pull/363) by @chojs23
+- _(voice)_ Fix microphone frame loss caused by queue replacement by @chojs23
+
+## [2.5.19] - 2026-09-11
 
 ### Bug Fixes
 

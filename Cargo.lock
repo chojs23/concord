@@ -1034,7 +1034,7 @@ checksum = "6e8ccc4ea9f6acc32d102c0f6d471d11d913ad15f20c04de743374861fa1d414"
 
 [[package]]
 name = "concord"
-version = "2.5.19"
+version = "2.5.20"
 dependencies = [
  "aes-gcm 0.11.1",
  "alsa",
