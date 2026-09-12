@@ -111,8 +111,6 @@ use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 #[cfg(feature = "voice-playback")]
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-#[cfg(feature = "voice-playback")]
-use std::sync::{Condvar, Mutex as StdMutex};
 use tokio::{
     net::UdpSocket,
     sync::{Mutex, mpsc, watch},
@@ -195,9 +193,9 @@ const DISCORD_TRAILING_SILENCE_FRAMES: usize = 5;
 #[allow(dead_code)]
 const OPUS_MAX_ENCODED_FRAME_BYTES: usize = 4000;
 #[cfg(feature = "voice-playback")]
-const VOICE_MIC_PCM_FRAME_QUEUE: usize = 16;
+const VOICE_MIC_PCM_FRAME_QUEUE: usize = 32;
 #[cfg(feature = "voice-playback")]
-const VOICE_MIC_MAX_LIVE_FRAMES: usize = 3;
+const VOICE_MIC_INPUT_CALLBACK_QUEUE: usize = 8;
 #[cfg(feature = "voice-playback")]
 const VOICE_MIC_MAX_FRAME_AGE: Duration = Duration::from_millis(80);
 #[cfg(all(feature = "voice-playback", target_os = "linux"))]
@@ -900,7 +898,7 @@ struct VoiceMicrophoneInputStream {
 
 #[cfg(feature = "voice-playback")]
 struct VoiceMicrophoneInputProcessor {
-    shutdown: Option<Box<dyn FnOnce() + Send>>,
+    stopped: Arc<AtomicBool>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -909,19 +907,6 @@ struct VoiceMicrophoneInputChunk<T> {
     samples: Vec<T>,
     captured_at: Instant,
     input_dropped: bool,
-}
-
-#[cfg(feature = "voice-playback")]
-struct VoiceMicrophoneInputHandoff<T> {
-    state: StdMutex<VoiceMicrophoneInputHandoffState<T>>,
-    wake: Condvar,
-    input_dropped: AtomicBool,
-}
-
-#[cfg(feature = "voice-playback")]
-struct VoiceMicrophoneInputHandoffState<T> {
-    pending: Option<VoiceMicrophoneInputChunk<T>>,
-    stopped: bool,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -963,7 +948,7 @@ struct VoiceMicrophoneCaptureStats {
     clipped_samples: AtomicU64,
     last_callback_elapsed_us: AtomicU64,
     max_callback_gap_ms: AtomicU64,
-    callback_handoff_drops: AtomicU64,
+    callback_queue_drops: AtomicU64,
     stream_errors: AtomicU64,
     stream_xruns: AtomicU64,
     max_capture_latency_us: AtomicU64,

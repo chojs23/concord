@@ -697,8 +697,15 @@ pub(super) fn write_voice_output_frame<T>(
 
 #[cfg(feature = "voice-playback")]
 fn log_voice_output_stream_error(error: cpal::Error) {
-    logging::error(
-        "voice",
-        format!("voice audio output stream failed: {error}"),
-    );
+    if audio_output::is_recoverable_output_stream_error(&error) {
+        logging::debug(
+            "voice",
+            format!("voice audio output stream reported a recoverable event: {error}"),
+        );
+    } else {
+        logging::error(
+            "voice",
+            format!("voice audio output stream failed: {error}"),
+        );
+    }
 }

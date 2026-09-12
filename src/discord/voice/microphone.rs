@@ -372,7 +372,7 @@ impl Default for VoiceMicrophoneCaptureStats {
             clipped_samples: AtomicU64::new(0),
             last_callback_elapsed_us: AtomicU64::new(0),
             max_callback_gap_ms: AtomicU64::new(0),
-            callback_handoff_drops: AtomicU64::new(0),
+            callback_queue_drops: AtomicU64::new(0),
             stream_errors: AtomicU64::new(0),
             stream_xruns: AtomicU64::new(0),
             max_capture_latency_us: AtomicU64::new(0),
@@ -384,9 +384,7 @@ impl Default for VoiceMicrophoneCaptureStats {
 #[cfg(feature = "voice-playback")]
 impl Drop for VoiceMicrophoneInputProcessor {
     fn drop(&mut self) {
-        if let Some(shutdown) = self.shutdown.take() {
-            shutdown();
-        }
+        self.stopped.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take()
             && let Err(error) = worker.join()
         {
@@ -395,62 +393,6 @@ impl Drop for VoiceMicrophoneInputProcessor {
                 format!("voice microphone input processor panicked: {error:?}"),
             );
         }
-    }
-}
-
-#[cfg(feature = "voice-playback")]
-impl<T> VoiceMicrophoneInputHandoff<T> {
-    pub(super) fn new() -> Self {
-        Self {
-            state: StdMutex::new(VoiceMicrophoneInputHandoffState {
-                pending: None,
-                stopped: false,
-            }),
-            wake: Condvar::new(),
-            input_dropped: AtomicBool::new(false),
-        }
-    }
-
-    pub(super) fn take(&self) -> Option<VoiceMicrophoneInputChunk<T>> {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        while state.pending.is_none() && !state.stopped {
-            state = self
-                .wake
-                .wait(state)
-                .unwrap_or_else(|error| error.into_inner());
-        }
-        if state.stopped {
-            None
-        } else {
-            state.pending.take()
-        }
-    }
-
-    fn try_replace(
-        &self,
-        mut chunk: VoiceMicrophoneInputChunk<T>,
-    ) -> Result<Option<VoiceMicrophoneInputChunk<T>>, VoiceMicrophoneInputChunk<T>> {
-        let Ok(mut state) = self.state.try_lock() else {
-            self.input_dropped.store(true, Ordering::Release);
-            return Err(chunk);
-        };
-        if state.stopped {
-            return Err(chunk);
-        }
-
-        chunk.input_dropped |= self.input_dropped.swap(false, Ordering::AcqRel);
-        chunk.input_dropped |= state.pending.is_some();
-        let replaced = state.pending.replace(chunk);
-        drop(state);
-        self.wake.notify_one();
-        Ok(replaced)
-    }
-
-    pub(super) fn stop(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.stopped = true;
-        drop(state);
-        self.wake.notify_all();
     }
 }
 
@@ -557,23 +499,6 @@ impl VoiceMicrophonePcmFrames {
     }
 
     pub(super) fn flush_output_frames(&mut self) -> Option<Instant> {
-        let completed_frames = self.output_pending.len() / DISCORD_OPUS_20MS_STEREO_SAMPLES;
-        let stale_frames = completed_frames.saturating_sub(VOICE_MIC_MAX_LIVE_FRAMES);
-        if stale_frames > 0 {
-            self.output_pending
-                .drain(..stale_frames * DISCORD_OPUS_20MS_STEREO_SAMPLES);
-            self.output_pending_at = self.output_pending_at.and_then(|captured_at| {
-                captured_at.checked_add(
-                    DISCORD_OPUS_FRAME_DURATION
-                        .saturating_mul(u32::try_from(stale_frames).unwrap_or(u32::MAX)),
-                )
-            });
-            self.stats.dropped_frames.fetch_add(
-                u64::try_from(stale_frames).unwrap_or(u64::MAX),
-                Ordering::Relaxed,
-            );
-        }
-
         let mut oldest_frame_at = None;
         while self.output_pending.len() >= DISCORD_OPUS_20MS_STEREO_SAMPLES {
             let frame = VoiceMicrophoneFrame {
@@ -614,13 +539,13 @@ impl Drop for VoiceMicrophoneCapture {
         logging::debug(
             "voice",
             format!(
-                "voice microphone capture stopped: chunks={} frames={} callback_frames_min={} callback_frames_max={} callback_max_gap_ms={} callback_handoff_drops={} capture_latency_max_us={} capture_delivery_age_max_us={} stream_errors={} stream_xruns={} queued_20ms_frames={} dropped_20ms_frames={} peak_sample={} clipped_samples={}",
+                "voice microphone capture stopped: chunks={} frames={} callback_frames_min={} callback_frames_max={} callback_max_gap_ms={} callback_queue_drops={} capture_latency_max_us={} capture_delivery_age_max_us={} stream_errors={} stream_xruns={} queued_20ms_frames={} dropped_20ms_frames={} peak_sample={} clipped_samples={}",
                 self.stats.chunks.load(Ordering::Relaxed),
                 self.stats.frames.load(Ordering::Relaxed),
                 voice_microphone_min_callback_frames(&self.stats),
                 self.stats.max_callback_frames.load(Ordering::Relaxed),
                 self.stats.max_callback_gap_ms.load(Ordering::Relaxed),
-                self.stats.callback_handoff_drops.load(Ordering::Relaxed),
+                self.stats.callback_queue_drops.load(Ordering::Relaxed),
                 self.stats.max_capture_latency_us.load(Ordering::Relaxed),
                 self.stats
                     .max_capture_delivery_age_us
@@ -692,16 +617,25 @@ where
 {
     let channels = usize::from(config.channels);
     let sample_rate = config.sample_rate;
-    let handoff = Arc::new(VoiceMicrophoneInputHandoff::<T>::new());
-    let worker_handoff = Arc::clone(&handoff);
+    let (input_tx, input_rx) = std::sync::mpsc::sync_channel::<VoiceMicrophoneInputChunk<T>>(
+        VOICE_MIC_INPUT_CALLBACK_QUEUE,
+    );
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_stopped = Arc::clone(&stopped);
     let worker_stats = Arc::clone(&stats);
-    let (recycle_tx, recycle_rx) = std::sync::mpsc::sync_channel::<Vec<T>>(2);
+    let (recycle_tx, recycle_rx) =
+        std::sync::mpsc::sync_channel::<Vec<T>>(VOICE_MIC_INPUT_CALLBACK_QUEUE + 1);
     let worker = std::thread::Builder::new()
         .name("voice-mic-input".to_owned())
         .spawn(move || {
             let mut pcm_frames =
                 VoiceMicrophonePcmFrames::new(samples_tx, Arc::clone(&worker_stats), sample_rate);
-            while let Some(mut chunk) = worker_handoff.take() {
+            while !worker_stopped.load(Ordering::Acquire) {
+                let mut chunk = match input_rx.recv_timeout(Duration::from_millis(5)) {
+                    Ok(chunk) => chunk,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                };
                 pcm_frames.apply_input_drop(chunk.input_dropped);
                 let samples = convert(&chunk.samples, channels);
                 record_voice_input_pcm_stats(&samples, &worker_stats);
@@ -712,12 +646,12 @@ where
             }
         })
         .map_err(|error| format!("voice microphone input processor spawn failed: {error}"))?;
-    let shutdown_handoff = Arc::clone(&handoff);
     let processor = VoiceMicrophoneInputProcessor {
-        shutdown: Some(Box::new(move || shutdown_handoff.stop())),
+        stopped,
         worker: Some(worker),
     };
     let mut spare = None;
+    let mut input_dropped = false;
     let error_stats = Arc::clone(&stats);
     let stream = device
         .build_input_stream(
@@ -736,17 +670,16 @@ where
                 let chunk = VoiceMicrophoneInputChunk {
                     samples,
                     captured_at,
-                    input_dropped: false,
+                    input_dropped: std::mem::take(&mut input_dropped),
                 };
-                match handoff.try_replace(chunk) {
-                    Ok(replaced) => {
-                        if let Some(replaced) = replaced {
-                            stats.callback_handoff_drops.fetch_add(1, Ordering::Relaxed);
-                            spare = Some(replaced.samples);
-                        }
+                match input_tx.try_send(chunk) {
+                    Ok(()) => {}
+                    Err(std::sync::mpsc::TrySendError::Full(dropped)) => {
+                        stats.callback_queue_drops.fetch_add(1, Ordering::Relaxed);
+                        input_dropped = true;
+                        spare = Some(dropped.samples);
                     }
-                    Err(dropped) => {
-                        stats.callback_handoff_drops.fetch_add(1, Ordering::Relaxed);
+                    Err(std::sync::mpsc::TrySendError::Disconnected(dropped)) => {
                         spare = Some(dropped.samples);
                     }
                 }
@@ -913,7 +846,7 @@ pub(super) fn record_voice_input_stream_error(
     stats.stream_errors.fetch_add(1, Ordering::Relaxed);
     if error.kind() == cpal::ErrorKind::Xrun {
         stats.stream_xruns.fetch_add(1, Ordering::Relaxed);
-        logging::error(
+        logging::debug(
             "voice",
             format!("voice microphone input stream reported an xrun: {error}"),
         );
@@ -1039,9 +972,7 @@ pub(super) fn select_fresh_voice_microphone_frame(
     now: Instant,
 ) -> (Option<VoiceMicrophoneFrame>, u64) {
     let mut dropped = 0u64;
-    while now.saturating_duration_since(frame.captured_at) > VOICE_MIC_MAX_FRAME_AGE
-        || pcm_rx.len().saturating_add(1) > VOICE_MIC_MAX_LIVE_FRAMES
-    {
+    while now.saturating_duration_since(frame.captured_at) > VOICE_MIC_MAX_FRAME_AGE {
         dropped = dropped.saturating_add(1);
         let Ok(next) = pcm_rx.try_recv() else {
             return (None, dropped);
@@ -1283,9 +1214,7 @@ pub(super) async fn run_voice_udp_transmit(
                             transmit_stats.max_microphone_queue_depth = transmit_stats
                                 .max_microphone_queue_depth
                                 .max(pcm_rx.len().saturating_add(1));
-                            if frame_age > VOICE_MIC_MAX_FRAME_AGE
-                                || pcm_rx.len().saturating_add(1) > VOICE_MIC_MAX_LIVE_FRAMES
-                            {
+                            if frame_age > VOICE_MIC_MAX_FRAME_AGE {
                                 transmit_stats.stale_microphone_frames_dropped = transmit_stats
                                     .stale_microphone_frames_dropped
                                     .saturating_add(1);

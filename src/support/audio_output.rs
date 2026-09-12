@@ -1,5 +1,13 @@
 use cpal::traits::DeviceTrait;
 
+// CPAL delivers these through the error callback even though the stream remains active.
+pub(crate) fn is_recoverable_output_stream_error(error: &cpal::Error) -> bool {
+    matches!(
+        error.kind(),
+        cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::Xrun
+    )
+}
+
 pub(crate) trait F32OutputSource {
     fn fill<T>(&mut self, output: &mut [T], channels: usize, convert: fn(f32) -> T)
     where

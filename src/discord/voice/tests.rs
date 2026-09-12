@@ -2104,12 +2104,12 @@ fn microphone_pcm_frames_resample_44100_to_48000() {
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn microphone_pcm_frames_keep_latest_audio_from_large_callbacks() {
+fn microphone_pcm_frames_queue_all_audio_from_large_callbacks() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
     let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
     let mut frames =
         VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), DISCORD_VOICE_SAMPLE_RATE);
-    let callback_frames = VOICE_MIC_MAX_LIVE_FRAMES + 2;
+    let callback_frames = 5;
     let mut samples = Vec::with_capacity(DISCORD_OPUS_20MS_STEREO_SAMPLES * callback_frames);
     for value in 0..callback_frames {
         samples.extend(vec![value as i16; DISCORD_OPUS_20MS_STEREO_SAMPLES]);
@@ -2120,9 +2120,9 @@ fn microphone_pcm_frames_keep_latest_audio_from_large_callbacks() {
     let queued = std::iter::from_fn(|| rx.try_recv().ok())
         .map(|frame| frame.samples[0])
         .collect::<Vec<_>>();
-    assert_eq!(queued, vec![2, 3, 4]);
-    assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 3);
-    assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 2);
+    assert_eq!(queued, vec![0, 1, 2, 3, 4]);
+    assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 5);
+    assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 0);
 }
 
 #[cfg(feature = "voice-playback")]
@@ -2148,32 +2148,11 @@ fn microphone_pcm_frames_keep_20ms_capture_timeline_for_batched_input() {
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn microphone_input_continues_with_fresh_audio_after_handoff_drop() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-    let mut frames =
-        VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), DISCORD_VOICE_SAMPLE_RATE);
-    let resumed_at = Instant::now();
-
-    frames.push_stereo_samples(
-        &vec![1i16; DISCORD_OPUS_20MS_STEREO_SAMPLES / 2],
-        resumed_at - Duration::from_secs(1),
-    );
-    frames.apply_input_drop(true);
-    frames.push_stereo_samples(&vec![2i16; DISCORD_OPUS_20MS_STEREO_SAMPLES], resumed_at);
-
-    let frame = rx.try_recv().expect("resumed frame should queue");
-    assert!(frame.samples.iter().all(|sample| *sample == 2));
-    assert_eq!(frame.captured_at, resumed_at + DISCORD_OPUS_FRAME_DURATION);
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_freshness_policy_bounds_queue_depth_and_frame_age() {
+fn microphone_freshness_policy_selects_the_first_live_frame() {
     let now = Instant::now();
 
-    // A full stored queue catches up to the newest three live frames instead
-    // of preserving hundreds of milliseconds of old speech.
+    // Old audio is skipped by capture age. Newer queued audio remains in order
+    // instead of being discarded to satisfy an unrelated queue-depth limit.
     let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
     let initial = VoiceMicrophoneFrame {
         samples: vec![0],
@@ -2190,9 +2169,9 @@ fn microphone_freshness_policy_bounds_queue_depth_and_frame_age() {
     let (selected, dropped) = select_fresh_voice_microphone_frame(initial, &mut rx, now);
     let selected = selected.expect("a fresh frame should remain");
 
-    assert_eq!(selected.samples, vec![13]);
-    assert_eq!(dropped, 13);
-    assert_eq!(rx.len().saturating_add(1), VOICE_MIC_MAX_LIVE_FRAMES);
+    assert_eq!(selected.samples, vec![11]);
+    assert_eq!(dropped, 11);
+    assert_eq!(rx.len(), 4);
     assert!(now.saturating_duration_since(selected.captured_at) <= VOICE_MIC_MAX_FRAME_AGE);
 
     // A frame exactly on the age boundary remains live when it is the only
@@ -2452,31 +2431,6 @@ fn microphone_capture_stats_track_callback_size_and_clipping() {
     assert_eq!(stats.max_callback_frames.load(Ordering::Relaxed), 480);
     assert_eq!(stats.peak_sample.load(Ordering::Relaxed), 32767);
     assert_eq!(stats.clipped_samples.load(Ordering::Relaxed), 2);
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_input_handoff_stop_wakes_waiter() {
-    let handoff = Arc::new(VoiceMicrophoneInputHandoff::<f32>::new());
-    let worker_handoff = Arc::clone(&handoff);
-    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        ready_tx.send(()).expect("test waiter should signal");
-        done_tx
-            .send(worker_handoff.take().is_none())
-            .expect("test waiter should finish");
-    });
-
-    ready_rx.recv().expect("test waiter should start");
-    handoff.stop();
-
-    assert!(
-        done_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("stopped waiter should wake")
-    );
-    worker.join().expect("test waiter should not panic");
 }
 
 #[cfg(feature = "voice-playback")]

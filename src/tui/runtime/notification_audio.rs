@@ -128,8 +128,7 @@ fn build_notification_output_stream(
             output_frame: 0,
         },
         move |error| {
-            callback_failed.store(true, Ordering::Relaxed);
-            log_notification_output_stream_error(error);
+            handle_notification_output_stream_error(error, &callback_failed);
         },
         "notification audio output",
         "notification audio",
@@ -193,11 +192,19 @@ fn fill_notification_output<T>(
 }
 
 #[cfg(feature = "voice-playback")]
-fn log_notification_output_stream_error(error: cpal::Error) {
-    logging::error(
-        "voice",
-        format!("notification audio output stream failed: {error}"),
-    );
+fn handle_notification_output_stream_error(error: cpal::Error, failed: &AtomicBool) {
+    if audio_output::is_recoverable_output_stream_error(&error) {
+        logging::debug(
+            "voice",
+            format!("notification audio output stream reported a recoverable event: {error}"),
+        );
+    } else {
+        failed.store(true, Ordering::Relaxed);
+        logging::error(
+            "voice",
+            format!("notification audio output stream failed: {error}"),
+        );
+    }
 }
 
 #[cfg(feature = "voice-playback")]
@@ -550,6 +557,16 @@ mod tests {
         assert_eq!(pressed.samples.len() % usize::from(pressed.channels), 0);
         assert!(pressed.samples.len() < generated_notification_sound().samples.len());
         assert_ne!(pressed.samples, released.samples);
+    }
+
+    #[cfg(feature = "voice-playback")]
+    #[test]
+    fn notification_playback_completes_after_an_xrun() {
+        let failed = AtomicBool::new(false);
+
+        handle_notification_output_stream_error(cpal::Error::new(cpal::ErrorKind::Xrun), &failed);
+
+        assert_eq!(notification_stream_result(&failed), Ok(()));
     }
 
     #[test]
