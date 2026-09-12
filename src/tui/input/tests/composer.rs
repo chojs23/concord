@@ -996,14 +996,58 @@ fn direct_reply_shortcut_opens_composer() {
 }
 
 #[test]
-fn canceling_reply_composer_clears_reply_target() {
+fn starting_reply_preserves_existing_composer_draft() {
+    let mut state = state_with_messages(1);
+    state.start_composer();
+    for ch in "draft".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+    state.close_composer();
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, char_key('R'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.composer_input(), "draft");
+    assert!(state.reply_target_message_state().is_some());
+}
+
+#[test]
+fn starting_reply_preserves_existing_composer_attachments() {
+    let attachment = temp_upload_file("reply draft.png", &[1, 2, 3]);
+    let mut state = state_with_messages(1);
+    state.start_composer();
+    assert!(handle_paste(
+        &mut state,
+        attachment.to_str().expect("temp path is valid unicode"),
+    ));
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert_eq!(state.pending_composer_preview_attachment_count(), 1);
+    state.close_composer();
+    state.focus_pane(FocusPane::Messages);
+
+    handle_key(&mut state, char_key('R'));
+
+    assert!(state.is_composing());
+    assert_eq!(state.pending_composer_attachments().len(), 1);
+    assert_eq!(
+        state.pending_composer_attachments()[0].filename,
+        "reply draft.png"
+    );
+    assert_eq!(state.pending_composer_preview_attachment_count(), 1);
+    remove_temp_upload_file(&attachment);
+}
+
+#[test]
+fn canceling_reply_composer_preserves_draft_and_clears_reply_target() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
     handle_key(&mut state, char_key('R'));
     handle_key(&mut state, char_key('x'));
     handle_key(&mut state, key(KeyCode::Esc));
 
-    assert_eq!(state.composer_input(), "");
+    assert_eq!(state.composer_input(), "x");
+    assert!(state.reply_target_message_state().is_none());
 
     handle_key(&mut state, char_key('i'));
     handle_key(&mut state, char_key('n'));
@@ -1014,7 +1058,7 @@ fn canceling_reply_composer_clears_reply_target() {
         Some(AppCommand::SendMessage {
             channel_id: Id::new(2),
             nonce: Id::new(1),
-            content: "n".to_owned(),
+            content: "xn".to_owned(),
             reply_to: None,
             attachments: Vec::new(),
         })

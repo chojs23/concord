@@ -357,6 +357,25 @@ fn mouse_click_outside_composer_blurs_and_focuses_clicked_pane_without_clearing_
 }
 
 #[test]
+fn mouse_click_outside_reply_composer_preserves_draft_and_clears_reply_target() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    handle_key(&mut state, char_key('R'));
+    handle_key(&mut state, char_key('d'));
+
+    assert!(state.reply_target_message_state().is_some());
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), 100, 1),
+        dashboard_area(),
+    ));
+
+    assert!(!state.is_composing());
+    assert_eq!(state.composer_input(), "d");
+    assert!(state.reply_target_message_state().is_none());
+}
+
+#[test]
 fn mouse_click_outside_composer_blurs_and_selects_clicked_row() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);

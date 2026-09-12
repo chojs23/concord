@@ -192,9 +192,8 @@ impl DashboardState {
         if !self.can_reply_to_selected_message() {
             return;
         }
-        self.clear_composer_text();
-        self.clear_composer_attachments();
         self.cancel_clipboard_paste();
+        self.reset_mention_picker_state();
         self.composer.reply_target_message_id = Some(message_id);
         self.composer.edit_target_message = None;
         self.composer.composer_active = true;
@@ -671,13 +670,13 @@ impl DashboardState {
     }
 
     pub fn close_composer(&mut self) {
-        if self.composer.reply_target_message_id.is_some()
-            || self.composer.edit_target_message.is_some()
-        {
+        // An unfinished edit cannot safely be reopened as a normal message.
+        if self.composer.edit_target_message.is_some() {
             self.cancel_composer();
             return;
         }
         self.composer.composer_active = false;
+        self.composer.reply_target_message_id = None;
         self.cancel_clipboard_paste();
         self.reset_mention_picker_state();
     }
