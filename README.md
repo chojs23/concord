@@ -436,10 +436,11 @@ push_to_talk_shortcut = "F8"
 noise_suppression = true
 
 # Optional microphone capture buffer duration in milliseconds, from 10 to 60.
-# When omitted, Concord accepts a sane host default and replaces an excessive
-# negotiated buffer with bounded 40ms or 60ms fixed attempts.
-# Setting a value forces that fixed duration and disables automatic recovery.
-# microphone_buffer_ms = 40
+# When omitted, Concord requests 50ms on Linux and 10ms on other platforms,
+# clamped to the device's supported range. It uses the host default only when
+# the range is unknown or the platform fixed buffer cannot be opened.
+# Setting a value forces that fixed duration.
+# microphone_buffer_ms = 50
 
 # Voice activity threshold in dB. Lower values transmit quieter input.
 microphone_sensitivity = -30
