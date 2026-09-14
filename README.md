@@ -173,7 +173,7 @@ storage is unavailable. See the Security section below for details.
 ### Guilds & Channels
 
 - View, filter, and create forum/media posts (active / archived)
-- Switch channels, threads, and posts with the fuzzy channel switcher (`Space`, `Space`)
+- Switch channels, threads, and posts with the fuzzy channel switcher (`Space`, `Space`); start the query with `*` to search servers instead
 
 ### Messaging
 

@@ -95,6 +95,17 @@ fn selected_channel_switcher_unread_row_uses_selection_color() {
 }
 
 #[test]
+fn channel_switcher_lines_name_servers_when_star_query_has_no_results() {
+    let lines = channel_switcher_lines(&[], 0, "*nope", "*nope".len(), 10, 0, 40);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.to_string().contains("No servers found"))
+    );
+}
+
+#[test]
 fn channel_switcher_cursor_position_tracks_query_cursor() {
     let mut state = DashboardState::new();
     state.open_channel_switcher();

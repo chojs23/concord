@@ -9,9 +9,17 @@ use crate::discord::{
 };
 use ratatui_image::protocol::Protocol;
 
+/// What activating a channel switcher row navigates to. Server rows are only
+/// listed for `*`-prefixed queries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChannelSwitcherTarget {
+    Channel(Id<ChannelMarker>),
+    Guild(Id<GuildMarker>),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelSwitcherItem {
-    pub channel_id: Id<ChannelMarker>,
+    pub target: ChannelSwitcherTarget,
     pub guild_id: Option<Id<GuildMarker>>,
     pub guild_name: Option<String>,
     pub group_label: String,
@@ -25,12 +33,21 @@ pub struct ChannelSwitcherItem {
     pub original_index: usize,
 }
 
+impl ChannelSwitcherItem {
+    pub fn channel_id(&self) -> Option<Id<ChannelMarker>> {
+        match self.target {
+            ChannelSwitcherTarget::Channel(channel_id) => Some(channel_id),
+            ChannelSwitcherTarget::Guild(_) => None,
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 impl ChannelSwitcherItem {
     pub(crate) fn test(channel_id: Id<ChannelMarker>) -> Self {
         Self {
-            channel_id,
+            target: ChannelSwitcherTarget::Channel(channel_id),
             guild_id: None,
             guild_name: None,
             group_label: String::new(),

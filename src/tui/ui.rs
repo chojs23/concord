@@ -24,11 +24,12 @@ use super::{
     message::layout::MessageViewportPlan,
     state::{
         ActiveModalPopupKind, AppliedForumTag, AttachmentDownloadProgressView,
-        AttachmentViewerItem, ChannelSwitcherItem, ChannelThreadItem, DashboardState,
-        DisplayOptionItem, EmojiReactionItem, FocusPane, MessageActionItem, MessageUrlItem,
-        PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
-        SelectablePopupSnapshot, SelectablePopupTarget, ThreadActionItem, apply_discord_foreground,
-        normal_text_style, presence_marker, presence_style,
+        AttachmentViewerItem, CHANNEL_SWITCHER_GUILD_QUERY_PREFIX, ChannelSwitcherItem,
+        ChannelThreadItem, DashboardState, DisplayOptionItem, EmojiReactionItem, FocusPane,
+        MessageActionItem, MessageUrlItem, PollVotePickerItem, SearchFieldView, SearchPopupMode,
+        SearchPopupView, SearchResultItem, SelectablePopupSnapshot, SelectablePopupTarget,
+        ThreadActionItem, apply_discord_foreground, normal_text_style, presence_marker,
+        presence_style,
     },
     text::{EmojiImageSize, sanitize_for_display_width, truncate_display_width},
 };

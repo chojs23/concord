@@ -130,8 +130,15 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
     ];
 
     if items.is_empty() {
+        let searching_guilds = query
+            .trim_start()
+            .starts_with(CHANNEL_SWITCHER_GUILD_QUERY_PREFIX);
         lines.push(Line::from(Span::styled(
-            "No channels found",
+            if searching_guilds {
+                "No servers found"
+            } else {
+                "No channels found"
+            },
             theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     } else {
@@ -149,7 +156,7 @@ pub(in crate::tui::ui) fn channel_switcher_lines(
 fn channel_switcher_search_line(query: &str, query_cursor: usize, width: usize) -> Line<'static> {
     let shown_query = if query.is_empty() {
         Span::styled(
-            "search channels",
+            "where would you like to go?",
             theme::current().style(theme::HighlightGroup::Placeholder),
         )
     } else {

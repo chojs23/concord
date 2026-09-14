@@ -69,9 +69,9 @@ pub use dashboard::DashboardState;
 pub use member_grouping::{MemberEntry, MemberGroup};
 pub(super) use member_grouping::{MemberRow, MemberRows};
 pub use message_viewport::MessagePaneSource;
-#[cfg(test)]
-pub(crate) use model::ActionAvailability;
 pub(in crate::tui) use model::ThreadCardImagePreview;
+#[cfg(test)]
+pub(crate) use model::{ActionAvailability, ChannelSwitcherTarget};
 pub use model::{
     ActionItem, AppliedForumTag, AttachmentDownloadProgressView, AttachmentViewerItem,
     ChannelActionItem, ChannelPaneEntry, ChannelSearchSuggestionItem, ChannelSwitcherItem,
@@ -88,9 +88,9 @@ pub use model::{
 };
 pub use options::{DisplayOptionGauge, DisplayOptionItem};
 pub(in crate::tui) use popups::{
-    ActiveModalPopupKind, ConfirmationButton, DebugLogLine, DebugMediaSnapshot,
-    MessageConfirmationKind, PopupInputMode, PopupKeymapContext, SelectablePopupSnapshot,
-    SelectablePopupTarget, VoiceParticipantAudioField,
+    ActiveModalPopupKind, CHANNEL_SWITCHER_GUILD_QUERY_PREFIX, ConfirmationButton, DebugLogLine,
+    DebugMediaSnapshot, MessageConfirmationKind, PopupInputMode, PopupKeymapContext,
+    SelectablePopupSnapshot, SelectablePopupTarget, VoiceParticipantAudioField,
 };
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,

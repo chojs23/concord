@@ -41,7 +41,7 @@ fn channel_switcher_groups_channels_and_filters_by_fuzzy_name() {
     }
     let filtered = state.channel_switcher_items();
     assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].channel_id, Id::new(11));
+    assert_eq!(filtered[0].channel_id(), Some(Id::new(11)));
 
     state.close_channel_switcher();
     state.open_channel_switcher();
@@ -51,7 +51,7 @@ fn channel_switcher_groups_channels_and_filters_by_fuzzy_name() {
     let filtered: Vec<Id<ChannelMarker>> = state
         .channel_switcher_items()
         .into_iter()
-        .map(|item| item.channel_id)
+        .filter_map(|item| item.channel_id())
         .collect();
     assert!(filtered.contains(&Id::new(11)));
     assert!(filtered.contains(&Id::new(13)));
@@ -94,7 +94,7 @@ fn channel_switcher_includes_joined_active_threads_and_forums_with_type_icons() 
     let label = |id: Id<ChannelMarker>| {
         items
             .iter()
-            .find(|item| item.channel_id == id)
+            .find(|item| item.channel_id() == Some(id))
             .map(|item| item.channel_label.as_str())
     };
 
@@ -104,7 +104,7 @@ fn channel_switcher_includes_joined_active_threads_and_forums_with_type_icons() 
 
     let thread = items
         .iter()
-        .find(|item| item.channel_id == thread_id)
+        .find(|item| item.channel_id() == Some(thread_id))
         .expect("joined thread should be listed");
     assert_eq!(
         thread.parent_label.as_deref(),
@@ -149,7 +149,7 @@ fn channel_switcher_items_use_sidebar_unread_policy() {
     let unread_for = |channel_id| {
         items
             .iter()
-            .find(|item| item.channel_id == channel_id)
+            .find(|item| item.channel_id() == Some(channel_id))
             .map(|item| item.unread)
             .expect("channel remains searchable")
     };
@@ -188,7 +188,7 @@ fn channel_switcher_query_prefers_channel_name_before_context() {
     let filtered: Vec<Id<ChannelMarker>> = state
         .channel_switcher_items()
         .into_iter()
-        .map(|item| item.channel_id)
+        .filter_map(|item| item.channel_id())
         .collect();
 
     assert_eq!(filtered, vec![Id::new(21), Id::new(11)]);
@@ -307,13 +307,13 @@ fn channel_switcher_lists_recent_channels_first() {
     let items = state.channel_switcher_items();
 
     assert_eq!(items[0].group_label, "Recent Channels");
-    assert_eq!(items[0].channel_id, Id::new(12));
+    assert_eq!(items[0].channel_id(), Some(Id::new(12)));
     assert_eq!(items[0].parent_label.as_deref(), Some("guild"));
     assert_eq!(
         items
             .iter()
             .filter(|item| {
-                item.group_label == "Recent Channels" && item.channel_id == Id::new(12)
+                item.group_label == "Recent Channels" && item.channel_id() == Some(Id::new(12))
             })
             .count(),
         1
@@ -322,12 +322,12 @@ fn channel_switcher_lists_recent_channels_first() {
         items
             .iter()
             .skip(1)
-            .any(|item| { item.group_label == "guild" && item.channel_id == Id::new(11) })
+            .any(|item| { item.group_label == "guild" && item.channel_id() == Some(Id::new(11)) })
     );
     assert!(
         items
             .iter()
-            .any(|item| { item.group_label == "guild" && item.channel_id == Id::new(12) })
+            .any(|item| { item.group_label == "guild" && item.channel_id() == Some(Id::new(12)) })
     );
 }
 
@@ -356,7 +356,7 @@ fn channel_switcher_query_matches_display_prefixes() {
     let filtered: Vec<Id<ChannelMarker>> = state
         .channel_switcher_items()
         .into_iter()
-        .map(|item| item.channel_id)
+        .filter_map(|item| item.channel_id())
         .collect();
     assert_eq!(filtered, vec![Id::new(11)]);
 
@@ -368,9 +368,107 @@ fn channel_switcher_query_matches_display_prefixes() {
     let filtered: Vec<Id<ChannelMarker>> = state
         .channel_switcher_items()
         .into_iter()
-        .map(|item| item.channel_id)
+        .filter_map(|item| item.channel_id())
         .collect();
     assert_eq!(filtered, vec![Id::new(40)]);
+}
+
+#[test]
+fn channel_switcher_star_prefix_searches_servers_only() {
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::ChannelUpsert(dm_channel_info(
+        Id::new(40),
+        "acme-dm",
+    )));
+    state.push_event(guild_create_event(
+        Id::new(1),
+        "acme",
+        vec![positioned_text_channel_info(
+            Id::new(1),
+            Id::new(11),
+            "general",
+            0,
+        )],
+    ));
+    state.push_event(guild_create_event(
+        Id::new(2),
+        "other",
+        vec![positioned_text_channel_info(
+            Id::new(2),
+            Id::new(21),
+            "acme-chat",
+            0,
+        )],
+    ));
+
+    state.open_channel_switcher();
+    state.push_channel_switcher_char('*');
+    let targets: Vec<ChannelSwitcherTarget> = state
+        .channel_switcher_items()
+        .into_iter()
+        .map(|item| item.target)
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            ChannelSwitcherTarget::Guild(Id::new(1)),
+            ChannelSwitcherTarget::Guild(Id::new(2)),
+        ]
+    );
+
+    for ch in "acme".chars() {
+        state.push_channel_switcher_char(ch);
+    }
+    let items = state.channel_switcher_items();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].target, ChannelSwitcherTarget::Guild(Id::new(1)));
+    assert_eq!(items[0].group_label, "Servers");
+    assert_eq!(items[0].channel_label, "acme");
+}
+
+#[test]
+fn channel_switcher_star_prefix_includes_servers_in_collapsed_folders() {
+    let mut state = state_with_folder(Some(42));
+    state.toggle_selected_folder();
+
+    state.open_channel_switcher();
+    for ch in "*second".chars() {
+        state.push_channel_switcher_char(ch);
+    }
+    let targets: Vec<ChannelSwitcherTarget> = state
+        .channel_switcher_items()
+        .into_iter()
+        .map(|item| item.target)
+        .collect();
+
+    assert_eq!(targets, vec![ChannelSwitcherTarget::Guild(Id::new(2))]);
+}
+
+#[test]
+fn channel_switcher_activating_server_opens_it_and_focuses_channels() {
+    let mut state = DashboardState::new();
+    state.push_event(guild_create_event(
+        Id::new(1),
+        "acme",
+        vec![positioned_text_channel_info(
+            Id::new(1),
+            Id::new(11),
+            "general",
+            0,
+        )],
+    ));
+    state.push_event(guild_create_event(Id::new(2), "other", Vec::new()));
+
+    state.open_channel_switcher();
+    for ch in "*other".chars() {
+        state.push_channel_switcher_char(ch);
+    }
+    let command = state.activate_selected_channel_switcher_item();
+
+    assert_eq!(command, None);
+    assert!(!state.is_active_modal_popup(ActiveModalPopupKind::ChannelSwitcher));
+    assert_eq!(state.selected_guild_id(), Some(Id::new(2)));
+    assert_eq!(state.focus(), FocusPane::Channels);
 }
 
 #[test]
