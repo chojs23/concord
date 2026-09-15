@@ -71,26 +71,27 @@ pub(super) use member_grouping::{MemberRow, MemberRows};
 pub use message_viewport::MessagePaneSource;
 pub(in crate::tui) use model::ThreadCardImagePreview;
 #[cfg(test)]
-pub(crate) use model::{ActionAvailability, ChannelSwitcherTarget};
+pub(crate) use model::{ActionAvailability, ChannelSwitcherDisplay};
 pub use model::{
     ActionItem, AppliedForumTag, AttachmentDownloadProgressView, AttachmentViewerItem,
     ChannelActionItem, ChannelPaneEntry, ChannelSearchSuggestionItem, ChannelSwitcherItem,
-    ChannelThreadItem, EmojiReactionItem, FocusPane, ForumPostComposerAttachmentView,
-    ForumPostComposerField, ForumPostComposerTagView, ForumPostComposerView, GuildActionItem,
-    GuildPaneEntry, LocalUploadPreviewView, MemberActionItem, MemberSearchResultItem,
-    MessageActionItem, MessageActionKind, MessageSearchResultItem, MuteActionDurationItem,
-    PollVotePickerItem, SearchFieldView, SearchPopupMode, SearchPopupView, SearchResultItem,
-    SearchSuggestionItem, ThreadActionItem, ThreadEditField, ThreadEditTagView, ThreadEditView,
-    ThreadMessagePreview, ThreadNotificationItem, ThreadSummary,
+    ChannelSwitcherMode, ChannelSwitcherView, ChannelThreadItem, EmojiReactionItem, FocusPane,
+    ForumPostComposerAttachmentView, ForumPostComposerField, ForumPostComposerTagView,
+    ForumPostComposerView, GuildActionItem, GuildPaneEntry, LocalUploadPreviewView,
+    MemberActionItem, MemberSearchResultItem, MessageActionItem, MessageActionKind,
+    MessageSearchResultItem, MuteActionDurationItem, PollVotePickerItem, SearchFieldView,
+    SearchPopupMode, SearchPopupView, SearchResultItem, SearchSuggestionItem, ThreadActionItem,
+    ThreadEditField, ThreadEditTagView, ThreadEditView, ThreadMessagePreview,
+    ThreadNotificationItem, ThreadSummary,
 };
 pub use model::{
     ChannelActionKind, GuildActionKind, MemberActionKind, MessageUrlItem, ThreadActionKind,
 };
 pub use options::{DisplayOptionGauge, DisplayOptionItem};
 pub(in crate::tui) use popups::{
-    ActiveModalPopupKind, CHANNEL_SWITCHER_GUILD_QUERY_PREFIX, ConfirmationButton, DebugLogLine,
-    DebugMediaSnapshot, MessageConfirmationKind, PopupInputMode, PopupKeymapContext,
-    SelectablePopupSnapshot, SelectablePopupTarget, VoiceParticipantAudioField,
+    ActiveModalPopupKind, ConfirmationButton, DebugLogLine, DebugMediaSnapshot,
+    MessageConfirmationKind, PopupInputMode, PopupKeymapContext, SelectablePopupSnapshot,
+    SelectablePopupTarget, VoiceParticipantAudioField,
 };
 pub use popups::{
     AttachmentViewerZoom, EmojiReactionPickerState, MessageActionMenuState, MessageUrlPickerState,

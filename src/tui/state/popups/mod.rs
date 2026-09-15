@@ -49,7 +49,6 @@ use super::{
     DashboardState, EmojiReactionItem, FocusPane, ForumPostComposerField, MessageUrlItem,
     PollVotePickerItem, ThreadEditField,
 };
-pub(in crate::tui) use channel_switcher::CHANNEL_SWITCHER_GUILD_QUERY_PREFIX;
 use channel_switcher::ChannelSwitcherState;
 use notification_inbox::NotificationInboxState;
 pub use notification_inbox::{

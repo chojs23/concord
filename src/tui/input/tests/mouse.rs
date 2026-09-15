@@ -165,7 +165,10 @@ fn left_click_selects_channel_switcher_row() {
     ));
 
     assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::ChannelSwitcher));
-    assert_eq!(state.selected_channel_switcher_index(), Some(1));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.selected),
+        Some(1)
+    );
     assert_eq!(state.selected_channel_id(), None);
 }
 
@@ -220,14 +223,20 @@ fn wheel_moves_channel_switcher_selection() {
         mouse(MouseEventKind::ScrollDown, 50, 7),
         dashboard_area(),
     ));
-    assert_eq!(state.selected_channel_switcher_index(), Some(1));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.selected),
+        Some(1)
+    );
 
     assert!(handle_mouse(
         &mut state,
         mouse(MouseEventKind::ScrollUp, 50, 7),
         dashboard_area(),
     ));
-    assert_eq!(state.selected_channel_switcher_index(), Some(0));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.selected),
+        Some(0)
+    );
 }
 
 #[test]

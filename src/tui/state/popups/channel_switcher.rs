@@ -12,7 +12,10 @@ use crate::tui::keybindings::SelectionAction;
 
 use super::super::{
     ActiveGuildScope, DashboardState, channel_tree,
-    model::{ChannelSwitcherItem, ChannelSwitcherTarget, FocusPane, GuildPaneEntry},
+    model::{
+        ChannelSwitcherDisplay, ChannelSwitcherItem, ChannelSwitcherMode, ChannelSwitcherView,
+        FocusPane, GuildPaneEntry,
+    },
     presentation::{is_direct_message_channel, sort_direct_message_channels},
 };
 use crate::discord::AppCommand;
@@ -24,24 +27,28 @@ use crate::tui::state::popups::{
 pub(in crate::tui::state) struct ChannelSwitcherState {
     query: TextInputState,
     selection: SelectablePopupState,
-    base_items: Vec<ChannelSwitcherItem>,
+    mode: ChannelSwitcherMode,
+    channel_items: Vec<ChannelSwitcherItem>,
     guild_items: Vec<ChannelSwitcherItem>,
-    query_items: Option<Vec<ChannelSwitcherItem>>,
+    filtered_items: Option<Vec<ChannelSwitcherItem>>,
 }
 
 impl ChannelSwitcherState {
-    fn new(base_items: Vec<ChannelSwitcherItem>, guild_items: Vec<ChannelSwitcherItem>) -> Self {
+    fn new(channel_items: Vec<ChannelSwitcherItem>, guild_items: Vec<ChannelSwitcherItem>) -> Self {
         Self {
             query: TextInputState::default(),
             selection: SelectablePopupState::default(),
-            base_items,
+            mode: ChannelSwitcherMode::Channels,
+            channel_items,
             guild_items,
-            query_items: None,
+            filtered_items: None,
         }
     }
 
     fn visible_items(&self) -> &[ChannelSwitcherItem] {
-        self.query_items.as_deref().unwrap_or(&self.base_items)
+        self.filtered_items
+            .as_deref()
+            .unwrap_or(&self.channel_items)
     }
 
     pub(super) fn visible_len(&self) -> usize {
@@ -56,30 +63,59 @@ impl ChannelSwitcherState {
         &self.selection
     }
 
-    fn refresh_query_items(&mut self) {
-        let query = self.query.value().trim();
-        self.query_items = match query.strip_prefix(CHANNEL_SWITCHER_GUILD_QUERY_PREFIX) {
-            Some(guild_query) => Some(filter_channel_switcher_items(
-                &self.guild_items,
-                guild_query,
-            )),
-            None => {
-                (!query.is_empty()).then(|| filter_channel_switcher_items(&self.base_items, query))
+    fn view(&self) -> ChannelSwitcherView<'_> {
+        ChannelSwitcherView {
+            query: self.query.value(),
+            query_cursor: self.query.cursor_byte_index(),
+            mode: self.mode,
+            items: self.visible_items(),
+            selected: self.selection.selected_for_len(self.visible_len()),
+            scroll: self.selection.scroll(),
+        }
+    }
+
+    fn refresh_filtered_items(&mut self) {
+        let query = parse_channel_switcher_query(self.query.value());
+        self.mode = query.mode;
+        self.filtered_items = match query.mode {
+            ChannelSwitcherMode::Guilds => {
+                Some(filter_channel_switcher_items(&self.guild_items, query.text))
             }
+            ChannelSwitcherMode::Channels => (!query.text.is_empty())
+                .then(|| filter_channel_switcher_items(&self.channel_items, query.text)),
         };
     }
 }
 
 /// Mirrors Discord's quick switcher, where a leading `*` searches servers.
-pub(crate) const CHANNEL_SWITCHER_GUILD_QUERY_PREFIX: char = '*';
+const CHANNEL_SWITCHER_GUILD_QUERY_PREFIX: char = '*';
+
+struct ParsedChannelSwitcherQuery<'a> {
+    mode: ChannelSwitcherMode,
+    text: &'a str,
+}
+
+fn parse_channel_switcher_query(query: &str) -> ParsedChannelSwitcherQuery<'_> {
+    let query = query.trim();
+    match query.strip_prefix(CHANNEL_SWITCHER_GUILD_QUERY_PREFIX) {
+        Some(guild_query) => ParsedChannelSwitcherQuery {
+            mode: ChannelSwitcherMode::Guilds,
+            text: guild_query.trim(),
+        },
+        None => ParsedChannelSwitcherQuery {
+            mode: ChannelSwitcherMode::Channels,
+            text: query,
+        },
+    }
+}
 
 impl DashboardState {
     pub fn open_channel_switcher(&mut self) {
-        let items = self.all_channel_switcher_items();
-        let guild_items = self.guild_switcher_items();
+        let channel_items = self.build_channel_switcher_items();
+        let guild_items = self.build_guild_switcher_items();
         self.popups
             .set_modal(ModalPopup::ChannelSwitcher(ChannelSwitcherState::new(
-                items,
+                channel_items,
                 guild_items,
             )));
     }
@@ -90,27 +126,10 @@ impl DashboardState {
         }
     }
 
-    pub fn channel_switcher_query(&self) -> Option<&str> {
+    pub fn channel_switcher_view(&self) -> Option<ChannelSwitcherView<'_>> {
         self.popups
             .channel_switcher()
-            .map(|switcher| switcher.query.value())
-    }
-
-    pub fn channel_switcher_query_cursor_byte_index(&self) -> Option<usize> {
-        let switcher = self.popups.channel_switcher()?;
-        Some(switcher.query.cursor_byte_index())
-    }
-
-    pub fn selected_channel_switcher_index(&self) -> Option<usize> {
-        let switcher = self.popups.channel_switcher()?;
-        Some(switcher.selection.selected_for_len(switcher.visible_len()))
-    }
-
-    pub fn channel_switcher_items(&self) -> Vec<ChannelSwitcherItem> {
-        self.popups
-            .channel_switcher()
-            .map(|switcher| switcher.visible_items().to_vec())
-            .unwrap_or_default()
+            .map(ChannelSwitcherState::view)
     }
 
     pub fn move_channel_switcher_down(&mut self) {
@@ -131,7 +150,7 @@ impl DashboardState {
         if let Some(switcher) = self.popups.channel_switcher_mut() {
             switcher.query.insert_char(value);
             switcher.selection.select(0);
-            switcher.refresh_query_items();
+            switcher.refresh_filtered_items();
         }
     }
 
@@ -140,7 +159,7 @@ impl DashboardState {
             && switcher.query.delete_previous_grapheme()
         {
             switcher.selection.select(0);
-            switcher.refresh_query_items();
+            switcher.refresh_filtered_items();
         }
     }
 
@@ -163,9 +182,9 @@ impl DashboardState {
             switcher.visible_items().get(selected)?.clone()
         };
 
-        let channel_id = match item.target {
-            ChannelSwitcherTarget::Channel(channel_id) => channel_id,
-            ChannelSwitcherTarget::Guild(guild_id) => {
+        let channel_id = match item {
+            ChannelSwitcherItem::Channel { channel_id, .. } => channel_id,
+            ChannelSwitcherItem::Guild { guild_id, .. } => {
                 self.close_channel_switcher();
                 // Same as confirming a server in the guild pane: the next step
                 // is picking one of its channels.
@@ -207,28 +226,31 @@ impl DashboardState {
         }
     }
 
-    fn guild_switcher_items(&self) -> Vec<ChannelSwitcherItem> {
+    fn build_guild_switcher_items(&self) -> Vec<ChannelSwitcherItem> {
         self.guilds_in_display_order()
             .into_iter()
             .enumerate()
-            .map(|(original_index, guild)| ChannelSwitcherItem {
-                target: ChannelSwitcherTarget::Guild(guild.id),
-                guild_id: Some(guild.id),
-                guild_name: Some(guild.name.clone()),
-                group_label: "Servers".to_owned(),
-                parent_label: None,
-                channel_label: guild.name.clone(),
-                unread: self.sidebar_guild_unread(guild.id),
-                unread_message_count: 0,
-                search_name: guild.name.clone(),
-                depth: 0,
-                group_order: 0,
-                original_index,
+            .map(|(original_index, guild)| {
+                let unread = self.sidebar_guild_unread(guild.id);
+                ChannelSwitcherItem::Guild {
+                    guild_id: guild.id,
+                    display: ChannelSwitcherDisplay {
+                        group_label: "Servers".to_owned(),
+                        parent_label: None,
+                        label: guild.name.clone(),
+                        unread,
+                        badge_state: unread,
+                        search_text: guild.name.clone(),
+                        depth: 0,
+                        group_order: 0,
+                        original_index,
+                    },
+                }
             })
             .collect()
     }
 
-    fn all_channel_switcher_items(&self) -> Vec<ChannelSwitcherItem> {
+    fn build_channel_switcher_items(&self) -> Vec<ChannelSwitcherItem> {
         let mut base = Vec::new();
         self.push_direct_message_switcher_items(&mut base);
 
@@ -245,14 +267,15 @@ impl DashboardState {
         let recent = self.recent_channel_switcher_items(&base);
         if !recent.is_empty() {
             for item in base.iter_mut() {
-                item.group_order = item.group_order.saturating_add(1);
+                let display = item.display_mut();
+                display.group_order = display.group_order.saturating_add(1);
             }
         }
 
         let mut items = recent;
         items.extend(base);
         for (index, item) in items.iter_mut().enumerate() {
-            item.original_index = index;
+            item.display_mut().original_index = index;
         }
         items
     }
@@ -277,10 +300,15 @@ impl DashboardState {
                 continue;
             };
             let mut item = item.clone();
-            item.group_label = "Recent Channels".to_owned();
-            item.parent_label = item.guild_name.clone();
-            item.depth = 0;
-            item.group_order = 0;
+            let guild_name = match &item {
+                ChannelSwitcherItem::Channel { guild_name, .. } => guild_name.clone(),
+                ChannelSwitcherItem::Guild { .. } => None,
+            };
+            let display = item.display_mut();
+            display.group_label = "Recent Channels".to_owned();
+            display.parent_label = guild_name;
+            display.depth = 0;
+            display.group_order = 0;
             recent.push(item);
         }
         recent
@@ -443,20 +471,39 @@ fn push_channel_switcher_item(
         return;
     }
     let original_index = items.len();
-    items.push(ChannelSwitcherItem {
-        target: ChannelSwitcherTarget::Channel(channel.id),
-        guild_id,
+    items.push(ChannelSwitcherItem::Channel {
+        channel_id: channel.id,
         guild_name: guild_name.map(str::to_owned),
-        group_label: group_label.to_owned(),
-        parent_label: parent_label.map(str::to_owned),
-        channel_label: channel_switcher_channel_label(channel),
-        unread,
-        unread_message_count,
-        search_name: format!("{} / {}", group_label, channel.name),
-        depth,
-        group_order,
-        original_index,
+        display: ChannelSwitcherDisplay {
+            group_label: group_label.to_owned(),
+            parent_label: parent_label.map(str::to_owned),
+            label: channel_switcher_channel_label(channel),
+            unread,
+            badge_state: channel_switcher_badge_state(guild_id, unread, unread_message_count),
+            search_text: format!("{} / {}", group_label, channel.name),
+            depth,
+            group_order,
+            original_index,
+        },
     });
+}
+
+fn channel_switcher_badge_state(
+    guild_id: Option<Id<GuildMarker>>,
+    unread: ChannelUnreadState,
+    unread_message_count: usize,
+) -> ChannelUnreadState {
+    if guild_id.is_some() || unread == ChannelUnreadState::Seen {
+        return unread;
+    }
+    if unread_message_count > 0 {
+        let count = u32::try_from(unread_message_count).unwrap_or(u32::MAX);
+        return ChannelUnreadState::Notified(count);
+    }
+    if unread == ChannelUnreadState::Unread {
+        return ChannelUnreadState::Notified(1);
+    }
+    unread
 }
 
 fn channel_switcher_match_score(
@@ -464,21 +511,22 @@ fn channel_switcher_match_score(
     query: &str,
 ) -> Option<(FuzzyMatchQuality, FuzzyScore)> {
     let query = query.trim();
-    if let ChannelSwitcherTarget::Guild(_) = item.target {
-        return fuzzy_name_match_score(&item.search_name, query);
+    let display = item.display();
+    if matches!(item, ChannelSwitcherItem::Guild { .. }) {
+        return fuzzy_name_match_score(&display.search_text, query);
     }
     if let Some(prefix) = channel_switcher_query_label_prefix(query)
-        && !item.channel_label.starts_with(prefix)
+        && !display.label.starts_with(prefix)
     {
         return None;
     }
     let channel_query = channel_switcher_search_channel_name(query);
-    let channel_name = channel_switcher_search_channel_name(&item.channel_label);
+    let channel_name = channel_switcher_search_channel_name(&display.label);
     if let Some(score) = fuzzy_name_match_score(channel_name, channel_query) {
         return Some(score);
     }
 
-    fuzzy_text_score(&item.search_name, query).map(|score| (FuzzyMatchQuality::Context, score))
+    fuzzy_text_score(&display.search_text, query).map(|score| (FuzzyMatchQuality::Context, score))
 }
 
 fn filter_channel_switcher_items(
@@ -493,7 +541,13 @@ fn filter_channel_switcher_items(
         })
         .collect();
     scored.sort_by_key(|(quality, score, item)| {
-        (*quality, *score, item.group_order, item.original_index)
+        let display = item.display();
+        (
+            *quality,
+            *score,
+            display.group_order,
+            display.original_index,
+        )
     });
     scored.into_iter().map(|(_, _, item)| item).collect()
 }

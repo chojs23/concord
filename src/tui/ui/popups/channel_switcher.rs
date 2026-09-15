@@ -7,21 +7,12 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
     area: Rect,
     state: &DashboardState,
 ) {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::ChannelSwitcher) {
+    let Some(view) = state.channel_switcher_view() else {
         return;
-    }
+    };
 
-    let query = state.channel_switcher_query().unwrap_or_default();
-    let query_cursor = state
-        .channel_switcher_query_cursor_byte_index()
-        .unwrap_or(query.len());
-    let items = state.channel_switcher_items();
-    let selected = state.selected_channel_switcher_index().unwrap_or(0);
     let popup = channel_switcher_popup_area(area);
     let max_result_lines = usize::from(popup.height.saturating_sub(4)).max(1);
-    let scroll = state
-        .popup_list_scroll(SelectablePopupTarget::ChannelSwitcher)
-        .expect("channel switcher has selection state");
     let inner = render_modal_frame(frame, popup, "Channel Switcher");
     let content = Rect {
         width: inner.width.saturating_sub(1).max(1),
@@ -29,12 +20,8 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
     };
     frame.render_widget(
         Paragraph::new(channel_switcher_lines(
-            &items,
-            selected,
-            query,
-            query_cursor,
+            view,
             max_result_lines,
-            scroll,
             usize::from(content.width),
         )),
         content,
@@ -46,17 +33,15 @@ pub(in crate::tui::ui) fn render_channel_switcher_popup(
             height: max_result_lines.min(u16::MAX as usize) as u16,
             ..inner
         },
-        scroll,
-        channel_switcher_visible_result_rows(&items, scroll, max_result_lines)
+        view.scroll,
+        channel_switcher_visible_result_rows(view.items, view.scroll, max_result_lines)
             .iter()
             .filter(|row| matches!(row, ChannelSwitcherResultRow::Item(_)))
             .count()
             .max(1),
-        items.len(),
+        view.items.len(),
     );
-    if let Some(position) = channel_switcher_cursor_position(area, state) {
-        frame.set_cursor_position(position);
-    }
+    frame.set_cursor_position(channel_switcher_cursor_position_for_view(area, view));
 }
 
 pub(in crate::tui::ui) fn channel_switcher_popup_area(area: Rect) -> Rect {
@@ -77,9 +62,11 @@ pub(in crate::tui::ui) fn channel_switcher_list_layout(
         height: inner.height.saturating_sub(2),
         ..inner
     };
-    let items = state.channel_switcher_items();
+    let view = state
+        .channel_switcher_view()
+        .expect("channel switcher layout requires view");
     SelectablePopupLayout::new(snapshot.target, popup, list, snapshot, |start, max_rows| {
-        channel_switcher_visible_result_rows(&items, start, max_rows)
+        channel_switcher_visible_result_rows(view.items, start, max_rows)
             .into_iter()
             .map(|row| match row {
                 ChannelSwitcherResultRow::Item(index) => Some(index),
@@ -89,64 +76,59 @@ pub(in crate::tui::ui) fn channel_switcher_list_layout(
     })
 }
 
+#[cfg(test)]
 pub(in crate::tui::ui) fn channel_switcher_cursor_position(
     area: Rect,
     state: &DashboardState,
 ) -> Option<Position> {
-    if !state.is_active_modal_popup(ActiveModalPopupKind::ChannelSwitcher) {
-        return None;
-    }
-    let query = state.channel_switcher_query().unwrap_or_default();
-    let cursor = state
-        .channel_switcher_query_cursor_byte_index()?
-        .min(query.len());
+    let view = state.channel_switcher_view()?;
+    Some(channel_switcher_cursor_position_for_view(area, view))
+}
+
+fn channel_switcher_cursor_position_for_view(
+    area: Rect,
+    view: ChannelSwitcherView<'_>,
+) -> Position {
+    let cursor = view.query_cursor.min(view.query.len());
     let popup = channel_switcher_popup_area(area);
     let inner_width = usize::from(popup.width.saturating_sub(3)).max(1);
-    let (_, cursor_offset) = visible_channel_switcher_query(query, cursor, inner_width);
-    Some(Position::new(
+    let (_, cursor_offset) = visible_channel_switcher_query(view.query, cursor, inner_width);
+    Position::new(
         popup
             .x
             .saturating_add(1)
             .saturating_add(cursor_offset as u16),
         popup.y.saturating_add(1),
-    ))
+    )
 }
 
 pub(in crate::tui::ui) fn channel_switcher_lines(
-    items: &[ChannelSwitcherItem],
-    selected: usize,
-    query: &str,
-    query_cursor: usize,
+    view: ChannelSwitcherView<'_>,
     max_result_lines: usize,
-    scroll: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
-        channel_switcher_search_line(query, query_cursor, width),
+        channel_switcher_search_line(view.query, view.query_cursor, width),
         Line::from(Span::styled(
             "─".repeat(width.max(1)),
             theme::current().style(theme::HighlightGroup::Decoration),
         )),
     ];
 
-    if items.is_empty() {
-        let searching_guilds = query
-            .trim_start()
-            .starts_with(CHANNEL_SWITCHER_GUILD_QUERY_PREFIX);
+    if view.items.is_empty() {
         lines.push(Line::from(Span::styled(
-            if searching_guilds {
-                "No servers found"
-            } else {
-                "No channels found"
+            match view.mode {
+                ChannelSwitcherMode::Channels => "No channels found",
+                ChannelSwitcherMode::Guilds => "No servers found",
             },
             theme::current().style(theme::HighlightGroup::Placeholder),
         )));
     } else {
         lines.extend(channel_switcher_result_lines(
-            items,
-            selected,
+            view.items,
+            view.selected,
             max_result_lines,
-            scroll,
+            view.scroll,
         ));
     }
 
@@ -253,9 +235,10 @@ fn channel_switcher_visible_result_rows(
     let mut rows = Vec::new();
     let mut last_group: Option<&str> = None;
     for (index, item) in items.iter().enumerate().skip(start).take(end - start) {
-        if last_group != Some(item.group_label.as_str()) {
-            rows.push(ChannelSwitcherResultRow::Group(item.group_label.clone()));
-            last_group = Some(item.group_label.as_str());
+        let display = item.display();
+        if last_group != Some(display.group_label.as_str()) {
+            rows.push(ChannelSwitcherResultRow::Group(display.group_label.clone()));
+            last_group = Some(display.group_label.as_str());
         }
         rows.push(ChannelSwitcherResultRow::Item(index));
     }
@@ -264,17 +247,18 @@ fn channel_switcher_visible_result_rows(
 }
 
 fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Line<'static> {
+    let display = item.display();
     let style = if selected {
         highlight_style()
     } else {
         Style::default()
     };
-    let badge =
-        channel_switcher_unread_badge(item).map(|badge| selected_text_span(selected, badge));
-    let (_, name_style) = channel_unread_decoration(item.unread, style, false);
+    let badge = channel_switcher_unread_badge(display.badge_state)
+        .map(|badge| selected_text_span(selected, badge));
+    let (_, name_style) = channel_unread_decoration(display.unread, style, false);
     let name_style = selected_text_style(selected, name_style);
-    let indent = "  ".repeat(item.depth.saturating_add(1));
-    let parent = item
+    let indent = "  ".repeat(display.depth.saturating_add(1));
+    let parent = display
         .parent_label
         .as_ref()
         .map(|label| format!("{label} / "))
@@ -290,30 +274,11 @@ fn channel_switcher_item_line(item: &ChannelSwitcherItem, selected: bool) -> Lin
     if let Some(badge) = badge {
         spans.push(badge);
     }
-    spans.push(Span::styled(item.channel_label.clone(), name_style));
+    spans.push(Span::styled(display.label.clone(), name_style));
     selected_row_line(Line::from(spans), selected)
 }
 
-fn channel_switcher_unread_badge(item: &ChannelSwitcherItem) -> Option<Span<'static>> {
-    let (badge, _) = channel_unread_decoration(item.unread, Style::default(), false);
-    if item.guild_id.is_none() && item.unread != ChannelUnreadState::Seen {
-        if item.unread_message_count > 0 {
-            let count = u32::try_from(item.unread_message_count).unwrap_or(u32::MAX);
-            return channel_unread_decoration(
-                ChannelUnreadState::Notified(count),
-                Style::default(),
-                false,
-            )
-            .0;
-        }
-        if item.unread == ChannelUnreadState::Unread {
-            return channel_unread_decoration(
-                ChannelUnreadState::Notified(1),
-                Style::default(),
-                false,
-            )
-            .0;
-        }
-    }
+fn channel_switcher_unread_badge(unread: ChannelUnreadState) -> Option<Span<'static>> {
+    let (badge, _) = channel_unread_decoration(unread, Style::default(), false);
     badge
 }

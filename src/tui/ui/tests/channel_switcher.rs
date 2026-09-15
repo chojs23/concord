@@ -1,29 +1,55 @@
 use super::*;
 
+fn switcher_view<'a>(
+    items: &'a [ChannelSwitcherItem],
+    mode: ChannelSwitcherMode,
+    query: &'a str,
+) -> ChannelSwitcherView<'a> {
+    ChannelSwitcherView {
+        query,
+        query_cursor: query.len(),
+        mode,
+        items,
+        selected: 0,
+        scroll: 0,
+    }
+}
+
 #[test]
 fn channel_switcher_lines_show_search_and_grouped_selection() {
     let items = vec![
-        ChannelSwitcherItem {
-            group_label: "Direct Messages".to_owned(),
-            channel_label: "@alice".to_owned(),
-            search_name: "alice".to_owned(),
-            ..ChannelSwitcherItem::test(Id::new(1))
-        },
-        ChannelSwitcherItem {
-            guild_id: Some(Id::new(1)),
-            guild_name: Some("guild".to_owned()),
-            group_label: "guild".to_owned(),
-            parent_label: Some("Text".to_owned()),
-            channel_label: "#general".to_owned(),
-            search_name: "general".to_owned(),
-            depth: 1,
-            group_order: 1,
-            original_index: 1,
-            ..ChannelSwitcherItem::test(Id::new(2))
-        },
+        ChannelSwitcherItem::test(
+            Id::new(1),
+            ChannelSwitcherDisplay {
+                group_label: "Direct Messages".to_owned(),
+                label: "@alice".to_owned(),
+                search_text: "alice".to_owned(),
+                ..ChannelSwitcherDisplay::test()
+            },
+        ),
+        ChannelSwitcherItem::test(
+            Id::new(2),
+            ChannelSwitcherDisplay {
+                group_label: "guild".to_owned(),
+                parent_label: Some("Text".to_owned()),
+                label: "#general".to_owned(),
+                search_text: "general".to_owned(),
+                depth: 1,
+                group_order: 1,
+                original_index: 1,
+                ..ChannelSwitcherDisplay::test()
+            },
+        ),
     ];
 
-    let lines = channel_switcher_lines(&items, 1, "gen", "gen".len(), 10, 0, 40);
+    let lines = channel_switcher_lines(
+        ChannelSwitcherView {
+            selected: 1,
+            ..switcher_view(&items, ChannelSwitcherMode::Channels, "gen")
+        },
+        10,
+        40,
+    );
 
     assert_eq!(lines[0].spans[0].content, "🔎 ");
     assert_eq!(lines[0].spans[1].content, "gen");
@@ -42,16 +68,23 @@ fn channel_switcher_lines_show_search_and_grouped_selection() {
 
 #[test]
 fn channel_switcher_lines_show_unread_badges_like_channel_pane() {
-    let items = vec![ChannelSwitcherItem {
-        group_label: "Direct Messages".to_owned(),
-        channel_label: "@new".to_owned(),
-        unread: ChannelUnreadState::Unread,
-        unread_message_count: 5,
-        search_name: "new".to_owned(),
-        ..ChannelSwitcherItem::test(Id::new(1))
-    }];
+    let items = vec![ChannelSwitcherItem::test(
+        Id::new(1),
+        ChannelSwitcherDisplay {
+            group_label: "Direct Messages".to_owned(),
+            label: "@new".to_owned(),
+            unread: ChannelUnreadState::Unread,
+            badge_state: ChannelUnreadState::Notified(5),
+            search_text: "new".to_owned(),
+            ..ChannelSwitcherDisplay::test()
+        },
+    )];
 
-    let lines = channel_switcher_lines(&items, 0, "", 0, 10, 0, 40);
+    let lines = channel_switcher_lines(
+        switcher_view(&items, ChannelSwitcherMode::Channels, ""),
+        10,
+        40,
+    );
 
     assert!(
         lines
@@ -62,17 +95,23 @@ fn channel_switcher_lines_show_unread_badges_like_channel_pane() {
 
 #[test]
 fn selected_channel_switcher_unread_row_uses_selection_color() {
-    let items = vec![ChannelSwitcherItem {
-        guild_id: Some(Id::new(1)),
-        guild_name: Some("guild".to_owned()),
-        group_label: "guild".to_owned(),
-        channel_label: "#alerts".to_owned(),
-        unread: ChannelUnreadState::Mentioned(2),
-        search_name: "alerts".to_owned(),
-        ..ChannelSwitcherItem::test(Id::new(1))
-    }];
+    let items = vec![ChannelSwitcherItem::test(
+        Id::new(1),
+        ChannelSwitcherDisplay {
+            group_label: "guild".to_owned(),
+            label: "#alerts".to_owned(),
+            unread: ChannelUnreadState::Mentioned(2),
+            badge_state: ChannelUnreadState::Mentioned(2),
+            search_text: "alerts".to_owned(),
+            ..ChannelSwitcherDisplay::test()
+        },
+    )];
 
-    let lines = channel_switcher_lines(&items, 0, "", 0, 10, 0, 40);
+    let lines = channel_switcher_lines(
+        switcher_view(&items, ChannelSwitcherMode::Channels, ""),
+        10,
+        40,
+    );
     let item_line = lines
         .iter()
         .find(|line| line.to_string().contains("#alerts"))
@@ -95,8 +134,12 @@ fn selected_channel_switcher_unread_row_uses_selection_color() {
 }
 
 #[test]
-fn channel_switcher_lines_name_servers_when_star_query_has_no_results() {
-    let lines = channel_switcher_lines(&[], 0, "*nope", "*nope".len(), 10, 0, 40);
+fn channel_switcher_lines_name_servers_when_guild_search_has_no_results() {
+    let lines = channel_switcher_lines(
+        switcher_view(&[], ChannelSwitcherMode::Guilds, "nope"),
+        10,
+        40,
+    );
 
     assert!(
         lines
@@ -126,7 +169,11 @@ fn channel_switcher_cursor_position_tracks_query_cursor() {
 fn channel_switcher_search_line_windows_long_query_around_cursor() {
     let query = "abcdefghijklmnopqrstuvwxyz";
 
-    let lines = channel_switcher_lines(&[], 0, query, query.len(), 10, 0, 12);
+    let lines = channel_switcher_lines(
+        switcher_view(&[], ChannelSwitcherMode::Channels, query),
+        10,
+        12,
+    );
     let rendered = lines[0].to_string();
 
     assert!(rendered.contains("uvwxyz"));

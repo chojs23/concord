@@ -24,7 +24,7 @@ use super::{
     message::layout::MessageViewportPlan,
     state::{
         ActiveModalPopupKind, AppliedForumTag, AttachmentDownloadProgressView,
-        AttachmentViewerItem, CHANNEL_SWITCHER_GUILD_QUERY_PREFIX, ChannelSwitcherItem,
+        AttachmentViewerItem, ChannelSwitcherItem, ChannelSwitcherMode, ChannelSwitcherView,
         ChannelThreadItem, DashboardState, DisplayOptionItem, EmojiReactionItem, FocusPane,
         MessageActionItem, MessageUrlItem, PollVotePickerItem, SearchFieldView, SearchPopupMode,
         SearchPopupView, SearchResultItem, SelectablePopupSnapshot, SelectablePopupTarget,

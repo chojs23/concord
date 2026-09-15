@@ -9,35 +9,89 @@ use crate::discord::{
 };
 use ratatui_image::protocol::Protocol;
 
-/// What activating a channel switcher row navigates to. Server rows are only
-/// listed for `*`-prefixed queries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChannelSwitcherTarget {
-    Channel(Id<ChannelMarker>),
-    Guild(Id<GuildMarker>),
+pub enum ChannelSwitcherMode {
+    Channels,
+    Guilds,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChannelSwitcherItem {
-    pub target: ChannelSwitcherTarget,
-    pub guild_id: Option<Id<GuildMarker>>,
-    pub guild_name: Option<String>,
+pub struct ChannelSwitcherDisplay {
     pub group_label: String,
     pub parent_label: Option<String>,
-    pub channel_label: String,
+    pub label: String,
     pub unread: ChannelUnreadState,
-    pub unread_message_count: usize,
-    pub search_name: String,
+    /// Direct messages may show a numeric badge while keeping the same unread
+    /// name style as the channel pane.
+    pub badge_state: ChannelUnreadState,
+    pub search_text: String,
     pub depth: usize,
     pub group_order: usize,
     pub original_index: usize,
 }
 
+/// Keeps target-specific navigation data separate from the shared presentation
+/// data used to render and rank every switcher row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChannelSwitcherItem {
+    Channel {
+        channel_id: Id<ChannelMarker>,
+        guild_name: Option<String>,
+        display: ChannelSwitcherDisplay,
+    },
+    Guild {
+        guild_id: Id<GuildMarker>,
+        display: ChannelSwitcherDisplay,
+    },
+}
+
 impl ChannelSwitcherItem {
     pub fn channel_id(&self) -> Option<Id<ChannelMarker>> {
-        match self.target {
-            ChannelSwitcherTarget::Channel(channel_id) => Some(channel_id),
-            ChannelSwitcherTarget::Guild(_) => None,
+        match self {
+            Self::Channel { channel_id, .. } => Some(*channel_id),
+            Self::Guild { .. } => None,
+        }
+    }
+
+    pub fn display(&self) -> &ChannelSwitcherDisplay {
+        match self {
+            Self::Channel { display, .. } | Self::Guild { display, .. } => display,
+        }
+    }
+
+    pub fn display_mut(&mut self) -> &mut ChannelSwitcherDisplay {
+        match self {
+            Self::Channel { display, .. } | Self::Guild { display, .. } => display,
+        }
+    }
+}
+
+/// A consistent popup snapshot shared by rendering, cursor placement, and hit
+/// testing.
+#[derive(Clone, Copy, Debug)]
+pub struct ChannelSwitcherView<'a> {
+    pub query: &'a str,
+    pub query_cursor: usize,
+    pub mode: ChannelSwitcherMode,
+    pub items: &'a [ChannelSwitcherItem],
+    pub selected: usize,
+    pub scroll: usize,
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+impl ChannelSwitcherDisplay {
+    pub(crate) fn test() -> Self {
+        Self {
+            group_label: String::new(),
+            parent_label: None,
+            label: String::new(),
+            unread: ChannelUnreadState::Seen,
+            badge_state: ChannelUnreadState::Seen,
+            search_text: String::new(),
+            depth: 0,
+            group_order: 0,
+            original_index: 0,
         }
     }
 }
@@ -45,20 +99,11 @@ impl ChannelSwitcherItem {
 #[cfg(test)]
 #[allow(dead_code)]
 impl ChannelSwitcherItem {
-    pub(crate) fn test(channel_id: Id<ChannelMarker>) -> Self {
-        Self {
-            target: ChannelSwitcherTarget::Channel(channel_id),
-            guild_id: None,
+    pub(crate) fn test(channel_id: Id<ChannelMarker>, display: ChannelSwitcherDisplay) -> Self {
+        Self::Channel {
+            channel_id,
             guild_name: None,
-            group_label: String::new(),
-            parent_label: None,
-            channel_label: String::new(),
-            unread: ChannelUnreadState::Seen,
-            unread_message_count: 0,
-            search_name: String::new(),
-            depth: 0,
-            group_order: 0,
-            original_index: 0,
+            display,
         }
     }
 }

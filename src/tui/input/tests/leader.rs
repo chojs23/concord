@@ -1195,11 +1195,17 @@ fn leader_leader_switcher_printable_navigation_keys_type_into_search() {
     handle_key(&mut state, char_key('G'));
     handle_key(&mut state, char_key('x'));
 
-    assert_eq!(state.channel_switcher_query(), Some("jkggGx"));
-    assert_eq!(state.selected_channel_switcher_index(), Some(0));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.query),
+        Some("jkggGx")
+    );
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.selected),
+        Some(0)
+    );
 
     handle_key(&mut state, key(KeyCode::PageDown));
-    assert_eq!(state.channel_switcher_query(), None);
+    assert!(state.channel_switcher_view().is_none());
 }
 
 #[test]
@@ -1210,16 +1216,28 @@ fn leader_leader_switcher_selection_aliases_move_selection() {
     handle_key(&mut state, char_key(' '));
 
     handle_key(&mut state, key(KeyCode::Down));
-    assert_eq!(state.selected_channel_switcher_index(), Some(1));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.selected),
+        Some(1)
+    );
 
     handle_key(&mut state, key(KeyCode::Up));
-    assert_eq!(state.selected_channel_switcher_index(), Some(0));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.selected),
+        Some(0)
+    );
 
     handle_key(&mut state, ctrl_key('n'));
-    assert_eq!(state.selected_channel_switcher_index(), Some(1));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.selected),
+        Some(1)
+    );
 
     handle_key(&mut state, ctrl_key('p'));
-    assert_eq!(state.selected_channel_switcher_index(), Some(0));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.selected),
+        Some(0)
+    );
 }
 
 #[test]
@@ -1237,7 +1255,10 @@ fn leader_leader_switcher_left_right_move_search_cursor() {
     handle_key(&mut state, key(KeyCode::Right));
     handle_key(&mut state, key(KeyCode::Backspace));
 
-    assert_eq!(state.channel_switcher_query(), Some("random"));
+    assert_eq!(
+        state.channel_switcher_view().map(|view| view.query),
+        Some("random")
+    );
     let command = handle_key(&mut state, key(KeyCode::Enter));
     assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
     assert_eq!(

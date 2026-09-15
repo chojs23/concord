@@ -15,8 +15,9 @@ use unicode_width::UnicodeWidthStr;
 use super::model::{ChannelBranch, GuildBranch};
 use super::{
     ActiveGuildScope, ActiveModalPopupKind, AttachmentViewerItem, ChannelActionKind,
-    ChannelPaneEntry, ChannelSwitcherTarget, ComposerLock, DashboardState, FocusPane,
-    GuildActionKind, GuildPaneEntry, MessageActionItem, MessageActionKind, SearchResultItem,
+    ChannelPaneEntry, ChannelSwitcherItem, ChannelSwitcherMode, ComposerLock, DashboardState,
+    FocusPane, GuildActionKind, GuildPaneEntry, MessageActionItem, MessageActionKind,
+    SearchResultItem,
 };
 use crate::discord::test_builders::{MessageAckFixture, message_ack_event};
 use crate::discord::{
