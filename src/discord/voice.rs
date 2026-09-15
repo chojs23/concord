@@ -193,11 +193,22 @@ const DISCORD_TRAILING_SILENCE_FRAMES: usize = 5;
 #[allow(dead_code)]
 const OPUS_MAX_ENCODED_FRAME_BYTES: usize = 4000;
 #[cfg(feature = "voice-playback")]
-const VOICE_MIC_PCM_FRAME_QUEUE: usize = 32;
+const VOICE_MIC_MAX_PROCESSING_DELAY: Duration = Duration::from_millis(500);
 #[cfg(feature = "voice-playback")]
-const VOICE_MIC_INPUT_CALLBACK_QUEUE: usize = 8;
+const VOICE_MIC_SEND_TIMEOUT: Duration = Duration::from_millis(100);
 #[cfg(feature = "voice-playback")]
-const VOICE_MIC_MAX_FRAME_AGE: Duration = Duration::from_millis(80);
+const VOICE_MIC_SERVICE_INTERVAL: Duration = Duration::from_millis(5);
+// Storage covers the processing deadline, one bounded send, and worker scheduling.
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_QUEUE_BUDGET: Duration = VOICE_MIC_MAX_PROCESSING_DELAY
+    .saturating_add(VOICE_MIC_SEND_TIMEOUT)
+    .saturating_add(VOICE_MIC_SERVICE_INTERVAL.saturating_mul(2));
+#[cfg(feature = "voice-playback")]
+const VOICE_MIC_PCM_FRAME_QUEUE: usize = VOICE_MIC_QUEUE_BUDGET
+    .as_millis()
+    .div_ceil(DISCORD_OPUS_FRAME_DURATION.as_millis())
+    as usize
+    + 1;
 #[cfg(all(feature = "voice-playback", target_os = "linux"))]
 const VOICE_MIC_AUTOMATIC_CALLBACKS_PER_SECOND: u32 = 20;
 #[cfg(all(feature = "voice-playback", not(target_os = "linux")))]
@@ -850,6 +861,8 @@ impl Default for VoiceChildTasks {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VoiceCaptureGate {
+    // Preserve transmit transitions even when watch coalesces mute and unmute.
+    transmit_epoch: u64,
     capture_enabled: bool,
     transmit_enabled: bool,
     use_voice_activity: bool,
@@ -903,13 +916,6 @@ struct VoiceMicrophoneInputProcessor {
 }
 
 #[cfg(feature = "voice-playback")]
-struct VoiceMicrophoneInputChunk<T> {
-    samples: Vec<T>,
-    captured_at: Instant,
-    input_dropped: bool,
-}
-
-#[cfg(feature = "voice-playback")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum VoiceMicrophoneBufferMode {
     PlatformFixed,
@@ -926,13 +932,18 @@ struct VoiceMicrophonePcmFrames {
     output_pending: Vec<i16>,
     output_pending_at: Option<Instant>,
     next_source_frame: f64,
+    source_end: Option<Instant>,
+    generation: Arc<AtomicBool>,
 }
 
 #[cfg(feature = "voice-playback")]
 #[derive(Debug)]
 struct VoiceMicrophoneFrame {
     samples: Vec<i16>,
+    // The oldest sample, including time spent in the audio backend.
     captured_at: Instant,
+    // Either stage can retire all queued and partial audio from this generation.
+    generation: Arc<AtomicBool>,
 }
 
 #[cfg(feature = "voice-playback")]
@@ -948,7 +959,8 @@ struct VoiceMicrophoneCaptureStats {
     clipped_samples: AtomicU64,
     last_callback_elapsed_us: AtomicU64,
     max_callback_gap_ms: AtomicU64,
-    callback_queue_drops: AtomicU64,
+    input_queue_dropped_blocks: AtomicU64,
+    stale_input_blocks: AtomicU64,
     stream_errors: AtomicU64,
     stream_xruns: AtomicU64,
     max_capture_latency_us: AtomicU64,
@@ -1072,14 +1084,10 @@ impl VoiceChildTasks {
     #[cfg(feature = "voice-playback")]
     fn signal_udp_transmit_stop(&mut self) {
         if let Some(gate) = self.transmit_gate.as_ref() {
-            let _ = gate.send(VoiceCaptureGate {
-                capture_enabled: false,
-                transmit_enabled: false,
-                use_voice_activity: true,
-                noise_suppression: false,
-                microphone_buffer_ms: None,
-                microphone_sensitivity: MicrophoneSensitivityDb::default(),
-                microphone_volume: VoiceVolumePercent::default(),
+            gate.send_modify(|current| {
+                current.transmit_epoch = current.transmit_epoch.wrapping_add(1);
+                current.capture_enabled = false;
+                current.transmit_enabled = false;
             });
         }
         self.microphone_capture = None;
@@ -1232,7 +1240,13 @@ impl VoiceChildTasks {
         #[cfg(feature = "voice-playback")]
         {
             if let Some(gate) = self.transmit_gate.as_ref() {
-                let _ = gate.send(capture_gate);
+                gate.send_modify(|current| {
+                    let epoch = current.transmit_epoch.wrapping_add(u64::from(
+                        current.transmit_enabled != capture_gate.transmit_enabled,
+                    ));
+                    *current = capture_gate;
+                    current.transmit_epoch = epoch;
+                });
             }
             self.set_microphone_capture_enabled(
                 capture_gate.capture_enabled,

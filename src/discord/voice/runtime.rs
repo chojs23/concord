@@ -820,6 +820,7 @@ impl VoiceRuntimeState {
         }
         let capture_enabled = requested.allow_microphone_transmit && !requested.self_mute;
         Some(VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled,
             transmit_enabled: capture_enabled && (!self.push_to_talk || self.push_to_talk_pressed),
             use_voice_activity: !self.push_to_talk,
@@ -1061,6 +1062,7 @@ pub(crate) async fn run_voice_runtime(
                     audio_sources_tx = Some(next_audio_sources_tx);
                     participant_playback_tx = Some(next_participant_playback_tx);
                     let initial_capture_gate = state.capture_gate().unwrap_or(VoiceCaptureGate {
+                        transmit_epoch: 0,
                         capture_enabled: false,
                         transmit_enabled: false,
                         use_voice_activity: true,

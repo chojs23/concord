@@ -178,6 +178,7 @@ pub(super) async fn connect_voice_gateway(
                     }
                     None => {
                         child_tasks.set_voice_transmit_gate(VoiceCaptureGate {
+                            transmit_epoch: 0,
                             capture_enabled: false,
                             transmit_enabled: false,
                             use_voice_activity: true,

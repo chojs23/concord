@@ -131,6 +131,7 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled: true,
             transmit_enabled: true,
             use_voice_activity: true,
@@ -153,6 +154,7 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled: false,
             transmit_enabled: false,
             use_voice_activity: true,
@@ -175,6 +177,7 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled: false,
             transmit_enabled: false,
             use_voice_activity: true,
@@ -199,6 +202,7 @@ fn voice_runtime_capture_gate_requires_allowed_active_unmuted_voice() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled: false,
             transmit_enabled: false,
             use_voice_activity: true,
@@ -246,6 +250,7 @@ fn voice_runtime_push_to_talk_transmits_only_while_pressed() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled: true,
             transmit_enabled: false,
             use_voice_activity: false,
@@ -260,6 +265,7 @@ fn voice_runtime_push_to_talk_transmits_only_while_pressed() {
     assert_eq!(
         state.capture_gate(),
         Some(VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled: true,
             transmit_enabled: true,
             use_voice_activity: false,
@@ -585,6 +591,7 @@ fn local_speaking_follows_microphone_activity_and_emits_only_edges() {
     let quiet = vec![100i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     let normal = vec![1500i16; DISCORD_OPUS_20MS_STEREO_SAMPLES];
     let voice_activity_gate = VoiceCaptureGate {
+        transmit_epoch: 0,
         capture_enabled: true,
         transmit_enabled: true,
         use_voice_activity: true,
@@ -1332,6 +1339,7 @@ fn voice_microphone_conditioning_combines_gain_before_soft_limiting() {
     condition_voice_microphone_frame(
         &mut frame,
         VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled: true,
             transmit_enabled: true,
             use_voice_activity: true,
@@ -2104,102 +2112,33 @@ fn microphone_pcm_frames_resample_44100_to_48000() {
 
 #[cfg(feature = "voice-playback")]
 #[test]
-fn microphone_pcm_frames_queue_all_audio_from_large_callbacks() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-    let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-    let mut frames =
-        VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), DISCORD_VOICE_SAMPLE_RATE);
-    let callback_frames = 5;
-    let mut samples = Vec::with_capacity(DISCORD_OPUS_20MS_STEREO_SAMPLES * callback_frames);
-    for value in 0..callback_frames {
-        samples.extend(vec![value as i16; DISCORD_OPUS_20MS_STEREO_SAMPLES]);
+fn microphone_preserves_delayed_batches_during_paced_transmission() {
+    for (capture_delay_ms, poll_delay_ms) in [(100, 0), (150, 10), (400, 19)] {
+        let now = Instant::now();
+        let captured_at = now - Duration::from_millis(capture_delay_ms);
+        let (tx, mut rx) = mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
+        let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
+        let mut frames = VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), 48_000);
+        let samples = (0..5)
+            .flat_map(|value| vec![value; DISCORD_OPUS_20MS_STEREO_SAMPLES])
+            .collect::<Vec<_>>();
+        frames.push_stereo_samples(&samples, captured_at);
+
+        for index in 0..5 {
+            let frame = rx.try_recv().expect("batch frame should remain queued");
+            let tick = now + Duration::from_millis(poll_delay_ms + index * 20);
+            let (selected, dropped) = select_fresh_voice_microphone_frame(frame, &mut rx, tick);
+            let selected = selected.expect("ordinary capture delay must preserve speech");
+            assert_eq!(dropped, 0);
+            assert_eq!(selected.samples[0], index as i16);
+            assert_eq!(
+                selected.captured_at,
+                captured_at + Duration::from_millis(index * 20)
+            );
+        }
+        assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 0);
+        assert!(rx.try_recv().is_err());
     }
-
-    frames.push_stereo_samples(&samples, Instant::now());
-
-    let queued = std::iter::from_fn(|| rx.try_recv().ok())
-        .map(|frame| frame.samples[0])
-        .collect::<Vec<_>>();
-    assert_eq!(queued, vec![0, 1, 2, 3, 4]);
-    assert_eq!(stats.queued_frames.load(Ordering::Relaxed), 5);
-    assert_eq!(stats.dropped_frames.load(Ordering::Relaxed), 0);
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_pcm_frames_keep_20ms_capture_timeline_for_batched_input() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
-    let stats = Arc::new(VoiceMicrophoneCaptureStats::default());
-    let mut frames =
-        VoiceMicrophonePcmFrames::new(tx, Arc::clone(&stats), DISCORD_VOICE_SAMPLE_RATE);
-    let captured_at = Instant::now();
-    let samples = vec![1i16; DISCORD_OPUS_20MS_STEREO_SAMPLES * 2];
-
-    frames.push_stereo_samples(&samples, captured_at);
-
-    let first = rx.try_recv().expect("first 20 ms frame should queue");
-    let second = rx.try_recv().expect("second 20 ms frame should queue");
-    assert_eq!(first.captured_at, captured_at + DISCORD_OPUS_FRAME_DURATION);
-    assert_eq!(
-        second.captured_at,
-        captured_at + DISCORD_OPUS_FRAME_DURATION.saturating_mul(2)
-    );
-}
-
-#[cfg(feature = "voice-playback")]
-#[test]
-fn microphone_freshness_policy_selects_the_first_live_frame() {
-    let now = Instant::now();
-
-    // Old audio is skipped by capture age. Newer queued audio remains in order
-    // instead of being discarded to satisfy an unrelated queue-depth limit.
-    let (tx, mut rx) = tokio::sync::mpsc::channel(VOICE_MIC_PCM_FRAME_QUEUE);
-    let initial = VoiceMicrophoneFrame {
-        samples: vec![0],
-        captured_at: now - Duration::from_millis(320),
-    };
-    for index in 1u8..=15 {
-        tx.try_send(VoiceMicrophoneFrame {
-            samples: vec![i16::from(index)],
-            captured_at: now - Duration::from_millis(u64::from(15 - index) * 20),
-        })
-        .expect("backlog frame should queue");
-    }
-
-    let (selected, dropped) = select_fresh_voice_microphone_frame(initial, &mut rx, now);
-    let selected = selected.expect("a fresh frame should remain");
-
-    assert_eq!(selected.samples, vec![11]);
-    assert_eq!(dropped, 11);
-    assert_eq!(rx.len(), 4);
-    assert!(now.saturating_duration_since(selected.captured_at) <= VOICE_MIC_MAX_FRAME_AGE);
-
-    // A frame exactly on the age boundary remains live when it is the only
-    // available audio.
-    let (_tx, mut rx) = tokio::sync::mpsc::channel(1);
-    let boundary = VoiceMicrophoneFrame {
-        samples: vec![50],
-        captured_at: now - VOICE_MIC_MAX_FRAME_AGE,
-    };
-    let (selected, dropped) = select_fresh_voice_microphone_frame(boundary, &mut rx, now);
-
-    assert_eq!(
-        selected.expect("boundary frame should remain live").samples,
-        vec![50]
-    );
-    assert_eq!(dropped, 0);
-
-    // Once the age budget is exceeded, transmitting silence or waiting for a
-    // new live frame is better than sending stale speech.
-    let (_tx, mut rx) = tokio::sync::mpsc::channel(1);
-    let stale = VoiceMicrophoneFrame {
-        samples: vec![99],
-        captured_at: now - VOICE_MIC_MAX_FRAME_AGE - Duration::from_millis(1),
-    };
-    let (selected, dropped) = select_fresh_voice_microphone_frame(stale, &mut rx, now);
-
-    assert!(selected.is_none());
-    assert_eq!(dropped, 1);
 }
 
 #[cfg(feature = "voice-playback")]
@@ -2210,6 +2149,7 @@ fn microphone_capture_requires_enabled_transmit_destination() {
         let mut child_tasks = VoiceChildTasks::default();
         child_tasks.microphone_pcm_tx = has_destination.then_some(pcm_tx);
         let capture_gate = VoiceCaptureGate {
+            transmit_epoch: 0,
             capture_enabled,
             transmit_enabled: capture_enabled,
             use_voice_activity: true,
@@ -2384,11 +2324,13 @@ fn microphone_pcm_drain_clears_backlog_before_reenable() {
     let now = Instant::now();
 
     tx.try_send(VoiceMicrophoneFrame {
+        generation: Arc::new(AtomicBool::new(true)),
         samples: vec![10],
         captured_at: now,
     })
     .expect("first frame should queue");
     tx.try_send(VoiceMicrophoneFrame {
+        generation: Arc::new(AtomicBool::new(true)),
         samples: vec![20],
         captured_at: now,
     })
