@@ -197,6 +197,7 @@ impl DashboardState {
         self.composer.reply_target_message_id = Some(message_id);
         self.composer.edit_target_message = None;
         self.composer.composer_active = true;
+        self.move_composer_cursor_end();
         self.navigation.focus = FocusPane::Messages;
     }
 
