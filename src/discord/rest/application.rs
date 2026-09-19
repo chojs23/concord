@@ -4,7 +4,7 @@ use crate::Result;
 
 use super::DiscordRest;
 
-/// Resolves an RPC app's `client_id` to a display name. `SET_ACTIVITY` omits it.
+/// Resolves an RPC app's `client_id` for clients that omit the activity name.
 #[derive(Debug, Deserialize)]
 pub(in crate::discord) struct ApplicationRpcInfo {
     pub name: String,

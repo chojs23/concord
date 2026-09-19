@@ -231,7 +231,9 @@ where
             // is held across the REST round-trips.
             match activity {
                 Some(mut activity) => {
-                    activity.name = resolve_app_name(context, client_id).await;
+                    if activity.name.is_empty() {
+                        activity.name = resolve_app_name(context, client_id).await;
+                    }
                     resolve_asset_keys(context, client_id, &mut activity).await;
                     let sequence =
                         context
@@ -936,6 +938,100 @@ mod tests {
         );
         assert_eq!(outbound, (PresenceStatus::Online, vec![custom.clone()]));
         assert_eq!(local_activities, vec![custom]);
+    }
+
+    #[tokio::test]
+    async fn set_activity_prefers_rpc_name_and_falls_back_when_missing() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (client, user_id) = test_client_with_current_user().await;
+        client
+            .publish_event(AppEvent::PresenceUpdate {
+                guild_id: None,
+                presence: PresenceEventFields {
+                    user_id,
+                    status: PresenceStatus::Online,
+                    activities: Vec::new(),
+                },
+            })
+            .await;
+        let mut commands = client.take_gateway_commands_for_test();
+        let context = context_with_client(client);
+        context
+            .names
+            .lock()
+            .await
+            .insert("123".to_owned(), "Heroic Games Launcher".to_owned());
+
+        let (mut app, mut server) = tokio::io::duplex(4096);
+        let server_context = context.clone();
+        let task =
+            tokio::spawn(async move { serve_connection(&mut server, &server_context).await });
+        app.write_all(&encode_frame(
+            Opcode::Handshake,
+            br#"{"v":1,"client_id":"123"}"#,
+        ))
+        .await
+        .expect("send handshake");
+        read_frame(&mut app).await.expect("connection ready");
+
+        let named = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "args": {
+                "pid": 42,
+                "activity": {
+                    "name": "Rocket League®",
+                    "type": 0,
+                    "status_display_type": 0
+                }
+            }
+        });
+        app.write_all(&encode_frame(Opcode::Frame, named.to_string().as_bytes()))
+            .await
+            .expect("set named activity");
+        read_frame(&mut app)
+            .await
+            .expect("named activity acknowledged");
+
+        let detected = context.registry.lock().await.activities();
+        assert_eq!(
+            detected.first().map(|activity| activity.name.as_str()),
+            Some("Rocket League®")
+        );
+        broadcast_selected_now(&context).await;
+        let (_, outbound) =
+            presence_update_command(commands.recv().await.expect("presence update"));
+        assert_eq!(
+            outbound.first().map(|activity| activity.name.as_str()),
+            Some("Rocket League®")
+        );
+
+        let unnamed = serde_json::json!({
+            "cmd": "SET_ACTIVITY",
+            "args": { "pid": 42, "activity": { "type": 0 } }
+        });
+        app.write_all(&encode_frame(Opcode::Frame, unnamed.to_string().as_bytes()))
+            .await
+            .expect("set unnamed activity");
+        read_frame(&mut app)
+            .await
+            .expect("unnamed activity acknowledged");
+        assert_eq!(
+            context
+                .registry
+                .lock()
+                .await
+                .activities()
+                .first()
+                .map(|activity| activity.name.as_str()),
+            Some("Heroic Games Launcher")
+        );
+
+        app.write_all(&encode_frame(Opcode::Close, b""))
+            .await
+            .expect("close connection");
+        task.await
+            .expect("connection task joins")
+            .expect("connection closes cleanly");
     }
 
     #[tokio::test]

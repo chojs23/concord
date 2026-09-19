@@ -98,14 +98,11 @@ fn command_nonce(object: &serde_json::Map<String, Value>) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The RPC payload carries no app name (Discord derives it from `client_id`),
-/// so we stamp a placeholder that the caller resolves before broadcasting.
+/// The activity name is independent of the application identified by `client_id`.
+/// Leave a missing name empty so the caller can apply its compatibility fallback.
 fn build_activity(value: &Value, client_id: &str) -> Option<ActivityInfo> {
     let mut activity = parse_activity(value)?;
     activity.application_id = Some(client_id.to_owned());
-    if activity.name.is_empty() {
-        activity.name = client_id.to_owned();
-    }
     // Some RPC clients (e.g. presence.nvim) send seconds though the gateway
     // expects milliseconds. Normalize or the elapsed timer is off by 1000x.
     if let Some(timestamps) = activity.timestamps.as_mut() {
