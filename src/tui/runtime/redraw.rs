@@ -10,12 +10,26 @@ use crossterm::{
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
 use ratatui::{DefaultTerminal, layout::Rect};
+use tokio::time::{Duration, Instant};
 
 use crate::tui::state::DashboardState;
 
 use super::media_runtime::{
     DashboardMediaRuntime, clear_image_surfaces_frame, draw_dashboard_frame,
 };
+
+pub(super) const INPUT_REDRAW_INTERVAL: Duration = Duration::from_millis(12);
+
+pub(super) fn schedule_redraw(deadline: &mut Option<Instant>, now: Instant, delay: Duration) {
+    let candidate = now + delay;
+    if deadline.is_none_or(|current| candidate < current) {
+        *deadline = Some(candidate);
+    }
+}
+
+pub(super) fn redraw_is_due(deadline: Option<Instant>, now: Instant) -> bool {
+    deadline.is_none_or(|deadline| deadline <= now)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RedrawPlan {
@@ -77,7 +91,40 @@ pub(super) fn draw_dashboard_transaction(
 
 #[cfg(test)]
 mod tests {
-    use super::{DashboardRedrawState, RedrawPlan};
+    use std::time::Duration;
+
+    use tokio::time::Instant;
+
+    use super::{DashboardRedrawState, RedrawPlan, redraw_is_due, schedule_redraw};
+
+    #[test]
+    fn input_redraw_shortens_background_deadline_without_replacing_it_later() {
+        let now = Instant::now();
+        let mut deadline = None;
+        schedule_redraw(&mut deadline, now, Duration::from_millis(80));
+        let background_deadline = deadline;
+
+        schedule_redraw(&mut deadline, now, Duration::from_millis(12));
+        assert!(deadline < background_deadline);
+
+        schedule_redraw(&mut deadline, now, Duration::from_millis(80));
+        assert_eq!(deadline, Some(now + Duration::from_millis(12)));
+    }
+
+    #[test]
+    fn redraw_deadline_coalesces_events_until_the_due_frame() {
+        let now = Instant::now();
+        let mut deadline = None;
+        schedule_redraw(&mut deadline, now, Duration::from_millis(12));
+        schedule_redraw(
+            &mut deadline,
+            now + Duration::from_millis(4),
+            Duration::from_millis(12),
+        );
+
+        assert!(!redraw_is_due(deadline, now + Duration::from_millis(11)));
+        assert!(redraw_is_due(deadline, now + Duration::from_millis(12)));
+    }
 
     #[test]
     fn redraw_plan_synchronizes_media_animation_and_placement_cleanup() {
