@@ -68,13 +68,13 @@ impl DashboardState {
             channel_id,
             user_id,
         };
-        if self.runtime.active_stream_playback == Some(target) {
+        if self.runtime.active_stream_playbacks.contains(&target)
+            || !self.runtime.stream_playback_preparing.insert(target)
+        {
             return false;
         }
 
         self.runtime.media_playback_preparing = None;
-        self.runtime.active_stream_playback = None;
-        self.runtime.stream_playback_preparing = Some(target);
         self.runtime.toast_message = Some(ToastMessage {
             text: STREAM_PLAYBACK_PREPARING_TEXT.to_owned(),
             kind: ToastKind::Info,
@@ -94,13 +94,15 @@ impl DashboardState {
             channel_id,
             user_id,
         };
-        if self.runtime.stream_playback_preparing.as_ref() != Some(&target) {
+        if !self.runtime.stream_playback_preparing.remove(&target) {
             return false;
         }
 
-        self.runtime.stream_playback_preparing = None;
-        self.runtime.active_stream_playback = Some(target);
-        self.clear_owned_preparing_toast(STREAM_PLAYBACK_PREPARING_TEXT)
+        self.runtime.active_stream_playbacks.insert(target);
+        if self.runtime.stream_playback_preparing.is_empty() {
+            self.clear_owned_preparing_toast(STREAM_PLAYBACK_PREPARING_TEXT);
+        }
+        true
     }
 
     pub(in crate::tui) fn record_stream_playback_ended(
@@ -115,22 +117,26 @@ impl DashboardState {
             channel_id,
             user_id,
         };
-        let tracked = self.runtime.active_stream_playback == Some(target)
-            || self.runtime.stream_playback_preparing == Some(target);
-        if !tracked {
+        let was_active = self.runtime.active_stream_playbacks.remove(&target);
+        let was_preparing = self.runtime.stream_playback_preparing.remove(&target);
+        if !was_active && !was_preparing {
             return false;
         }
 
-        self.runtime.active_stream_playback = None;
         if reconnecting {
-            return self.show_stream_playback_preparing_toast(scope, channel_id, user_id);
+            self.runtime.stream_playback_preparing.insert(target);
+            self.runtime.toast_message = Some(ToastMessage {
+                text: STREAM_PLAYBACK_PREPARING_TEXT.to_owned(),
+                kind: ToastKind::Info,
+                expires_at: None,
+            });
+            return true;
         }
 
-        let was_preparing = self.runtime.stream_playback_preparing == Some(target);
-        if was_preparing {
-            self.runtime.stream_playback_preparing = None;
+        if was_preparing && self.runtime.stream_playback_preparing.is_empty() {
+            self.clear_owned_preparing_toast(STREAM_PLAYBACK_PREPARING_TEXT);
         }
-        was_preparing && self.clear_owned_preparing_toast(STREAM_PLAYBACK_PREPARING_TEXT)
+        true
     }
 
     pub(in crate::tui) fn show_media_playback_preparing_toast(
@@ -138,7 +144,6 @@ impl DashboardState {
         request_id: MediaPlaybackRequestId,
         url: String,
     ) {
-        self.runtime.stream_playback_preparing = None;
         self.runtime.media_playback_preparing =
             Some(MediaPlaybackPreparingUiState { request_id, url });
         self.runtime.toast_message = Some(ToastMessage {
@@ -308,7 +313,7 @@ impl DashboardState {
             STREAM_CAPTURE_TARGETS_LOADING_TEXT
         } else if self.runtime.stream_broadcast_preparing.is_some() {
             STREAM_BROADCAST_PREPARING_TEXT
-        } else if self.runtime.stream_playback_preparing.is_some() {
+        } else if !self.runtime.stream_playback_preparing.is_empty() {
             STREAM_PLAYBACK_PREPARING_TEXT
         } else if self.runtime.media_playback_preparing.is_some() {
             MEDIA_PLAYBACK_PREPARING_TEXT
@@ -583,6 +588,52 @@ mod tests {
                 .text,
             STREAM_PLAYBACK_PREPARING_TEXT
         );
+    }
+
+    #[test]
+    fn stream_playback_ui_tracks_concurrent_targets_independently() {
+        let mut state = DashboardState::new();
+        let scope = VoiceScope::Guild(Id::new(1));
+        let channel_id = Id::new(2);
+        let first_user_id = Id::new(3);
+        let second_user_id = Id::new(4);
+
+        assert!(state.show_stream_playback_preparing_toast(scope, channel_id, first_user_id));
+        assert!(state.show_stream_playback_preparing_toast(scope, channel_id, second_user_id));
+
+        state.push_event(AppEvent::StreamPlaybackWindowReady {
+            scope,
+            channel_id,
+            user_id: first_user_id,
+        });
+        assert_eq!(state.runtime.active_stream_playbacks.len(), 1);
+        assert_eq!(state.runtime.stream_playback_preparing.len(), 1);
+        assert_eq!(
+            state
+                .toast_message()
+                .expect("second stream preparation remains visible")
+                .text,
+            STREAM_PLAYBACK_PREPARING_TEXT
+        );
+
+        state.push_event(AppEvent::StreamPlaybackWindowReady {
+            scope,
+            channel_id,
+            user_id: second_user_id,
+        });
+        assert_eq!(state.runtime.active_stream_playbacks.len(), 2);
+        assert!(state.runtime.stream_playback_preparing.is_empty());
+        assert!(state.toast_message().is_none());
+
+        state.push_event(AppEvent::StreamPlaybackEnded {
+            scope,
+            channel_id,
+            user_id: second_user_id,
+            reconnecting: false,
+        });
+        assert_eq!(state.runtime.active_stream_playbacks.len(), 1);
+        assert!(!state.show_stream_playback_preparing_toast(scope, channel_id, first_user_id));
+        assert!(state.show_stream_playback_preparing_toast(scope, channel_id, second_user_id));
     }
 
     #[test]

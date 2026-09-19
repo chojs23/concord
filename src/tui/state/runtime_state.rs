@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{collections::BTreeSet, time::Instant};
 
 use crate::discord::ids::{
     Id,
@@ -56,7 +56,7 @@ pub(super) struct MediaPlaybackPreparingUiState {
     pub(super) url: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct StreamPlaybackUiTarget {
     pub(super) scope: VoiceScope,
     pub(super) channel_id: Id<ChannelMarker>,
@@ -85,8 +85,8 @@ impl StreamBroadcastUiTarget {
 pub(super) struct RuntimeUiState {
     pub(super) toast_message: Option<ToastMessage>,
     pub(super) media_playback_preparing: Option<MediaPlaybackPreparingUiState>,
-    pub(super) stream_playback_preparing: Option<StreamPlaybackUiTarget>,
-    pub(super) active_stream_playback: Option<StreamPlaybackUiTarget>,
+    pub(super) stream_playback_preparing: BTreeSet<StreamPlaybackUiTarget>,
+    pub(super) active_stream_playbacks: BTreeSet<StreamPlaybackUiTarget>,
     pub(super) stream_broadcast_preparing: Option<StreamBroadcastUiTarget>,
     pub(super) active_stream_broadcast: Option<StreamBroadcastUiTarget>,
     pub(super) stream_capture_targets_request: Option<StreamCaptureTargetsRequest>,

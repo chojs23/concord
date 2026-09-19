@@ -607,8 +607,8 @@ impl DashboardState {
 
     fn clear_finished_voice_connection(&mut self, scope: VoiceScope) {
         self.runtime.stream_capture_targets_request = None;
-        self.runtime.stream_playback_preparing = None;
-        self.runtime.active_stream_playback = None;
+        self.runtime.stream_playback_preparing.clear();
+        self.runtime.active_stream_playbacks.clear();
         self.runtime.stream_broadcast_preparing = None;
         self.runtime.active_stream_broadcast = None;
         if self

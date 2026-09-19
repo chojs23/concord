@@ -9,7 +9,7 @@ pub(in crate::tui) struct StreamInfoSection {
 
 impl DashboardState {
     pub(in crate::tui) fn stream_info_sections(&self) -> Vec<StreamInfoSection> {
-        let mut sections = Vec::with_capacity(2);
+        let mut sections = Vec::with_capacity(1 + self.runtime.active_stream_playbacks.len());
 
         if let (Some(target), Some(current_user_id)) = (
             self.runtime.active_stream_broadcast.as_ref(),
@@ -25,7 +25,7 @@ impl DashboardState {
             });
         }
 
-        if let Some(target) = self.runtime.active_stream_playback {
+        for target in &self.runtime.active_stream_playbacks {
             let stream =
                 self.discord
                     .stream_participants(target.scope, target.channel_id, target.user_id);

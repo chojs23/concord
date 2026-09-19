@@ -53,13 +53,21 @@ impl BroadcastCapturePreparationTask {
 
 #[derive(Default)]
 struct StreamWatchController {
-    task: Option<JoinHandle<()>>,
-    session: Option<StreamGatewaySession>,
+    connections: HashMap<String, StreamWatchConnection>,
+}
+
+struct StreamWatchConnection {
+    task: JoinHandle<()>,
+    session: StreamGatewaySession,
 }
 
 impl StreamWatchController {
-    async fn stop(&mut self, label: &str) -> Option<StreamGatewaySession> {
-        stop_stream_connection_task(&mut self.task, &mut self.session, label).await
+    async fn stop(&mut self, stream_key: &str, label: &str) -> Option<StreamGatewaySession> {
+        let mut connection = self.connections.remove(stream_key)?;
+        logging::debug("stream", format!("{label}: stream_key={stream_key}"));
+        connection.task.abort();
+        let _ = timeout(Duration::from_millis(100), &mut connection.task).await;
+        Some(connection.session)
     }
 
     async fn replace(
@@ -68,14 +76,36 @@ impl StreamWatchController {
         events_tx: mpsc::UnboundedSender<VoiceRuntimeEvent>,
         status_publisher: VoiceStatusPublisher,
     ) {
-        self.stop("stopping previous stream connection task before reconnect")
-            .await;
-        self.session = Some(session.clone());
-        self.task = Some(tokio::spawn(run_stream_gateway_session(
-            session,
+        let stream_key = session.request.stream_key.clone();
+        self.stop(
+            &stream_key,
+            "stopping previous stream connection task before reconnect",
+        )
+        .await;
+        let task = tokio::spawn(run_stream_gateway_session(
+            session.clone(),
             events_tx,
             status_publisher,
-        )));
+        ));
+        self.connections
+            .insert(stream_key, StreamWatchConnection { task, session });
+    }
+
+    async fn shutdown(&mut self, label: &str) {
+        let stream_keys = self.connections.keys().cloned().collect::<Vec<_>>();
+        for stream_key in stream_keys {
+            let _ = self.stop(&stream_key, label).await;
+        }
+    }
+}
+
+#[cfg(test)]
+impl StreamWatchController {
+    fn insert_test_connection(&mut self, session: StreamGatewaySession, task: JoinHandle<()>) {
+        self.connections.insert(
+            session.request.stream_key.clone(),
+            StreamWatchConnection { task, session },
+        );
     }
 }
 
@@ -963,10 +993,10 @@ pub(crate) async fn run_voice_runtime(
                 .publish_audio_sources_apply_failed(requested_sources, active_sources, message)
                 .await;
         }
-        if let Some(error) = stream_update.error {
+        for error in stream_update.errors {
             status_publisher.publish_error(error).await;
         }
-        if let Some(ended) = stream_update.playback_ended {
+        for ended in stream_update.playback_ended {
             status_publisher
                 .publish_stream_playback_ended(
                     ended.request.scope,
@@ -976,15 +1006,17 @@ pub(crate) async fn run_voice_runtime(
                 )
                 .await;
         }
-        if let Some(stream_key) = stream_update.close_stream_key {
+        for close in stream_update.close {
             let _ = stream_controller
-                .stop("stopping active stream connection task")
+                .stop(&close.stream_key, "stopping active stream connection task")
                 .await;
-            if stream_update.send_delete {
-                let _ = gateway_commands_tx.send(GatewayCommand::DeleteStream { stream_key });
+            if close.send_delete {
+                let _ = gateway_commands_tx.send(GatewayCommand::DeleteStream {
+                    stream_key: close.stream_key,
+                });
             }
         }
-        if let Some(session) = stream_update.connect {
+        for session in stream_update.connect {
             stream_controller
                 .replace(session, events_tx.clone(), status_publisher.clone())
                 .await;
@@ -1157,25 +1189,10 @@ pub(crate) async fn run_voice_runtime(
             .publish_speaking(&stopped_session, stopped_session.user_id, false)
             .await;
     }
-    let _ = stream_controller
-        .stop("stopping stream connection task during voice runtime shutdown")
+    stream_controller
+        .shutdown("stopping stream connection task during voice runtime shutdown")
         .await;
     broadcast_controller.shutdown().await;
-}
-
-async fn stop_stream_connection_task(
-    stream_task: &mut Option<JoinHandle<()>>,
-    stream_session: &mut Option<StreamGatewaySession>,
-    label: &str,
-) -> Option<StreamGatewaySession> {
-    let stopped_session = stream_session.take();
-    let Some(mut task) = stream_task.take() else {
-        return stopped_session;
-    };
-    logging::debug("stream", label);
-    task.abort();
-    let _ = timeout(Duration::from_millis(100), &mut task).await;
-    stopped_session
 }
 
 async fn cancel_broadcast_capture_preparation(
@@ -1368,27 +1385,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stopping_stream_watch_aborts_its_gateway_task() {
-        let (started_tx, started_rx) = oneshot::channel();
-        let (stopped_tx, stopped_rx) = oneshot::channel();
-        let task = tokio::spawn(async move {
-            let _notice = DropNotice(Some(stopped_tx));
-            let _ = started_tx.send(());
+    async fn stopping_stream_watch_keeps_other_gateway_tasks_running() {
+        let (first_started_tx, first_started_rx) = oneshot::channel();
+        let (first_stopped_tx, first_stopped_rx) = oneshot::channel();
+        let first_task = tokio::spawn(async move {
+            let _notice = DropNotice(Some(first_stopped_tx));
+            let _ = first_started_tx.send(());
             std::future::pending::<()>().await;
         });
-        let mut controller = StreamWatchController {
-            task: Some(task),
-            session: None,
-        };
-        started_rx.await.expect("stream watch task should start");
+        let (second_started_tx, second_started_rx) = oneshot::channel();
+        let (second_stopped_tx, second_stopped_rx) = oneshot::channel();
+        let second_task = tokio::spawn(async move {
+            let _notice = DropNotice(Some(second_stopped_tx));
+            let _ = second_started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        let first_key = "guild:1:2:3";
+        let second_key = "guild:1:2:4";
+        let mut controller = StreamWatchController::default();
+        controller.insert_test_connection(StreamGatewaySession::for_test(first_key), first_task);
+        controller.insert_test_connection(StreamGatewaySession::for_test(second_key), second_task);
+        first_started_rx
+            .await
+            .expect("first stream watch task should start");
+        second_started_rx
+            .await
+            .expect("second stream watch task should start");
 
-        controller.stop("stopping test stream watch").await;
+        controller
+            .stop(first_key, "stopping test stream watch")
+            .await;
 
-        timeout(Duration::from_secs(1), stopped_rx)
+        timeout(Duration::from_secs(1), first_stopped_rx)
             .await
             .expect("stream watch task should stop")
             .expect("stream watch task should report cleanup");
-        assert!(controller.task.is_none());
+        assert!(!controller.connections.contains_key(first_key));
+        assert!(controller.connections.contains_key(second_key));
+
+        controller
+            .shutdown("stopping remaining test stream watch")
+            .await;
+        timeout(Duration::from_secs(1), second_stopped_rx)
+            .await
+            .expect("remaining stream watch task should stop during shutdown")
+            .expect("remaining stream watch task should report cleanup");
     }
 
     #[tokio::test]
