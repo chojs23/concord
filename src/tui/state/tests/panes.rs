@@ -355,6 +355,28 @@ fn channel_tree_groups_category_children() {
 }
 
 #[test]
+fn channel_tree_places_uncategorized_channels_before_categories() {
+    let guild_id = Id::new(1);
+    let uncategorized_voice_id = Id::new(20);
+    let mut state = state_with_channel_tree();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        position: Some(10),
+        ..voice_channel_info(guild_id, uncategorized_voice_id, "hidden")
+    }));
+
+    let entries = state.channel_pane_entries();
+
+    assert!(matches!(
+        &entries[0],
+        ChannelPaneEntry::Channel { state, .. } if state.id == uncategorized_voice_id
+    ));
+    assert!(matches!(
+        &entries[1],
+        ChannelPaneEntry::CategoryHeader { state, .. } if state.id == Id::new(10)
+    ));
+}
+
+#[test]
 fn channel_filter_preserves_highlight_across_background_events() {
     let guild_id = Id::new(1);
     let category_id = Id::new(10);

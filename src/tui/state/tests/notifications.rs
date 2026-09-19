@@ -148,7 +148,7 @@ fn notification_inbox_applies_display_order_at_each_scope() {
 
         assert_eq!(
             notification_inbox_channel_ids(&state),
-            vec![first_root_id, first_child_id, thread_id, last_root_id]
+            vec![first_root_id, last_root_id, first_child_id, thread_id]
         );
     }
 }

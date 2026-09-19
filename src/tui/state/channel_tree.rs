@@ -23,7 +23,15 @@ pub(super) fn sorted_channel_tree_roots<'a>(
                     && !channel.is_thread()
         })
         .collect();
-    sort_channels(&mut roots);
+    // Discord keeps uncategorized channels above every category block.
+    // Raw positions only decide order within those two root groups.
+    roots.sort_by_key(|channel| {
+        (
+            channel.is_category(),
+            channel.position.unwrap_or(i32::MAX),
+            channel.id,
+        )
+    });
     roots
 }
 
