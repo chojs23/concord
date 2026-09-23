@@ -29,6 +29,7 @@ pub struct GuildState {
     /// Discord guild feature names. Unknown values are preserved so feature
     /// based safety checks do not require a parser update for every new flag.
     pub features: Option<Vec<String>>,
+    pub icon_hash: Option<String>,
     /// Full onboarding configuration when Discord has supplied it.
     pub onboarding: Option<GuildOnboardingInfo>,
 }

@@ -29,6 +29,10 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_owned();
+    let icon_hash = guild_field(data, "icon")
+        .and_then(Value::as_str)
+        .filter(|hash| !hash.is_empty())
+        .map(str::to_owned);
 
     let mut channels: Vec<ChannelInfo> = data
         .get("channels")
@@ -98,6 +102,7 @@ pub(super) fn parse_guild_create(data: &Value) -> Option<AppEvent> {
     Some(AppEvent::GuildCreate {
         guild_id,
         name,
+        icon_hash,
         member_count,
         owner_id,
         boost_tier,
@@ -305,6 +310,12 @@ pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_owned();
+    let icon_hash = data.get("icon").map(|icon| {
+        icon.as_str()
+            .filter(|hash| !hash.is_empty())
+            .unwrap_or_default()
+            .to_owned()
+    });
     let emojis = data
         .get("emojis")
         .and_then(Value::as_array)
@@ -327,6 +338,7 @@ pub(super) fn parse_guild_update(data: &Value) -> Option<AppEvent> {
     Some(AppEvent::GuildUpdate {
         guild_id,
         name,
+        icon_hash,
         owner_id,
         boost_tier,
         boost_count,
