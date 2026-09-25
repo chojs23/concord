@@ -12,6 +12,7 @@ mod diagnostics;
 mod discord_ui;
 mod emoji;
 mod events;
+pub(in crate::tui) mod gif_picker;
 mod guilds;
 mod layout_cache;
 mod local_upload_preview;

@@ -1085,6 +1085,7 @@ impl DashboardState {
         content: String,
         additional_attachment: Option<MessageAttachmentUpload>,
     ) -> AppCommand {
+        self.queue_klipy_shares(&content);
         self.clear_composer_text();
         let mention_author = self.options.composer_options.ping_on_reply;
         let reply_to = self
@@ -1258,6 +1259,7 @@ impl DashboardState {
     }
 
     fn clear_composer_text(&mut self) {
+        self.clear_klipy_selections();
         self.cancel_composer_translation();
         self.composer.composer_input.clear();
         self.reset_mention_picker_state();

@@ -67,6 +67,11 @@ macro_rules! define_composer_actions {
 }
 
 define_composer_actions! {
+    OpenGifPicker => (
+        aliases: [],
+        action: ComposerAction::OpenGifPicker,
+        defaults: vec![ctrl_chord('g')]
+    ),
     OpenEditor => (
         aliases: ["OpenInEditor"],
         action: ComposerAction::OpenInEditor,

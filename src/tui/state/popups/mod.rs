@@ -135,6 +135,7 @@ define_modal_popups! {
     ChannelSwitcher(ChannelSwitcherState),
     NotificationInbox(NotificationInboxState),
     Search(SearchPopupState),
+    GifPicker(super::gif_picker::GifPickerState),
     ForumPostComposer(ForumPostComposerState),
     ThreadEdit(ThreadEditState),
     ThreadActionMenu(ThreadActionMenuState),
@@ -1794,6 +1795,7 @@ impl DashboardState {
             }
             ActiveModalPopupKind::NotificationInbox => self.close_notification_inbox(),
             ActiveModalPopupKind::Search => self.close_search_popup(),
+            ActiveModalPopupKind::GifPicker => self.popups.clear_modal(),
             ActiveModalPopupKind::ForumPostComposer => {
                 self.close_or_cancel_forum_post_composer();
             }
@@ -2066,6 +2068,9 @@ impl DashboardState {
             }
             ModalPopup::NotificationInbox(_) => {
                 ActivePopupPolicy::selectable(kind, SelectablePopupTarget::NotificationInbox)
+            }
+            ModalPopup::GifPicker(_) => {
+                ActivePopupPolicy::text_entry(kind, ActivePopupInteraction::NoNavigation)
             }
             ModalPopup::Search(_) => ActivePopupPolicy::text_entry(
                 kind,

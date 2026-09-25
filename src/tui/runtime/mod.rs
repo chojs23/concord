@@ -26,6 +26,7 @@ use super::{
 
 pub(super) mod effects;
 pub(super) mod events;
+mod klipy;
 mod media_runtime;
 pub(super) mod notification_audio;
 mod placement;
@@ -107,6 +108,7 @@ pub(super) async fn run_dashboard(
     state.apply_presence_options(options.presence);
     state.apply_reaction_options(options.reactions);
     state.apply_translation_options(options.translation);
+    state.apply_klipy_options(options.klipy.clone());
     drop(snapshots.borrow_and_update());
     let initial_snapshot = client.current_discord_snapshot();
     let mut current_snapshot_revision = initial_snapshot.revision.global;
@@ -128,6 +130,8 @@ pub(super) async fn run_dashboard(
         state.show_error_toast(summary, std::time::Instant::now());
     }
     let mut media_runtime = DashboardMediaRuntime::new(options.display.image_protocol);
+    media_runtime.klipy.configure(&options.klipy);
+    let (klipy_tx, mut klipy_rx) = mpsc::unbounded_channel();
     let mut terminal_events = EventStream::new();
     let mut mouse_input = input::MouseInputState::default();
     let (media_decode_tx, mut media_decode_rx) = mpsc::unbounded_channel();
@@ -182,6 +186,7 @@ pub(super) async fn run_dashboard(
         if dirty {
             let size = terminal.size()?;
             let area = Rect::new(0, 0, size.width, size.height);
+            media_runtime.sync_klipy(&mut state, area, &klipy_tx);
             // Resolve where every overlay image lands this frame and diff it
             // against the last frame. Terminal graphics are a pixel layer the
             // cell diff cannot erase on its own, so when an overlay moved or
@@ -264,6 +269,9 @@ pub(super) async fn run_dashboard(
         }
 
         tokio::select! {
+            Some(result) = klipy_rx.recv() => {
+                dirty |= media_runtime.klipy.store(&mut state, result);
+            }
             _ = wait_for_optional_deadline(debug_panel_deadline) => {
                 dirty |= state.set_debug_media_snapshot(media_runtime.diagnostics());
                 dirty |= state.store_debug_log_tail(logging::recent_log_lines());
@@ -654,6 +662,12 @@ fn apply_clipboard_paste_result(state: &mut DashboardState, result: ClipboardRea
 }
 
 fn apply_clipboard_paste_data(state: &mut DashboardState, data: ClipboardPasteData) -> bool {
+    if state.gif_picker().is_some() {
+        return data
+            .text
+            .as_deref()
+            .is_some_and(|text| input::handle_paste(state, text));
+    }
     if state.accepts_user_profile_avatar_paste()
         || state.is_user_profile_avatar_clipboard_paste_pending()
     {

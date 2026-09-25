@@ -465,6 +465,7 @@ pub(in crate::tui) enum VoiceParticipantAudioPopupAction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::tui) enum ComposerAction {
+    OpenGifPicker,
     OpenInEditor,
     PasteClipboard,
     InsertNewline,

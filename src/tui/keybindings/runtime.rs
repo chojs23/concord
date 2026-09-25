@@ -452,6 +452,7 @@ impl KeyBindings {
             | ComposerAction::InsertNewline
             | ComposerAction::ClearInput
             | ComposerAction::RemoveLastAttachment
+            | ComposerAction::OpenGifPicker
             | ComposerAction::Translate
             | ComposerAction::ToggleReplyPing
             | ComposerAction::Ignore => None,

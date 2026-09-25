@@ -48,6 +48,7 @@ pub(super) struct LocalUploadPreviewResult {
 }
 
 pub(super) struct DashboardMediaRuntime {
+    pub(super) klipy: super::klipy::KlipyRuntime,
     image_previews: ImagePreviewCache,
     avatar_images: AvatarImageCache,
     emoji_images: EmojiImageCache,
@@ -77,6 +78,7 @@ impl DashboardMediaRuntime {
 
     fn with_picker(picker: Option<Picker>) -> Self {
         Self {
+            klipy: super::klipy::KlipyRuntime::default(),
             image_previews: ImagePreviewCache::new(picker.clone()),
             avatar_images: AvatarImageCache::new(picker.clone()),
             emoji_images: EmojiImageCache::new(picker.clone()),
@@ -91,6 +93,15 @@ impl DashboardMediaRuntime {
             placement_diff: PlacementDiff::default(),
             popup_avatar_url: None,
         }
+    }
+
+    pub(super) fn sync_klipy(
+        &mut self,
+        state: &mut DashboardState,
+        area: Rect,
+        tx: &mpsc::UnboundedSender<super::klipy::KlipyResult>,
+    ) {
+        self.klipy.sync(state, area, self.picker.clone(), tx);
     }
 
     pub(super) fn schedule_local_upload_previews(
@@ -577,6 +588,7 @@ impl DashboardMediaRuntime {
                 .map(|(avatar_area, _)| (url.clone(), state.circular_avatars(), avatar_area))
         });
         placements.set_popup_avatar(popup_avatar);
+        placements.set_gif_preview(self.klipy.placement(area));
 
         placements
     }
@@ -956,7 +968,10 @@ pub(super) fn draw_dashboard_frame(
         image_previews,
         rendered_avatars,
         rendered_emojis,
-        popup_avatar,
+        ui::PopupMedia {
+            profile_avatar: popup_avatar,
+            gif_preview: media_runtime.klipy.preview(),
+        },
         Some(&viewport_plan),
     );
     area
@@ -1041,7 +1056,14 @@ pub(super) fn clear_image_surfaces_frame(
         image_previews,
         rendered_avatars,
         rendered_emojis,
-        popup_avatar,
+        ui::PopupMedia {
+            profile_avatar: popup_avatar,
+            gif_preview: if media_runtime.placement_diff.gif_preview_unchanged {
+                media_runtime.klipy.preview()
+            } else {
+                None
+            },
+        },
         Some(&viewport_plan),
     );
     area

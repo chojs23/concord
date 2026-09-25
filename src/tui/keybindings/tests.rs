@@ -1477,3 +1477,22 @@ fn keymap_rejects_overlong_sequences() {
 
     assert!(KeyBindings::try_from_options(&keymap).is_err());
 }
+
+#[test]
+fn klipy_composer_shortcut_is_remappable() {
+    let keymap = KeymapOptions {
+        composer: [("OpenGifPicker".to_owned(), KeymapBinding::one("<C-y>"))]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let bindings = KeyBindings::try_from_options(&keymap).unwrap();
+    assert_eq!(
+        bindings.composer_action(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL)),
+        ComposerAction::OpenGifPicker
+    );
+    assert_eq!(
+        bindings.composer_action(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)),
+        ComposerAction::Ignore
+    );
+}

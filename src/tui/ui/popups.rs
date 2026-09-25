@@ -14,6 +14,9 @@ mod confirmation;
 mod debug_panel;
 mod downloads;
 mod folder_settings;
+mod gif_picker;
+pub(super) use gif_picker::render_gif_picker;
+pub(in crate::tui) use gif_picker::{gif_picker_popup_area, gif_picker_preview_area};
 mod forum_post;
 mod keymap;
 mod notification_inbox;
@@ -474,6 +477,7 @@ pub(super) fn active_modal_popup_area(frame_area: Rect, state: &DashboardState) 
         ActiveModalPopupKind::ThreadDeleteConfirmation => {
             thread_delete_confirmation_popup_area_for_state(frame_area, state)
         }
+        ActiveModalPopupKind::GifPicker => Some(gif_picker_popup_area(frame_area)),
         ActiveModalPopupKind::Options => Some(options_popup_area(frame_area, state)),
         ActiveModalPopupKind::AttachmentViewer => Some(attachment_viewer_popup(
             frame_area,

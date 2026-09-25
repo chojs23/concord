@@ -212,6 +212,9 @@ fn dispatch_popup_key(
             handle_notification_inbox_fixed_key,
             handle_notification_inbox_key,
         ),
+        ActiveModalPopupKind::GifPicker => {
+            route_fallback_key(state, key, stage, handle_gif_picker_key)
+        }
         ActiveModalPopupKind::Search => {
             route_fallback_key(state, key, stage, handle_search_popup_key)
         }
@@ -510,6 +513,7 @@ fn handle_forum_post_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
         ComposerAction::OpenInEditor
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
+        | ComposerAction::OpenGifPicker
         | ComposerAction::Translate
         | ComposerAction::EditText(_)
         | ComposerAction::InsertChar(_)
@@ -542,6 +546,7 @@ fn handle_forum_post_tag_picker_key(
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
         | ComposerAction::RemoveLastAttachment
+        | ComposerAction::OpenGifPicker
         | ComposerAction::Translate
         | ComposerAction::EditText(_)
         | ComposerAction::InsertChar(_)
@@ -567,7 +572,9 @@ fn handle_forum_post_composer_edit_key(
         ComposerAction::RemoveLastAttachment => state.pop_pending_forum_post_attachment(),
         ComposerAction::OpenInEditor => state.request_open_forum_post_body_in_editor(),
         ComposerAction::EditText(action) => state.edit_forum_post_active_text_input(action),
-        ComposerAction::Translate | ComposerAction::ToggleReplyPing => {}
+        ComposerAction::OpenGifPicker
+        | ComposerAction::Translate
+        | ComposerAction::ToggleReplyPing => {}
         ComposerAction::Ignore => {}
     }
     None
@@ -656,6 +663,7 @@ fn handle_thread_edit_key(state: &mut DashboardState, key: KeyEvent) -> Option<A
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
         | ComposerAction::RemoveLastAttachment
+        | ComposerAction::OpenGifPicker
         | ComposerAction::Translate
         | ComposerAction::EditText(_)
         | ComposerAction::InsertChar(_)
@@ -688,6 +696,7 @@ fn handle_thread_edit_tag_picker_key(
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
         | ComposerAction::RemoveLastAttachment
+        | ComposerAction::OpenGifPicker
         | ComposerAction::Translate
         | ComposerAction::EditText(_)
         | ComposerAction::InsertChar(_)
@@ -712,6 +721,7 @@ fn handle_thread_edit_title_key(state: &mut DashboardState, key: KeyEvent) -> Op
         ComposerAction::InsertNewline
         | ComposerAction::RemoveLastAttachment
         | ComposerAction::OpenInEditor
+        | ComposerAction::OpenGifPicker
         | ComposerAction::Translate
         | ComposerAction::ToggleReplyPing
         | ComposerAction::Ignore => {}
@@ -1391,5 +1401,23 @@ fn handle_options_popup_key(state: &mut DashboardState, key: KeyEvent) -> Option
         None => {}
     }
 
+    None
+}
+
+fn handle_gif_picker_key(state: &mut DashboardState, key: KeyEvent) -> Option<AppCommand> {
+    match key.code {
+        KeyCode::Up => state.move_gif_selection(-1),
+        KeyCode::Down => state.move_gif_selection(1),
+        KeyCode::PageUp => state.change_gif_page(false),
+        KeyCode::PageDown => state.change_gif_page(true),
+        KeyCode::Enter => state.confirm_gif_selection(),
+        _ => match state.key_bindings().composer_action(key) {
+            ComposerAction::PasteClipboard => state.request_paste_clipboard(),
+            ComposerAction::InsertChar(value) => state.insert_gif_query(&value.to_string()),
+            ComposerAction::EditText(action) => state.edit_gif_query(action),
+            ComposerAction::ClearInput => state.clear_gif_query(),
+            _ => {}
+        },
+    }
     None
 }
