@@ -2,6 +2,7 @@ pub mod app;
 pub mod config;
 pub mod discord;
 pub mod error;
+mod klipy;
 pub mod logging;
 mod support;
 mod translation;

@@ -295,6 +295,26 @@ pub struct AppOptions {
     pub voice: VoiceOptions,
     pub presence: PresenceOptions,
     pub translation: TranslationOptions,
+    pub klipy: KlipyOptions,
+}
+
+/// Optional KLIPY integration. Keys are never included in diagnostic output.
+#[derive(Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct KlipyOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+}
+
+impl fmt::Debug for KlipyOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KlipyOptions")
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("api_key_env", &self.api_key_env)
+            .finish()
+    }
 }
 
 /// Validated Highlight Group and UI definitions from `theme.toml`.

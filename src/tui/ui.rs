@@ -303,10 +303,20 @@ pub fn render(
         image_previews,
         avatar_images,
         emoji_images,
-        profile_avatar,
+        PopupMedia {
+            profile_avatar,
+            gif_preview: None,
+        },
         None,
     );
 }
+
+pub(in crate::tui) struct PopupMedia<'a> {
+    pub profile_avatar: Option<AvatarImage<'a>>,
+    pub gif_preview: Option<Result<&'a ratatui_image::protocol::Protocol, &'a str>>,
+}
+
+pub(in crate::tui) use popups::gif_picker_preview_area;
 
 pub(in crate::tui) fn render_with_message_viewport_plan(
     frame: &mut Frame,
@@ -314,7 +324,7 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     image_previews: Vec<ImagePreview<'_>>,
     avatar_images: Vec<AvatarImage>,
     emoji_images: Vec<EmojiImage<'_>>,
-    profile_avatar: Option<AvatarImage>,
+    popup_media: PopupMedia<'_>,
     message_viewport_plan: Option<&MessageViewportPlan<'_>>,
 ) {
     let frame_area = frame.area();
@@ -375,13 +385,20 @@ pub(in crate::tui) fn render_with_message_viewport_plan(
     render_options_popup(frame, popup_area, state);
     render_voice_participant_audio_popup(frame, popup_area, state);
     render_poll_vote_picker(frame, popup_area, state);
-    render_user_profile_popup(frame, popup_area, state, profile_avatar, &emoji_images);
+    render_user_profile_popup(
+        frame,
+        popup_area,
+        state,
+        popup_media.profile_avatar,
+        &emoji_images,
+    );
     render_emoji_reaction_picker(frame, popup_area, state, &emoji_images);
     render_reaction_users_popup(frame, popup_area, state, &emoji_images);
     render_attachment_viewer(frame, frame.area(), state, viewer_image_preview);
     render_debug_panel(frame, popup_area, state);
     render_keymap_help_popup(frame, popup_area, state);
     render_search_popup(frame, popup_area, state);
+    popups::render_gif_picker(frame, popup_area, state, popup_media.gif_preview);
     render_forum_post_composer(frame, popup_area, state);
     render_forum_post_tag_picker(frame, popup_area, state, &emoji_images);
     render_thread_edit(frame, popup_area, state);

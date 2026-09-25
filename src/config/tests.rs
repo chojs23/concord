@@ -635,6 +635,7 @@ fn translation_options_parse_supported_providers_and_redact_secrets() {
 fn options_save_and_load_round_trip() {
     let (_directory, path) = test_file_path("config.toml");
     let options = AppOptions {
+        klipy: Default::default(),
         display: DisplayOptions {
             disable_image_preview: true,
             show_avatars: false,
@@ -790,4 +791,19 @@ fn reaction_favorite_emojis_default_empty() {
         parse_app_options("[display]\n").expect("empty reactions should use defaults");
     assert!(options.reactions.favorite_emojis.is_empty());
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn klipy_config_round_trips_and_redacts_key() {
+    let (options, warnings) = super::parse::parse_app_options(
+        "[klipy]\napi_key = 'secret-klipy-key'\napi_key_env = 'MY_KLIPY_KEY'\n",
+    )
+    .unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(options.klipy.api_key.as_deref(), Some("secret-klipy-key"));
+    assert_eq!(options.klipy.api_key_env.as_deref(), Some("MY_KLIPY_KEY"));
+    assert!(!format!("{options:?}").contains("secret-klipy-key"));
+    let round_trip: AppOptions = toml::from_str(&toml::to_string(&options).unwrap()).unwrap();
+    assert_eq!(round_trip, options);
+    assert!(AppOptions::default().klipy.api_key.is_none());
 }

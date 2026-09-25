@@ -2418,3 +2418,41 @@ fn keymap_popup_lines_show_help_content() {
         );
     });
 }
+
+#[test]
+fn klipy_picker_renders_attribution_results_and_small_terminals() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let mut state = state_with_message();
+    state.start_composer();
+    state.apply_klipy_options(crate::config::KlipyOptions {
+        api_key: Some("test-key".to_owned()),
+        api_key_env: Some("CONCORD_KLIPY_TEST_UNSET_KEY".to_owned()),
+    });
+    state.open_gif_picker();
+    assert!(state.gif_picker().is_some());
+    let loading = render_dashboard_dump(100, 30, &mut state).join("\n");
+    assert!(loading.contains("Search KLIPY"));
+    assert!(loading.contains("Powered by KLIPY"));
+    assert!(loading.contains("Searching KLIPY"));
+    let generation = state.gif_picker().unwrap().generation;
+    state.store_gif_results(generation, Ok(serde_json::from_value(serde_json::json!({"has_next": false, "data": [
+        {"slug":"hello", "title":"Hello cat", "file":{"hd":{"gif":{"url":"https://static.klipy.com/cat.gif"}}}},
+        {"slug":"bye", "title":"Goodbye cat", "file":{"hd":{"gif":{"url":"https://static.klipy.com/bye.gif"}}}}
+    ]})).unwrap()));
+    state.move_gif_selection(1);
+    let results = render_dashboard_dump(100, 30, &mut state).join("\n");
+    assert!(results.contains("› Goodbye cat"));
+    assert!(results.contains("Enter: add to draft"));
+    assert!(results.contains("Loading preview"));
+    assert!(
+        background_media_occlusion_areas(Rect::new(0, 0, 100, 30), &state).contains(
+            &crate::tui::ui::popups::gif_picker_popup_area(Rect::new(0, 0, 100, 30))
+        )
+    );
+    state.insert_gif_query(&"🐈".repeat(80));
+    for (width, height) in [(40, 14), (20, 8), (6, 4), (1, 1)] {
+        let dump = render_dashboard_dump(width, height, &mut state);
+        assert_eq!(dump.len(), usize::from(height));
+        assert!(crate::tui::ui::gif_picker_preview_area(Rect::new(0, 0, width, height)).is_empty());
+    }
+}

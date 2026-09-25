@@ -319,6 +319,43 @@ selection.
 The composer supports copied file attachments and editing the current draft in
 `$EDITOR`. Pending uploads appear above the input before sending.
 
+#### GIF picker (KLIPY)
+
+Set `KLIPY_API_KEY` before launching Concord, or add an opt-in key to
+`config.toml`:
+
+```toml
+[klipy]
+api_key = "your-klipy-key"
+# Optional: read a different environment variable (takes precedence over api_key).
+# api_key_env = "MY_KLIPY_KEY"
+```
+
+Create a key in the [KLIPY Partner Panel](https://partner.klipy.com/) with **ads
+disabled**. Testing keys allow 100 API requests per hour; request production
+access through the panel when needed. Configure content filtering in the panel.
+See the [KLIPY integration requirements](https://docs.klipy.com/).
+
+1. Press `i` to compose a message, then `Ctrl-G` to open **Search KLIPY**.
+2. Type to search (an empty query shows trending GIFs). Use `↑`/`↓` to select
+   and `PageUp`/`PageDown` for more results.
+3. Press `Enter` to append the original GIF URL to your draft, then `Enter`
+   again in the composer to send. `Esc` cancels the picker and keeps your draft.
+   After a search error, `Enter` retries.
+
+The picker preserves KLIPY's result order and displays the selected GIF's first
+frame using Concord's existing Kitty/iTerm2/Sixel/Halfblocks renderer. The shared
+URL points to the full GIF. Previews respect `display.show_images`; narrow
+terminals show the result list alone. Queries and media requests go directly to
+KLIPY, without Discord credentials. Preview data stays in memory only while in
+use; Concord does not persist or proxy it. Share events include the original
+query and are registered when the composer submits the chosen link. No Discord
+user ID is sent to KLIPY. Ads-enabled responses are unsupported and produce an
+error instead of silently removing items.
+
+`OpenGifPicker` can be remapped in `[keymap.composer]` in `keymap.toml`. It applies
+to the main message composer when writing a new message or reply.
+
 #### Emoji picker
 
 Supports searching and selecting emoji with the picker. Press `:` to open the
@@ -647,6 +684,7 @@ Close = "esc"
 ClearInput = "<C-c>"
 RemoveLastAttachment = "delete"
 TranslateComposer = "<C-t>"
+OpenGifPicker = "<C-g>"
 DeletePreviousChar = "backspace"
 DeletePreviousWord = { keys = ["<A-backspace>", "<C-backspace>", "<C-w>"] }
 DeleteToLineStart = "<C-u>"

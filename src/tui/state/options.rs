@@ -379,6 +379,7 @@ impl DashboardState {
             voice: self.options.voice_options.clone(),
             presence: self.options.presence_options,
             translation: self.translations.options().clone(),
+            klipy: self.klipy.options.clone(),
         })
     }
 

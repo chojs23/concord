@@ -106,6 +106,9 @@ impl DashboardState {
     }
 
     fn clipboard_paste_target(&self) -> Option<ClipboardPasteTarget> {
+        if let Some(picker) = self.gif_picker() {
+            return Some(ClipboardPasteTarget::GifQuery(picker.generation));
+        }
         if self.accepts_user_profile_avatar_paste()
             || self.is_user_profile_avatar_clipboard_paste_pending()
         {

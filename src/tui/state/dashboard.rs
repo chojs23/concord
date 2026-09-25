@@ -15,6 +15,7 @@ pub struct DashboardState {
     pub(super) messages: MessageViewportState,
     pub(super) pending_messages: PendingMessageUiState,
     pub(super) composer: ComposerUiState,
+    pub(super) klipy: super::gif_picker::KlipyState,
     pub(super) popups: PopupUiState,
     pub(super) runtime: RuntimeUiState,
     pub(super) options: SettingsState,

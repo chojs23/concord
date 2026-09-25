@@ -17,6 +17,7 @@ use super::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ClipboardPasteTarget {
     Composer,
+    GifQuery(u64),
     ForumPost(Option<ForumPostComposerField>),
     UserProfileAvatar,
     UserProfileText(UserProfileSettingsField),

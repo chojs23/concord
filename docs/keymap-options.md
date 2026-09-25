@@ -255,10 +255,12 @@ move between title, body, attachments, and tags. `Enter` starts or finishes
 editing title/body, removes the selected attachment while choosing attachments,
 or toggles the selected tag. Paste files or images while editing the body to add
 attachments. Press `s` outside edit mode to create the post.
-`TranslateComposer` applies only to the main message composer.
+`TranslateComposer` and `OpenGifPicker` apply only to the main message composer.
+The GIF picker supports new messages and replies, not editing existing messages.
 
 | Composer action        | Default config                                     | Action                                   |
 | ---------------------- | -------------------------------------------------- | ---------------------------------------- |
+| `OpenGifPicker`        | `"<C-g>"`                                          | Search KLIPY GIFs and add one to the draft. |
 | `OpenEditor`           | `"<C-e>"`                                          | Open the current draft in `$EDITOR`.     |
 | `PasteClipboard`       | `"<C-v>"`                                          | Request clipboard paste.                 |
 | `InsertNewline`        | `["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"]` | Insert a newline.                        |

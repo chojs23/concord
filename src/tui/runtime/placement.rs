@@ -35,6 +35,7 @@ pub(super) struct FramePlacements {
     avatars: HashMap<(String, isize), (u16, u16, bool)>,
     /// Profile popup avatar, when shown: (url, circular, area).
     popup_avatar: Option<(String, bool, Rect)>,
+    gif_preview: Option<(String, Rect)>,
 }
 
 /// Which images survived unchanged from the previous frame, plus whether any
@@ -47,6 +48,7 @@ pub(super) struct PlacementDiff {
     pub(super) unchanged_previews: HashSet<ImagePreviewFragmentKey>,
     pub(super) unchanged_avatars: HashSet<(String, isize)>,
     pub(super) popup_avatar_unchanged: bool,
+    pub(super) gif_preview_unchanged: bool,
 }
 
 impl FramePlacements {
@@ -56,6 +58,10 @@ impl FramePlacements {
 
     pub(super) fn insert_avatar(&mut self, url: String, row: isize, fingerprint: (u16, u16, bool)) {
         self.avatars.insert((url, row), fingerprint);
+    }
+
+    pub(super) fn set_gif_preview(&mut self, preview: Option<(String, Rect)>) {
+        self.gif_preview = preview;
     }
 
     pub(super) fn set_popup_avatar(&mut self, popup: Option<(String, bool, Rect)>) {
@@ -104,6 +110,8 @@ impl FramePlacements {
             diff.need_clear = true;
         }
 
+        diff.gif_preview_unchanged = self.gif_preview == previous.gif_preview;
+        diff.need_clear |= !diff.gif_preview_unchanged;
         diff
     }
 }
@@ -235,5 +243,28 @@ mod tests {
         assert!(diff.need_clear);
         assert!(diff.unchanged_previews.contains(&top.fragment_key()));
         assert!(!diff.unchanged_previews.contains(&bottom.fragment_key()));
+    }
+}
+
+#[cfg(test)]
+mod klipy_tests {
+    use super::*;
+
+    #[test]
+    fn klipy_preview_change_resize_and_close_clear_old_pixels() {
+        let mut previous = FramePlacements::default();
+        previous.set_gif_preview(Some(("a".to_owned(), Rect::new(10, 10, 20, 8))));
+        assert!(!previous.diff(&previous).need_clear);
+        for next in [
+            None,
+            Some(("b".to_owned(), Rect::new(10, 10, 20, 8))),
+            Some(("a".to_owned(), Rect::new(5, 5, 10, 4))),
+        ] {
+            let mut current = FramePlacements::default();
+            current.set_gif_preview(next);
+            let diff = current.diff(&previous);
+            assert!(diff.need_clear);
+            assert!(!diff.gif_preview_unchanged);
+        }
     }
 }

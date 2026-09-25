@@ -14,6 +14,10 @@ pub(super) fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
     let action = state.key_bindings().composer_action(key);
 
     match action {
+        ComposerAction::OpenGifPicker => {
+            state.open_gif_picker();
+            None
+        }
         ComposerAction::OpenInEditor => {
             state.request_open_composer_in_editor();
             None

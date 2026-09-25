@@ -72,6 +72,7 @@ fn every_display_option_changes_only_its_own_setting() {
                 voice: state.voice_options(),
                 presence: Default::default(),
                 translation: Default::default(),
+                klipy: Default::default(),
             }),
             "{label}"
         );
@@ -136,6 +137,7 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
             voice: state.voice_options(),
             presence: Default::default(),
             translation: Default::default(),
+            klipy: Default::default(),
         })
     );
 }
@@ -304,6 +306,7 @@ fn options_popup_sequences_own_continuations_then_restore_fixed_shortcuts() {
             voice: state.voice_options(),
             presence: Default::default(),
             translation: Default::default(),
+            klipy: Default::default(),
         })
     );
 }

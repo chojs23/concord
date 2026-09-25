@@ -29,6 +29,7 @@ pub(super) fn parse_app_options(content: &str) -> Result<(AppOptions, Vec<String
         voice: section(&root, "voice", &mut warnings),
         presence: section(&root, "presence", &mut warnings),
         translation: section(&root, "translation", &mut warnings),
+        klipy: section(&root, "klipy", &mut warnings),
     };
 
     Ok((options, warnings))
