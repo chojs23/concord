@@ -1,4 +1,4 @@
-use crossterm::event::{Event as TerminalEvent, KeyEventKind};
+use crossterm::event::{Event as TerminalEvent, KeyEventKind, MouseEventKind};
 use ratatui::layout::Rect;
 
 use crate::{Result, config, discord::AppEvent};
@@ -9,6 +9,7 @@ use crate::discord::AppCommand;
 #[derive(Default)]
 pub(super) struct TerminalEventOutcome {
     pub(super) dirty: bool,
+    pub(super) mouse_scrolled: bool,
     pub(super) command: Option<AppCommand>,
 }
 
@@ -35,6 +36,10 @@ pub(super) fn handle_terminal_event(
             outcome.command = mouse_outcome.command;
             if mouse_outcome.handled {
                 outcome.dirty = true;
+                outcome.mouse_scrolled = matches!(
+                    mouse.kind,
+                    MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+                );
             }
         }
         TerminalEvent::Resize(width, height) => {

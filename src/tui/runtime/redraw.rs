@@ -10,6 +10,7 @@ use crossterm::{
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
 use ratatui::{DefaultTerminal, layout::Rect};
+use tokio::time::Instant;
 
 use crate::tui::state::DashboardState;
 
@@ -26,9 +27,25 @@ pub(super) struct RedrawPlan {
 #[derive(Default)]
 pub(super) struct DashboardRedrawState {
     media_animation_pending: bool,
+    mouse_scroll_deadline: Option<Instant>,
 }
 
 impl DashboardRedrawState {
+    pub(super) fn request_mouse_scroll(&mut self, now: Instant) {
+        const FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+        // Keep the first deadline so a long gesture cannot postpone its frame.
+        self.mouse_scroll_deadline
+            .get_or_insert(now + FRAME_INTERVAL);
+    }
+
+    pub(super) fn mouse_scroll_deadline(&self) -> Option<Instant> {
+        self.mouse_scroll_deadline
+    }
+
+    pub(super) fn clear_mouse_scroll(&mut self) {
+        self.mouse_scroll_deadline = None;
+    }
+
     pub(super) fn request_media_animation(&mut self) {
         self.media_animation_pending = true;
     }
@@ -78,6 +95,34 @@ pub(super) fn draw_dashboard_transaction(
 #[cfg(test)]
 mod tests {
     use super::{DashboardRedrawState, RedrawPlan};
+    use std::time::Duration;
+    use tokio::time::Instant;
+
+    #[test]
+    fn mouse_scroll_burst_keeps_one_frame_deadline() {
+        let started_at = Instant::now();
+        let mut state = DashboardRedrawState::default();
+
+        state.request_mouse_scroll(started_at);
+        let first_deadline = state
+            .mouse_scroll_deadline()
+            .expect("scroll requests a frame");
+        assert_eq!(first_deadline, started_at + Duration::from_millis(16));
+        for elapsed_ms in [2, 5, 10] {
+            state.request_mouse_scroll(started_at + Duration::from_millis(elapsed_ms));
+            assert_eq!(state.mouse_scroll_deadline(), Some(first_deadline));
+        }
+
+        state.clear_mouse_scroll();
+        assert_eq!(state.mouse_scroll_deadline(), None);
+        state.request_mouse_scroll(first_deadline);
+        assert!(
+            state
+                .mouse_scroll_deadline()
+                .expect("the next scroll requests a frame")
+                > first_deadline
+        );
+    }
 
     #[test]
     fn redraw_plan_synchronizes_media_animation_and_placement_cleanup() {

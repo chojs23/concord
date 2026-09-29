@@ -201,6 +201,7 @@ pub(super) async fn run_dashboard(
                 &mut last_frame_area,
                 redraw_plan,
             )?;
+            redraw_state.clear_mouse_scroll();
             media_runtime.commit_placements();
             if last_media_report.elapsed() >= MEDIA_REPORT_INTERVAL {
                 if logging::debug_logging_enabled() {
@@ -264,6 +265,9 @@ pub(super) async fn run_dashboard(
         }
 
         tokio::select! {
+            _ = wait_for_optional_deadline(redraw_state.mouse_scroll_deadline()) => {
+                dirty = true;
+            }
             _ = wait_for_optional_deadline(debug_panel_deadline) => {
                 dirty |= state.set_debug_media_snapshot(media_runtime.diagnostics());
                 dirty |= state.store_debug_log_tail(logging::recent_log_lines());
@@ -379,7 +383,13 @@ pub(super) async fn run_dashboard(
                             }
                         }
                         if outcome.dirty {
-                            dirty = true;
+                            if outcome.mouse_scrolled && !dirty {
+                                // Let a wheel burst update state before drawing. Otherwise a
+                                // slow terminal draw can leave wheel events visibly queued.
+                                redraw_state.request_mouse_scroll(tokio::time::Instant::now());
+                            } else {
+                                dirty = true;
+                            }
                         }
                     }
                     Some(Err(error)) => return Err(error.into()),
