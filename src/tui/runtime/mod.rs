@@ -159,6 +159,11 @@ pub(super) async fn run_dashboard(
     // out on a timer as well as on demand. Debug logging gates it.
     const MEDIA_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
     let mut last_media_report = std::time::Instant::now();
+    // Frees inside the arena only reach the OS when something asks, and the
+    // image pipeline frees constantly. Once a minute is often enough to keep
+    // resident memory tracking live data and rare enough not to matter.
+    const HEAP_TRIM_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+    let mut last_heap_trim = std::time::Instant::now();
     let mut pending_redraw_deadline: Option<tokio::time::Instant> = None;
     let mut animation_frame_deadline: Option<tokio::time::Instant> = None;
     let mut debug_panel_deadline: Option<tokio::time::Instant> = None;
@@ -213,6 +218,10 @@ pub(super) async fn run_dashboard(
                     media_runtime.log_memory_report();
                 }
                 last_media_report = std::time::Instant::now();
+            }
+            if last_heap_trim.elapsed() >= HEAP_TRIM_INTERVAL {
+                crate::allocator::trim();
+                last_heap_trim = std::time::Instant::now();
             }
             if state.terminal_focused() {
                 media_runtime
