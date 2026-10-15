@@ -179,11 +179,7 @@ fn render_reaction_user_list(
     inner_width: usize,
     max_visible: usize,
 ) {
-    let title = format!(
-        "{} · {}",
-        reaction_emoji_label(entry.emoji(), state.show_custom_emoji()),
-        entry.count()
-    );
+    let title = format!("{} · {}", entry.emoji().status_label(), entry.count());
     let lines = reaction_user_lines(
         popup_state,
         popup_state.user_scroll(),
@@ -411,7 +407,7 @@ fn reaction_emoji_cell(
     if thumbnail_ready {
         " ".repeat(usize::from(EmojiImageSize::Compact.width()))
     } else {
-        reaction_emoji_label(emoji, show_custom_emoji)
+        emoji.status_label()
     }
 }
 
@@ -481,15 +477,6 @@ fn reaction_user_data_lines(
         .collect()
 }
 
-fn reaction_emoji_label(emoji: &crate::discord::ReactionEmoji, show_custom_emoji: bool) -> String {
-    match emoji {
-        crate::discord::ReactionEmoji::Custom { id, .. } if !show_custom_emoji => {
-            id.get().to_string()
-        }
-        _ => emoji.status_label(),
-    }
-}
-
 pub(in crate::tui::ui) struct EmojiReactionPickerRenderOptions<'a> {
     pub(in crate::tui::ui) key_bindings: &'a crate::tui::keybindings::KeyBindings,
     pub(in crate::tui::ui) max_visible_items: usize,
@@ -539,14 +526,7 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_custom_emoji_images(
                         shortcut,
                         theme::current().style(theme::HighlightGroup::Shortcut),
                     ),
-                    Span::styled(
-                        format_emoji_reaction_item(
-                            reaction,
-                            thumbnail_ready,
-                            options.show_custom_emoji,
-                        ),
-                        style,
-                    ),
+                    Span::styled(format_emoji_reaction_item(reaction, thumbnail_ready), style),
                 ]),
                 is_selected,
             )
@@ -614,16 +594,8 @@ fn emoji_reaction_image_x_offset() -> u16 {
     2 + shortcut_prefix(Some('q')).width() as u16
 }
 
-fn format_emoji_reaction_item(
-    reaction: &EmojiReactionItem,
-    thumbnail_ready: bool,
-    show_custom_emoji: bool,
-) -> String {
+fn format_emoji_reaction_item(reaction: &EmojiReactionItem, thumbnail_ready: bool) -> String {
     match &reaction.emoji {
-        crate::discord::ReactionEmoji::Unicode(emoji) => format!("{} {}", emoji, reaction.label),
-        crate::discord::ReactionEmoji::Custom { id, .. } if !show_custom_emoji => {
-            format!("{} {}", id.get(), reaction.label)
-        }
         crate::discord::ReactionEmoji::Custom { .. } if thumbnail_ready => format!(
             "{}{}",
             " ".repeat(usize::from(
@@ -631,9 +603,6 @@ fn format_emoji_reaction_item(
             )),
             reaction.label
         ),
-        crate::discord::ReactionEmoji::Custom { name, .. } => name
-            .as_deref()
-            .map(|name| format!(":{name}: {}", reaction.label))
-            .unwrap_or_else(|| format!(":custom: {}", reaction.label)),
+        _ => format!("{} {}", reaction.emoji.status_label(), reaction.label),
     }
 }

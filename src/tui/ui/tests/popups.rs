@@ -1611,24 +1611,26 @@ fn emoji_reaction_picker_uses_reaction_colors_and_selected_background() {
             })
         },
     ];
-    let custom_lines = emoji_reaction_picker_lines_with_custom_emoji_images(
-        &custom_reactions,
-        1,
-        EmojiReactionPickerRenderOptions {
-            key_bindings: &key_bindings,
-            max_visible_items: 10,
-            scroll: 0,
-            thumbnail_urls: &[],
-            own_reactions: &[],
-            show_custom_emoji: true,
-            filter: None,
-            max_width: usize::MAX,
-        },
-    );
-    assert_eq!(
-        line_texts_from_ratatui(&custom_lines),
-        vec!["  [1] 👍 Thumbs up", "▸ [2] :party: Party"]
-    );
+    for show_custom_emoji in [true, false] {
+        let custom_lines = emoji_reaction_picker_lines_with_custom_emoji_images(
+            &custom_reactions,
+            1,
+            EmojiReactionPickerRenderOptions {
+                key_bindings: &key_bindings,
+                max_visible_items: 10,
+                scroll: 0,
+                thumbnail_urls: &[],
+                own_reactions: &[],
+                show_custom_emoji,
+                filter: None,
+                max_width: usize::MAX,
+            },
+        );
+        assert_eq!(
+            line_texts_from_ratatui(&custom_lines),
+            vec!["  [1] 👍 Thumbs up", "▸ [2] :party: Party"]
+        );
+    }
 }
 
 #[test]
@@ -1683,19 +1685,29 @@ fn reaction_users_popup_lists_reactions() {
         ],
     );
 
-    let lines = reaction_list_lines(popup.entries(), popup.list_selected(), 0, 10, true, &[], 56);
+    for show_custom_emoji in [true, false] {
+        let lines = reaction_list_lines(
+            popup.entries(),
+            popup.list_selected(),
+            0,
+            10,
+            show_custom_emoji,
+            &[],
+            56,
+        );
 
-    let trimmed = line_texts_from_ratatui(&lines)
-        .into_iter()
-        .map(|line| line.trim_end().to_owned())
-        .collect::<Vec<_>>();
-    assert_eq!(trimmed, vec!["▸ 👍 55", "  :party: 23"]);
-    assert_eq!(
-        lines[0].spans[1].style.fg,
-        theme::current()
-            .style(theme::HighlightGroup::SelectedRow)
-            .fg
-    );
+        let trimmed = line_texts_from_ratatui(&lines)
+            .into_iter()
+            .map(|line| line.trim_end().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(trimmed, vec!["▸ 👍 55", "  :party: 23"]);
+        assert_eq!(
+            lines[0].spans[1].style.fg,
+            theme::current()
+                .style(theme::HighlightGroup::SelectedRow)
+                .fg
+        );
+    }
 }
 
 #[test]

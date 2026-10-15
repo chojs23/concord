@@ -10,16 +10,77 @@ fn attachment_viewer_preview_area_centers_rendered_image() {
 }
 
 #[test]
-fn custom_emoji_markup_uses_id_fallback_when_disabled() {
-    let message = message_with_content(Some("hello <:wave:42>".to_owned()));
-    let state = DashboardState::new_with_display_options(DisplayOptions {
-        show_custom_emoji: false,
-        ..DisplayOptions::default()
-    });
+fn custom_emoji_markup_uses_name_fallback_when_disabled() {
+    let loaded_urls = vec![
+        "https://cdn.discordapp.com/emojis/42.png".to_owned(),
+        "https://cdn.discordapp.com/emojis/43.webp?animated=true".to_owned(),
+    ];
+    for options in [
+        DisplayOptions {
+            show_custom_emoji: false,
+            ..DisplayOptions::default()
+        },
+        DisplayOptions {
+            disable_image_preview: true,
+            ..DisplayOptions::default()
+        },
+    ] {
+        let state = DashboardState::new_with_display_options(options);
+        for (input, expected) in [
+            ("hello <:wave:42>", "hello :wave:"),
+            ("<a:party_time:43>", ":party_time:"),
+            (
+                "한글 <:wave:42> <a:party_time:43>",
+                "한글 :wave: :party_time:",
+            ),
+        ] {
+            let message = message_with_content(Some(input.to_owned()));
+            let lines = format_message_content_lines_with_loaded_custom_emoji_urls(
+                &message,
+                &state,
+                200,
+                &loaded_urls,
+            );
 
-    let lines = format_message_content_lines(&message, &state, 200);
+            assert_eq!(line_texts(&lines), vec![expected]);
+            assert!(lines[0].image_slots.is_empty());
+            assert_eq!(
+                state.render_user_mentions(message.guild_id, &message.mentions, input),
+                expected
+            );
+        }
+    }
+}
 
-    assert_eq!(lines[0].text, "hello 42");
+#[test]
+fn custom_emoji_reactions_use_name_fallback_when_disabled() {
+    let reactions = vec![
+        ReactionInfo::test(ReactionEmoji::Custom {
+            id: Id::new(42),
+            name: Some("wave".to_owned()),
+            animated: false,
+        }),
+        ReactionInfo::test(ReactionEmoji::Custom {
+            id: Id::new(43),
+            name: Some("party_time".to_owned()),
+            animated: true,
+        }),
+        ReactionInfo::test(ReactionEmoji::Custom {
+            id: Id::new(44),
+            name: None,
+            animated: false,
+        }),
+    ];
+
+    let layout = crate::tui::message::format::lay_out_reaction_chips_with_custom_emoji_images(
+        &reactions, 200, false,
+    );
+
+    assert_eq!(
+        layout.lines,
+        vec!["[:wave: 1]  [:party_time: 1]  [:custom: 1]"]
+    );
+    assert!(layout.slots.is_empty());
 }
 
 #[test]

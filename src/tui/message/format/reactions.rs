@@ -111,8 +111,8 @@ fn build_reaction_chip(
             let chip = format!("[{emoji} {count}]");
             (chip, None, None, reaction.me)
         }
-        ReactionEmoji::Custom { id, .. } if !show_custom_emoji => {
-            let label = id.get().to_string();
+        ReactionEmoji::Custom { .. } if !show_custom_emoji => {
+            let label = reaction.emoji.status_label();
             (format!("[{label} {count}]"), None, None, reaction.me)
         }
         ReactionEmoji::Custom { .. } => {

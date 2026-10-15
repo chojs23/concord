@@ -1448,11 +1448,7 @@ impl DashboardState {
         mentions: &[MentionInfo],
         value: &str,
     ) -> String {
-        let value = if self.show_custom_emoji() {
-            replace_custom_emoji_markup(value)
-        } else {
-            text::replace_custom_emoji_markup_with_ids(value)
-        };
+        let value = replace_custom_emoji_markup(value);
         render_user_mentions(
             &value,
             |user_id| self.resolve_mention_display_name(guild_id, mentions, user_id),

@@ -134,22 +134,27 @@ fn rendered_emoji_fallback_preserves_slot_metadata() {
 }
 
 #[test]
-fn rendered_replacer_uses_id_text_when_images_are_disabled() {
-    let rendered = RenderedText {
-        text: "hi <:wave:42>".to_owned(),
-        ..Default::default()
-    };
+fn rendered_replacer_uses_names_when_images_are_disabled() {
+    for (input, expected) in [
+        ("hi <:wave:42>", "hi :wave:"),
+        ("<a:party_time:43>", ":party_time:"),
+        (
+            "한글 <:wave:42> <a:party_time:43>",
+            "한글 :wave: :party_time:",
+        ),
+    ] {
+        let out =
+            replace_custom_emoji_markup_in_rendered_with_images(RenderedText::from(input), false);
 
-    let out = replace_custom_emoji_markup_in_rendered_with_images(rendered, false);
-
-    assert_eq!(out.text, "hi 42");
-    assert!(out.emoji_slots.is_empty());
+        assert_eq!(out.text, expected);
+        assert!(out.emoji_slots.is_empty());
+    }
 }
 
 #[test]
 fn rendered_replacer_remaps_highlights_after_replacement() {
-    let text = "<:e:1>@alice and bob".to_owned();
-    let highlight_start = "<:e:1>".len();
+    let text = "한글 <:e:1><a:wave:1146289325491892225>@alice and bob".to_owned();
+    let highlight_start = "한글 <:e:1><a:wave:1146289325491892225>".len();
     let highlight_end = highlight_start + "@alice".len();
     let rendered = RenderedText {
         text,
@@ -160,12 +165,20 @@ fn rendered_replacer_remaps_highlights_after_replacement() {
         }],
         emoji_slots: Vec::new(),
     };
-    let out = replace_custom_emoji_markup_in_rendered(rendered);
-    assert_eq!(out.text, ":e:@alice and bob");
-    assert_eq!(out.highlights.len(), 1);
-    let h = out.highlights[0];
-    assert_eq!(&out.text[h.start..h.end], "@alice");
-    assert_eq!(out.emoji_slots[0].byte_start, 0);
+    for images_enabled in [true, false] {
+        let out =
+            replace_custom_emoji_markup_in_rendered_with_images(rendered.clone(), images_enabled);
+        assert_eq!(out.text, "한글 :e::wave:@alice and bob");
+        assert_eq!(out.highlights.len(), 1);
+        let h = out.highlights[0];
+        assert_eq!(&out.text[h.start..h.end], "@alice");
+        if images_enabled {
+            assert_eq!(out.emoji_slots[0].byte_start, "한글 ".len());
+            assert_eq!(out.emoji_slots[1].byte_start, "한글 :e:".len());
+        } else {
+            assert!(out.emoji_slots.is_empty());
+        }
+    }
 }
 
 #[test]

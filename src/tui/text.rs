@@ -424,7 +424,7 @@ where
 /// String-only fallback used by thread/channel previews where no image
 /// overlay is possible. Replaces `<:name:id>` and `<a:name:id>` with
 /// `:name:`. The body pipeline uses
-/// [`replace_custom_emoji_markup_in_rendered`].
+/// [`replace_custom_emoji_markup_in_rendered_with_images`].
 pub fn replace_custom_emoji_markup(value: &str) -> String {
     if !value.contains('<') {
         return value.to_owned();
@@ -441,35 +441,6 @@ pub fn replace_custom_emoji_markup(value: &str) -> String {
                 output.push(':');
                 output.push_str(name);
                 output.push(':');
-                cursor = end;
-            }
-            None => {
-                output.push('<');
-                cursor = start.saturating_add(1);
-            }
-        }
-    }
-    output.push_str(&value[cursor..]);
-    output
-}
-
-/// Text fallback used when custom emoji images are disabled. The id is the
-/// most stable value Discord gives us and matches the user's requested
-/// fallback better than the display name, which can be missing or renamed.
-pub fn replace_custom_emoji_markup_with_ids(value: &str) -> String {
-    if !value.contains('<') {
-        return value.to_owned();
-    }
-
-    let mut output = String::with_capacity(value.len());
-    let mut cursor = 0usize;
-    while let Some(relative_start) = value[cursor..].find('<') {
-        let start = cursor.saturating_add(relative_start);
-        output.push_str(&value[cursor..start]);
-
-        match parse_custom_emoji_full(value, start) {
-            Some((end, _name, id, _animated)) => {
-                output.push_str(id);
                 cursor = end;
             }
             None => {
@@ -510,13 +481,9 @@ pub fn replace_custom_emoji_markup_in_rendered_with_images(
     for emoji in &matches {
         output.push_str(&text[cursor..emoji.input_start]);
         let slot_byte_start = output.len();
-        if images_enabled {
-            output.push(':');
-            output.push_str(&emoji.name);
-            output.push(':');
-        } else {
-            output.push_str(&emoji.id);
-        }
+        output.push(':');
+        output.push_str(&emoji.name);
+        output.push(':');
         let slot_byte_len = output.len() - slot_byte_start;
         if images_enabled {
             emoji_slots.push(InlineEmojiSlot {
@@ -533,8 +500,8 @@ pub fn replace_custom_emoji_markup_in_rendered_with_images(
     let new_highlights = highlights
         .into_iter()
         .map(|highlight| TextHighlight {
-            start: remap_offset(&matches, highlight.start, images_enabled),
-            end: remap_offset(&matches, highlight.end, images_enabled),
+            start: remap_offset(&matches, highlight.start),
+            end: remap_offset(&matches, highlight.end),
             kind: highlight.kind,
         })
         .collect();
@@ -560,12 +527,8 @@ impl CustomEmojiMatch {
     }
 
     /// Bytes the textual fallback (`:name:`) consumes in the rewritten string.
-    fn output_len(&self, images_enabled: bool) -> usize {
-        if images_enabled {
-            self.name.len() + 2
-        } else {
-            self.id.len()
-        }
+    fn output_len(&self) -> usize {
+        self.name.len() + 2
     }
 }
 
@@ -594,11 +557,11 @@ fn scan_custom_emoji_matches(text: &str) -> Vec<CustomEmojiMatch> {
     matches
 }
 
-fn remap_offset(matches: &[CustomEmojiMatch], pos: usize, images_enabled: bool) -> usize {
+fn remap_offset(matches: &[CustomEmojiMatch], pos: usize) -> usize {
     let mut delta: isize = 0;
     for emoji in matches {
         if emoji.input_end <= pos {
-            delta += emoji.output_len(images_enabled) as isize - emoji.input_len() as isize;
+            delta += emoji.output_len() as isize - emoji.input_len() as isize;
         } else {
             break;
         }
