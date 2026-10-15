@@ -106,6 +106,7 @@ pub(super) async fn run_dashboard(
         ui_state_options,
     );
     state.apply_presence_options(options.presence);
+    state.apply_safety_options(options.safety);
     state.apply_reaction_options(options.reactions);
     state.apply_translation_options(options.translation);
     state.apply_klipy_options(options.klipy.clone());

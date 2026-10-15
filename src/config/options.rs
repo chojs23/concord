@@ -44,6 +44,19 @@ impl Default for ComposerOptions {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SafetyOptions {
+    /// Extra account-risk safeguards, separate from cooldowns and permissions.
+    pub enabled: bool,
+}
+
+impl Default for SafetyOptions {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ReactionOptions {
@@ -289,6 +302,7 @@ impl TranslationProviderKind {
 pub struct AppOptions {
     pub display: DisplayOptions,
     pub composer: ComposerOptions,
+    pub safety: SafetyOptions,
     pub reactions: ReactionOptions,
     pub credentials: CredentialOptions,
     pub notifications: NotificationOptions,

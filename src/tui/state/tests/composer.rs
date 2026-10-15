@@ -406,6 +406,142 @@ fn state_with_application_command(command: ApplicationCommandInfo) -> DashboardS
 }
 
 #[test]
+fn safety_option_controls_account_risk_locks() {
+    let dm_state = |last_message_id, is_spam, is_message_request| {
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(Id::new(1)),
+        });
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            last_message_id,
+            is_spam,
+            is_message_request,
+            ..dm_channel_info(Id::new(20), "alice")
+        }));
+        state.confirm_selected_guild();
+        state.confirm_selected_channel();
+        state.push_event(latest_history_loaded(Id::new(20), Vec::new()));
+        state
+    };
+    let mut empty_guild = guild_state_with_overwrites(Vec::new(), None);
+    empty_guild.push_event(latest_history_loaded(Id::new(2), Vec::new()));
+    let mut onboarding = state_with_writable_channel();
+    apply_incomplete_community_onboarding(&mut onboarding, Id::new(1), Id::new(10));
+
+    let cases = [
+        ("empty guild channel", empty_guild),
+        ("guild onboarding", onboarding),
+        ("empty DM", dm_state(None, None, None)),
+        (
+            "new DM conversation",
+            dm_state(Some(Id::new(200)), None, None),
+        ),
+        ("spam DM", dm_state(None, Some(true), None)),
+        ("message-request DM", dm_state(None, None, Some(true))),
+    ];
+
+    for (label, mut state) in cases {
+        assert!(state.composer_lock().is_some(), "{label}");
+        state.discord.cache.set_safety_checks_enabled(false);
+
+        assert_eq!(state.composer_lock(), None, "{label}");
+        assert!(state.can_send_in_selected_channel(), "{label}");
+        state.start_composer();
+        assert!(state.is_composing(), "{label}");
+        state.replace_composer_input("hello".to_owned());
+        assert!(
+            matches!(
+                state.submit_composer(),
+                Some(AppCommand::SendMessage { .. })
+            ),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn history_loading_and_failure_locks_stay_active_when_safety_is_disabled() {
+    let loading = guild_state_with_overwrites(Vec::new(), None);
+    let mut failed = guild_state_with_overwrites(Vec::new(), None);
+    failed.push_event(AppEvent::MessageHistoryLoadFailed {
+        channel_id: Id::new(2),
+        target: crate::discord::MessageHistoryLoadTarget::Latest,
+        message: "offline".to_owned(),
+    });
+
+    for (mut state, expected) in [
+        (loading, ComposerLock::LoadingMessages),
+        (failed, ComposerLock::MessageLoadFailed),
+    ] {
+        state.discord.cache.set_safety_checks_enabled(false);
+
+        assert_eq!(state.composer_lock(), Some(expected));
+        state.start_composer();
+        assert!(!state.is_composing());
+    }
+}
+
+#[test]
+fn slow_mode_locks_stay_active_when_safety_is_disabled() {
+    for kind in ["guild", "forum", "dm"] {
+        for rate_limited in [false, true] {
+            let mut state = match kind {
+                "guild" => state_with_writable_channel(),
+                "forum" => state_with_forum_post_channel(false),
+                "dm" => {
+                    let mut state = state_with_direct_messages();
+                    state.confirm_selected_guild();
+                    state.confirm_selected_channel();
+                    state.push_event(latest_history_loaded(Id::new(20), Vec::new()));
+                    state
+                }
+                _ => unreachable!("all channel kinds are listed"),
+            };
+            let case = format!("{kind}, rate_limited={rate_limited}");
+            let channel_id = state.selected_channel_id().expect("channel is selected");
+            state.discord.cache.set_safety_checks_enabled(false);
+            state.start_composer();
+            assert!(
+                state.is_composing() || state.is_forum_post_composer_active(),
+                "{case}"
+            );
+
+            state.push_effect(if rate_limited {
+                AppEvent::MessageSendRateLimited {
+                    channel_id,
+                    retry_after_millis: 1_500,
+                }
+            } else {
+                AppEvent::MessageSendCooldownStarted {
+                    channel_id,
+                    duration_millis: 1_500,
+                }
+            });
+
+            assert!(
+                matches!(state.slow_mode_remaining_seconds(channel_id), Some(1..=2)),
+                "{case}"
+            );
+            assert!(
+                matches!(state.composer_lock(), Some(ComposerLock::SlowMode { .. })),
+                "{case}"
+            );
+            if kind == "forum" {
+                assert!(!state.can_create_post_in_selected_channel(), "{case}");
+                state.close_forum_post_composer();
+                state.start_composer();
+                assert!(!state.is_forum_post_composer_active(), "{case}");
+            } else {
+                assert!(!state.is_composing(), "{case}");
+                state.start_composer();
+                assert!(!state.is_composing(), "{case}");
+            }
+        }
+    }
+}
+
+#[test]
 fn empty_guild_channel_locks_until_a_message_exists() {
     let mut state = guild_state_with_overwrites(Vec::new(), None);
 

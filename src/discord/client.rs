@@ -203,6 +203,15 @@ impl DiscordClient {
             .expect("effect stream can only be taken once")
     }
 
+    /// Apply config before starting tasks or publishing snapshots. Both the
+    /// request guard and the TUI then read the same safety policy.
+    pub(crate) fn configure_safety(&self, options: crate::config::SafetyOptions) {
+        self.state
+            .write()
+            .expect("discord state lock is not poisoned")
+            .set_safety_checks_enabled(options.enabled);
+    }
+
     pub fn subscribe_snapshots(&self) -> watch::Receiver<SnapshotRevision> {
         self.snapshots_tx.subscribe()
     }

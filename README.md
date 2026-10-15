@@ -404,6 +404,14 @@ hour_format_24 = true
 # Send custom emoji your account cannot use directly as image links.
 emojis_as_links = false
 
+[safety]
+# Enable Concord's extra account-risk safeguards for spam/message-request DMs,
+# new conversations, empty channels, and server screening/onboarding/verification.
+# Set false to skip these safeguards at your own risk, then restart Concord.
+# Slow mode, message-history loading/failure locks, channel permissions, and
+# Discord's own rules and rate limits always apply.
+enabled = true
+
 [reactions]
 # Up to 10 unicode emoji pinned at the top of the reaction picker.
 # When unset or empty, Concord uses the built-in quick reactions.

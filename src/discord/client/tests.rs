@@ -844,6 +844,71 @@ async fn voice_join_fails_closed_before_gateway_command() {
 }
 
 #[tokio::test]
+async fn safety_config_is_shared_by_request_guards_and_snapshots() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    for configured in [None, Some(true), Some(false)] {
+        for level in [Some(GuildVerificationLevel::Low), None] {
+            let client =
+                DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+            if let Some(enabled) = configured {
+                client.configure_safety(crate::config::SafetyOptions { enabled });
+            }
+            publish_permission_authorization_fixture(
+                &client,
+                "GuildText",
+                level,
+                Some(0),
+                Some(Vec::new()),
+                Some(permission_fixture_roles(VIEW_CHANNEL | SEND_MESSAGES)),
+            )
+            .await;
+            client
+                .publish_event(AppEvent::CurrentUserVerification {
+                    email_verified: Some(false),
+                    phone_verified: Some(false),
+                    mfa_enabled: None,
+                })
+                .await;
+
+            let enabled = configured.unwrap_or(true);
+            let snapshot = client.current_discord_snapshot();
+            let reader = snapshot.to_state();
+            let channel = reader.channel(Id::new(2)).expect("channel is loaded");
+            assert_eq!(reader.safety_checks_enabled(), enabled);
+            assert_eq!(reader.guild_participation_block(channel).is_some(), enabled);
+            assert_eq!(
+                reader
+                    .message_send_decision(channel, false, false)
+                    .block_reason()
+                    .is_some(),
+                enabled
+            );
+            assert_eq!(
+                client
+                    .ensure_can_send_message(Id::new(2), None, &[])
+                    .is_err(),
+                enabled
+            );
+
+            client
+                .publish_event(AppEvent::GuildRolesUpdate {
+                    guild_id: Id::new(1),
+                    roles: permission_fixture_roles(VIEW_CHANNEL),
+                })
+                .await;
+            if !enabled {
+                assert_action_blocked(
+                    client.ensure_can_send_message(Id::new(2), None, &[]),
+                    DiscordAction::SendMessage,
+                    ActionBlockReason::PermissionDenied(DiscordPermission::SendMessages),
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn forum_post_rejects_unmet_guild_verification() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");

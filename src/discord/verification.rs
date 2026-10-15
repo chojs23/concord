@@ -170,6 +170,9 @@ impl DiscordState {
         channel: &ChannelState,
         now: DateTime<Utc>,
     ) -> GuildParticipationDecision {
+        if !self.safety_checks_enabled() {
+            return GuildParticipationDecision::Allowed;
+        }
         let Some(guild_id) = channel.guild_id else {
             return GuildParticipationDecision::Allowed;
         };

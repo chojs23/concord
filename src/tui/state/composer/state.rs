@@ -440,6 +440,12 @@ impl DashboardState {
         let has_cached_messages = self.discord.cache.channel_has_cached_messages(channel.id);
 
         if channel.is_dm() {
+            if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
+                return Some(ComposerLock::SlowMode { remaining_seconds });
+            }
+            if !self.discord.cache.safety_checks_enabled() {
+                return None;
+            }
             if channel.is_spam == Some(true) {
                 return Some(ComposerLock::Spam);
             }
@@ -479,6 +485,9 @@ impl DashboardState {
         }
         if let Some(remaining_seconds) = self.slow_mode_remaining_seconds(channel.id) {
             return Some(ComposerLock::SlowMode { remaining_seconds });
+        }
+        if !self.discord.cache.safety_checks_enabled() {
+            return None;
         }
         // Threads can report counts even when no last message is cached. Those
         // fields prove that a server conversation already exists.

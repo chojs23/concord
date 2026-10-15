@@ -6,7 +6,7 @@ use super::{
     AnimatePreviews, AppOptions, BorderShape, BorderSurface, ComposerOptions, CredentialOptions,
     CredentialStoreMode, DisplayOptions, HighlightGroup, ImagePreviewQualityPreset,
     ImageProtocolPreference, KeymapBinding, KeymapOptions, NotificationOptions, PresenceOptions,
-    ThemeOptions, TranslationOptions, TranslationProviderKind, VoiceOptions,
+    SafetyOptions, ThemeOptions, TranslationOptions, TranslationProviderKind, VoiceOptions,
     load_keymap_options_from_path, load_options_from_path, parse_app_options, parse_theme_options,
     save_options_to_path,
 };
@@ -132,6 +132,25 @@ fn app_options_with(update: impl FnOnce(&mut AppOptions)) -> AppOptions {
     let mut options = AppOptions::default();
     update(&mut options);
     options
+}
+
+#[test]
+fn safety_checks_default_to_enabled_and_follow_config() {
+    assert!(SafetyOptions::default().enabled);
+
+    for (content, enabled) in [
+        ("", true),
+        ("[safety]\n", true),
+        ("[safety]\nenabled = true\n", true),
+        ("[safety]\nenabled = false\n", false),
+    ] {
+        let direct: AppOptions = toml::from_str(content).expect("safety config parses");
+        let (loaded, warnings) = parse_app_options(content).expect("safety config loads");
+
+        assert_eq!(direct.safety.enabled, enabled, "{content}");
+        assert_eq!(loaded.safety, direct.safety, "{content}");
+        assert!(warnings.is_empty(), "{content}");
+    }
 }
 
 #[test]
@@ -653,6 +672,7 @@ fn options_save_and_load_round_trip() {
             emojis_as_links: true,
             ping_on_reply: false,
         },
+        safety: SafetyOptions { enabled: false },
         reactions: Default::default(),
         credentials: CredentialOptions {
             store: CredentialStoreMode::Plain,

@@ -20,6 +20,7 @@ pub(super) fn parse_app_options(content: &str) -> Result<(AppOptions, Vec<String
     let options = AppOptions {
         display: section(&root, "display", &mut warnings),
         composer: section(&root, "composer", &mut warnings),
+        safety: section(&root, "safety", &mut warnings),
         reactions: normalize_reaction_options(
             section(&root, "reactions", &mut warnings),
             &mut warnings,

@@ -28,6 +28,7 @@ pub struct DiscordSnapshot {
 
 #[derive(Clone, Debug)]
 pub struct NavigationSnapshot {
+    pub(in crate::discord) safety_checks_enabled: bool,
     pub(in crate::discord) navigation: Arc<NavigationIndex>,
     pub(in crate::discord) guild_details: Arc<GuildDetailCache>,
     pub(in crate::discord) profiles: Arc<ProfileCache>,

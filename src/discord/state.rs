@@ -59,6 +59,7 @@ pub(in crate::discord) fn is_fallback_identity(username: Option<&str>, display_n
 /// live snapshot still references it.
 #[derive(Clone, Debug)]
 pub struct DiscordState {
+    pub(in crate::discord) safety_checks_enabled: bool,
     pub(in crate::discord) navigation: Arc<NavigationIndex>,
     pub(in crate::discord) message_cache: Arc<MessageCache>,
     pub(in crate::discord) guild_details: Arc<GuildDetailCache>,
@@ -92,6 +93,7 @@ impl Default for DiscordState {
 impl DiscordState {
     pub fn new(max_messages_per_channel: usize) -> Self {
         Self {
+            safety_checks_enabled: true,
             navigation: Arc::default(),
             message_cache: Arc::new(MessageCache::new(max_messages_per_channel)),
             guild_details: Arc::default(),
@@ -102,6 +104,14 @@ impl DiscordState {
             notifications: Arc::default(),
             threads: Arc::default(),
         }
+    }
+
+    pub(crate) fn safety_checks_enabled(&self) -> bool {
+        self.safety_checks_enabled
+    }
+
+    pub(crate) fn set_safety_checks_enabled(&mut self, enabled: bool) {
+        self.safety_checks_enabled = enabled;
     }
 
     pub(in crate::discord) fn navigation_mut(&mut self) -> &mut NavigationIndex {
@@ -171,6 +181,7 @@ impl DiscordState {
         DiscordSnapshot {
             revision,
             navigation: NavigationSnapshot {
+                safety_checks_enabled: self.safety_checks_enabled,
                 navigation: Arc::clone(&self.navigation),
                 guild_details: Arc::clone(&self.guild_details),
                 profiles: Arc::clone(&self.profiles),
@@ -205,6 +216,7 @@ impl DiscordState {
         areas: SnapshotAreas,
     ) {
         if areas.navigation {
+            self.safety_checks_enabled = snapshot.navigation.safety_checks_enabled;
             self.navigation = Arc::clone(&snapshot.navigation.navigation);
             self.guild_details = Arc::clone(&snapshot.navigation.guild_details);
             self.profiles = Arc::clone(&snapshot.navigation.profiles);
