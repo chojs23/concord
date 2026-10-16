@@ -69,14 +69,40 @@ emerge -av net-im/concord
 ### Prebuilt releases
 
 Download an archive for Linux, macOS, or Windows from the
-[latest GitHub release](https://github.com/chojs23/concord/releases/latest), or
-run the release installer:
+[latest GitHub release](https://github.com/chojs23/concord/releases/latest).
+
+#### Linux and macOS
+
+Alternatively, run the shell release installer:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/chojs23/concord/releases/latest/download/concord-installer.sh | sh
 ```
 
-The installer places `concord` under `$CARGO_HOME/bin`.
+The shell installer places `concord` under `$CARGO_HOME/bin`.
+
+#### Windows
+
+1. Open the latest GitHub release linked above and download the archive for
+   `x86_64-pc-windows-msvc` from its assets.
+2. Extract the entire archive, then locate `concord.exe` inside the extracted
+   contents.
+3. Move the extracted contents, including `concord.exe` and any accompanying
+   runtime files, to a stable directory you can write to, such as a `Concord`
+   folder under your user folder. Keep the extracted file layout intact.
+4. Search the Start menu for **Edit environment variables for your account**.
+   In **Environment Variables**, select **Path** under **User variables**, then
+   choose **Edit** and **New**. Add the full path to the directory containing
+   `concord.exe`, not the archive or executable filename. Paths containing
+   spaces can be entered without quotes. Confirm the dialogs with **OK**.
+5. Close and reopen your terminal application, then run `concord`.
+
+Manual extraction uses the directory you choose; it does not install Concord
+under `$CARGO_HOME/bin` or update Path automatically.
+
+You can also install with [Cargo](#cargo). Cargo and other source builds require
+the Windows MSVC Rust toolchain, Visual Studio 2022 Build Tools with Desktop
+development with C++, CMake, and NASM; see [Build from source](#build-from-source).
 
 ### Runtime requirements
 
