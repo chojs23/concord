@@ -4015,3 +4015,45 @@ fn image_preview_targets_track_the_visible_message_window() {
         );
     }
 }
+
+#[test]
+fn avatar_animation_runs_only_when_previews_always_animate() {
+    let target = AvatarTarget {
+        url: "https://cdn.discordapp.com/avatars/1/a_hash.gif".to_owned(),
+        row: 0,
+        visible_height: 2,
+        top_clip_rows: 0,
+    };
+    let url = avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
+    let mut cache = AvatarImageCache::new(Some(Picker::halfblocks()));
+    cache.cache.entries.insert(
+        url.clone(),
+        AvatarImageEntry::Decoding {
+            generation: 1,
+            last_used: 1,
+        },
+    );
+    cache.store_decoded(
+        url,
+        1,
+        decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
+    );
+    cache.prepare(std::slice::from_ref(&target), None, None, false);
+    for job in cache.take_protocol_jobs() {
+        cache.store_protocol(build_media_protocol(job));
+    }
+
+    let now = Instant::now();
+    for animate in [AnimatePreviews::Never, AnimatePreviews::Selected] {
+        cache.sync_animation_visibility(std::slice::from_ref(&target), now, animate);
+        assert_eq!(cache.next_animation_deadline(), None, "{animate:?}");
+    }
+    cache.sync_animation_visibility(std::slice::from_ref(&target), now, AnimatePreviews::Always);
+    assert!(cache.next_animation_deadline().is_some());
+    cache.sync_animation_visibility(
+        std::slice::from_ref(&target),
+        now,
+        AnimatePreviews::Selected,
+    );
+    assert_eq!(cache.next_animation_deadline(), None);
+}
