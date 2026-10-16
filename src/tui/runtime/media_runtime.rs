@@ -618,7 +618,7 @@ impl DashboardMediaRuntime {
         self.image_previews
             .sync_animation_visibility(&self.image_targets, now, animate);
         self.avatar_images
-            .sync_animation_visibility(&self.avatar_targets, now);
+            .sync_animation_visibility(&self.avatar_targets, now, animate);
         self.emoji_images
             .sync_animation_visibility(&self.emoji_targets, now);
     }
