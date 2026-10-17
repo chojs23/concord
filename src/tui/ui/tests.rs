@@ -74,8 +74,8 @@ use crate::{
         message::format::{
             MessageContentLine, format_message_content, format_message_content_lines,
             format_message_content_lines_with_loaded_custom_emoji_urls, lay_out_reaction_chips,
-            poll_box_border, poll_card_inner_width, reaction_line_test_spans, text_highlight_style,
-            wrap_text_lines,
+            poll_box_border, poll_card_inner_width, reaction_emoji_at, reaction_line_test_spans,
+            text_highlight_style, wrap_text_lines,
         },
         state::{
             AppliedForumTag, AttachmentDownloadProgressView, AttachmentViewerZoom,

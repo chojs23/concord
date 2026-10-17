@@ -233,6 +233,13 @@ fn handle_click(
                 .flatten();
             MouseEventResult::handled(command)
         }
+        InteractionTarget::ReactionChip { row, col } => {
+            state.focus_pane(FocusPane::Messages);
+            state.select_visible_pane_row(FocusPane::Messages, row);
+            let avatar_offset = ui::avatar_gutter_width(state.show_avatars());
+            let command = state.toggle_reaction_chip_at(row, col, avatar_offset);
+            MouseEventResult::handled(command)
+        }
         InteractionTarget::UserProfileControl(control) => {
             let command = match control {
                 ui::UserProfileControl::Tab(UserProfileSettingsTab::Global) => {
@@ -346,6 +353,7 @@ fn handle_context_menu(state: &mut DashboardState, target: InteractionTarget) ->
         InteractionTarget::ModalSurface
         | InteractionTarget::ModalBackdrop
         | InteractionTarget::PopupItem { .. }
+        | InteractionTarget::ReactionChip { .. }
         | InteractionTarget::UserProfileControl(_)
         | InteractionTarget::ConfirmationButton(_)
         | InteractionTarget::FormButton(_)
@@ -410,7 +418,9 @@ fn supports_double_click(target: InteractionTarget) -> bool {
 fn interaction_pane(target: InteractionTarget) -> Option<FocusPane> {
     match target {
         InteractionTarget::Pane(pane) | InteractionTarget::PaneItem { pane, .. } => Some(pane),
-        InteractionTarget::Composer => Some(FocusPane::Messages),
+        InteractionTarget::Composer | InteractionTarget::ReactionChip { .. } => {
+            Some(FocusPane::Messages)
+        }
         InteractionTarget::PopupItem { .. }
         | InteractionTarget::UserProfileControl(_)
         | InteractionTarget::ConfirmationButton(_)

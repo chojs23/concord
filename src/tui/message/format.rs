@@ -22,10 +22,10 @@ use polls::format_poll_lines;
 pub(in crate::tui) use polls::poll_box_border;
 #[cfg(test)]
 pub(crate) use polls::poll_card_inner_width;
-pub(in crate::tui) use reactions::format_message_reaction_lines;
 pub(crate) use reactions::{
     ReactionLayout, lay_out_reaction_chips_with_custom_emoji_images, reaction_line_spans,
 };
+pub(in crate::tui) use reactions::{format_message_reaction_lines, reaction_emoji_at};
 #[cfg(test)]
 pub(crate) use reactions::{lay_out_reaction_chips, reaction_line_test_spans};
 pub(in crate::tui) use system::format_message_relative_age;

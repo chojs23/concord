@@ -506,6 +506,44 @@ fn mouse_wheel_at_message_top_requests_older_history() {
 }
 
 #[test]
+fn left_click_on_a_reaction_chip_toggles_the_users_own_reaction() {
+    let mut state = state_with_reaction_message();
+    state.focus_pane(FocusPane::Messages);
+    state.set_message_view_height(10);
+    state.clamp_message_viewport_for_image_previews(80, 16, 3);
+
+    let (column, row) = (0..dashboard_area().height)
+        .flat_map(|row| (0..dashboard_area().width).map(move |column| (column, row)))
+        .find(|(column, row)| {
+            matches!(
+                crate::tui::ui::InteractionMap::new(dashboard_area(), &state)
+                    .target_at(*column, *row),
+                Some(crate::tui::ui::InteractionTarget::ReactionChip { .. })
+            )
+        })
+        .expect("the 👍 reaction chip is interactive");
+
+    let mut clicks = MouseInputState::default();
+    let outcome = handle_mouse_event(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+        dashboard_area(),
+        &mut clicks,
+    );
+
+    assert!(outcome.handled);
+    assert_eq!(state.selected_message(), 0);
+    assert_eq!(
+        outcome.command,
+        Some(AppCommand::RemoveReaction {
+            channel_id: Id::new(2),
+            message_id: Id::new(1),
+            emoji: ReactionEmoji::Unicode("👍".to_owned()),
+        })
+    );
+}
+
+#[test]
 fn right_click_selects_dashboard_item_and_opens_its_action_menu() {
     let mut guild_state = state_with_channel_tree();
     let guild = interaction_point(

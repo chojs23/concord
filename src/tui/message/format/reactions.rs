@@ -90,11 +90,44 @@ pub(crate) struct ReactionStyleRange {
     pub(crate) len: usize,
 }
 
+/// On-screen column span of a single reaction chip, relative to the start of
+/// a message's reaction strip. Used to hit-test a mouse click against the
+/// reactions rendered under a message, independent of the chip's text/image
+/// styling.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReactionChipSpan {
+    pub(crate) line: u16,
+    pub(crate) start_col: u16,
+    pub(crate) width: u16,
+    pub(crate) emoji: ReactionEmoji,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ReactionLayout {
     pub(crate) lines: Vec<String>,
     pub(crate) slots: Vec<ReactionImageSlot>,
     pub(crate) self_ranges: Vec<ReactionStyleRange>,
+    pub(crate) chips: Vec<ReactionChipSpan>,
+}
+
+/// Finds which reaction emoji (if any) occupies column `col` of reaction line
+/// `line`, recomputing the same layout used to render the reaction strip.
+pub(in crate::tui) fn reaction_emoji_at(
+    reactions: &[ReactionInfo],
+    width: usize,
+    show_custom_emoji: bool,
+    line: u16,
+    col: u16,
+) -> Option<ReactionEmoji> {
+    lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji)
+        .chips
+        .into_iter()
+        .find(|chip| {
+            chip.line == line
+                && col >= chip.start_col
+                && col < chip.start_col.saturating_add(chip.width)
+        })
+        .map(|chip| chip.emoji)
 }
 
 /// Builds a single chip's text plus the chip-internal column offset where its
@@ -135,28 +168,43 @@ pub(crate) fn lay_out_reaction_chips(reactions: &[ReactionInfo], width: usize) -
     lay_out_reaction_chips_with_custom_emoji_images(reactions, width, true)
 }
 
+/// `(chip text, custom-emoji image column offset, custom-emoji image url,
+/// is the current user's own reaction, the chip's emoji identity)`.
+type ReactionChipSpec = (String, Option<usize>, Option<String>, bool, ReactionEmoji);
+
 pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
     reactions: &[ReactionInfo],
     width: usize,
     show_custom_emoji: bool,
 ) -> ReactionLayout {
     let width = width.max(1);
-    let chips: Vec<(String, Option<usize>, Option<String>, bool)> = reactions
+    let chip_specs: Vec<ReactionChipSpec> = reactions
         .iter()
         .filter(|reaction| reaction.count > 0)
-        .map(|reaction| build_reaction_chip(reaction, show_custom_emoji))
+        .map(|reaction| {
+            let (chip_text, image_offset, url, is_self) =
+                build_reaction_chip(reaction, show_custom_emoji);
+            (
+                chip_text,
+                image_offset,
+                url,
+                is_self,
+                reaction.emoji.clone(),
+            )
+        })
         .collect();
-    if chips.is_empty() {
+    if chip_specs.is_empty() {
         return ReactionLayout::default();
     }
 
     let mut lines: Vec<String> = Vec::new();
     let mut slots: Vec<ReactionImageSlot> = Vec::new();
     let mut self_ranges: Vec<ReactionStyleRange> = Vec::new();
+    let mut chips: Vec<ReactionChipSpan> = Vec::new();
     let mut current = String::new();
     let mut current_width: usize = 0;
 
-    for (chip_text, image_offset, url, is_self) in chips {
+    for (chip_text, image_offset, url, is_self, emoji) in chip_specs {
         let chip_width = chip_text.width();
         let separator_width = if current_width == 0 { 0 } else { 2 };
         let projected = current_width + separator_width + chip_width;
@@ -190,6 +238,13 @@ pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
                 url,
             });
         }
+
+        chips.push(ReactionChipSpan {
+            line: u16::try_from(lines.len()).unwrap_or(u16::MAX),
+            start_col: u16::try_from(chip_start_col).unwrap_or(u16::MAX),
+            width: u16::try_from(chip_width).unwrap_or(u16::MAX),
+            emoji,
+        });
     }
 
     if !current.is_empty() {
@@ -200,5 +255,6 @@ pub(crate) fn lay_out_reaction_chips_with_custom_emoji_images(
         lines,
         slots,
         self_ranges,
+        chips,
     }
 }
