@@ -8,7 +8,7 @@ use super::super::state::{
     ForumPostComposerField, NotificationInboxTab, SelectablePopupTarget, ThreadEditField,
 };
 use super::{
-    channel_pane_header_height,
+    avatar_gutter_width, channel_pane_header_height,
     layout::{dashboard_areas, message_areas},
     panel_block, panel_block_owned,
     popups::{
@@ -37,6 +37,10 @@ pub(crate) enum InteractionTarget {
     PaneItem {
         pane: FocusPane,
         row: usize,
+    },
+    ReactionChip {
+        row: usize,
+        col: usize,
     },
     Composer,
     PopupItem {
@@ -321,9 +325,21 @@ fn message_target_at(
         return Some(InteractionTarget::Composer);
     }
     if rect_contains(areas.list, column, row) {
+        let list_row = usize::from(row.saturating_sub(areas.list.y));
+        let list_col = usize::from(column.saturating_sub(areas.list.x));
+        let avatar_offset = avatar_gutter_width(state.show_avatars());
+        if state
+            .reaction_chip_at_viewport_position(list_row, list_col, avatar_offset)
+            .is_some()
+        {
+            return Some(InteractionTarget::ReactionChip {
+                row: list_row,
+                col: list_col,
+            });
+        }
         return Some(InteractionTarget::PaneItem {
             pane: FocusPane::Messages,
-            row: usize::from(row.saturating_sub(areas.list.y)),
+            row: list_row,
         });
     }
     Some(InteractionTarget::Pane(FocusPane::Messages))

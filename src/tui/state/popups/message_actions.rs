@@ -353,7 +353,7 @@ impl DashboardState {
         self.run_message_action_kind(action.kind)
     }
 
-    pub(super) fn can_add_reaction_to_message(
+    pub(in crate::tui::state) fn can_add_reaction_to_message(
         &self,
         message: &MessageState,
         emoji: &ReactionEmoji,

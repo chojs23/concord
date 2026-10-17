@@ -36,9 +36,9 @@ use crate::{
         GuildMemberListOperation, GuildMemberListUpdateInfo, GuildNotificationSettingsInfo,
         MemberInfo, MessageInfo, MessageReferenceInfo, MessageSnapshotInfo,
         MicrophoneSensitivityDb, NotificationLevel, PollAnswerInfo, PollInfo, PresenceEventFields,
-        PresenceStatus, ReactionEmoji, ReactionUserInfo, ReadStateInfo, RichPresenceSelection,
-        RoleInfo, UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo, VoiceConnectionStatus,
-        VoiceVolumePercent,
+        PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReadStateInfo,
+        RichPresenceSelection, RoleInfo, UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo,
+        VoiceConnectionStatus, VoiceVolumePercent,
     },
     tui::state::{
         ChannelPaneEntry, DashboardState, FocusPane, FolderSettingsField, GuildPaneEntry,
@@ -348,6 +348,41 @@ fn state_with_direct_message(kind: &str) -> DashboardState {
 
 fn state_with_messages(count: u64) -> DashboardState {
     state_with_messages_from_state(DashboardState::new(), count)
+}
+
+fn state_with_reaction_message() -> DashboardState {
+    let mut state = DashboardState::new();
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let current_user_id = Id::new(10);
+    push_test_ready(&mut state, current_user_id);
+    state.push_event(guild_create_event(message_test_guild_fixture(
+        guild_id,
+        current_user_id,
+        vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            name: "general".to_owned(),
+            ..ChannelInfo::test(channel_id, "GuildText")
+        }],
+        MESSAGE_TEST_PERMISSIONS,
+    )));
+    select_test_guild(&mut state, guild_id);
+    select_test_channel(&mut state, channel_id);
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
+        channel_id,
+        messages: vec![MessageInfo {
+            guild_id: Some(guild_id),
+            content: Some("message".to_owned()),
+            reactions: vec![ReactionInfo {
+                count: 2,
+                me: true,
+                ..ReactionInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
+            }],
+            ..MessageInfo::test(channel_id, Id::new(1))
+        }],
+        ..MessageHistoryLoadedFixture::new()
+    }));
+    state
 }
 
 fn state_with_channel_permissions(permissions: u64) -> DashboardState {

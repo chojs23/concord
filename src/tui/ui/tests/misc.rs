@@ -656,6 +656,46 @@ fn lay_out_reaction_chips_wraps_at_chip_boundary() {
 }
 
 #[test]
+fn reaction_emoji_at_hits_the_chip_under_the_given_column() {
+    let reactions = vec![
+        ReactionInfo {
+            count: 3,
+            ..ReactionInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
+        },
+        ReactionInfo {
+            count: 1,
+            ..ReactionInfo::test(ReactionEmoji::Unicode("❤".to_owned()))
+        },
+    ];
+
+    // Layout is "[👍 3]  [❤ 1]": first chip spans cols 0..6, second spans
+    // cols 8..14 (two-column separator in between).
+    assert_eq!(
+        reaction_emoji_at(&reactions, 200, true, 0, 0),
+        Some(ReactionEmoji::Unicode("👍".to_owned()))
+    );
+    assert_eq!(
+        reaction_emoji_at(&reactions, 200, true, 0, 5),
+        Some(ReactionEmoji::Unicode("👍".to_owned()))
+    );
+    assert_eq!(
+        reaction_emoji_at(&reactions, 200, true, 0, 8),
+        Some(ReactionEmoji::Unicode("❤".to_owned()))
+    );
+    // The two-column gap between chips hits neither.
+    assert_eq!(reaction_emoji_at(&reactions, 200, true, 0, 6), None);
+    assert_eq!(reaction_emoji_at(&reactions, 200, true, 0, 7), None);
+    // Past the end of the last chip, or on a nonexistent line: no hit.
+    assert_eq!(reaction_emoji_at(&reactions, 200, true, 0, 14), None);
+    assert_eq!(reaction_emoji_at(&reactions, 200, true, 1, 0), None);
+}
+
+#[test]
+fn reaction_emoji_at_returns_none_for_empty_reactions() {
+    assert_eq!(reaction_emoji_at(&[], 200, true, 0, 0), None);
+}
+
+#[test]
 fn forwarded_snapshot_content_wraps_after_prefix() {
     for (content, width, expected) in [
         (

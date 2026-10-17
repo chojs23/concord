@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::discord::MessageState;
+use crate::discord::{Id, MessageState, ReactionEmoji, marker::MessageMarker};
 
 use super::{MessageRowContentMetrics, MessageRowContentMetricsCacheKey, *};
 use crate::tui::{
@@ -370,6 +370,122 @@ impl DashboardState {
             index == self.messages.selected_message,
         )
         .total_rows()
+    }
+
+    /// Resolves a click at the given viewport row/column to the reaction
+    /// chip it landed on, if any. `row`/`col` are relative to the top-left of
+    /// the message list area; `avatar_offset` is the left gutter width the
+    /// renderer reserves before message content (see `avatar_gutter_width`),
+    /// which the caller must supply since it is a rendering concern, not
+    /// cached state. Walks visible messages the same way
+    /// `select_visible_message_row` does, then recomputes that message's
+    /// reaction layout to pinpoint the chip, mirroring how `InteractionMap`
+    /// derives every other hit region on demand rather than caching one.
+    pub(in crate::tui) fn reaction_chip_at_viewport_position(
+        &self,
+        row: usize,
+        col: usize,
+        avatar_offset: u16,
+    ) -> Option<(Id<MessageMarker>, ReactionEmoji)> {
+        if self.message_pane_uses_thread_cards() {
+            return None;
+        }
+        if self.messages.message_content_width == usize::MAX {
+            return None;
+        }
+        let col = col.checked_sub(avatar_offset as usize)?;
+        let content_width = self.messages.message_content_width;
+        let preview_width = self.messages.message_preview_width;
+        let max_preview_height = self.messages.message_max_preview_height;
+        let show_custom_emoji = self.show_custom_emoji();
+
+        let mut rendered_row = 0usize;
+        for local_index in 0..self.visible_messages().len() {
+            let index = self.messages.message_scroll.saturating_add(local_index);
+            let message = self.messages().get(index).copied()?;
+            let metrics = self.message_row_metrics_at_with_selected_bottom(
+                index,
+                message,
+                content_width,
+                preview_width,
+                max_preview_height,
+                index == self.messages.selected_message,
+            );
+            let rendered_height = metrics.total_rows().max(1);
+            let line_offset = usize::from(local_index == 0) * self.messages.message_line_scroll;
+            let visible_height = rendered_height.saturating_sub(line_offset);
+            if row < rendered_row.saturating_add(visible_height) {
+                let local_row = row.saturating_sub(rendered_row).saturating_add(line_offset);
+                let reaction_top = metrics.reaction_top_offset();
+                if local_row < reaction_top
+                    || local_row >= reaction_top.saturating_add(metrics.reaction_rows)
+                {
+                    return None;
+                }
+                let reaction_line = u16::try_from(local_row - reaction_top).unwrap_or(u16::MAX);
+                let col = u16::try_from(col).unwrap_or(u16::MAX);
+                let emoji = message_format::reaction_emoji_at(
+                    &message.reactions,
+                    content_width.max(8),
+                    show_custom_emoji,
+                    reaction_line,
+                    col,
+                )?;
+                return Some((message.id, emoji));
+            }
+            rendered_row = rendered_row.saturating_add(visible_height);
+        }
+        None
+    }
+
+    /// Builds the add/remove-reaction command that toggles the current
+    /// user's own reaction with `emoji` on `message`, honoring add-reaction
+    /// permission the same way the emoji-reaction picker does (see
+    /// `activate_selected_emoji_reaction`). Returns `None` when the user has
+    /// not already reacted and lacks permission to add a new reaction.
+    pub(in crate::tui) fn toggle_own_reaction_command(
+        &self,
+        message: &MessageState,
+        emoji: ReactionEmoji,
+    ) -> Option<AppCommand> {
+        let already_reacted = message
+            .reactions
+            .iter()
+            .any(|existing| existing.me && existing.emoji == emoji);
+        if !already_reacted && !self.can_add_reaction_to_message(message, &emoji) {
+            return None;
+        }
+        Some(if already_reacted {
+            AppCommand::RemoveReaction {
+                channel_id: message.channel_id,
+                message_id: message.id,
+                emoji,
+            }
+        } else {
+            AppCommand::AddReaction {
+                channel_id: message.channel_id,
+                message_id: message.id,
+                emoji,
+            }
+        })
+    }
+
+    /// Combines `reaction_chip_at_viewport_position` and
+    /// `toggle_own_reaction_command` for a click at `row`/`col`.
+    pub(in crate::tui) fn toggle_reaction_chip_at(
+        &self,
+        row: usize,
+        col: usize,
+        avatar_offset: u16,
+    ) -> Option<AppCommand> {
+        let (message_id, emoji) =
+            self.reaction_chip_at_viewport_position(row, col, avatar_offset)?;
+        let messages = self.messages();
+        let message = messages
+            .iter()
+            .find(|message| message.id == message_id)
+            .copied()?;
+        self.toggle_own_reaction_command(message, emoji)
     }
 }
 
