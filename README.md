@@ -625,6 +625,8 @@ VoiceParticipantAudio = "a"
 ShowPinnedMessages = "p"
 ShowThreads = "t"
 MarkAsRead = "m"
+CloseDm = "c"
+LeaveGroup = "L"
 ToggleMute = "u"
 
 [keymap.message_actions]

@@ -104,6 +104,146 @@ fn folder_leader_action_opens_settings() {
 }
 
 #[test]
+fn channel_action_menu_closes_the_highlighted_dm() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    for (kind, use_shortcut) in [("dm", true), ("Private", false)] {
+        let active_channel_id = Id::new(10);
+        let highlighted_channel_id = Id::new(20);
+        let mut state = DashboardState::new();
+        for channel_id in [active_channel_id, highlighted_channel_id] {
+            state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+                kind: kind.to_owned(),
+                ..dm_channel_info(channel_id, format!("user-{channel_id}"))
+            }));
+        }
+        state.activate_guild(super::ActiveGuildScope::DirectMessages);
+        state.activate_channel(active_channel_id);
+        state.focus_pane(FocusPane::Channels);
+        state.move_up();
+        state.open_selected_channel_actions();
+
+        let actions = state.selected_channel_action_items();
+        let close_index = actions
+            .iter()
+            .position(|action| action.kind == ChannelActionKind::CloseDm)
+            .expect("DM menu has a close action");
+        assert_eq!(actions[close_index].label, "Close DM");
+        assert!(actions[close_index].is_enabled());
+        assert_eq!(actions[close_index - 1].kind, ChannelActionKind::MarkAsRead);
+        assert_eq!(actions[close_index + 1].kind, ChannelActionKind::ToggleMute);
+
+        let command = if use_shortcut {
+            crate::tui::input::handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+            )
+        } else {
+            assert!(state.select_channel_action_row(close_index));
+            state.activate_selected_channel_action()
+        };
+        assert_eq!(
+            command,
+            Some(AppCommand::CloseDm {
+                channel_id: highlighted_channel_id,
+            })
+        );
+        assert!(!state.is_channel_action_menu_active());
+        assert_eq!(state.selected_channel_id(), Some(active_channel_id));
+        assert_eq!(state.channels().len(), 2);
+    }
+}
+
+#[test]
+fn channel_action_menu_confirms_leaving_the_highlighted_group() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::tui::input::handle_key;
+    use crate::tui::state::ConfirmationButton;
+
+    for (kind, modifiers) in [
+        ("group-dm", KeyModifiers::NONE),
+        ("Group", KeyModifiers::SHIFT),
+    ] {
+        let active_channel_id = Id::new(10);
+        let group_channel_id = Id::new(20);
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(dm_channel_info(
+            active_channel_id,
+            "alice",
+        )));
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            kind: kind.to_owned(),
+            ..dm_channel_info(group_channel_id, "Weekend plans")
+        }));
+        state.activate_guild(super::ActiveGuildScope::DirectMessages);
+        state.activate_channel(active_channel_id);
+        state.focus_pane(FocusPane::Channels);
+        state.move_up();
+        state.open_selected_channel_actions();
+
+        let actions = state.selected_channel_action_items();
+        let leave_index = actions
+            .iter()
+            .position(|action| action.kind == ChannelActionKind::LeaveGroup)
+            .expect("group DM menu has a leave action");
+        assert_eq!(actions[leave_index].label, "Leave group");
+        assert!(actions[leave_index].is_enabled());
+        assert_eq!(actions[leave_index - 1].kind, ChannelActionKind::MarkAsRead);
+        assert_eq!(actions[leave_index + 1].kind, ChannelActionKind::ToggleMute);
+
+        assert_eq!(
+            handle_key(&mut state, KeyEvent::new(KeyCode::Char('L'), modifiers)),
+            None
+        );
+        assert!(state.is_active_modal_popup(ActiveModalPopupKind::GroupLeaveConfirmation));
+        assert_eq!(
+            state.group_leave_confirmation_name().as_deref(),
+            Some("Weekend plans")
+        );
+        assert_eq!(
+            state.active_confirmation_button(),
+            ConfirmationButton::Cancel
+        );
+
+        assert_eq!(
+            handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            ),
+            None
+        );
+        assert_eq!(state.active_modal_popup_kind(), None);
+        assert_eq!(state.channels().len(), 2);
+
+        state.open_selected_channel_actions();
+        assert!(state.select_channel_action_row(leave_index));
+        assert_eq!(state.activate_selected_channel_action(), None);
+        let command = if modifiers.is_empty() {
+            handle_key(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+            handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            )
+        } else {
+            handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+            )
+        };
+        assert_eq!(
+            command,
+            Some(AppCommand::LeaveGroup {
+                channel_id: group_channel_id
+            })
+        );
+        assert_eq!(state.active_modal_popup_kind(), None);
+        assert_eq!(state.selected_channel_id(), Some(active_channel_id));
+        assert_eq!(state.channels().len(), 2);
+    }
+}
+
+#[test]
 fn channel_action_menu_toggle_mute_opens_duration_then_dispatches_command() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);

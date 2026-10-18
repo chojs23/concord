@@ -255,6 +255,34 @@ impl DiscordClient {
         self.rest.leave_guild(guild_id).await
     }
 
+    pub async fn close_dm(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
+        // The same endpoint deletes guild channels or leaves group DMs.
+        if !self
+            .read_state()
+            .channel(channel_id)
+            .is_some_and(|channel| channel.guild_id.is_none() && channel.is_dm())
+        {
+            return Err(AppError::DiscordRequest(
+                "closing a DM requires a one-to-one direct message".to_owned(),
+            ));
+        }
+        self.rest.close_dm(channel_id).await
+    }
+
+    pub async fn leave_group_dm(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
+        // This endpoint deletes guild channels. Only a known group DM is safe here.
+        if !self
+            .read_state()
+            .channel(channel_id)
+            .is_some_and(|channel| channel.guild_id.is_none() && channel.is_group_dm())
+        {
+            return Err(AppError::DiscordRequest(
+                "leaving a group DM requires a group direct message".to_owned(),
+            ));
+        }
+        self.rest.leave_group_dm(channel_id).await
+    }
+
     pub async fn ack_channel(
         &self,
         channel_id: Id<ChannelMarker>,

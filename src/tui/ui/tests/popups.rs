@@ -218,6 +218,61 @@ fn create_post_body_scrolls_inside_a_bounded_editor_and_fields_remain_reachable(
 }
 
 #[test]
+fn group_leave_confirmation_explains_rejoining_and_supports_mouse_buttons() {
+    use crate::tui::input::{MouseInputState, handle_key, handle_mouse_event};
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let channel_id = Id::new(20);
+    let mut state = DashboardState::new();
+    state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+        name: "Weekend plans with friends and family across several time zones".to_owned(),
+        ..ChannelInfo::test(channel_id, "group-dm")
+    }));
+    state.confirm_selected_guild();
+    state.focus_pane(FocusPane::Channels);
+
+    for (button_text, expected_command) in [
+        ("[n] cancel", None),
+        (
+            "[y] leave group",
+            Some(AppCommand::LeaveGroup { channel_id }),
+        ),
+    ] {
+        state.open_selected_channel_actions();
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE),
+        );
+        let dump = render_dashboard_dump(100, 24, &mut state);
+        let rendered = dump.join("\n");
+        assert!(rendered.contains("Leave this group DM?"));
+        assert!(rendered.contains("Group: Weekend plans with friends and family across s..."));
+        assert!(rendered.contains("Another member must add you back to rejoin."));
+        assert!(rendered.contains("› [n] cancel"));
+        let row = dump
+            .iter()
+            .position(|line| line.contains(button_text))
+            .expect("confirmation button is rendered");
+
+        let outcome = handle_mouse_event(
+            &mut state,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 50,
+                row: u16::try_from(row).expect("test row fits in terminal"),
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, 100, 24),
+            &mut MouseInputState::default(),
+        );
+        assert!(outcome.handled);
+        assert_eq!(outcome.command, expected_command);
+        assert_eq!(state.active_modal_popup_kind(), None);
+        assert_eq!(state.channels().len(), 1);
+    }
+}
+
+#[test]
 fn long_message_confirmation_explains_the_file_fallback() {
     let lines = long_message_confirmation_lines(2_001, 2_000, ConfirmationButton::default());
     let rendered = line_texts_from_ratatui(&lines);

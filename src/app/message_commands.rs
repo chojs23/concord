@@ -290,6 +290,34 @@ pub(super) async fn remove_message_embeds(
     }
 }
 
+pub(super) async fn leave_group_dm(client: DiscordClient, channel_id: Id<ChannelMarker>) {
+    match client.leave_group_dm(channel_id).await {
+        Ok(()) => {
+            client
+                .publish_event(AppEvent::ChannelDelete {
+                    guild_id: None,
+                    channel_id,
+                })
+                .await;
+        }
+        Err(error) => publish_app_error(&client, "leave group DM failed", &error).await,
+    }
+}
+
+pub(super) async fn close_dm(client: DiscordClient, channel_id: Id<ChannelMarker>) {
+    match client.close_dm(channel_id).await {
+        Ok(()) => {
+            client
+                .publish_event(AppEvent::ChannelDelete {
+                    guild_id: None,
+                    channel_id,
+                })
+                .await;
+        }
+        Err(error) => publish_app_error(&client, "close DM failed", &error).await,
+    }
+}
+
 pub(super) async fn leave_guild(client: DiscordClient, guild_id: Id<GuildMarker>, label: String) {
     match client.leave_guild(guild_id).await {
         Ok(()) => {

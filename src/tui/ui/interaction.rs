@@ -210,6 +210,7 @@ impl<'a> InteractionMap<'a> {
                 | ActiveModalPopupKind::LongMessageConfirmation
                 | ActiveModalPopupKind::QuitConfirmation
                 | ActiveModalPopupKind::GuildLeaveConfirmation
+                | ActiveModalPopupKind::GroupLeaveConfirmation
                 | ActiveModalPopupKind::ThreadDeleteConfirmation
         ) || (kind == ActiveModalPopupKind::NotificationInbox
             && self.state.notification_inbox_is_confirming_mark_all())

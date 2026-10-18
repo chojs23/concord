@@ -7,7 +7,7 @@ use super::super::model::{
     MUTE_ACTION_DURATIONS,
 };
 use super::super::{DashboardState, MuteActionDurationItem};
-use super::ModalPopup;
+use super::{ActiveModalPopupKind, ConfirmationButton, GroupLeaveConfirmationState, ModalPopup};
 use super::{ChannelActionMenuState, SelectablePopupState, SelectablePopupTarget};
 
 impl DashboardState {
@@ -196,7 +196,7 @@ impl DashboardState {
             (false, false) => "Mute channel",
         };
 
-        vec![
+        let mut items = vec![
             ChannelActionItem::new(
                 ChannelActionKind::JoinVoice,
                 join_voice_label,
@@ -241,12 +241,27 @@ impl DashboardState {
                 "Mark as read",
                 (!mark_as_read_enabled).then(|| "no unread messages".to_owned()),
             ),
-            ChannelActionItem::new(
-                ChannelActionKind::ToggleMute,
-                mute_label,
+        ];
+        // Closing a group DM would leave the group, so only offer this for 1:1 DMs.
+        if channel.is_dm() {
+            items.push(ChannelActionItem::new(
+                ChannelActionKind::CloseDm,
+                "Close DM",
                 ActionAvailability::Enabled,
-            ),
-        ]
+            ));
+        } else if channel.is_group_dm() {
+            items.push(ChannelActionItem::new(
+                ChannelActionKind::LeaveGroup,
+                "Leave group",
+                ActionAvailability::Enabled,
+            ));
+        }
+        items.push(ChannelActionItem::new(
+            ChannelActionKind::ToggleMute,
+            mute_label,
+            ActionAvailability::Enabled,
+        ));
+        items
     }
 
     pub fn selected_channel_mute_duration_items(&self) -> &'static [MuteActionDurationItem] {
@@ -420,6 +435,14 @@ impl DashboardState {
                         self.close_channel_action_menu();
                         None
                     }
+                    ChannelActionKind::CloseDm => {
+                        self.close_channel_action_menu();
+                        Some(AppCommand::CloseDm { channel_id })
+                    }
+                    ChannelActionKind::LeaveGroup => {
+                        self.open_group_leave_confirmation(channel_id);
+                        None
+                    }
                     ChannelActionKind::ToggleMute => {
                         if self.discord.cache.channel_notification_muted(channel_id) {
                             self.close_channel_action_menu();
@@ -496,6 +519,34 @@ impl DashboardState {
                 })
             }
         }
+    }
+
+    fn open_group_leave_confirmation(&mut self, channel_id: Id<ChannelMarker>) {
+        let name = self.channel_label(channel_id);
+        // Rejoining needs another member, so Enter must not leave by default.
+        self.popups.confirmation_button = ConfirmationButton::Cancel;
+        self.popups.set_modal(ModalPopup::GroupLeaveConfirmation(
+            GroupLeaveConfirmationState { channel_id, name },
+        ));
+    }
+
+    pub fn close_group_leave_confirmation(&mut self) {
+        if self.is_active_modal_popup(ActiveModalPopupKind::GroupLeaveConfirmation) {
+            self.popups.clear_modal();
+        }
+    }
+
+    pub fn confirm_group_leave(&mut self) -> Option<AppCommand> {
+        let confirmation = self.popups.take_group_leave_confirmation()?;
+        Some(AppCommand::LeaveGroup {
+            channel_id: confirmation.channel_id,
+        })
+    }
+
+    pub fn group_leave_confirmation_name(&self) -> Option<String> {
+        self.popups
+            .group_leave_confirmation()
+            .map(|confirmation| confirmation.name.clone())
     }
 
     pub fn activate_channel_action_shortcut(&mut self, shortcut: KeyChord) -> Option<AppCommand> {

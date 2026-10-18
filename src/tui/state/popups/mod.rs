@@ -124,6 +124,7 @@ define_modal_popups! {
     MessageConfirmation(MessageConfirmationState),
     QuitConfirmation,
     GuildLeaveConfirmation(GuildLeaveConfirmationState),
+    GroupLeaveConfirmation(GroupLeaveConfirmationState),
     Options(OptionsPopupState),
     AttachmentViewer(AttachmentViewerState),
     UserProfile(UserProfilePopupState),
@@ -647,6 +648,12 @@ impl MessageConfirmationKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuildLeaveConfirmationState {
     pub(super) guild_id: Id<GuildMarker>,
+    pub(super) name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct GroupLeaveConfirmationState {
+    pub(super) channel_id: Id<ChannelMarker>,
     pub(super) name: String,
 }
 
@@ -1407,6 +1414,17 @@ impl PopupUiState {
         take_modal_state!(self, GuildLeaveConfirmation, confirmation)
     }
 
+    pub(super) fn group_leave_confirmation(&self) -> Option<&GroupLeaveConfirmationState> {
+        match &self.modal {
+            Some(ModalPopup::GroupLeaveConfirmation(confirmation)) => Some(confirmation),
+            _ => None,
+        }
+    }
+
+    pub(super) fn take_group_leave_confirmation(&mut self) -> Option<GroupLeaveConfirmationState> {
+        take_modal_state!(self, GroupLeaveConfirmation, confirmation)
+    }
+
     pub(super) fn thread_delete_confirmation(&self) -> Option<&ThreadDeleteConfirmationState> {
         match &self.modal {
             Some(ModalPopup::ThreadDeleteConfirmation(confirmation)) => Some(confirmation),
@@ -1733,6 +1751,7 @@ impl DashboardState {
                 None
             }
             ActiveModalPopupKind::GuildLeaveConfirmation => self.confirm_guild_leave(),
+            ActiveModalPopupKind::GroupLeaveConfirmation => self.confirm_group_leave(),
             ActiveModalPopupKind::ThreadDeleteConfirmation => self.confirm_thread_delete(),
             ActiveModalPopupKind::NotificationInbox
                 if self.notification_inbox_is_confirming_mark_all() =>
@@ -1772,6 +1791,9 @@ impl DashboardState {
             ActiveModalPopupKind::QuitConfirmation => self.close_quit_confirmation(),
             ActiveModalPopupKind::GuildLeaveConfirmation => {
                 self.close_guild_leave_confirmation();
+            }
+            ActiveModalPopupKind::GroupLeaveConfirmation => {
+                self.close_group_leave_confirmation();
             }
             ActiveModalPopupKind::Options if self.is_capturing_push_to_talk_shortcut() => {
                 self.cancel_push_to_talk_shortcut_capture();
@@ -2116,6 +2138,7 @@ impl DashboardState {
             ModalPopup::MessageConfirmation(_)
             | ModalPopup::QuitConfirmation
             | ModalPopup::GuildLeaveConfirmation(_)
+            | ModalPopup::GroupLeaveConfirmation(_)
             | ModalPopup::ThreadDeleteConfirmation(_) => ActivePopupPolicy::confirmation(kind),
             ModalPopup::AttachmentViewer(_) => {
                 ActivePopupPolicy::routed(kind, ActivePopupInteraction::NoNavigation)

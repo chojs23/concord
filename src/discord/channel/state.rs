@@ -80,6 +80,10 @@ impl ChannelState {
         matches!(self.kind.as_str(), "dm" | "Private")
     }
 
+    pub fn is_group_dm(&self) -> bool {
+        matches!(self.kind.as_str(), "group-dm" | "Group")
+    }
+
     /// Sidebar tag for a DM Discord flagged as spam or a message request. Spam
     /// wins. `None` otherwise.
     pub fn dm_request_tag(&self) -> Option<&'static str> {
@@ -102,7 +106,7 @@ impl ChannelState {
     /// A 1:1 DM or a group DM. Unlike [`Self::is_dm`], this also matches group
     /// DMs, which together are the channels that support a private call.
     pub fn is_dm_or_group_dm(&self) -> bool {
-        matches!(self.kind.as_str(), "dm" | "Private" | "group-dm" | "Group")
+        self.is_dm() || self.is_group_dm()
     }
 
     /// Whether a voice call can be placed here: a guild voice channel, or a DM /

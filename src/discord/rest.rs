@@ -26,6 +26,7 @@ use tokio::sync::{Mutex as AsyncMutex, Notify, OwnedMutexGuard};
 
 mod application;
 mod application_commands;
+mod channels;
 mod connection;
 mod forum;
 mod guilds;

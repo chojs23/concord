@@ -589,6 +589,12 @@ impl CommandDispatcher {
             AppCommand::LeaveGuild { guild_id, label } => {
                 message_commands::leave_guild(self.client.clone(), guild_id, label).await;
             }
+            AppCommand::CloseDm { channel_id } => {
+                message_commands::close_dm(self.client.clone(), channel_id).await;
+            }
+            AppCommand::LeaveGroup { channel_id } => {
+                message_commands::leave_group_dm(self.client.clone(), channel_id).await;
+            }
             AppCommand::AddReaction {
                 channel_id,
                 message_id,

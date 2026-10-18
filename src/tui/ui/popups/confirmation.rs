@@ -78,6 +78,20 @@ pub(in crate::tui::ui) fn render_guild_leave_confirmation(
     render_modal_paragraph(frame, popup, "Leave server?", lines);
 }
 
+pub(in crate::tui::ui) fn render_group_leave_confirmation(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DashboardState,
+) {
+    let Some(name) = state.group_leave_confirmation_name() else {
+        return;
+    };
+
+    let lines = group_leave_confirmation_lines(&name, 56, state.active_confirmation_button());
+    let popup = message_confirmation_popup_area(area, lines.len());
+    render_modal_paragraph(frame, popup, "Leave group?", lines);
+}
+
 pub(in crate::tui::ui) fn render_thread_delete_confirmation(
     frame: &mut Frame,
     area: Rect,
@@ -181,6 +195,15 @@ pub(in crate::tui::ui) fn guild_leave_confirmation_popup_area_for_state(
     Some(guild_leave_confirmation_popup_area(area, lines.len()))
 }
 
+pub(in crate::tui::ui) fn group_leave_confirmation_popup_area_for_state(
+    area: Rect,
+    state: &DashboardState,
+) -> Option<Rect> {
+    let name = state.group_leave_confirmation_name()?;
+    let lines = group_leave_confirmation_lines(&name, 56, state.active_confirmation_button());
+    Some(message_confirmation_popup_area(area, lines.len()))
+}
+
 pub(in crate::tui::ui) fn thread_delete_confirmation_popup_area(
     area: Rect,
     line_count: usize,
@@ -224,6 +247,30 @@ fn guild_leave_confirmation_lines(
         Line::from(Span::raw(String::new())),
     ];
     lines.extend(confirmation_button_lines(active));
+    lines
+}
+
+fn group_leave_confirmation_lines(
+    name: &str,
+    width: usize,
+    active: ConfirmationButton,
+) -> Vec<Line<'static>> {
+    let label = "Group: ";
+    let name = truncate_display_width(name, width.saturating_sub(label.len()));
+    let mut lines = vec![
+        Line::from(Span::raw("Leave this group DM?")),
+        Line::from(Span::styled(
+            format!("{label}{name}"),
+            theme::current().style(theme::HighlightGroup::Error),
+        )),
+        Line::from(Span::raw("Another member must add you back to rejoin.")),
+        Line::from(Span::raw(String::new())),
+    ];
+    lines.extend(confirmation_button_lines_with_labels(
+        active,
+        "leave group",
+        "cancel",
+    ));
     lines
 }
 

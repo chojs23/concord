@@ -181,6 +181,13 @@ fn dispatch_popup_key(
             DashboardState::confirm_guild_leave,
             DashboardState::close_active_popup,
         ),
+        ActiveModalPopupKind::GroupLeaveConfirmation => route_confirmation_key(
+            state,
+            key,
+            stage,
+            DashboardState::confirm_group_leave,
+            DashboardState::close_active_popup,
+        ),
         ActiveModalPopupKind::ThreadDeleteConfirmation => route_confirmation_key(
             state,
             key,

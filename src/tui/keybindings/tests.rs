@@ -305,6 +305,20 @@ fn scoped_action_keymaps_override_pane_action_shortcuts_and_labels() {
         channel_actions: [
             ("ToggleMute".to_owned(), KeymapBinding::one("x")),
             (
+                "LeaveGroup".to_owned(),
+                KeymapBinding {
+                    keys: vec!["g".to_owned()],
+                    description: Some("leave conversation".to_owned()),
+                },
+            ),
+            (
+                "CloseDm".to_owned(),
+                KeymapBinding {
+                    keys: vec!["z".to_owned()],
+                    description: Some("hide conversation".to_owned()),
+                },
+            ),
+            (
                 "VoiceParticipantAudio".to_owned(),
                 KeymapBinding {
                     keys: vec!["v".to_owned()],
@@ -356,6 +370,32 @@ fn scoped_action_keymaps_override_pane_action_shortcuts_and_labels() {
     assert_eq!(
         key_bindings.channel_action_shortcuts(&channel_actions, 0),
         char_chords(&['x'])
+    );
+    let close_dm_actions = [ChannelActionItem::new(
+        ChannelActionKind::CloseDm,
+        "Close DM",
+        ActionAvailability::Enabled,
+    )];
+    assert_eq!(
+        key_bindings.channel_action_shortcuts(&close_dm_actions, 0),
+        char_chords(&['z'])
+    );
+    assert_eq!(
+        key_bindings.channel_action_label(&close_dm_actions[0]),
+        "hide conversation"
+    );
+    let leave_group_actions = [ChannelActionItem::new(
+        ChannelActionKind::LeaveGroup,
+        "Leave group",
+        ActionAvailability::Enabled,
+    )];
+    assert_eq!(
+        key_bindings.channel_action_shortcuts(&leave_group_actions, 0),
+        char_chords(&['g'])
+    );
+    assert_eq!(
+        key_bindings.channel_action_label(&leave_group_actions[0]),
+        "leave conversation"
     );
     let participant_actions = [ChannelActionItem::new(
         ChannelActionKind::ParticipantAudioSettings,

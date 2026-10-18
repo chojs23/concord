@@ -44,6 +44,53 @@ fn direct_messages_are_sorted_by_latest_message_id() {
 }
 
 #[test]
+fn removing_a_private_channel_repairs_the_active_view_and_list_selection() {
+    for (kind, active_channel_id) in [
+        ("dm", Id::new(20)),
+        ("dm", Id::new(10)),
+        ("group-dm", Id::new(20)),
+        ("group-dm", Id::new(10)),
+    ] {
+        let mut state = state_with_direct_messages();
+        state.push_event(AppEvent::ChannelUpsert(ChannelInfo {
+            kind: kind.to_owned(),
+            last_message_id: Some(Id::new(200)),
+            ..dm_channel_info(Id::new(20), "new")
+        }));
+        state.confirm_selected_guild();
+        state.activate_channel(active_channel_id);
+        state.focus_pane(FocusPane::Channels);
+
+        state.push_event(AppEvent::ChannelDelete {
+            guild_id: None,
+            channel_id: Id::new(20),
+        });
+
+        assert_eq!(channel_entry_names(&state), vec!["old", "empty"]);
+        assert_eq!(
+            state.selected_channel_id(),
+            (active_channel_id == Id::new(10)).then_some(active_channel_id)
+        );
+        assert_eq!(
+            state
+                .selected_channel_pane_entry()
+                .and_then(|entry| entry.channel_id()),
+            Some(Id::new(10))
+        );
+
+        for channel_id in [Id::new(10), Id::new(30)] {
+            state.push_event(AppEvent::ChannelDelete {
+                guild_id: None,
+                channel_id,
+            });
+        }
+        assert!(state.channels().is_empty());
+        assert_eq!(state.selected_channel_id(), None);
+        assert!(state.selected_channel_pane_entry().is_none());
+    }
+}
+
+#[test]
 fn direct_message_selection_waits_for_channel_confirmation() {
     let mut state = state_with_direct_messages();
 

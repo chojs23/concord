@@ -481,6 +481,12 @@ pub enum AppCommand {
         guild_id: Id<GuildMarker>,
         label: String,
     },
+    CloseDm {
+        channel_id: Id<ChannelMarker>,
+    },
+    LeaveGroup {
+        channel_id: Id<ChannelMarker>,
+    },
     SetSelectedMessageChannel {
         channel_id: Option<Id<ChannelMarker>>,
     },

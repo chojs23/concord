@@ -426,6 +426,8 @@ pub enum ChannelActionKind {
     ShowPinnedMessages,
     ShowThreads,
     MarkAsRead,
+    CloseDm,
+    LeaveGroup,
     ToggleMute,
     WatchStream,
     ParticipantAudioSettings,

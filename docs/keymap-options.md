@@ -319,6 +319,8 @@ VoiceParticipantAudio = { keys = ["a"], description = "participant audio" }
 ShowPinnedMessages = { keys = ["p"], description = "show pinned messages" }
 ShowThreads = { keys = ["t"], description = "show threads" }
 MarkAsRead = { keys = ["m"], description = "mark as read" }
+CloseDm = { keys = ["c"], description = "close DM" }
+LeaveGroup = { keys = ["L"], description = "leave group" }
 ToggleMute = { keys = ["u"], description = "mute channel" }
 ```
 
@@ -332,6 +334,8 @@ ToggleMute = { keys = ["u"], description = "mute channel" }
 | `ShowPinnedMessages`    | `p`     | Open the selected channel's pinned messages.                            |
 | `ShowThreads`           | `t`     | List threads for the selected channel.                                  |
 | `MarkAsRead`            | `m`     | Mark the selected channel read.                                         |
+| `CloseDm`               | `c`     | Close a one-to-one DM.                                                  |
+| `LeaveGroup`            | `L`     | Open confirmation to leave a group DM.                                  |
 | `ToggleMute`            | `u`     | Mute or unmute the selected channel or category.                        |
 
 Member pane actions:

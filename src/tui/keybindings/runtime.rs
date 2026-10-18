@@ -913,6 +913,8 @@ impl KeyBindings {
             ChannelActionKind::ShowPinnedMessages => vec![char_chord('p')],
             ChannelActionKind::ShowThreads => vec![char_chord('t')],
             ChannelActionKind::MarkAsRead => vec![char_chord('m')],
+            ChannelActionKind::CloseDm => vec![char_chord('c')],
+            ChannelActionKind::LeaveGroup => vec![char_chord('L')],
             ChannelActionKind::ToggleMute => vec![char_chord('u')],
             ChannelActionKind::WatchStream => vec![char_chord('w')],
             ChannelActionKind::ParticipantAudioSettings => vec![char_chord('a')],
