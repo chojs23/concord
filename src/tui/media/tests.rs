@@ -932,7 +932,8 @@ fn image_preview_targets_account_for_first_message_line_offset() {
 
 #[test]
 fn avatar_targets_include_visible_author_avatar() {
-    let state = state_with_avatar_messages(1);
+    let mut state = state_with_avatar_messages(1);
+    state.focus_pane(FocusPane::Channels);
 
     let targets = visible_avatar_targets(&state, layout(2));
 
@@ -941,6 +942,12 @@ fn avatar_targets_include_visible_author_avatar() {
     assert_eq!(targets[0].visible_height, 1);
     assert_eq!(targets[0].top_clip_rows, 0);
     assert_eq!(targets[0].url, "https://cdn.discordapp.com/avatar-1.png");
+    assert!(!targets[0].selected);
+
+    state.focus_pane(FocusPane::Messages);
+    let targets = visible_avatar_targets(&state, layout(2));
+    assert_eq!(targets.len(), 1);
+    assert!(targets[0].selected);
 }
 
 #[test]
@@ -1017,6 +1024,7 @@ fn avatar_image_cache_evicts_least_recently_used_when_over_capacity() {
     let visible_cache_url =
         avatar_preview_url(&visible_url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
     let targets = vec![AvatarTarget {
+        selected: false,
         row: 0,
         visible_height: 1,
         top_clip_rows: 0,
@@ -1037,6 +1045,7 @@ fn avatar_image_cache_evicts_least_recently_used_when_over_capacity() {
 #[test]
 fn avatar_protocol_key_tracks_render_clipping() {
     let full = AvatarTarget {
+        selected: false,
         row: 0,
         visible_height: AVATAR_PREVIEW_HEIGHT,
         top_clip_rows: 0,
@@ -1153,6 +1162,7 @@ fn avatar_cache_pruning_preserves_active_popup_avatar() {
 
     let targets = (0..MAX_AVATAR_IMAGE_CACHE_ENTRIES)
         .map(|id| AvatarTarget {
+            selected: false,
             row: 0,
             visible_height: 1,
             top_clip_rows: 0,
@@ -1928,6 +1938,7 @@ fn ready_pixels_replace_transient_surface_states_and_ignore_late_failures() {
     let preview = image_preview_target(1);
     let avatar = AvatarTarget {
         url: preview.url.clone(),
+        selected: false,
         row: 0,
         visible_height: 2,
         top_clip_rows: 0,
@@ -2040,6 +2051,7 @@ fn ready_pixels_replace_transient_surface_states_and_ignore_late_failures() {
 #[test]
 fn visible_surfaces_reuse_exact_url_pixels_without_sharing_playback() {
     let avatar = AvatarTarget {
+        selected: false,
         row: 0,
         visible_height: AVATAR_PREVIEW_HEIGHT,
         top_clip_rows: 0,
@@ -4017,43 +4029,67 @@ fn image_preview_targets_track_the_visible_message_window() {
 }
 
 #[test]
-fn avatar_animation_runs_only_when_previews_always_animate() {
-    let target = AvatarTarget {
+fn animate_previews_policy_decides_which_avatars_keep_moving() {
+    let selected = AvatarTarget {
         url: "https://cdn.discordapp.com/avatars/1/a_hash.gif".to_owned(),
+        selected: true,
         row: 0,
         visible_height: 2,
         top_clip_rows: 0,
     };
-    let url = avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
+    let unselected = AvatarTarget {
+        url: "https://cdn.discordapp.com/avatars/2/a_hash.gif".to_owned(),
+        selected: false,
+        ..selected.clone()
+    };
+    let mut targets = [selected, unselected];
     let mut cache = AvatarImageCache::new(Some(Picker::halfblocks()));
-    cache.cache.entries.insert(
-        url.clone(),
-        AvatarImageEntry::Decoding {
-            generation: 1,
-            last_used: 1,
-        },
-    );
-    cache.store_decoded(
-        url,
-        1,
-        decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
-    );
-    cache.prepare(std::slice::from_ref(&target), None, None, false);
+    for target in &targets {
+        let url = avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
+        cache.cache.entries.insert(
+            url.clone(),
+            AvatarImageEntry::Decoding {
+                generation: 1,
+                last_used: 1,
+            },
+        );
+        cache.store_decoded(
+            url,
+            1,
+            decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
+        );
+    }
+    cache.prepare(&targets, None, None, false);
     for job in cache.take_protocol_jobs() {
         cache.store_protocol(build_media_protocol(job));
     }
 
     let now = Instant::now();
-    for animate in [AnimatePreviews::Never, AnimatePreviews::Selected] {
-        cache.sync_animation_visibility(std::slice::from_ref(&target), now, animate);
-        assert_eq!(cache.next_animation_deadline(), None, "{animate:?}");
+    for (animate, selected_index, expected) in [
+        (AnimatePreviews::Never, 0, [false, false]),
+        (AnimatePreviews::Selected, 0, [true, false]),
+        (AnimatePreviews::Selected, 1, [false, true]),
+        (AnimatePreviews::Always, 1, [true, true]),
+        (AnimatePreviews::Selected, 1, [false, true]),
+        (AnimatePreviews::Never, 1, [false, false]),
+    ] {
+        for (index, target) in targets.iter_mut().enumerate() {
+            target.selected = index == selected_index;
+        }
+        cache.sync_animation_visibility(&targets, now, animate);
+
+        for (target, should_animate) in targets.iter().zip(expected) {
+            let url = avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT);
+            let animating = matches!(
+                cache.cache.entries.get(&url),
+                Some(AvatarImageEntry::Ready { image, .. })
+                    if image.next_frame_deadline().is_some()
+            );
+            assert_eq!(
+                animating, should_animate,
+                "{animate:?}, selected index {selected_index}, avatar {}",
+                target.url
+            );
+        }
     }
-    cache.sync_animation_visibility(std::slice::from_ref(&target), now, AnimatePreviews::Always);
-    assert!(cache.next_animation_deadline().is_some());
-    cache.sync_animation_visibility(
-        std::slice::from_ref(&target),
-        now,
-        AnimatePreviews::Selected,
-    );
-    assert_eq!(cache.next_animation_deadline(), None);
 }

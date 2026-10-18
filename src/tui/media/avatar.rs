@@ -470,15 +470,14 @@ impl AvatarImageCache {
         now: Instant,
         animate: AnimatePreviews,
     ) {
-        // Avatars carry no selection state, so outside `Always` only the
-        // profile popup avatar keeps moving and list avatars hold their frame.
-        let list_targets: &[AvatarTarget] = if animate == AnimatePreviews::Always {
-            targets
-        } else {
-            &[]
-        };
-        let visible = list_targets
+        // The policy applies to list avatars. An open profile popup keeps animating.
+        let visible = targets
             .iter()
+            .filter(|target| match animate {
+                AnimatePreviews::Always => true,
+                AnimatePreviews::Selected => target.selected,
+                AnimatePreviews::Never => false,
+            })
             .map(|target| {
                 avatar_preview_url(&target.url, AVATAR_PREVIEW_WIDTH, AVATAR_PREVIEW_HEIGHT)
             })

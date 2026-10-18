@@ -77,6 +77,7 @@ pub(in crate::tui) struct ImagePreviewTarget {
 
 #[derive(Clone)]
 pub(in crate::tui) struct AvatarTarget {
+    pub(super) selected: bool,
     pub(super) row: isize,
     pub(super) visible_height: u16,
     pub(super) top_clip_rows: u16,
@@ -788,6 +789,7 @@ pub(in crate::tui) fn visible_avatar_targets_from_plan(
             && visible_top < visible_bottom
         {
             targets.push(AvatarTarget {
+                selected: row.selected,
                 row: visible_top,
                 visible_height: u16::try_from(visible_bottom - visible_top).unwrap_or(u16::MAX),
                 top_clip_rows: u16::try_from(visible_top - row.body_top).unwrap_or(u16::MAX),

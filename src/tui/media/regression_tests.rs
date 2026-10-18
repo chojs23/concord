@@ -21,6 +21,7 @@ fn encoded_png() -> Vec<u8> {
 
 fn avatar_target(url: impl Into<String>, row: isize, visible_height: u16) -> AvatarTarget {
     AvatarTarget {
+        selected: false,
         row,
         visible_height,
         top_clip_rows: 0,
