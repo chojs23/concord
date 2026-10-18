@@ -507,40 +507,87 @@ fn mouse_wheel_at_message_top_requests_older_history() {
 
 #[test]
 fn left_click_on_a_reaction_chip_toggles_the_users_own_reaction() {
-    let mut state = state_with_reaction_message();
-    state.focus_pane(FocusPane::Messages);
-    state.set_message_view_height(10);
-    state.clamp_message_viewport_for_image_previews(80, 16, 3);
+    use ratatui::{Terminal, backend::TestBackend};
 
-    let (column, row) = (0..dashboard_area().height)
-        .flat_map(|row| (0..dashboard_area().width).map(move |column| (column, row)))
-        .find(|(column, row)| {
-            matches!(
-                crate::tui::ui::InteractionMap::new(dashboard_area(), &state)
-                    .target_at(*column, *row),
-                Some(crate::tui::ui::InteractionTarget::ReactionChip { .. })
-            )
-        })
-        .expect("the 👍 reaction chip is interactive");
+    let single_reaction = &["👍"][..];
+    let wrapped_reactions = &["🔥", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀", "💯", "👍"][..];
+    for (count, message_id, selected, focus, emojis) in [
+        (1, 1, 0, FocusPane::Messages, single_reaction),
+        (3, 2, 2, FocusPane::Messages, single_reaction),
+        (3, 2, 2, FocusPane::Messages, wrapped_reactions),
+        (3, 2, 0, FocusPane::Channels, single_reaction),
+        (3, 2, 1, FocusPane::Channels, single_reaction),
+        (4, 3, 1, FocusPane::Channels, single_reaction),
+        (3, 2, 0, FocusPane::Channels, wrapped_reactions),
+        (3, 2, 1, FocusPane::Channels, wrapped_reactions),
+    ] {
+        for me in [false, true] {
+            let reactions = emojis
+                .iter()
+                .map(|emoji| ReactionInfo {
+                    count: 2,
+                    me,
+                    ..ReactionInfo::test(ReactionEmoji::Unicode((*emoji).to_owned()))
+                })
+                .collect::<Vec<_>>();
+            let mut state = state_with_reaction_messages(count, message_id, &reactions);
+            let area = dashboard_area();
+            state.focus_pane(FocusPane::Messages);
+            crate::tui::ui::sync_view_heights(area, &mut state);
+            let layout = crate::tui::ui::image_preview_layout(area, &state);
+            state.clamp_message_viewport_for_image_previews(
+                layout.content_width,
+                layout.preview_width,
+                layout.max_preview_height,
+            );
+            state.jump_top();
+            for _ in 0..selected {
+                state.move_down();
+            }
+            state.focus_pane(focus);
 
-    let mut clicks = MouseInputState::default();
-    let outcome = handle_mouse_event(
-        &mut state,
-        mouse(MouseEventKind::Down(MouseButton::Left), column, row),
-        dashboard_area(),
-        &mut clicks,
-    );
+            let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
+                .expect("test terminal builds");
+            terminal
+                .draw(|frame| crate::tui::ui::render(frame, &state, vec![], vec![], vec![], None))
+                .expect("test frame renders");
+            let buffer = terminal.backend().buffer();
+            // Use the rendered chip, not the hit map whose geometry this verifies.
+            let (column, row) = (0..area.height)
+                .flat_map(|row| (0..area.width).map(move |column| (column, row)))
+                .find(|&(column, row)| buffer[(column, row)].symbol() == "👍")
+                .expect("the 👍 reaction chip is visible");
 
-    assert!(outcome.handled);
-    assert_eq!(state.selected_message(), 0);
-    assert_eq!(
-        outcome.command,
-        Some(AppCommand::RemoveReaction {
-            channel_id: Id::new(2),
-            message_id: Id::new(1),
-            emoji: ReactionEmoji::Unicode("👍".to_owned()),
-        })
-    );
+            let mut clicks = MouseInputState::default();
+            let outcome = handle_mouse_event(
+                &mut state,
+                mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+                area,
+                &mut clicks,
+            );
+            let emoji = ReactionEmoji::Unicode("👍".to_owned());
+            let expected = if me {
+                AppCommand::RemoveReaction {
+                    channel_id: Id::new(2),
+                    message_id: Id::new(message_id),
+                    emoji,
+                }
+            } else {
+                AppCommand::AddReaction {
+                    channel_id: Id::new(2),
+                    message_id: Id::new(message_id),
+                    emoji,
+                }
+            };
+            assert!(outcome.handled);
+            assert_eq!(state.selected_message(), (message_id - 1) as usize);
+            assert_eq!(
+                outcome.command,
+                Some(expected),
+                "count={count}, selected={selected}, focus={focus:?}, me={me}, emojis={emojis:?}",
+            );
+        }
+    }
 }
 
 #[test]

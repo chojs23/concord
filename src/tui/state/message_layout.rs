@@ -398,19 +398,24 @@ impl DashboardState {
         let preview_width = self.messages.message_preview_width;
         let max_preview_height = self.messages.message_max_preview_height;
         let show_custom_emoji = self.show_custom_emoji();
+        let selected = self.focused_message_selection();
 
         let mut rendered_row = 0usize;
         for local_index in 0..self.visible_messages().len() {
             let index = self.messages.message_scroll.saturating_add(local_index);
             let message = self.messages().get(index).copied()?;
-            let metrics = self.message_row_metrics_at_with_selected_bottom(
+            let mut metrics = self.message_row_metrics_at_with_selected_bottom(
                 index,
                 message,
                 content_width,
                 preview_width,
                 max_preview_height,
-                index == self.messages.selected_message,
+                selected == Some(local_index),
             );
+            // An unfocused grouped message does not render its selection's top border.
+            if selected != Some(local_index) {
+                metrics.selected_extra_top_rows = 0;
+            }
             let rendered_height = metrics.total_rows().max(1);
             let line_offset = usize::from(local_index == 0) * self.messages.message_line_scroll;
             let visible_height = rendered_height.saturating_sub(line_offset);
@@ -470,22 +475,27 @@ impl DashboardState {
         })
     }
 
-    /// Combines `reaction_chip_at_viewport_position` and
-    /// `toggle_own_reaction_command` for a click at `row`/`col`.
+    /// Builds the toggle command and selects the clicked message by identity,
+    /// since changing focus or selection can move grouped-message borders.
     pub(in crate::tui) fn toggle_reaction_chip_at(
-        &self,
+        &mut self,
         row: usize,
         col: usize,
         avatar_offset: u16,
     ) -> Option<AppCommand> {
         let (message_id, emoji) =
             self.reaction_chip_at_viewport_position(row, col, avatar_offset)?;
-        let messages = self.messages();
-        let message = messages
-            .iter()
-            .find(|message| message.id == message_id)
-            .copied()?;
-        self.toggle_own_reaction_command(message, emoji)
+        let (index, message) = self
+            .messages()
+            .into_iter()
+            .enumerate()
+            .find(|(_, message)| message.id == message_id)?;
+        let command = self.toggle_own_reaction_command(message, emoji);
+        self.focus_pane(FocusPane::Messages);
+        self.messages.selected_message = index;
+        self.messages.message_auto_follow = false;
+        self.messages.message_keep_selection_visible = false;
+        command
     }
 }
 

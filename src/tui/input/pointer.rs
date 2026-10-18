@@ -234,8 +234,6 @@ fn handle_click(
             MouseEventResult::handled(command)
         }
         InteractionTarget::ReactionChip { row, col } => {
-            state.focus_pane(FocusPane::Messages);
-            state.select_visible_pane_row(FocusPane::Messages, row);
             let avatar_offset = ui::avatar_gutter_width(state.show_avatars());
             let command = state.toggle_reaction_chip_at(row, col, avatar_offset);
             MouseEventResult::handled(command)

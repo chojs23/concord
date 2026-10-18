@@ -350,7 +350,11 @@ fn state_with_messages(count: u64) -> DashboardState {
     state_with_messages_from_state(DashboardState::new(), count)
 }
 
-fn state_with_reaction_message() -> DashboardState {
+fn state_with_reaction_messages(
+    count: u64,
+    reaction_message_id: u64,
+    reactions: &[ReactionInfo],
+) -> DashboardState {
     let mut state = DashboardState::new();
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
@@ -370,16 +374,18 @@ fn state_with_reaction_message() -> DashboardState {
     select_test_channel(&mut state, channel_id);
     state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
         channel_id,
-        messages: vec![MessageInfo {
-            guild_id: Some(guild_id),
-            content: Some("message".to_owned()),
-            reactions: vec![ReactionInfo {
-                count: 2,
-                me: true,
-                ..ReactionInfo::test(ReactionEmoji::Unicode("👍".to_owned()))
-            }],
-            ..MessageInfo::test(channel_id, Id::new(1))
-        }],
+        messages: (1..=count)
+            .map(|id| MessageInfo {
+                guild_id: Some(guild_id),
+                content: Some(format!("message {id}")),
+                reactions: if id == reaction_message_id {
+                    reactions.to_vec()
+                } else {
+                    Vec::new()
+                },
+                ..MessageInfo::test(channel_id, Id::new(id))
+            })
+            .collect(),
         ..MessageHistoryLoadedFixture::new()
     }));
     state
