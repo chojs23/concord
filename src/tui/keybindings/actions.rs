@@ -398,6 +398,7 @@ pub(in crate::tui) enum EmojiReactionPickerAction {
     InsertFilterChar(char),
     ActivateSelected,
     ActivateShortcut(char),
+    TogglePinned,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -485,6 +486,7 @@ pub(in crate::tui) enum ComposerCompletionAction {
     Select(SelectionAction),
     Confirm,
     Cancel,
+    ToggleEmojiPin,
     FallThrough,
 }
 

@@ -1628,6 +1628,7 @@ fn emoji_reaction_picker_uses_reaction_colors_and_selected_background() {
             own_reactions: &own_reactions,
             show_custom_emoji: true,
             filter: None,
+            pinned_emojis: &[],
             max_width: usize::MAX,
         },
     );
@@ -1678,12 +1679,17 @@ fn emoji_reaction_picker_uses_reaction_colors_and_selected_background() {
                 own_reactions: &[],
                 show_custom_emoji,
                 filter: None,
+                pinned_emojis: &[],
                 max_width: usize::MAX,
             },
         );
         assert_eq!(
             line_texts_from_ratatui(&custom_lines),
-            vec!["  [1] 👍 Thumbs up", "▸ [2] :party: Party"]
+            vec![
+                "  [1]   👍 Thumbs up",
+                "▸ [2]   :party: Party",
+                "/ search   Ctrl+f pin",
+            ]
         );
     }
 }
@@ -1984,11 +1990,15 @@ fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
             own_reactions: &[],
             show_custom_emoji: true,
             filter: None,
+            pinned_emojis: &[],
             max_width: usize::MAX,
         },
     );
 
-    assert_eq!(line_texts_from_ratatui(&lines), vec!["▸ [1]    Party"]);
+    assert_eq!(
+        line_texts_from_ratatui(&lines),
+        vec!["▸ [1]      Party", "/ search   Ctrl+f pin"]
+    );
 }
 
 #[test]
@@ -2014,6 +2024,7 @@ fn emoji_reaction_picker_truncates_long_rows_to_inner_width() {
             own_reactions: &[],
             show_custom_emoji: true,
             filter: None,
+            pinned_emojis: &[],
             max_width: 24,
         },
     );
@@ -2027,7 +2038,7 @@ fn emoji_reaction_picker_truncates_long_rows_to_inner_width() {
     }
     assert_eq!(
         line_texts_from_ratatui(&lines)[0].trim_end(),
-        "▸ [1] :this_is_a_very..."
+        "▸ [1]   :this_is_a_ve..."
     );
 }
 
@@ -2057,6 +2068,7 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
             own_reactions: &[],
             show_custom_emoji: true,
             filter: None,
+            pinned_emojis: &[],
             max_width: usize::MAX,
         },
     );
@@ -2064,11 +2076,12 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "      :emoji_10: Emoji 10",
-            "      :emoji_11: Emoji 11",
-            "▸     :emoji_12: Emoji 12",
-            "      :emoji_13: Emoji 13",
-            "      :emoji_14: Emoji 14",
+            "        :emoji_10: Emoji 10",
+            "        :emoji_11: Emoji 11",
+            "▸       :emoji_12: Emoji 12",
+            "        :emoji_13: Emoji 13",
+            "        :emoji_14: Emoji 14",
+            "/ search   Ctrl+f pin",
         ]
     );
 }
@@ -2096,13 +2109,14 @@ fn emoji_reaction_picker_shows_active_filter() {
             own_reactions: &[],
             show_custom_emoji: true,
             filter: Some("thi"),
+            pinned_emojis: &[],
             max_width: usize::MAX,
         },
     );
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["▸ [1] :this: This goose", "Filter /thi",]
+        vec!["▸ [1]   :this: This goose", "Filter /thi",]
     );
 }
 

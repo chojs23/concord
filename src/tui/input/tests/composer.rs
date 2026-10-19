@@ -894,6 +894,44 @@ fn enter_confirms_emoji_picker_before_submit() {
 }
 
 #[test]
+fn ctrl_f_pins_the_selected_composer_emoji_candidate() {
+    let mut state = state_with_channel_tree();
+    state.focus_pane(FocusPane::Channels);
+    handle_key(&mut state, key(KeyCode::Down));
+    handle_key(&mut state, key(KeyCode::Enter));
+    handle_key(&mut state, char_key('i'));
+    for ch in ":heart".chars() {
+        handle_key(&mut state, char_key(ch));
+    }
+
+    assert!(
+        !state
+            .composer_emoji_candidates()
+            .iter()
+            .any(|entry| entry.shortcode == "heart" && entry.pinned)
+    );
+
+    let command = handle_key(&mut state, ctrl_key('f'));
+
+    assert_eq!(command, None);
+    assert_eq!(
+        state.pinned_emojis(),
+        &[ReactionEmoji::Unicode("❤️".to_owned())]
+    );
+    assert!(
+        state
+            .composer_emoji_candidates()
+            .iter()
+            .any(|entry| entry.shortcode == "heart" && entry.pinned),
+        "the candidate should show as pinned without closing the picker"
+    );
+    assert!(state.composer_has_active_picker());
+
+    handle_key(&mut state, ctrl_key('f'));
+    assert!(state.pinned_emojis().is_empty());
+}
+
+#[test]
 fn enter_submits_no_match_emoji_query_without_hidden_picker() {
     let mut state = state_with_channel_tree();
     state.focus_pane(FocusPane::Channels);
@@ -1205,6 +1243,39 @@ fn emoji_picker_selection_removes_existing_own_reaction() {
     assert!(
         !state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker)
     );
+}
+
+#[test]
+fn ctrl_f_toggles_pinned_emoji_in_reaction_picker_without_closing_it() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+    open_emoji_picker(&mut state);
+
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Unicode("👍".to_owned()))
+    );
+    assert!(state.pinned_emojis().is_empty());
+
+    let command = handle_key(&mut state, ctrl_key('f'));
+
+    assert_eq!(command, None);
+    assert_eq!(
+        state.pinned_emojis(),
+        &[ReactionEmoji::Unicode("👍".to_owned())]
+    );
+    assert!(
+        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker),
+        "toggling a pin should not close the picker"
+    );
+    assert_eq!(
+        state.selected_emoji_reaction().map(|item| item.emoji),
+        Some(ReactionEmoji::Unicode("👍".to_owned())),
+        "the pinned emoji should remain selected after the list re-sorts"
+    );
+
+    handle_key(&mut state, ctrl_key('f'));
+    assert!(state.pinned_emojis().is_empty());
 }
 
 #[test]
