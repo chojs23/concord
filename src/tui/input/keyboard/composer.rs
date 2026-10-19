@@ -115,6 +115,14 @@ fn handle_composer_completion_picker_key(
             cancel(state);
             Some(None)
         }
+        ComposerCompletionAction::ToggleEmojiPin => {
+            if state.active_composer_picker_is_emoji() {
+                state.toggle_selected_composer_emoji_pin();
+                Some(None)
+            } else {
+                None
+            }
+        }
         ComposerCompletionAction::FallThrough => None,
     }
 }

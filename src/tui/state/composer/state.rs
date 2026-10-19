@@ -1477,6 +1477,20 @@ impl DashboardState {
         )
     }
 
+    pub(in crate::tui) fn active_composer_picker_is_emoji(&self) -> bool {
+        self.composer.emoji_completion.is_active()
+    }
+
+    /// Toggles the pinned state of the highlighted `:shortcode` candidate and
+    /// rebuilds the candidate list so pinned-first ordering shows immediately.
+    pub(in crate::tui) fn toggle_selected_composer_emoji_pin(&mut self) {
+        let Some(entry) = self.composer.emoji_completion.selected_entry() else {
+            return;
+        };
+        let identity = entry.identity.clone();
+        self.toggle_pinned_emoji(&identity);
+    }
+
     pub fn move_active_composer_picker_selection(&mut self, delta: isize) {
         if self.composer.emoji_completion.is_active() {
             self.composer.emoji_completion.move_selection(delta);
@@ -2274,6 +2288,7 @@ impl DashboardState {
             self.current_user_has_nitro(),
             can_use_external_emojis,
             self.options.composer_options.emojis_as_links,
+            self.pinned_emojis(),
         )
     }
 }

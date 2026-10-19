@@ -1,6 +1,8 @@
 use super::*;
+use crate::discord::ids::Id;
 use crate::discord::{
     GuildParticipationBlock, GuildParticipationDataGap, GuildParticipationRestriction,
+    ReactionEmoji,
 };
 
 #[test]
@@ -852,6 +854,12 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
                 available: false,
                 available_as_link: false,
                 custom_image_url: Some("https://cdn.discordapp.com/emojis/51.png".to_owned()),
+                identity: ReactionEmoji::Custom {
+                    id: Id::new(51),
+                    name: Some("gone".to_owned()),
+                    animated: false,
+                },
+                pinned: false,
             },
             EmojiPickerEntry {
                 emoji: "❤️".to_owned(),
@@ -861,6 +869,8 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
                 available: true,
                 available_as_link: false,
                 custom_image_url: None,
+                identity: ReactionEmoji::Unicode("❤️".to_owned()),
+                pinned: false,
             },
             EmojiPickerEntry {
                 emoji: "◆".to_owned(),
@@ -870,6 +880,12 @@ fn emoji_picker_lines_cross_out_unavailable_custom_emoji() {
                 available: true,
                 available_as_link: true,
                 custom_image_url: Some("https://cdn.discordapp.com/emojis/50.png".to_owned()),
+                identity: ReactionEmoji::Custom {
+                    id: Id::new(50),
+                    name: Some("party_time".to_owned()),
+                    animated: false,
+                },
+                pinned: false,
             },
         ],
         0,

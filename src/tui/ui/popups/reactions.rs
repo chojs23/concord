@@ -23,14 +23,13 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
     let selected = state
         .selected_emoji_reaction_index_for_len(reactions.len())
         .unwrap_or(0);
-    let popup = emoji_reaction_picker_popup_area(area, reactions.len(), filter.is_some());
+    let popup = emoji_reaction_picker_popup_area(area, reactions.len());
     let ready_urls = emoji_images
         .iter()
         .map(|image| image.url.clone())
         .collect::<Vec<_>>();
     let content = render_modal_frame(frame, popup, "Choose reaction");
-    let visible_items =
-        emoji_reaction_picker_visible_items_for_area(area, reactions.len(), filter.is_some());
+    let visible_items = emoji_reaction_picker_visible_items_for_area(area, reactions.len());
     let scroll = state
         .popup_list_scroll(SelectablePopupTarget::EmojiReactions)
         .expect("emoji reactions have selection state");
@@ -46,6 +45,7 @@ pub(in crate::tui::ui) fn render_emoji_reaction_picker(
                 own_reactions,
                 show_custom_emoji: state.show_custom_emoji(),
                 filter,
+                pinned_emojis: state.pinned_emojis(),
                 max_width: usize::from(content.width),
             },
         ))
@@ -212,18 +212,20 @@ fn render_reaction_user_list(
     );
 }
 
+/// Lines reserved below the list for the always-present filter/hint row (see
+/// [`emoji_reaction_picker_lines_with_custom_emoji_images`]).
+const EMOJI_REACTION_PICKER_HINT_LINES: u16 = 1;
+
 pub(in crate::tui::ui) fn emoji_reaction_picker_popup_area(
     area: Rect,
     reaction_count: usize,
-    has_filter: bool,
 ) -> Rect {
     let desired_visible_items = emoji_reaction_picker_visible_items(reaction_count);
-    let extra_lines = u16::from(has_filter);
     centered_rect(
         area,
         42,
         (desired_visible_items as u16)
-            .saturating_add(extra_lines)
+            .saturating_add(EMOJI_REACTION_PICKER_HINT_LINES)
             .saturating_add(2),
     )
 }
@@ -236,26 +238,21 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_popup_area_for_state(
     if reactions.is_empty() && !state.is_filtering_emoji_reactions() {
         return None;
     }
-    Some(emoji_reaction_picker_popup_area(
-        area,
-        reactions.len(),
-        state.emoji_reaction_filter().is_some(),
-    ))
+    Some(emoji_reaction_picker_popup_area(area, reactions.len()))
 }
 
 pub(in crate::tui::ui) fn emoji_reaction_picker_list_layout(
     area: Rect,
-    state: &DashboardState,
     snapshot: SelectablePopupSnapshot,
 ) -> SelectablePopupLayout {
-    let has_filter = state.emoji_reaction_filter().is_some();
-    let popup = emoji_reaction_picker_popup_area(area, snapshot.item_count, has_filter);
+    let popup = emoji_reaction_picker_popup_area(area, snapshot.item_count);
     let inner = panel_block("Choose reaction", true).inner(popup);
-    let filter_lines = u16::from(has_filter);
     let list = Rect {
-        y: inner.y.saturating_add(filter_lines),
+        y: inner.y.saturating_add(EMOJI_REACTION_PICKER_HINT_LINES),
         width: inner.width.saturating_sub(1).max(1),
-        height: inner.height.saturating_sub(filter_lines),
+        height: inner
+            .height
+            .saturating_sub(EMOJI_REACTION_PICKER_HINT_LINES),
         ..inner
     };
     SelectablePopupLayout::new(snapshot.target, popup, list, snapshot, |start, max_rows| {
@@ -272,13 +269,16 @@ fn emoji_reaction_picker_visible_items(reaction_count: usize) -> usize {
 pub(in crate::tui::ui) fn emoji_reaction_picker_visible_items_for_area(
     area: Rect,
     reaction_count: usize,
-    has_filter: bool,
 ) -> usize {
     let desired = emoji_reaction_picker_visible_items(reaction_count);
-    let popup = emoji_reaction_picker_popup_area(area, reaction_count, has_filter);
+    let popup = emoji_reaction_picker_popup_area(area, reaction_count);
     let content = panel_block("Choose reaction", true).inner(popup);
-    let filter_lines = u16::from(has_filter);
-    usize::from(content.height.saturating_sub(filter_lines)).min(desired)
+    usize::from(
+        content
+            .height
+            .saturating_sub(EMOJI_REACTION_PICKER_HINT_LINES),
+    )
+    .min(desired)
 }
 
 const REACTION_USERS_POPUP_TARGET_WIDTH: u16 = 58;
@@ -485,6 +485,7 @@ pub(in crate::tui::ui) struct EmojiReactionPickerRenderOptions<'a> {
     pub(in crate::tui::ui) own_reactions: &'a [crate::discord::ReactionEmoji],
     pub(in crate::tui::ui) show_custom_emoji: bool,
     pub(in crate::tui::ui) filter: Option<&'a str>,
+    pub(in crate::tui::ui) pinned_emojis: &'a [crate::discord::ReactionEmoji],
     pub(in crate::tui::ui) max_width: usize,
 }
 
@@ -519,11 +520,16 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_custom_emoji_images(
                 && reaction
                     .custom_image_url()
                     .is_some_and(|url| options.thumbnail_urls.iter().any(|ready| ready == &url));
+            let pinned = options
+                .pinned_emojis
+                .iter()
+                .any(|pin| pin.pin_identity_eq(&reaction.emoji));
+            let pin_marker = if pinned { "★ " } else { "  " };
             selected_row_line(
                 Line::from(vec![
                     selection_marker(is_selected),
                     Span::styled(
-                        shortcut,
+                        format!("{shortcut}{pin_marker}"),
                         theme::current().style(theme::HighlightGroup::Shortcut),
                     ),
                     Span::styled(format_emoji_reaction_item(reaction, thumbnail_ready), style),
@@ -540,8 +546,8 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_custom_emoji_images(
         )));
     }
 
-    if let Some(filter) = options.filter {
-        lines.push(Line::from(vec![
+    lines.push(match options.filter {
+        Some(filter) => Line::from(vec![
             Span::styled(
                 "Filter ",
                 theme::current().style(theme::HighlightGroup::FieldLabel),
@@ -553,8 +559,16 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_custom_emoji_images(
                 ),
                 theme::current().style(theme::HighlightGroup::ActiveField),
             ),
-        ]));
-    }
+        ]),
+        None => Line::from(Span::styled(
+            format!(
+                "{} search   {} pin",
+                options.key_bindings.emoji_reaction_filter_prefix(),
+                options.key_bindings.emoji_reaction_pin_toggle_label(),
+            ),
+            theme::current().style(theme::HighlightGroup::Description),
+        )),
+    });
     if options.max_width == usize::MAX {
         lines
     } else {
@@ -591,7 +605,8 @@ fn render_emoji_reaction_images(
 }
 
 fn emoji_reaction_image_x_offset() -> u16 {
-    2 + shortcut_prefix(Some('q')).width() as u16
+    // Selection marker + shortcut prefix + the pinned-emoji marker ("★ "/"  ").
+    2 + shortcut_prefix(Some('q')).width() as u16 + 2
 }
 
 fn format_emoji_reaction_item(reaction: &EmojiReactionItem, thumbnail_ready: bool) -> String {

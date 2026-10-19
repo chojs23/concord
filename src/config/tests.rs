@@ -11,7 +11,8 @@ use super::{
     save_options_to_path,
 };
 use crate::discord::{
-    MicrophoneBufferMs, MicrophoneSensitivityDb, VoiceParticipantVolumePercent, VoiceVolumePercent,
+    MicrophoneBufferMs, MicrophoneSensitivityDb, ReactionEmoji, VoiceParticipantVolumePercent,
+    VoiceVolumePercent,
 };
 
 #[test]
@@ -773,19 +774,20 @@ favorite_emojis = ["🔥", "not-an-emoji", "👍", "🔥", "❤️", "😂", "�
     )
     .expect("reactions config should parse");
 
+    assert!(options.reactions.favorite_emojis.is_empty());
     assert_eq!(
-        options.reactions.favorite_emojis,
+        options.reactions.pinned_emojis,
         vec![
-            "🔥".to_owned(),
-            "👍".to_owned(),
-            "❤️".to_owned(),
-            "😂".to_owned(),
-            "🎉".to_owned(),
-            "😮".to_owned(),
-            "😢".to_owned(),
-            "🙏".to_owned(),
-            "👀".to_owned(),
-            "💯".to_owned(),
+            ReactionEmoji::Unicode("🔥".to_owned()),
+            ReactionEmoji::Unicode("👍".to_owned()),
+            ReactionEmoji::Unicode("❤️".to_owned()),
+            ReactionEmoji::Unicode("😂".to_owned()),
+            ReactionEmoji::Unicode("🎉".to_owned()),
+            ReactionEmoji::Unicode("😮".to_owned()),
+            ReactionEmoji::Unicode("😢".to_owned()),
+            ReactionEmoji::Unicode("🙏".to_owned()),
+            ReactionEmoji::Unicode("👀".to_owned()),
+            ReactionEmoji::Unicode("💯".to_owned()),
         ]
     );
     assert!(
@@ -810,7 +812,40 @@ fn reaction_favorite_emojis_default_empty() {
     let (options, warnings) =
         parse_app_options("[display]\n").expect("empty reactions should use defaults");
     assert!(options.reactions.favorite_emojis.is_empty());
+    assert!(options.reactions.pinned_emojis.is_empty());
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn reaction_pinned_emojis_round_trips_custom_emoji_through_toml() {
+    use crate::config::ReactionOptions;
+
+    let options = ReactionOptions {
+        favorite_emojis: Vec::new(),
+        pinned_emojis: vec![
+            ReactionEmoji::Unicode("🔥".to_owned()),
+            ReactionEmoji::Custom {
+                id: crate::discord::ids::Id::new(42),
+                name: Some("party".to_owned()),
+                animated: false,
+            },
+        ],
+    };
+
+    let serialized = toml::to_string(&options).expect("reaction options should serialize");
+    let round_tripped: ReactionOptions =
+        toml::from_str(&serialized).expect("reaction options should round-trip");
+    assert_eq!(round_tripped, options);
+
+    let mut root = toml::Table::new();
+    root.insert(
+        "reactions".to_owned(),
+        toml::Value::try_from(&options).expect("reaction options should convert to a toml value"),
+    );
+    let (parsed, warnings) =
+        parse_app_options(&toml::to_string(&root).unwrap()).expect("reactions config should parse");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    assert_eq!(parsed.reactions, options);
 }
 
 #[test]

@@ -4,6 +4,7 @@
 use unicode_width::UnicodeWidthStr;
 
 use crate::Result;
+use crate::discord::ReactionEmoji;
 
 use super::{
     AppOptions, BorderShape, BorderSurface, HighlightGroup, HighlightLinkOptions, KeymapOptions,
@@ -40,39 +41,67 @@ fn normalize_reaction_options(
     options: ReactionOptions,
     warnings: &mut Vec<String>,
 ) -> ReactionOptions {
-    let mut favorite_emojis = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    // Pre-1.0 config files only had the unicode-only `favorite_emojis` list.
+    // Migrate it into `pinned_emojis` once; a file that already has
+    // `pinned_emojis` ignores the legacy field entirely.
+    let raw_pins = if options.pinned_emojis.is_empty() && !options.favorite_emojis.is_empty() {
+        options
+            .favorite_emojis
+            .iter()
+            .enumerate()
+            .filter_map(|(index, raw)| match emojis::get(raw) {
+                Some(emoji) => Some(ReactionEmoji::Unicode(emoji.as_str().to_owned())),
+                None => {
+                    warnings.push(format!(
+                        "[reactions] favorite_emojis[{index}] = \"{raw}\" is not a valid unicode emoji and was ignored"
+                    ));
+                    None
+                }
+            })
+            .collect()
+    } else {
+        options.pinned_emojis
+    };
+
+    let mut pinned_emojis: Vec<ReactionEmoji> = Vec::new();
     let mut truncated = false;
 
-    for (index, raw) in options.favorite_emojis.into_iter().enumerate() {
-        let Some(emoji) = emojis::get(&raw) else {
+    for (index, emoji) in raw_pins.into_iter().enumerate() {
+        if let ReactionEmoji::Unicode(value) = &emoji
+            && emojis::get(value).is_none()
+        {
             warnings.push(format!(
-                "[reactions] favorite_emojis[{index}] = \"{raw}\" is not a valid unicode emoji and was ignored"
-            ));
-            continue;
-        };
-        let value = emoji.as_str().to_owned();
-        if !seen.insert(value.clone()) {
-            warnings.push(format!(
-                "[reactions] favorite_emojis[{index}] = \"{raw}\" duplicates an earlier entry and was ignored"
+                "[reactions] pinned_emojis[{index}] = \"{value}\" is not a valid unicode emoji and was ignored"
             ));
             continue;
         }
-        if favorite_emojis.len() >= ReactionOptions::MAX_FAVORITE_EMOJIS {
+        if pinned_emojis
+            .iter()
+            .any(|pinned| pinned.pin_identity_eq(&emoji))
+        {
+            warnings.push(format!(
+                "[reactions] pinned_emojis[{index}] duplicates an earlier entry and was ignored"
+            ));
+            continue;
+        }
+        if pinned_emojis.len() >= ReactionOptions::MAX_PINNED_EMOJIS {
             truncated = true;
             continue;
         }
-        favorite_emojis.push(value);
+        pinned_emojis.push(emoji);
     }
 
     if truncated {
         warnings.push(format!(
-            "[reactions] favorite_emojis truncated to {} entries",
-            ReactionOptions::MAX_FAVORITE_EMOJIS
+            "[reactions] pinned_emojis truncated to {} entries",
+            ReactionOptions::MAX_PINNED_EMOJIS
         ));
     }
 
-    ReactionOptions { favorite_emojis }
+    ReactionOptions {
+        favorite_emojis: Vec::new(),
+        pinned_emojis,
+    }
 }
 
 fn one_entry(key: &str, value: toml::Value) -> toml::Table {

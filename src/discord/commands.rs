@@ -5,6 +5,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, EmojiMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker},
@@ -226,7 +228,8 @@ impl MessageAttachmentUpload {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ReactionEmoji {
     Unicode(String),
     Custom {
@@ -234,6 +237,18 @@ pub enum ReactionEmoji {
         name: Option<String>,
         animated: bool,
     },
+}
+
+impl ReactionEmoji {
+    /// Identity used for pinning: unlike `PartialEq`, a custom emoji matches
+    /// by id alone, so a pin survives the emoji being renamed server-side.
+    pub fn pin_identity_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Unicode(left), Self::Unicode(right)) => left == right,
+            (Self::Custom { id: left, .. }, Self::Custom { id: right, .. }) => left == right,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

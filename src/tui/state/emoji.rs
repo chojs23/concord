@@ -1,48 +1,100 @@
+use crate::config::ReactionOptions;
 use crate::discord::{CustomEmojiInfo, ReactionEmoji};
 
 use std::collections::HashSet;
 
-use super::EmojiReactionItem;
+use super::{DashboardState, EmojiReactionItem};
 
 pub(super) const DEFAULT_QUICK_UNICODE_EMOJIS: &[&str] =
     &["👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀"];
 
-pub(super) fn effective_quick_unicode_emojis(favorites: &[String]) -> Vec<String> {
-    if favorites.is_empty() {
-        DEFAULT_QUICK_UNICODE_EMOJIS
+impl DashboardState {
+    /// Toggles `emoji`'s pinned state, persists it, and refreshes any open
+    /// picker so the new pinned-first ordering shows immediately. Silently
+    /// no-ops when pinning would exceed [`ReactionOptions::MAX_PINNED_EMOJIS`].
+    pub fn toggle_pinned_emoji(&mut self, emoji: &ReactionEmoji) {
+        let pins = &mut self.options.reaction_options.pinned_emojis;
+        if let Some(position) = pins
             .iter()
-            .map(|emoji| (*emoji).to_owned())
-            .collect()
-    } else {
-        favorites.to_vec()
+            .position(|pinned| pinned.pin_identity_eq(emoji))
+        {
+            pins.remove(position);
+        } else {
+            if pins.len() >= ReactionOptions::MAX_PINNED_EMOJIS {
+                return;
+            }
+            pins.push(emoji.clone());
+        }
+        self.options.config_save_pending = true;
+        self.refresh_open_emoji_reaction_picker_items();
+        self.refresh_composer_emoji_candidates_for_current_query();
+    }
+
+    pub fn pinned_emojis(&self) -> &[ReactionEmoji] {
+        &self.options.reaction_options.pinned_emojis
     }
 }
 
-pub(super) fn quick_unicode_emoji_reaction_items(favorites: &[String]) -> Vec<EmojiReactionItem> {
-    effective_quick_unicode_emojis(favorites)
-        .iter()
-        .filter_map(|emoji| emojis::get(emoji).map(unicode_emoji_reaction_item_from_emoji))
-        .collect()
+/// The "quick" tier shown at the top of the reaction picker: the user's pins
+/// when any are set, otherwise a curated default set of unicode emoji.
+pub(super) fn quick_emoji_reaction_items(pins: &[ReactionEmoji]) -> Vec<EmojiReactionItem> {
+    if pins.is_empty() {
+        DEFAULT_QUICK_UNICODE_EMOJIS
+            .iter()
+            .filter_map(|emoji| emojis::get(emoji).map(unicode_emoji_reaction_item_from_emoji))
+            .collect()
+    } else {
+        pins.iter().map(pinned_emoji_reaction_item).collect()
+    }
 }
 
+fn pinned_emoji_reaction_item(pin: &ReactionEmoji) -> EmojiReactionItem {
+    match pin {
+        ReactionEmoji::Unicode(value) => emojis::get(value)
+            .map(unicode_emoji_reaction_item_from_emoji)
+            .unwrap_or_else(|| EmojiReactionItem {
+                emoji: pin.clone(),
+                label: pin.status_label(),
+            }),
+        ReactionEmoji::Custom { name, .. } => EmojiReactionItem {
+            emoji: pin.clone(),
+            label: name
+                .as_deref()
+                .map(custom_emoji_label)
+                .unwrap_or_else(|| pin.status_label()),
+        },
+    }
+}
+
+/// Every unicode emoji not already covered by the quick tier.
 pub(super) fn remaining_unicode_emoji_reaction_items(
-    favorites: &[String],
+    pins: &[ReactionEmoji],
 ) -> Vec<EmojiReactionItem> {
-    let quick_emojis: HashSet<String> = effective_quick_unicode_emojis(favorites)
-        .into_iter()
-        .collect();
+    let quick: HashSet<&str> = if pins.is_empty() {
+        DEFAULT_QUICK_UNICODE_EMOJIS.iter().copied().collect()
+    } else {
+        pins.iter()
+            .filter_map(|pin| match pin {
+                ReactionEmoji::Unicode(value) => Some(value.as_str()),
+                ReactionEmoji::Custom { .. } => None,
+            })
+            .collect()
+    };
 
     emojis::iter()
-        .filter(|emoji| !quick_emojis.contains(emoji.as_str()))
+        .filter(|emoji| !quick.contains(emoji.as_str()))
         .map(unicode_emoji_reaction_item_from_emoji)
         .collect()
 }
 
-pub(super) fn is_quick_unicode_emoji(value: &str, favorites: &[String]) -> bool {
-    if favorites.is_empty() {
+/// Whether a unicode emoji is already represented in the quick tier, so
+/// callers can skip re-listing it in the remaining/searchable tier.
+pub(super) fn is_quick_unicode_emoji(value: &str, pins: &[ReactionEmoji]) -> bool {
+    if pins.is_empty() {
         DEFAULT_QUICK_UNICODE_EMOJIS.contains(&value)
     } else {
-        favorites.iter().any(|emoji| emoji == value)
+        pins.iter()
+            .any(|pin| matches!(pin, ReactionEmoji::Unicode(pinned) if pinned == value))
     }
 }
 
@@ -55,12 +107,16 @@ fn unicode_emoji_reaction_item_from_emoji(emoji: &emojis::Emoji) -> EmojiReactio
 
 pub(super) fn custom_emoji_reaction_item(emoji: &CustomEmojiInfo) -> EmojiReactionItem {
     EmojiReactionItem {
-        emoji: ReactionEmoji::Custom {
-            id: emoji.id,
-            name: Some(emoji.name.clone()),
-            animated: emoji.animated,
-        },
+        emoji: custom_emoji_identity(emoji),
         label: custom_emoji_label(&emoji.name),
+    }
+}
+
+pub(super) fn custom_emoji_identity(emoji: &CustomEmojiInfo) -> ReactionEmoji {
+    ReactionEmoji::Custom {
+        id: emoji.id,
+        name: Some(emoji.name.clone()),
+        animated: emoji.animated,
     }
 }
 
