@@ -386,8 +386,11 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
     if query.chars().count() < 2 {
         return Vec::new();
     }
-    let is_pinned =
-        |identity: &ReactionEmoji| pinned_emojis.iter().any(|pin| pin.pin_identity_eq(identity));
+    let is_pinned = |identity: &ReactionEmoji| {
+        pinned_emojis
+            .iter()
+            .any(|pin| pin.pin_identity_eq(identity))
+    };
 
     let make_entry = |is_foreign: bool| {
         move |emoji: &CustomEmojiInfo| {
@@ -472,7 +475,10 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
             .then(a.2.cmp(&b.2))
             .then(a.3.cmp(&b.3))
     });
-    scored.into_iter().map(|(_, _, _, _, entry)| entry).collect()
+    scored
+        .into_iter()
+        .map(|(_, _, _, _, entry)| entry)
+        .collect()
 }
 
 const CUSTOM_EMOJI_TIER: u8 = 0;

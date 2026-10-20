@@ -14,10 +14,7 @@ impl DashboardState {
     /// no-ops when pinning would exceed [`ReactionOptions::MAX_PINNED_EMOJIS`].
     pub fn toggle_pinned_emoji(&mut self, emoji: &ReactionEmoji) {
         let pins = &mut self.options.reaction_options.pinned_emojis;
-        if let Some(position) = pins
-            .iter()
-            .position(|pinned| pinned.pin_identity_eq(emoji))
-        {
+        if let Some(position) = pins.iter().position(|pinned| pinned.pin_identity_eq(emoji)) {
             pins.remove(position);
         } else {
             if pins.len() >= ReactionOptions::MAX_PINNED_EMOJIS {

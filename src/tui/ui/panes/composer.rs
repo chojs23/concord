@@ -548,7 +548,10 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
                 .saturating_sub(pin_marker.width())
                 .max(1);
             let label = format!(":{}: {}", entry.shortcode, entry.name);
-            let label = format!("{pin_marker}{}", truncate_display_width(&label, max_label_width));
+            let label = format!(
+                "{pin_marker}{}",
+                truncate_display_width(&label, max_label_width)
+            );
             let mut row_style = if entry.available {
                 Style::default()
             } else {
