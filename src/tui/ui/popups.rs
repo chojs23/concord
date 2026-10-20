@@ -329,9 +329,7 @@ pub(super) fn active_selectable_popup_layout(
         SelectablePopupTarget::UserProfileStatus | SelectablePopupTarget::UserProfileActivity => {
             user_profile_picker_list_layout(area, state, snapshot)
         }
-        SelectablePopupTarget::EmojiReactions => {
-            emoji_reaction_picker_list_layout(area, snapshot)
-        }
+        SelectablePopupTarget::EmojiReactions => emoji_reaction_picker_list_layout(area, snapshot),
         SelectablePopupTarget::PollVotes => SelectablePopupLayout::fixed(
             snapshot.target,
             poll_vote_picker_popup_area(area, snapshot.item_count),

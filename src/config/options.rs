@@ -6,7 +6,9 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crate::discord::{MicrophoneBufferMs, MicrophoneSensitivityDb, ReactionEmoji, VoiceVolumePercent};
+use crate::discord::{
+    MicrophoneBufferMs, MicrophoneSensitivityDb, ReactionEmoji, VoiceVolumePercent,
+};
 
 pub const DEFAULT_SERVER_WIDTH: u16 = 20;
 pub const DEFAULT_CHANNEL_LIST_WIDTH: u16 = 24;
