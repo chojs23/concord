@@ -4,9 +4,10 @@ use crate::discord::{
     ids::{Id, marker::MessageMarker},
 };
 
-use super::super::{AttachmentViewerItem, DashboardState};
+use super::super::{AttachmentViewerItem, DashboardState, FocusPane};
 use crate::tui::state::popups::{
     ActiveModalPopupKind, AttachmentViewerState, AttachmentViewerZoom, ModalPopup,
+    SelectablePopupState,
 };
 
 struct SelectedAttachmentViewerAttachment<'a> {
@@ -29,6 +30,56 @@ impl DashboardState {
             .set_modal(ModalPopup::AttachmentViewer(AttachmentViewerState {
                 message_id: message.id,
                 selection: Default::default(),
+                zoom: AttachmentViewerZoom::default(),
+            }));
+        true
+    }
+
+    /// Opens the attachment viewer for the image thumbnail clicked at the
+    /// given viewport position, selecting both the message it belongs to and
+    /// that specific attachment. Mirrors `toggle_reaction_chip_at`: the hit
+    /// test lives on `DashboardState` (`image_preview_at_viewport_position`)
+    /// so `InteractionMap` can resolve it the same way it resolves every
+    /// other click target. Returns `false` (and opens nothing) when the
+    /// clicked preview belongs to an embed or sticker rather than a message
+    /// attachment, since the viewer only navigates real attachments.
+    pub(in crate::tui) fn open_image_preview_at_viewport_position(
+        &mut self,
+        row: usize,
+        col: usize,
+        avatar_offset: u16,
+    ) -> bool {
+        let Some((message_id, filename)) =
+            self.image_preview_at_viewport_position(row, col, avatar_offset)
+        else {
+            return false;
+        };
+        let Some((index, attachment_index)) = self
+            .messages()
+            .into_iter()
+            .enumerate()
+            .find(|(_, message)| message.id == message_id)
+            .and_then(|(index, message)| {
+                message
+                    .attachments_in_display_order()
+                    .position(|attachment| attachment.filename == filename)
+                    .map(|attachment_index| (index, attachment_index))
+            })
+        else {
+            return false;
+        };
+
+        self.focus_pane(FocusPane::Messages);
+        self.messages.selected_message = index;
+        self.messages.message_auto_follow = false;
+        self.messages.message_keep_selection_visible = false;
+
+        let mut selection = SelectablePopupState::default();
+        selection.select(attachment_index);
+        self.popups
+            .set_modal(ModalPopup::AttachmentViewer(AttachmentViewerState {
+                message_id,
+                selection,
                 zoom: AttachmentViewerZoom::default(),
             }));
         true
