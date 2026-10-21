@@ -664,7 +664,7 @@ fn components_v2_hides_attachments_that_are_not_exposed_by_components() {
 }
 
 #[test]
-fn spoiler_and_sensitive_media_remain_visible_in_inline_previews() {
+fn spoiler_flagged_attachment_and_component_media_report_spoiler_in_inline_previews() {
     let mut attachment = image_attachment(1);
     attachment.filename = "SPOILER_image-1.png".to_owned();
     attachment.flags = 1 << 3;
@@ -673,32 +673,18 @@ fn spoiler_and_sensitive_media_remain_visible_in_inline_previews() {
         ..MessageState::default()
     };
 
-    let embed_message = MessageState {
-        embeds: vec![EmbedInfo {
-            flags: 1 << 4,
-            image_url: Some("https://example.com/sensitive.png".to_owned()),
-            ..EmbedInfo::test()
-        }],
-        ..MessageState::default()
-    };
-
     let component_message = MessageState {
         flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
-        components: vec![MessageComponentInfo::Container {
-            components: vec![MessageComponentInfo::MediaGallery {
-                items: vec![ComponentMediaItemInfo {
-                    media: ComponentMediaInfo {
-                        url: "https://example.com/sensitive.png".to_owned(),
-                        content_type: Some("image/png".to_owned()),
-                        flags: 1 << 6,
-                        ..ComponentMediaInfo::default()
-                    },
-                    description: None,
-                    spoiler: true,
-                }],
+        components: vec![MessageComponentInfo::MediaGallery {
+            items: vec![ComponentMediaItemInfo {
+                media: ComponentMediaInfo {
+                    url: "https://example.com/spoiler.png".to_owned(),
+                    content_type: Some("image/png".to_owned()),
+                    ..ComponentMediaInfo::default()
+                },
+                description: None,
+                spoiler: true,
             }],
-            accent_color: None,
-            spoiler: true,
         }],
         ..MessageState::default()
     };
@@ -710,11 +696,59 @@ fn spoiler_and_sensitive_media_remain_visible_in_inline_previews() {
     );
     for (label, message) in [
         ("attachment", attachment_message),
-        ("embed", embed_message),
         ("component", component_message),
     ] {
-        assert_eq!(message.inline_previews().len(), 1, "{label}");
+        let previews = message.inline_previews();
+        assert_eq!(previews.len(), 1, "{label}");
+        assert!(previews[0].spoiler, "{label}");
     }
+}
+
+#[test]
+fn container_spoiler_cascades_to_nested_media_gallery_item_without_its_own_spoiler_flag() {
+    let message = MessageState {
+        flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+        components: vec![MessageComponentInfo::Container {
+            components: vec![MessageComponentInfo::MediaGallery {
+                items: vec![ComponentMediaItemInfo {
+                    media: ComponentMediaInfo {
+                        url: "https://example.com/spoiler.png".to_owned(),
+                        content_type: Some("image/png".to_owned()),
+                        ..ComponentMediaInfo::default()
+                    },
+                    description: None,
+                    spoiler: false,
+                }],
+            }],
+            accent_color: None,
+            spoiler: true,
+        }],
+        ..MessageState::default()
+    };
+
+    let previews = message.inline_previews();
+    assert_eq!(previews.len(), 1);
+    assert!(previews[0].spoiler);
+}
+
+/// Classic embeds (not Components V2) carry no spoiler signal in Discord's
+/// data model; this is Discord's separate, still-unimplemented "sensitive
+/// content" concept (a different flag), not the `||spoiler||`/attachment
+/// spoiler this module masks. Tracked as a known gap, not a regression.
+#[test]
+fn embed_sensitive_media_remains_visible_in_inline_previews() {
+    let embed_message = MessageState {
+        embeds: vec![EmbedInfo {
+            flags: 1 << 4,
+            image_url: Some("https://example.com/sensitive.png".to_owned()),
+            ..EmbedInfo::test()
+        }],
+        ..MessageState::default()
+    };
+
+    let previews = embed_message.inline_previews();
+    assert_eq!(previews.len(), 1);
+    assert!(!previews[0].spoiler);
 }
 
 #[test]
@@ -3931,6 +3965,7 @@ fn image_preview_target(id: u64) -> ImagePreviewTarget {
         top_clip_rows: 0,
         accent_color: None,
         show_play_marker: false,
+        spoiler: false,
         message_id: Id::new(id),
         url: format!("https://cdn.discordapp.com/image-{id}.png"),
         filename: format!("image-{id}.png"),

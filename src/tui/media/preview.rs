@@ -236,6 +236,11 @@ impl ImagePreviewCache {
         targets
             .iter()
             .map(|target| {
+                if target.spoiler {
+                    return target.render(ImagePreviewState::Spoiler {
+                        filename: target.filename.clone(),
+                    });
+                }
                 let state = match self.cache.entries.get(&target.key()) {
                     Some(ImagePreviewEntry::Loading { filename, .. })
                     | Some(ImagePreviewEntry::Decoding { filename, .. }) => {
@@ -303,7 +308,7 @@ impl ImagePreviewCache {
         let mut seen = HashSet::new();
         for target in targets.iter().filter(|target| {
             let key = target.key();
-            admitted.contains(&key) && seen.insert(key)
+            !target.spoiler && admitted.contains(&key) && seen.insert(key)
         }) {
             let key = target.key();
             if self.cache.entries.contains_key(&key) && !self.cache.take_due_retry(&key, now) {
