@@ -1214,6 +1214,10 @@ fn handle_emoji_reaction_picker_fixed_key(
             state.start_emoji_reaction_filter();
             Some(None)
         }
+        EmojiReactionPickerAction::TogglePinned => {
+            state.toggle_selected_emoji_reaction_pin();
+            Some(None)
+        }
         EmojiReactionPickerAction::Select(_)
         | EmojiReactionPickerAction::DeleteFilterChar
         | EmojiReactionPickerAction::CommitFilter
@@ -1247,6 +1251,10 @@ fn handle_emoji_reaction_picker_key(
         Some(EmojiReactionPickerAction::StartFilter) => return None,
         Some(EmojiReactionPickerAction::InsertFilterChar(value)) => {
             state.push_emoji_reaction_filter_char(value);
+            return None;
+        }
+        Some(EmojiReactionPickerAction::TogglePinned) => {
+            state.toggle_selected_emoji_reaction_pin();
             return None;
         }
         Some(

@@ -2,13 +2,13 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, MessageMarker},
 };
-use crate::discord::{AppCommand, ReactionEmoji};
+use crate::discord::{AppCommand, MessageState, ReactionEmoji};
 use crate::tui::fuzzy::{FuzzyScore, fuzzy_text_score};
 use crate::tui::keybindings::SelectionAction;
 
 use super::super::emoji::{
-    custom_emoji_can_be_used_directly, custom_emoji_reaction_item, is_quick_unicode_emoji,
-    quick_unicode_emoji_reaction_items, remaining_unicode_emoji_reaction_items,
+    custom_emoji_can_be_used_directly, custom_emoji_identity, custom_emoji_reaction_item,
+    is_quick_unicode_emoji, quick_emoji_reaction_items, remaining_unicode_emoji_reaction_items,
 };
 use super::super::{
     DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
@@ -32,8 +32,9 @@ impl DashboardState {
         &self,
         guild_id: Option<Id<GuildMarker>>,
     ) -> Vec<EmojiReactionItem> {
-        let favorites = &self.options.reaction_options.favorite_emojis;
-        let mut items = quick_unicode_emoji_reaction_items(favorites);
+        let pins = self.pinned_emojis();
+        let mut items = quick_emoji_reaction_items(pins);
+        let is_pinned = |emoji: &ReactionEmoji| pins.iter().any(|pin| pin.pin_identity_eq(emoji));
 
         if let Some(guild_id) = guild_id {
             items.extend(
@@ -48,6 +49,7 @@ impl DashboardState {
                                 false,
                                 self.current_user_has_nitro(),
                             )
+                            && !is_pinned(&custom_emoji_identity(emoji))
                     })
                     .map(custom_emoji_reaction_item),
             );
@@ -78,12 +80,13 @@ impl DashboardState {
                                 true,
                                 self.current_user_has_nitro(),
                             )
+                            && !is_pinned(&custom_emoji_identity(emoji))
                     })
                     .map(custom_emoji_reaction_item),
             );
         }
 
-        items.extend(remaining_unicode_emoji_reaction_items(favorites));
+        items.extend(remaining_unicode_emoji_reaction_items(pins));
 
         items
     }
@@ -98,11 +101,7 @@ impl DashboardState {
             return items;
         };
 
-        filter_emoji_reaction_items(
-            items,
-            filter,
-            &self.options.reaction_options.favorite_emojis,
-        )
+        filter_emoji_reaction_items(items, filter, self.pinned_emojis())
     }
 
     pub fn filtered_emoji_reaction_items_slice(&self) -> Option<&[EmojiReactionItem]> {
@@ -325,25 +324,25 @@ impl DashboardState {
     }
 
     pub fn push_emoji_reaction_filter_char(&mut self, value: char) {
-        let favorites = &self.options.reaction_options.favorite_emojis;
+        let pins = &self.options.reaction_options.pinned_emojis;
         if let Some(picker) = self.popups.emoji_reaction_picker_mut()
             && let Some(filter) = &mut picker.filter
         {
             filter.push(value);
             picker.filtered_items =
-                filter_emoji_reaction_items_from_slice(&picker.items, filter, favorites);
+                filter_emoji_reaction_items_from_slice(&picker.items, filter, pins);
             picker.selection.select(0);
         }
     }
 
     pub fn pop_emoji_reaction_filter_char(&mut self) {
-        let favorites = &self.options.reaction_options.favorite_emojis;
+        let pins = &self.options.reaction_options.pinned_emojis;
         if let Some(picker) = self.popups.emoji_reaction_picker_mut()
             && let Some(filter) = &mut picker.filter
         {
             filter.pop();
             picker.filtered_items =
-                filter_emoji_reaction_items_from_slice(&picker.items, filter, favorites);
+                filter_emoji_reaction_items_from_slice(&picker.items, filter, pins);
             picker.selection.select(0);
         }
     }
@@ -367,21 +366,7 @@ impl DashboardState {
                 .filter(|reaction| reaction.me)
                 .map(|reaction| reaction.emoji.clone())
                 .collect::<Vec<_>>();
-            let items = if self.can_add_new_reaction_for_message(message) {
-                prioritize_existing_reactions(
-                    self.emoji_reaction_items_for_guild(guild_id),
-                    &existing_reactions,
-                )
-            } else {
-                message
-                    .reactions
-                    .iter()
-                    .map(|reaction| EmojiReactionItem {
-                        emoji: reaction.emoji.clone(),
-                        label: reaction.emoji.status_label(),
-                    })
-                    .collect()
-            };
+            let items = self.emoji_reaction_picker_items_for_message(message, guild_id);
             self.popups
                 .set_modal(ModalPopup::EmojiReactionPicker(EmojiReactionPickerState {
                     selection: Default::default(),
@@ -396,6 +381,71 @@ impl DashboardState {
                     message_id: message.id,
                 }));
         }
+    }
+
+    fn emoji_reaction_picker_items_for_message(
+        &self,
+        message: &MessageState,
+        guild_id: Option<Id<GuildMarker>>,
+    ) -> Vec<EmojiReactionItem> {
+        if self.can_add_new_reaction_for_message(message) {
+            let existing_reactions = message
+                .reactions
+                .iter()
+                .map(|reaction| reaction.emoji.clone())
+                .collect::<Vec<_>>();
+            prioritize_existing_reactions(
+                self.emoji_reaction_items_for_guild(guild_id),
+                &existing_reactions,
+            )
+        } else {
+            message
+                .reactions
+                .iter()
+                .map(|reaction| EmojiReactionItem {
+                    emoji: reaction.emoji.clone(),
+                    label: reaction.emoji.status_label(),
+                })
+                .collect()
+        }
+    }
+
+    /// Toggles the pinned state of the currently highlighted reaction and
+    /// re-sorts the open picker's item list to reflect it immediately.
+    pub fn toggle_selected_emoji_reaction_pin(&mut self) {
+        let Some(reaction) = self.selected_emoji_reaction() else {
+            return;
+        };
+        self.toggle_pinned_emoji(&reaction.emoji);
+    }
+
+    /// Rebuilds the open emoji reaction picker's item list (e.g. after a pin
+    /// is toggled) so the pinned-first ordering shows without closing it.
+    pub(in crate::tui::state) fn refresh_open_emoji_reaction_picker_items(&mut self) {
+        let Some(picker) = self.popups.emoji_reaction_picker() else {
+            return;
+        };
+        let channel_id = picker.channel_id;
+        let message_id = picker.message_id;
+        let guild_id = picker.guild_id;
+        let filter = picker.filter.clone();
+        let Some(message) = self
+            .selected_message_state()
+            .filter(|message| message.channel_id == channel_id && message.id == message_id)
+        else {
+            return;
+        };
+        let items = self.emoji_reaction_picker_items_for_message(message, guild_id);
+        let pins = self.options.reaction_options.pinned_emojis.clone();
+        let Some(picker) = self.popups.emoji_reaction_picker_mut() else {
+            return;
+        };
+        picker.filtered_items = match &filter {
+            Some(filter) => filter_emoji_reaction_items_from_slice(&items, filter, &pins),
+            None => items.clone(),
+        };
+        picker.items = items;
+        picker.selection.select(0);
     }
 
     fn picker_guild_id(&self) -> Option<Id<GuildMarker>> {
@@ -413,9 +463,9 @@ impl DashboardState {
 fn filter_emoji_reaction_items(
     items: Vec<EmojiReactionItem>,
     filter: &str,
-    favorites: &[String],
+    pins: &[ReactionEmoji],
 ) -> Vec<EmojiReactionItem> {
-    filter_emoji_reaction_items_from_slice(&items, filter, favorites)
+    filter_emoji_reaction_items_from_slice(&items, filter, pins)
 }
 
 fn prioritize_existing_reactions(
@@ -448,7 +498,7 @@ fn prioritize_existing_reactions(
 fn filter_emoji_reaction_items_from_slice(
     items: &[EmojiReactionItem],
     filter: &str,
-    favorites: &[String],
+    pins: &[ReactionEmoji],
 ) -> Vec<EmojiReactionItem> {
     let filter = filter.trim();
     if filter.is_empty() {
@@ -461,7 +511,7 @@ fn filter_emoji_reaction_items_from_slice(
         .filter_map(|(index, item)| {
             emoji_reaction_filter_score(item, filter).map(|score| {
                 (
-                    usize::from(emoji_reaction_is_remaining_unicode(item, favorites)),
+                    usize::from(emoji_reaction_is_remaining_unicode(item, pins)),
                     score,
                     index,
                     item.clone(),
@@ -476,10 +526,10 @@ fn filter_emoji_reaction_items_from_slice(
     scored.into_iter().map(|(_, _, _, item)| item).collect()
 }
 
-fn emoji_reaction_is_remaining_unicode(item: &EmojiReactionItem, favorites: &[String]) -> bool {
+fn emoji_reaction_is_remaining_unicode(item: &EmojiReactionItem, pins: &[ReactionEmoji]) -> bool {
     matches!(
         &item.emoji,
-        crate::discord::ReactionEmoji::Unicode(emoji) if !is_quick_unicode_emoji(emoji, favorites)
+        crate::discord::ReactionEmoji::Unicode(emoji) if !is_quick_unicode_emoji(emoji, pins)
     )
 }
 

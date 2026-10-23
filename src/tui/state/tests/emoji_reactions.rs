@@ -612,7 +612,11 @@ fn emoji_picker_uses_configured_favorite_emojis_at_top() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
     state.apply_reaction_options(crate::config::ReactionOptions {
-        favorite_emojis: vec!["🔥".to_owned(), "💯".to_owned()],
+        favorite_emojis: Vec::new(),
+        pinned_emojis: vec![
+            ReactionEmoji::Unicode("🔥".to_owned()),
+            ReactionEmoji::Unicode("💯".to_owned()),
+        ],
     });
 
     let items = state.emoji_reaction_items();
@@ -626,4 +630,44 @@ fn emoji_picker_uses_configured_favorite_emojis_at_top() {
             ReactionEmoji::Unicode("💯".to_owned()),
         ]
     );
+}
+
+#[test]
+fn toggle_pinned_emoji_adds_and_removes_pin() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    let emoji = ReactionEmoji::Unicode("🔥".to_owned());
+    assert!(!state.pinned_emojis().contains(&emoji));
+
+    state.toggle_pinned_emoji(&emoji);
+    assert!(state.pinned_emojis().contains(&emoji));
+
+    state.toggle_pinned_emoji(&emoji);
+    assert!(!state.pinned_emojis().contains(&emoji));
+}
+
+#[test]
+fn toggle_pinned_emoji_matches_custom_emoji_by_id_not_name() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    let original = ReactionEmoji::Custom {
+        id: Id::new(42),
+        name: Some("old_name".to_owned()),
+        animated: false,
+    };
+    state.toggle_pinned_emoji(&original);
+    assert!(state.pinned_emojis().contains(&original));
+
+    let renamed = ReactionEmoji::Custom {
+        id: Id::new(42),
+        name: Some("new_name".to_owned()),
+        animated: false,
+    };
+    // Renaming doesn't match by `==`, but toggling must still find and
+    // remove the original pin by id.
+    assert_ne!(original, renamed);
+    state.toggle_pinned_emoji(&renamed);
+    assert!(state.pinned_emojis().is_empty());
 }
