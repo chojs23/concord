@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crate::config::{
     AnimatePreviews, AppOptions, ComposerOptions, CredentialOptions, DisplayOptions,
     ImagePreviewQualityPreset, KeymapOptions, NotificationOptions, PresenceOptions,
-    ReactionOptions, SafetyOptions, TranslationOptions, UiStateOptions, VoiceOptions,
-    VoiceParticipantPlaybackOption,
+    ReactionOptions, SafetyOptions, TranslationOptions, UiStateOptions, UpdateOptions,
+    VoiceOptions, VoiceParticipantPlaybackOption,
 };
 use crate::discord::ids::{Id, marker::UserMarker};
 use crate::discord::{AppCommand, VoiceAudioSourceOptions, VoiceParticipantPlaybackSettings};
@@ -72,6 +72,9 @@ pub(super) struct SettingsState {
     // Not editable in the TUI: kept only so saving unrelated options round-trips
     // the user's Rich Presence choice instead of resetting it to the default.
     pub(super) presence_options: PresenceOptions,
+    // Not editable in the TUI: kept so saving unrelated options does not turn
+    // the version check back on.
+    pub(super) update_options: UpdateOptions,
     // Not editable in the TUI: favorite reaction emojis live in config.toml.
     pub(super) reaction_options: ReactionOptions,
     pub(super) key_bindings: KeyBindings,
@@ -110,6 +113,10 @@ impl DashboardState {
 
     pub(in crate::tui) fn apply_presence_options(&mut self, presence_options: PresenceOptions) {
         self.options.presence_options = presence_options;
+    }
+
+    pub(in crate::tui) fn apply_update_options(&mut self, update_options: UpdateOptions) {
+        self.options.update_options = update_options;
     }
 
     pub(in crate::tui) fn apply_safety_options(&mut self, safety_options: SafetyOptions) {
@@ -387,6 +394,7 @@ impl DashboardState {
             presence: self.options.presence_options,
             translation: self.translations.options().clone(),
             klipy: self.klipy.options.clone(),
+            updates: self.options.update_options,
         })
     }
 

@@ -17,6 +17,22 @@ fn saving_display_options_preserves_configured_safety() {
 }
 
 #[test]
+fn saving_display_options_preserves_disabled_update_check() {
+    let mut state = state_with_messages(1);
+    let updates = crate::config::UpdateOptions {
+        check_for_updates: false,
+    };
+    state.apply_update_options(updates);
+    state.open_options_popup();
+    handle_key(&mut state, key(KeyCode::Enter));
+
+    let saved = state
+        .take_options_save_request()
+        .expect("display change saves options");
+    assert_eq!(saved.updates, updates);
+}
+
+#[test]
 fn every_display_option_changes_only_its_own_setting() {
     let cases: [(&str, DisplayOptionChange); 10] = [
         ("disable image preview", |mut options| {
@@ -88,6 +104,7 @@ fn every_display_option_changes_only_its_own_setting() {
                 presence: Default::default(),
                 translation: Default::default(),
                 klipy: Default::default(),
+                updates: Default::default(),
             }),
             "{label}"
         );
@@ -154,6 +171,7 @@ fn options_popup_h_l_adjust_microphone_sensitivity_by_one_or_ten_db() {
             presence: Default::default(),
             translation: Default::default(),
             klipy: Default::default(),
+            updates: Default::default(),
         })
     );
 }
@@ -324,6 +342,7 @@ fn options_popup_sequences_own_continuations_then_restore_fixed_shortcuts() {
             presence: Default::default(),
             translation: Default::default(),
             klipy: Default::default(),
+            updates: Default::default(),
         })
     );
 }
