@@ -310,9 +310,24 @@ pub struct AppOptions {
     pub presence: PresenceOptions,
     pub translation: TranslationOptions,
     pub klipy: KlipyOptions,
+    pub updates: UpdateOptions,
 }
 
 /// Optional KLIPY integration. Keys are never included in diagnostic output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UpdateOptions {
+    pub check_for_updates: bool,
+}
+
+impl Default for UpdateOptions {
+    fn default() -> Self {
+        Self {
+            check_for_updates: true,
+        }
+    }
+}
+
 #[derive(Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct KlipyOptions {

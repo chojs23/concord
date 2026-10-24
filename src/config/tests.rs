@@ -6,9 +6,9 @@ use super::{
     AnimatePreviews, AppOptions, BorderShape, BorderSurface, ComposerOptions, CredentialOptions,
     CredentialStoreMode, DisplayOptions, HighlightGroup, ImagePreviewQualityPreset,
     ImageProtocolPreference, KeymapBinding, KeymapOptions, NotificationOptions, PresenceOptions,
-    SafetyOptions, ThemeOptions, TranslationOptions, TranslationProviderKind, VoiceOptions,
-    load_keymap_options_from_path, load_options_from_path, parse_app_options, parse_theme_options,
-    save_options_to_path,
+    SafetyOptions, ThemeOptions, TranslationOptions, TranslationProviderKind, UpdateOptions,
+    VoiceOptions, load_keymap_options_from_path, load_options_from_path, parse_app_options,
+    parse_theme_options, save_options_to_path,
 };
 use crate::discord::{
     MicrophoneBufferMs, MicrophoneSensitivityDb, VoiceParticipantVolumePercent, VoiceVolumePercent,
@@ -149,6 +149,23 @@ fn safety_checks_default_to_enabled_and_follow_config() {
 
         assert_eq!(direct.safety.enabled, enabled, "{content}");
         assert_eq!(loaded.safety, direct.safety, "{content}");
+        assert!(warnings.is_empty(), "{content}");
+    }
+}
+
+#[test]
+fn update_check_defaults_to_enabled_and_follows_config() {
+    for (content, enabled) in [
+        ("", true),
+        ("[updates]\n", true),
+        ("[updates]\ncheck_for_updates = true\n", true),
+        ("[updates]\ncheck_for_updates = false\n", false),
+    ] {
+        let direct: AppOptions = toml::from_str(content).expect("updates config parses");
+        let (loaded, warnings) = parse_app_options(content).expect("updates config loads");
+
+        assert_eq!(direct.updates.check_for_updates, enabled, "{content}");
+        assert_eq!(loaded.updates, direct.updates, "{content}");
         assert!(warnings.is_empty(), "{content}");
     }
 }
@@ -708,6 +725,9 @@ fn options_save_and_load_round_trip() {
             endpoint: Some("http://127.0.0.1:5000/translate".to_owned()),
             api_key: Some("config-secret".to_owned()),
             api_key_env: None,
+        },
+        updates: UpdateOptions {
+            check_for_updates: false,
         },
     };
 
