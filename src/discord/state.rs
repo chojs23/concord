@@ -1786,12 +1786,20 @@ impl DiscordState {
         last_viewed: &Option<u64>,
         version: Option<i64>,
     ) {
+        let mention_count = mention_count.or_else(|| {
+            self.navigation
+                .channels
+                .get(channel_id)
+                .and_then(|channel| channel.last_message_id)
+                .is_some_and(|latest| *message_id >= latest)
+                .then_some(0)
+        });
         let entry = self
             .notifications_mut()
             .read_states
             .entry(*channel_id)
             .or_default();
-        entry.apply_server_ack(*message_id, *mention_count, *flags, *last_viewed);
+        entry.apply_server_ack(*message_id, mention_count, *flags, *last_viewed);
         if let Some(version) = version {
             self.advance_read_state_version(version);
         }
