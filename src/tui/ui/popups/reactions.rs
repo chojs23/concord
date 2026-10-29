@@ -248,7 +248,6 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_list_layout(
     let popup = emoji_reaction_picker_popup_area(area, snapshot.item_count);
     let inner = panel_block("Choose reaction", true).inner(popup);
     let list = Rect {
-        y: inner.y.saturating_add(EMOJI_REACTION_PICKER_HINT_LINES),
         width: inner.width.saturating_sub(1).max(1),
         height: inner
             .height

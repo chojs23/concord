@@ -2624,3 +2624,39 @@ fn klipy_picker_scrolls_all_titles_with_horizontal_keys() {
         2
     );
 }
+
+#[test]
+fn emoji_reaction_picker_click_targets_follow_rendered_rows() {
+    for height in [12, 40] {
+        for filtering in [false, true] {
+            let mut state = state_with_message();
+            state.focus_pane(FocusPane::Messages);
+            state.open_emoji_reaction_picker();
+            if filtering {
+                state.start_emoji_reaction_filter();
+                state.push_emoji_reaction_filter_char('h');
+            }
+            let dump = render_dashboard_dump(120, height, &mut state);
+            let area = Rect::new(0, 0, 120, height);
+            let layout = active_selectable_popup_layout(area, &state).expect("reaction layout");
+            let inner = panel_block("Choose reaction", true).inner(layout.popup);
+            let reactions = state.filtered_emoji_reaction_items();
+            assert!(
+                dump[usize::from(inner.y)].contains(&reactions[layout.scroll].emoji.status_label())
+            );
+            for offset in 0..layout.visible_items() {
+                assert_eq!(
+                    interaction_at(area, &state, inner.x, inner.y + offset as u16),
+                    Some(InteractionTarget::PopupItem {
+                        target: SelectablePopupTarget::EmojiReactions,
+                        row: layout.scroll + offset
+                    })
+                );
+            }
+            assert_eq!(
+                interaction_at(area, &state, inner.x, inner.y + inner.height - 1),
+                Some(InteractionTarget::ModalSurface)
+            );
+        }
+    }
+}

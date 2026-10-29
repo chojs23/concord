@@ -34,32 +34,29 @@ impl DashboardState {
 
 /// The "quick" tier shown at the top of the reaction picker: the user's pins
 /// when any are set, otherwise a curated default set of unicode emoji.
-pub(super) fn quick_emoji_reaction_items(pins: &[ReactionEmoji]) -> Vec<EmojiReactionItem> {
+pub(super) fn quick_emoji_reaction_items(
+    pins: &[ReactionEmoji],
+    eligible_custom_items: &[EmojiReactionItem],
+) -> Vec<EmojiReactionItem> {
     if pins.is_empty() {
         DEFAULT_QUICK_UNICODE_EMOJIS
             .iter()
             .filter_map(|emoji| emojis::get(emoji).map(unicode_emoji_reaction_item_from_emoji))
             .collect()
     } else {
-        pins.iter().map(pinned_emoji_reaction_item).collect()
-    }
-}
-
-fn pinned_emoji_reaction_item(pin: &ReactionEmoji) -> EmojiReactionItem {
-    match pin {
-        ReactionEmoji::Unicode(value) => emojis::get(value)
-            .map(unicode_emoji_reaction_item_from_emoji)
-            .unwrap_or_else(|| EmojiReactionItem {
-                emoji: pin.clone(),
-                label: pin.status_label(),
-            }),
-        ReactionEmoji::Custom { name, .. } => EmojiReactionItem {
-            emoji: pin.clone(),
-            label: name
-                .as_deref()
-                .map(custom_emoji_label)
-                .unwrap_or_else(|| pin.status_label()),
-        },
+        // Saved pins change rank, not availability. Resolve custom IDs through
+        // eligible live entries so renamed emoji also use their current data.
+        pins.iter()
+            .filter_map(|pin| match pin {
+                ReactionEmoji::Unicode(value) => {
+                    emojis::get(value).map(unicode_emoji_reaction_item_from_emoji)
+                }
+                ReactionEmoji::Custom { .. } => eligible_custom_items
+                    .iter()
+                    .find(|item| item.emoji.pin_identity_eq(pin))
+                    .cloned(),
+            })
+            .collect()
     }
 }
 

@@ -895,40 +895,49 @@ fn enter_confirms_emoji_picker_before_submit() {
 
 #[test]
 fn ctrl_f_pins_the_selected_composer_emoji_candidate() {
-    let mut state = state_with_channel_tree();
-    state.focus_pane(FocusPane::Channels);
-    handle_key(&mut state, key(KeyCode::Down));
-    handle_key(&mut state, key(KeyCode::Enter));
-    handle_key(&mut state, char_key('i'));
-    for ch in ":heart".chars() {
-        handle_key(&mut state, char_key(ch));
+    for shortcode in ["heart", "hearts"] {
+        let mut state = state_with_channel_tree();
+        let initial_pin = ReactionEmoji::Unicode("🔥".to_owned());
+        state.toggle_pinned_emoji(&initial_pin);
+        state.focus_pane(FocusPane::Channels);
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        handle_key(&mut state, char_key('i'));
+        for ch in ":heart".chars() {
+            handle_key(&mut state, char_key(ch));
+        }
+        let candidates = state.composer_emoji_candidates();
+        let index = candidates
+            .iter()
+            .position(|entry| entry.shortcode == shortcode)
+            .expect("heart shortcode should be suggested");
+        let selected = candidates[index].clone();
+        for _ in 0..index {
+            handle_key(&mut state, key(KeyCode::Down));
+        }
+
+        assert_eq!(handle_key(&mut state, ctrl_key('f')), None);
+        assert_eq!(
+            state.pinned_emojis(),
+            &[initial_pin.clone(), selected.identity.clone()]
+        );
+        let candidates = state.composer_emoji_candidates();
+        let highlighted = &candidates[state.composer_emoji_selected()];
+        assert_eq!(highlighted.shortcode, shortcode);
+        assert!(highlighted.pinned);
+        assert!(state.composer_has_active_picker());
+
+        handle_key(&mut state, ctrl_key('f'));
+        assert_eq!(state.pinned_emojis(), &[initial_pin]);
+        let candidates = state.composer_emoji_candidates();
+        assert_eq!(
+            candidates[state.composer_emoji_selected()].shortcode,
+            shortcode
+        );
+
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert_eq!(state.composer_input(), format!("{} ", selected.emoji));
     }
-
-    assert!(
-        !state
-            .composer_emoji_candidates()
-            .iter()
-            .any(|entry| entry.shortcode == "heart" && entry.pinned)
-    );
-
-    let command = handle_key(&mut state, ctrl_key('f'));
-
-    assert_eq!(command, None);
-    assert_eq!(
-        state.pinned_emojis(),
-        &[ReactionEmoji::Unicode("❤️".to_owned())]
-    );
-    assert!(
-        state
-            .composer_emoji_candidates()
-            .iter()
-            .any(|entry| entry.shortcode == "heart" && entry.pinned),
-        "the candidate should show as pinned without closing the picker"
-    );
-    assert!(state.composer_has_active_picker());
-
-    handle_key(&mut state, ctrl_key('f'));
-    assert!(state.pinned_emojis().is_empty());
 }
 
 #[test]
@@ -1247,35 +1256,48 @@ fn emoji_picker_selection_removes_existing_own_reaction() {
 
 #[test]
 fn ctrl_f_toggles_pinned_emoji_in_reaction_picker_without_closing_it() {
-    let mut state = state_with_messages(1);
-    state.focus_pane(FocusPane::Messages);
-    open_emoji_picker(&mut state);
+    for initial_pins in [Vec::new(), vec![ReactionEmoji::Unicode("🔥".to_owned())]] {
+        let mut state = state_with_messages(1);
+        for pin in &initial_pins {
+            state.toggle_pinned_emoji(pin);
+        }
+        state.focus_pane(FocusPane::Messages);
+        open_emoji_picker(&mut state);
+        handle_key(&mut state, key(KeyCode::Down));
+        let selected = state
+            .selected_emoji_reaction()
+            .expect("selected reaction")
+            .emoji;
 
-    assert_eq!(
-        state.selected_emoji_reaction().map(|item| item.emoji),
-        Some(ReactionEmoji::Unicode("👍".to_owned()))
-    );
-    assert!(state.pinned_emojis().is_empty());
+        assert_eq!(handle_key(&mut state, ctrl_key('f')), None);
+        let mut expected_pins = initial_pins.clone();
+        expected_pins.push(selected.clone());
+        assert_eq!(state.pinned_emojis(), expected_pins);
+        assert!(
+            state.is_active_modal_popup(
+                crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker
+            )
+        );
+        assert_eq!(
+            state.selected_emoji_reaction().map(|item| item.emoji),
+            Some(selected.clone())
+        );
 
-    let command = handle_key(&mut state, ctrl_key('f'));
-
-    assert_eq!(command, None);
-    assert_eq!(
-        state.pinned_emojis(),
-        &[ReactionEmoji::Unicode("👍".to_owned())]
-    );
-    assert!(
-        state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::EmojiReactionPicker),
-        "toggling a pin should not close the picker"
-    );
-    assert_eq!(
-        state.selected_emoji_reaction().map(|item| item.emoji),
-        Some(ReactionEmoji::Unicode("👍".to_owned())),
-        "the pinned emoji should remain selected after the list re-sorts"
-    );
-
-    handle_key(&mut state, ctrl_key('f'));
-    assert!(state.pinned_emojis().is_empty());
+        handle_key(&mut state, ctrl_key('f'));
+        assert_eq!(state.pinned_emojis(), initial_pins);
+        assert_eq!(
+            state.selected_emoji_reaction().map(|item| item.emoji),
+            Some(selected.clone())
+        );
+        assert_eq!(
+            handle_key(&mut state, key(KeyCode::Enter)),
+            Some(AppCommand::AddReaction {
+                channel_id: Id::new(2),
+                message_id: Id::new(1),
+                emoji: selected
+            })
+        );
+    }
 }
 
 #[test]

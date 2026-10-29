@@ -144,7 +144,19 @@ impl EmojiCompletionState {
         // open. Start at the top when it first opens.
         let (selected, scroll) = match &self.active {
             Some(active) => {
-                let selected = active.selected.min(candidates.len() - 1);
+                let mut selected = active.selected.min(candidates.len() - 1);
+                // Pinning can reorder an unchanged query. Keep the emoji and
+                // its shortcode alias selected instead of keeping its old row.
+                if active.start == start
+                    && active.query == query
+                    && let Some(entry) = active.candidates.get(active.selected)
+                    && let Some(index) = candidates.iter().position(|candidate| {
+                        candidate.shortcode == entry.shortcode
+                            && candidate.identity.pin_identity_eq(&entry.identity)
+                    })
+                {
+                    selected = index;
+                }
                 let scroll = clamp_list_scroll(
                     selected,
                     active.scroll,

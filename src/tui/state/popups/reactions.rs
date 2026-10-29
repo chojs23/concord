@@ -7,8 +7,8 @@ use crate::tui::fuzzy::{FuzzyScore, fuzzy_text_score};
 use crate::tui::keybindings::SelectionAction;
 
 use super::super::emoji::{
-    custom_emoji_can_be_used_directly, custom_emoji_identity, custom_emoji_reaction_item,
-    is_quick_unicode_emoji, quick_emoji_reaction_items, remaining_unicode_emoji_reaction_items,
+    custom_emoji_can_be_used_directly, custom_emoji_reaction_item, is_quick_unicode_emoji,
+    quick_emoji_reaction_items, remaining_unicode_emoji_reaction_items,
 };
 use super::super::{
     DashboardState, EmojiReactionItem, EmojiReactionPickerState, ReactionUsersPopupState,
@@ -33,11 +33,10 @@ impl DashboardState {
         guild_id: Option<Id<GuildMarker>>,
     ) -> Vec<EmojiReactionItem> {
         let pins = self.pinned_emojis();
-        let mut items = quick_emoji_reaction_items(pins);
-        let is_pinned = |emoji: &ReactionEmoji| pins.iter().any(|pin| pin.pin_identity_eq(emoji));
+        let mut custom_items = Vec::new();
 
         if let Some(guild_id) = guild_id {
-            items.extend(
+            custom_items.extend(
                 self.discord
                     .cache
                     .custom_emojis_for_guild(guild_id)
@@ -49,7 +48,6 @@ impl DashboardState {
                                 false,
                                 self.current_user_has_nitro(),
                             )
-                            && !is_pinned(&custom_emoji_identity(emoji))
                     })
                     .map(custom_emoji_reaction_item),
             );
@@ -65,7 +63,7 @@ impl DashboardState {
                     .can_use_external_emojis_in_channel(channel)
             });
         if self.current_user_has_nitro() && can_use_external_emojis {
-            items.extend(
+            custom_items.extend(
                 self.discord
                     .cache
                     .all_custom_emojis()
@@ -80,12 +78,17 @@ impl DashboardState {
                                 true,
                                 self.current_user_has_nitro(),
                             )
-                            && !is_pinned(&custom_emoji_identity(emoji))
                     })
                     .map(custom_emoji_reaction_item),
             );
         }
 
+        let mut items = quick_emoji_reaction_items(pins, &custom_items);
+        items.extend(
+            custom_items
+                .into_iter()
+                .filter(|item| !pins.iter().any(|pin| pin.pin_identity_eq(&item.emoji))),
+        );
         items.extend(remaining_unicode_emoji_reaction_items(pins));
 
         items
@@ -429,6 +432,14 @@ impl DashboardState {
         let message_id = picker.message_id;
         let guild_id = picker.guild_id;
         let filter = picker.filter.clone();
+        let selected_emoji = picker
+            .filtered_items
+            .get(
+                picker
+                    .selection
+                    .selected_for_len(picker.filtered_items.len()),
+            )
+            .map(|item| item.emoji.clone());
         let Some(message) = self
             .selected_message_state()
             .filter(|message| message.channel_id == channel_id && message.id == message_id)
@@ -445,7 +456,15 @@ impl DashboardState {
             None => items.clone(),
         };
         picker.items = items;
-        picker.selection.select(0);
+        let selected = selected_emoji
+            .and_then(|emoji| {
+                picker
+                    .filtered_items
+                    .iter()
+                    .position(|item| item.emoji.pin_identity_eq(&emoji))
+            })
+            .unwrap_or(0);
+        picker.selection.select(selected);
     }
 
     fn picker_guild_id(&self) -> Option<Id<GuildMarker>> {
