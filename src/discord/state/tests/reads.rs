@@ -255,6 +255,72 @@ fn message_ack_without_mention_count_retains_mentions_and_flags() {
 }
 
 #[test]
+fn message_ack_from_another_client_clears_direct_message_mentions() {
+    let channel_id = Id::new(50);
+    let mut state = DiscordState::default();
+    state.apply_event(&AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(Id::new(10)),
+    });
+    state.apply_event(&AppEvent::ChannelUpsert(channel_info(
+        channel_id,
+        "dm",
+        Vec::new(),
+    )));
+    state.apply_event(&AppEvent::ReadStateInit {
+        entries: vec![read_state_info(channel_id, Some(Id::new(100)), 0)],
+    });
+    for message_id in [200, 300] {
+        state.apply_event(&message_create_event(MessageCreateFixture::direct_message(
+            channel_id,
+            Id::new(message_id),
+        )));
+    }
+    assert_eq!(
+        state.channel_unread(channel_id),
+        ChannelUnreadState::Mentioned(2)
+    );
+
+    state.apply_event(&AppEvent::MessageAck {
+        channel_id,
+        message_id: Id::new(300),
+        mention_count: None,
+        flags: None,
+        last_viewed: None,
+        version: Some(5),
+    });
+
+    assert_eq!(state.channel_unread(channel_id), ChannelUnreadState::Seen);
+    assert_eq!(state.channel_ack_target(channel_id), None);
+}
+
+#[test]
+fn message_ack_before_latest_message_without_mention_count_retains_mentions() {
+    let channel_id = Id::new(7);
+    let mut state = DiscordState::default();
+    state.apply_event(&AppEvent::ChannelUpsert(channel_with_last_message(
+        channel_id, 300,
+    )));
+    state.apply_event(&AppEvent::ReadStateInit {
+        entries: vec![read_state_info(channel_id, Some(Id::new(100)), 2)],
+    });
+
+    state.apply_event(&AppEvent::MessageAck {
+        channel_id,
+        message_id: Id::new(200),
+        mention_count: None,
+        flags: None,
+        last_viewed: None,
+        version: None,
+    });
+
+    assert_eq!(
+        state.channel_unread(channel_id),
+        ChannelUnreadState::Mentioned(2)
+    );
+}
+
+#[test]
 fn channel_with_pending_mentions_reports_mention_count() {
     let channel_id = Id::new(7);
     let mut state = DiscordState::default();
