@@ -443,6 +443,11 @@ enabled = true
 # When unset or empty, Concord uses the built-in quick reactions.
 # favorite_emojis = ["🔥", "👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀", "💯"]
 
+[updates]
+# Check crates.io for a newer Concord release on startup and show a notice.
+# Set false to skip the check entirely.
+check_for_updates = true
+
 [presence]
 # Relay Rich Presence from local apps as your activity (most recent app wins,
 # like the native client).
