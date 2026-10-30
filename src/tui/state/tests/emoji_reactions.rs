@@ -612,7 +612,11 @@ fn emoji_picker_uses_configured_favorite_emojis_at_top() {
     let mut state = state_with_messages(1);
     state.focus_pane(FocusPane::Messages);
     state.apply_reaction_options(crate::config::ReactionOptions {
-        favorite_emojis: vec!["🔥".to_owned(), "💯".to_owned()],
+        favorite_emojis: Vec::new(),
+        pinned_emojis: vec![
+            ReactionEmoji::Unicode("🔥".to_owned()),
+            ReactionEmoji::Unicode("💯".to_owned()),
+        ],
     });
 
     let items = state.emoji_reaction_items();
@@ -626,4 +630,118 @@ fn emoji_picker_uses_configured_favorite_emojis_at_top() {
             ReactionEmoji::Unicode("💯".to_owned()),
         ]
     );
+}
+
+#[test]
+fn toggle_pinned_emoji_adds_and_removes_pin() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    let emoji = ReactionEmoji::Unicode("🔥".to_owned());
+    assert!(!state.pinned_emojis().contains(&emoji));
+
+    state.toggle_pinned_emoji(&emoji);
+    assert!(state.pinned_emojis().contains(&emoji));
+
+    state.toggle_pinned_emoji(&emoji);
+    assert!(!state.pinned_emojis().contains(&emoji));
+}
+
+#[test]
+fn toggle_pinned_emoji_matches_custom_emoji_by_id_not_name() {
+    let mut state = state_with_messages(1);
+    state.focus_pane(FocusPane::Messages);
+
+    let original = ReactionEmoji::Custom {
+        id: Id::new(42),
+        name: Some("old_name".to_owned()),
+        animated: false,
+    };
+    state.toggle_pinned_emoji(&original);
+    assert!(state.pinned_emojis().contains(&original));
+
+    let renamed = ReactionEmoji::Custom {
+        id: Id::new(42),
+        name: Some("new_name".to_owned()),
+        animated: false,
+    };
+    // Renaming doesn't match by `==`, but toggling must still find and
+    // remove the original pin by id.
+    assert_ne!(original, renamed);
+    state.toggle_pinned_emoji(&renamed);
+    assert!(state.pinned_emojis().is_empty());
+}
+
+#[test]
+fn pinned_custom_reactions_use_current_eligible_emoji() {
+    for (premium_tier, external_allowed, expected_custom) in [
+        (PremiumTier::None, true, &[(50_u64, "local", false)] as &[_]),
+        (
+            PremiumTier::Nitro,
+            false,
+            &[(50, "local", false), (52, "local_animated", true)],
+        ),
+        (
+            PremiumTier::Nitro,
+            true,
+            &[
+                (60, "wave_foreign", false),
+                (50, "local", false),
+                (61, "dance_foreign", true),
+                (52, "local_animated", true),
+            ],
+        ),
+    ] {
+        let permissions = PERM_VIEW_CHANNEL
+            | PERM_READ_MESSAGE_HISTORY
+            | PERM_ADD_REACTIONS
+            | if external_allowed {
+                PERM_USE_EXTERNAL_EMOJIS
+            } else {
+                0
+            };
+        let mut state = state_with_other_user_message_permissions(permissions, Vec::new());
+        state.push_event(AppEvent::GuildEmojisUpdate {
+            guild_id: Id::new(1),
+            emojis: vec![
+                CustomEmojiInfo::test(Id::new(50), "local"),
+                CustomEmojiInfo {
+                    available: false,
+                    ..CustomEmojiInfo::test(Id::new(51), "gone")
+                },
+                CustomEmojiInfo {
+                    animated: true,
+                    ..CustomEmojiInfo::test(Id::new(52), "local_animated")
+                },
+            ],
+        });
+        push_foreign_reaction_emojis(&mut state);
+        state.push_event(AppEvent::CurrentUserCapabilities { premium_tier });
+        let mut pins = vec![ReactionEmoji::Unicode("🔥".to_owned())];
+        pins.extend([60, 50, 61, 52, 51, 99].map(|id| ReactionEmoji::Custom {
+            id: Id::new(id),
+            name: Some("saved_name".to_owned()),
+            animated: false,
+        }));
+        state.apply_reaction_options(crate::config::ReactionOptions {
+            pinned_emojis: pins.clone(),
+            ..Default::default()
+        });
+
+        let items = state.emoji_reaction_items();
+        assert_eq!(items[0].emoji, ReactionEmoji::Unicode("🔥".to_owned()));
+        let custom = items
+            .iter()
+            .filter_map(|item| match &item.emoji {
+                ReactionEmoji::Custom { id, name, animated } => Some((
+                    id.get(),
+                    name.as_deref().expect("live emoji name"),
+                    *animated,
+                )),
+                ReactionEmoji::Unicode(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(custom, expected_custom);
+        assert_eq!(state.pinned_emojis(), pins);
+    }
 }

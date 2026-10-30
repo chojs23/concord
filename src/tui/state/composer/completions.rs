@@ -5,10 +5,16 @@ use crate::discord::ids::{
 
 use crate::discord::{
     ApplicationCommandIdentity, ApplicationCommandInfo, ApplicationCommandOptionInfo, ChannelState,
-    CustomEmojiInfo, PresenceStatus, RoleState, builtin_slash_commands, custom_emoji_image_url,
+    CustomEmojiInfo, PresenceStatus, ReactionEmoji, RoleState, builtin_slash_commands,
+    custom_emoji_image_url,
 };
 
-use super::super::{MemberEntry, emoji::custom_emoji_can_be_used_directly};
+use crate::tui::fuzzy::{FuzzyScore, fuzzy_text_score};
+
+use super::super::{
+    MemberEntry,
+    emoji::{custom_emoji_can_be_used_directly, custom_emoji_identity},
+};
 
 /// Maximum number of suggestions composer pickers show at once. Candidate
 /// builders still return every match. Rendering scrolls this many rows.
@@ -87,6 +93,10 @@ pub struct EmojiPickerEntry {
     pub available: bool,
     pub available_as_link: bool,
     pub custom_image_url: Option<String>,
+    /// Canonical identity used to pin/unpin this entry, independent of its
+    /// display marker (which is just "◇"/"◆" for custom emoji).
+    pub identity: ReactionEmoji,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -371,14 +381,20 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
     has_nitro: bool,
     can_use_external_emojis: bool,
     emojis_as_links: bool,
+    pinned_emojis: &[ReactionEmoji],
 ) -> Vec<EmojiPickerEntry> {
-    let needle = query.to_ascii_lowercase();
-    if needle.chars().count() < 2 {
+    if query.chars().count() < 2 {
         return Vec::new();
     }
+    let is_pinned = |identity: &ReactionEmoji| {
+        pinned_emojis
+            .iter()
+            .any(|pin| pin.pin_identity_eq(identity))
+    };
 
     let make_entry = |is_foreign: bool| {
         move |emoji: &CustomEmojiInfo| {
+            let score = fuzzy_text_score(&emoji.name, query)?;
             let can_send_directly = custom_emoji_can_be_used_directly(emoji, is_foreign, has_nitro)
                 && (!is_foreign || can_use_external_emojis);
             let as_link = emojis_as_links && !can_send_directly;
@@ -389,8 +405,12 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
             } else {
                 "custom emoji"
             };
-            (
-                0,
+            let identity = custom_emoji_identity(emoji);
+            let pinned = is_pinned(&identity);
+            Some((
+                CUSTOM_EMOJI_TIER,
+                u8::from(!pinned),
+                score,
                 shortcode.to_ascii_lowercase(),
                 EmojiPickerEntry {
                     emoji: marker.to_owned(),
@@ -405,46 +425,63 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
                     available: emoji.available && (can_send_directly || as_link),
                     available_as_link: emoji.available && as_link,
                     custom_image_url: Some(custom_emoji_image_url(emoji.id, emoji.animated)),
+                    identity,
+                    pinned,
                 },
-            )
+            ))
         }
     };
-    let mut scored: Vec<(u8, String, EmojiPickerEntry)> = guild_emojis
-        .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
-        .map(|emoji| make_entry(false)(emoji))
-        .collect();
+    let mut scored: Vec<(u8, u8, FuzzyScore, String, EmojiPickerEntry)> =
+        guild_emojis.filter_map(make_entry(false)).collect();
 
     if (has_nitro && can_use_external_emojis) || emojis_as_links {
-        scored.extend(
-            foreign_emojis
-                .filter(|emoji| emoji.name.to_ascii_lowercase().starts_with(&needle))
-                .map(|emoji| make_entry(true)(emoji)),
-        );
+        scored.extend(foreign_emojis.filter_map(make_entry(true)));
     }
 
     scored.extend(emojis::iter().flat_map(|emoji| {
-        emoji
-            .shortcodes()
-            .filter(|shortcode| shortcode.starts_with(&needle))
-            .map(|shortcode| {
-                (
-                    1,
-                    shortcode.to_owned(),
-                    EmojiPickerEntry {
-                        emoji: emoji.as_str().to_owned(),
-                        shortcode: shortcode.to_owned(),
-                        name: emoji.name().to_owned(),
-                        wire_format: None,
-                        available: true,
-                        available_as_link: false,
-                        custom_image_url: None,
-                    },
-                )
-            })
+        let identity = ReactionEmoji::Unicode(emoji.as_str().to_owned());
+        let pinned = is_pinned(&identity);
+        emoji.shortcodes().filter_map(move |shortcode| {
+            let score = fuzzy_text_score(shortcode, query)
+                .into_iter()
+                .chain(fuzzy_text_score(emoji.name(), query))
+                .min()?;
+            Some((
+                UNICODE_EMOJI_TIER,
+                u8::from(!pinned),
+                score,
+                shortcode.to_owned(),
+                EmojiPickerEntry {
+                    emoji: emoji.as_str().to_owned(),
+                    shortcode: shortcode.to_owned(),
+                    name: emoji.name().to_owned(),
+                    wire_format: None,
+                    available: true,
+                    available_as_link: false,
+                    custom_image_url: None,
+                    identity: identity.clone(),
+                    pinned,
+                },
+            ))
+        })
     }));
-    scored.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    scored.into_iter().map(|(_, _, entry)| entry).collect()
+
+    // Custom emoji keep their priority over unicode. Pins rank first within
+    // each tier, followed by fuzzy score and shortcode for stable ordering.
+    scored.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.cmp(&b.1))
+            .then(a.2.cmp(&b.2))
+            .then(a.3.cmp(&b.3))
+    });
+    scored
+        .into_iter()
+        .map(|(_, _, _, _, entry)| entry)
+        .collect()
 }
+
+const CUSTOM_EMOJI_TIER: u8 = 0;
+const UNICODE_EMOJI_TIER: u8 = 1;
 
 fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool, as_link: bool) -> String {
     if as_link {
@@ -635,6 +672,35 @@ mod tests {
             hoist: false,
             permissions: 0,
         }
+    }
+
+    #[test]
+    fn emoji_candidates_keep_custom_tier_first_and_prioritize_pins_within_each_tier() {
+        let custom = [
+            CustomEmojiInfo::test(Id::new(50), "party"),
+            CustomEmojiInfo::test(Id::new(51), "party_wave"),
+        ];
+        let pins = [
+            ReactionEmoji::Unicode("🎉".to_owned()),
+            custom_emoji_identity(&custom[1]),
+        ];
+        let candidates = build_emoji_candidates(
+            "party",
+            std::iter::empty(),
+            custom.iter(),
+            false,
+            true,
+            false,
+            &pins,
+        );
+        assert_eq!(
+            candidates
+                .iter()
+                .take(3)
+                .map(|entry| entry.shortcode.as_str())
+                .collect::<Vec<_>>(),
+            ["party_wave", "party", "tada"]
+        );
     }
 
     #[test]

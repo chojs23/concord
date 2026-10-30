@@ -439,9 +439,11 @@ emojis_as_links = false
 enabled = true
 
 [reactions]
-# Up to 10 unicode emoji pinned at the top of the reaction picker.
-# When unset or empty, Concord uses the built-in quick reactions.
-# favorite_emojis = ["🔥", "👍", "❤️", "😂", "🎉", "😮", "😢", "🙏", "👀", "💯"]
+# Up to 10 emoji (unicode or custom) pinned at the top of both the reaction
+# picker and the composer's `:shortcode` completion. When empty, Concord uses
+# the built-in quick reactions. Managed automatically by pressing Ctrl+f on a
+# highlighted emoji in either picker — hand-editing this list is unusual but
+# supported; see docs/keymap-options.md for the exact `pinned_emojis` shape.
 
 [updates]
 # Check crates.io for a newer Concord release on startup and show a notice.

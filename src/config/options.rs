@@ -6,7 +6,9 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use crate::discord::{MicrophoneBufferMs, MicrophoneSensitivityDb, VoiceVolumePercent};
+use crate::discord::{
+    MicrophoneBufferMs, MicrophoneSensitivityDb, ReactionEmoji, VoiceVolumePercent,
+};
 
 pub const DEFAULT_SERVER_WIDTH: u16 = 20;
 pub const DEFAULT_CHANNEL_LIST_WIDTH: u16 = 24;
@@ -60,12 +62,17 @@ impl Default for SafetyOptions {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ReactionOptions {
+    /// Deprecated unicode-only favorites list, kept so older config files
+    /// round-trip through `normalize_reaction_options` into `pinned_emojis`
+    /// instead of being silently dropped. Always empty after normalization.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub favorite_emojis: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pinned_emojis: Vec<ReactionEmoji>,
 }
 
 impl ReactionOptions {
-    pub const MAX_FAVORITE_EMOJIS: usize = 10;
+    pub const MAX_PINNED_EMOJIS: usize = 10;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]

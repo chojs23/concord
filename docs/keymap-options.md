@@ -195,8 +195,26 @@ Message actions:
 | `ShowReactionUsers`     | none           | Show users who reacted to the selected message.  |
 | `OpenPollVotePicker`    | none           | Choose poll votes for the selected message.      |
 
-Favorite emojis from `[reactions].favorite_emojis` in `config.toml` are pinned
-at the top of the reaction picker opened by `ReactMessage`.
+Pinned emojis from `[reactions].pinned_emojis` in `config.toml` are shown at
+the top of both the reaction picker opened by `ReactMessage` and the
+composer's `:shortcode` completion. Press `Ctrl+f` on a highlighted emoji in
+either picker to pin or unpin it; this updates `config.toml` automatically.
+Each `[[reactions.pinned_emojis]]` entry has either a `unicode` key (a plain
+emoji string) or a `custom` table (`id`, `name`, `animated`), e.g.:
+
+```toml
+[[reactions.pinned_emojis]]
+unicode = "🔥"
+
+[[reactions.pinned_emojis]]
+[reactions.pinned_emojis.custom]
+id = "123456789012345"
+name = "blobcat"
+animated = false
+```
+
+The older `favorite_emojis = ["🔥", ...]` (unicode-only) format is still read
+and is migrated into `pinned_emojis` the first time Concord saves its config.
 
 Pane, options, and voice actions:
 
