@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.6.4] - 2026-10-30
+
+### Bug Fixes
+
+- Clear DM mentions on ack to latest message (#405) in [#405](https://github.com/chojs23/concord/pull/405) by @ludwig7959
+
+### Documentation
+
+- Update issue template by @chojs23
+
+### Features
+
+- Add option to disable the startup version check (#406) in [#406](https://github.com/chojs23/concord/pull/406) by @liziye627-design
+- _(tui)_ Unify emoji pickers with shared fuzzy search and pinning (#400) in [#400](https://github.com/chojs23/concord/pull/400) by @rropleka
+
+### New Contributors
+
+- @liziye627-design made their first contribution in [#406](https://github.com/chojs23/concord/pull/406)
+- @ludwig7959 made their first contribution in [#405](https://github.com/chojs23/concord/pull/405)
+
 ## [2.6.3] - 2026-10-18
 
 ### Bug Fixes
