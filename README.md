@@ -806,6 +806,10 @@ link = "Muted"
 [highlight.Placeholder]
 link = "Muted"
 
+[highlight.Spoiler]
+foreground = "dark_gray"
+background = "dark_gray"
+
 [highlight.Disabled]
 link = "Muted"
 
