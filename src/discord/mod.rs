@@ -69,9 +69,9 @@ pub(crate) use commands::next_message_nonce;
 pub use commands::{
     AppCommand, AttachmentDownloadId, DownloadAttachmentSource, ForumPostCreate,
     GlobalUserProfileUpdate, GuildUserProfileUpdate, MediaPlaybackRequestId, MediaPlaybackSource,
-    MediaPlaybackTarget, MessageHistoryAfterMode, MessageSearchAuthorType, MessageSearchHas,
-    MessageSearchPage, MessageSearchQuery, MuteDuration, ProfileAvatarUpload, ReplyReference,
-    StreamCaptureTargetsRequestId, TranslationTarget, UserProfileUpdate,
+    MediaPlaybackTarget, MemberModeration, MessageHistoryAfterMode, MessageSearchAuthorType,
+    MessageSearchHas, MessageSearchPage, MessageSearchQuery, MuteDuration, ProfileAvatarUpload,
+    ReplyReference, StreamCaptureTargetsRequestId, TranslationTarget, UserProfileUpdate,
 };
 pub use commands::{
     MAX_PROFILE_AVATAR_BYTES, MAX_UPLOAD_ATTACHMENT_COUNT, MAX_UPLOAD_PREVIEW_BYTES,

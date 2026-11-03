@@ -1,11 +1,18 @@
-use crate::discord::ids::{Id, marker::ChannelMarker};
-use crate::discord::{AppCommand, DiscordAction, StreamCaptureTarget, VoiceScope};
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, UserMarker},
+};
+use crate::discord::{
+    ActionDecision, AppCommand, ChannelState, DiscordAction, MemberModeration, StreamCaptureTarget,
+    VoiceScope,
+};
 use crate::tui::keybindings::{KeyChord, SelectionAction};
 
 use super::super::model::{
     ActionAvailability, ChannelActionItem, ChannelActionKind, ChannelPaneEntry, FocusPane,
     MUTE_ACTION_DURATIONS,
 };
+use super::super::presentation::sort_channels;
 use super::super::{DashboardState, MuteActionDurationItem};
 use super::{ActiveModalPopupKind, ConfirmationButton, GroupLeaveConfirmationState, ModalPopup};
 use super::{ChannelActionMenuState, SelectablePopupState, SelectablePopupTarget};
@@ -62,6 +69,23 @@ impl DashboardState {
                 }
                 true
             }
+            Some(ChannelActionMenuState::MoveTargets {
+                channel_id,
+                user_id,
+                display_name,
+                ..
+            }) => {
+                let menu = ChannelActionMenuState::ParticipantActions {
+                    channel_id: *channel_id,
+                    user_id: *user_id,
+                    display_name: display_name.clone(),
+                    selection: Default::default(),
+                };
+                if let Some(action) = self.popups.channel_action_menu_mut() {
+                    *action = menu;
+                }
+                true
+            }
             _ => false,
         }
     }
@@ -111,7 +135,7 @@ impl DashboardState {
                     } else {
                         Some("voice channel unavailable".to_owned())
                     };
-                return vec![
+                let mut items = vec![
                     ChannelActionItem::new(
                         ChannelActionKind::WatchStream,
                         "Watch stream",
@@ -123,8 +147,20 @@ impl DashboardState {
                         ActionAvailability::Enabled,
                     ),
                 ];
+                if let Some(guild_id) = self
+                    .discord
+                    .cache
+                    .channel(*channel_id)
+                    .and_then(|channel| channel.guild_id)
+                {
+                    items.extend(self.participant_voice_moderation_items(guild_id, *user_id));
+                }
+                return items;
             }
-            Some(ChannelActionMenuState::StreamTargets { .. }) => return Vec::new(),
+            Some(
+                ChannelActionMenuState::StreamTargets { .. }
+                | ChannelActionMenuState::MoveTargets { .. },
+            ) => return Vec::new(),
             _ => return Vec::new(),
         };
         let Some(channel) = self.discord.cache.channel(channel_id) else {
@@ -264,6 +300,120 @@ impl DashboardState {
         items
     }
 
+    fn participant_voice_moderation_items(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Vec<ChannelActionItem> {
+        let Some(channel_id) = self
+            .discord
+            .cache
+            .user_voice_channel_in_guild(guild_id, user_id)
+        else {
+            return Vec::new();
+        };
+        let Some(participant) = self
+            .discord
+            .cache
+            .voice_participants_for_channel(guild_id, channel_id)
+            .into_iter()
+            .find(|participant| participant.user_id == user_id)
+        else {
+            return Vec::new();
+        };
+        [
+            (
+                ChannelActionKind::ServerMute,
+                DiscordAction::MuteMember,
+                if participant.mute {
+                    "Server unmute"
+                } else {
+                    "Server mute"
+                },
+            ),
+            (
+                ChannelActionKind::ServerDeafen,
+                DiscordAction::DeafenMember,
+                if participant.deaf {
+                    "Server undeafen"
+                } else {
+                    "Server deafen"
+                },
+            ),
+            (
+                ChannelActionKind::MoveMember,
+                DiscordAction::MoveMember,
+                "Move to...",
+            ),
+            (
+                ChannelActionKind::DisconnectMember,
+                DiscordAction::MoveMember,
+                "Disconnect",
+            ),
+        ]
+        .into_iter()
+        .filter(|(kind, _, _)| {
+            *kind != ChannelActionKind::MoveMember
+                || self
+                    .member_move_target_channels(guild_id, channel_id)
+                    .next()
+                    .is_some()
+        })
+        .filter(|(_, action, _)| {
+            self.discord
+                .cache
+                .member_moderation_decision(guild_id, user_id, *action)
+                == ActionDecision::Allowed
+        })
+        .map(|(kind, _, label)| ChannelActionItem::new(kind, label, ActionAvailability::Enabled))
+        .collect()
+    }
+
+    pub(in crate::tui) fn selected_member_move_targets(&self) -> &[(Id<ChannelMarker>, String)] {
+        match self.popups.channel_action_menu() {
+            Some(ChannelActionMenuState::MoveTargets { targets, .. }) => targets,
+            _ => &[],
+        }
+    }
+
+    pub(in crate::tui) fn is_channel_action_move_target_phase(&self) -> bool {
+        matches!(
+            self.popups.channel_action_menu(),
+            Some(ChannelActionMenuState::MoveTargets { .. })
+        )
+    }
+
+    fn member_move_target_channels(
+        &self,
+        guild_id: Id<GuildMarker>,
+        current_channel_id: Id<ChannelMarker>,
+    ) -> impl Iterator<Item = &ChannelState> {
+        self.discord
+            .cache
+            .viewable_channels_for_guild(Some(guild_id))
+            .into_iter()
+            .filter(move |channel| channel.is_voice() && channel.id != current_channel_id)
+            .filter(|channel| {
+                self.discord.cache.member_move_destination_decision(channel)
+                    == ActionDecision::Allowed
+            })
+    }
+
+    fn member_move_targets(
+        &self,
+        guild_id: Id<GuildMarker>,
+        current_channel_id: Id<ChannelMarker>,
+    ) -> Vec<(Id<ChannelMarker>, String)> {
+        let mut channels: Vec<_> = self
+            .member_move_target_channels(guild_id, current_channel_id)
+            .collect();
+        sort_channels(&mut channels);
+        channels
+            .into_iter()
+            .map(|channel| (channel.id, channel.name.clone()))
+            .collect()
+    }
+
     pub fn selected_channel_mute_duration_items(&self) -> &'static [MuteActionDurationItem] {
         &MUTE_ACTION_DURATIONS
     }
@@ -280,6 +430,9 @@ impl DashboardState {
             ChannelActionMenuState::StreamTargets {
                 targets, selection, ..
             } => Some(selection.selected_for_len(targets.len())),
+            ChannelActionMenuState::MoveTargets {
+                targets, selection, ..
+            } => Some(selection.selected_for_len(targets.len())),
         }
     }
 
@@ -293,6 +446,7 @@ impl DashboardState {
                 self.selected_channel_mute_duration_items().len()
             }
             Some(ChannelActionMenuState::StreamTargets { targets, .. }) => targets.len(),
+            Some(ChannelActionMenuState::MoveTargets { targets, .. }) => targets.len(),
             None => 0,
         }
     }
@@ -302,7 +456,8 @@ impl DashboardState {
             ChannelActionMenuState::Actions { selection, .. }
             | ChannelActionMenuState::ParticipantActions { selection, .. }
             | ChannelActionMenuState::MuteDuration { selection, .. }
-            | ChannelActionMenuState::StreamTargets { selection, .. } => Some(selection),
+            | ChannelActionMenuState::StreamTargets { selection, .. }
+            | ChannelActionMenuState::MoveTargets { selection, .. } => Some(selection),
         }
     }
 
@@ -310,6 +465,7 @@ impl DashboardState {
         match self.popups.channel_action_menu() {
             Some(ChannelActionMenuState::ParticipantActions { .. }) => "Participant actions",
             Some(ChannelActionMenuState::StreamTargets { .. }) => "Share screen",
+            Some(ChannelActionMenuState::MoveTargets { .. }) => "Move to",
             Some(
                 ChannelActionMenuState::Actions { .. }
                 | ChannelActionMenuState::MuteDuration { .. },
@@ -457,8 +613,12 @@ impl DashboardState {
                             None
                         }
                     }
-                    ChannelActionKind::WatchStream => None,
-                    ChannelActionKind::ParticipantAudioSettings => None,
+                    ChannelActionKind::WatchStream
+                    | ChannelActionKind::ParticipantAudioSettings
+                    | ChannelActionKind::ServerMute
+                    | ChannelActionKind::ServerDeafen
+                    | ChannelActionKind::MoveMember
+                    | ChannelActionKind::DisconnectMember => None,
                 }
             }
             ChannelActionMenuState::ParticipantActions {
@@ -472,7 +632,60 @@ impl DashboardState {
                 if !item.is_enabled() {
                     return None;
                 }
+                let guild_id = self
+                    .discord
+                    .cache
+                    .channel(channel_id)
+                    .and_then(|channel| channel.guild_id);
+                let moderate = |moderation| {
+                    guild_id.map(|guild_id| AppCommand::ModerateMember {
+                        guild_id,
+                        user_id,
+                        moderation,
+                    })
+                };
                 match item.kind {
+                    ChannelActionKind::ServerMute | ChannelActionKind::ServerDeafen => {
+                        let guild_id = guild_id?;
+                        let voice_channel_id = self
+                            .discord
+                            .cache
+                            .user_voice_channel_in_guild(guild_id, user_id)?;
+                        let participant = self
+                            .discord
+                            .cache
+                            .voice_participants_for_channel(guild_id, voice_channel_id)
+                            .into_iter()
+                            .find(|participant| participant.user_id == user_id)?;
+                        self.close_channel_action_menu();
+                        moderate(if item.kind == ChannelActionKind::ServerMute {
+                            MemberModeration::SetMute(!participant.mute)
+                        } else {
+                            MemberModeration::SetDeaf(!participant.deaf)
+                        })
+                    }
+                    ChannelActionKind::DisconnectMember => {
+                        self.close_channel_action_menu();
+                        moderate(MemberModeration::Disconnect)
+                    }
+                    ChannelActionKind::MoveMember => {
+                        let guild_id = guild_id?;
+                        let voice_channel_id = self
+                            .discord
+                            .cache
+                            .user_voice_channel_in_guild(guild_id, user_id)?;
+                        let targets = self.member_move_targets(guild_id, voice_channel_id);
+                        if let Some(action) = self.popups.channel_action_menu_mut() {
+                            *action = ChannelActionMenuState::MoveTargets {
+                                channel_id,
+                                user_id,
+                                display_name,
+                                targets,
+                                selection: Default::default(),
+                            };
+                        }
+                        None
+                    }
                     ChannelActionKind::WatchStream => {
                         self.close_channel_action_menu();
                         self.discord.cache.channel(channel_id).map(|channel| {
@@ -516,6 +729,22 @@ impl DashboardState {
                     scope,
                     channel_id,
                     target,
+                })
+            }
+            ChannelActionMenuState::MoveTargets {
+                channel_id,
+                user_id,
+                targets,
+                selection,
+                ..
+            } => {
+                let (target_id, _) = targets.get(selection.selected_for_len(targets.len()))?;
+                let guild_id = self.discord.cache.channel(channel_id)?.guild_id?;
+                self.close_channel_action_menu();
+                Some(AppCommand::ModerateMember {
+                    guild_id,
+                    user_id,
+                    moderation: MemberModeration::Move(*target_id),
                 })
             }
         }
@@ -577,6 +806,14 @@ impl DashboardState {
                 self.activate_selected_channel_action()
             }
             ChannelActionMenuState::StreamTargets { targets, .. } => {
+                let index = self
+                    .options
+                    .key_bindings()
+                    .matching_indexed_shortcut_index(shortcut, targets.len())?;
+                self.select_channel_action_row(index);
+                self.activate_selected_channel_action()
+            }
+            ChannelActionMenuState::MoveTargets { targets, .. } => {
                 let index = self
                     .options
                     .key_bindings()

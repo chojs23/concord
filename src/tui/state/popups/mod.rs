@@ -1013,6 +1013,13 @@ pub(super) enum ChannelActionMenuState {
         targets: Vec<StreamCaptureTarget>,
         selection: SelectablePopupState,
     },
+    MoveTargets {
+        channel_id: Id<ChannelMarker>,
+        user_id: Id<UserMarker>,
+        display_name: String,
+        targets: Vec<(Id<ChannelMarker>, String)>,
+        selection: SelectablePopupState,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2202,7 +2209,8 @@ impl DashboardState {
                     ChannelActionMenuState::Actions { selection, .. }
                     | ChannelActionMenuState::ParticipantActions { selection, .. }
                     | ChannelActionMenuState::MuteDuration { selection, .. }
-                    | ChannelActionMenuState::StreamTargets { selection, .. } => selection,
+                    | ChannelActionMenuState::StreamTargets { selection, .. }
+                    | ChannelActionMenuState::MoveTargets { selection, .. } => selection,
                 };
                 (selection, self.channel_action_row_count())
             }
@@ -2675,6 +2683,13 @@ impl DashboardState {
                 self.key_bindings(),
                 shortcut,
                 self.selected_channel_mute_duration_items().len(),
+            );
+        }
+        if self.is_channel_action_move_target_phase() {
+            return indexed_shortcut_matches(
+                self.key_bindings(),
+                shortcut,
+                self.selected_member_move_targets().len(),
             );
         }
         let actions = self.selected_channel_action_items();

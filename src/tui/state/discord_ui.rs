@@ -82,6 +82,7 @@ impl DashboardState {
             ActionBlockReason::ParticipationDataUnavailable(_) => {
                 "verification status unknown".to_owned()
             }
+            ActionBlockReason::MemberNotInVoice => "not in voice".to_owned(),
         })
     }
 

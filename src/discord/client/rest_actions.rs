@@ -6,9 +6,9 @@ use super::DiscordClient;
 use crate::discord::{
     ActionBlockReason, ActionDecision, ApplicationCommandInvocation, ArchivedThreadsPage,
     DiscordAction, DiscordPermission, DiscordState, ForumPostCreate, ForumPostDataInfo,
-    GuildFolder, MESSAGE_FLAG_SUPPRESS_EMBEDS, MessageAttachmentUpload, MessageInfo,
-    MessageSendLimits, MessageState, PermissionDecision, ReactionEmoji, ReactionUsersPage,
-    ReplyReference, UserProfileInfo, UserProfileUpdate,
+    GuildFolder, MESSAGE_FLAG_SUPPRESS_EMBEDS, MemberInfo, MemberModeration,
+    MessageAttachmentUpload, MessageInfo, MessageSendLimits, MessageState, PermissionDecision,
+    ReactionEmoji, ReactionUsersPage, ReplyReference, UserProfileInfo, UserProfileUpdate,
     ids::{
         Id,
         marker::{ChannelMarker, ForumTagMarker, GuildMarker, MessageMarker, UserMarker},
@@ -253,6 +253,18 @@ impl DiscordClient {
 
     pub async fn leave_guild(&self, guild_id: Id<GuildMarker>) -> Result<()> {
         self.rest.leave_guild(guild_id).await
+    }
+
+    pub async fn moderate_member(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+        moderation: &MemberModeration,
+    ) -> Result<Option<MemberInfo>> {
+        self.ensure_can_moderate_member(guild_id, user_id, moderation)?;
+        self.rest
+            .moderate_member(guild_id, user_id, moderation)
+            .await
     }
 
     pub async fn close_dm(&self, channel_id: Id<ChannelMarker>) -> Result<()> {
@@ -768,6 +780,32 @@ impl DiscordClient {
             Err(AppError::DiscordRequest(
                 "only the message author can edit this message".to_owned(),
             ))
+        }
+    }
+
+    pub(super) fn ensure_can_moderate_member(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+        moderation: &MemberModeration,
+    ) -> Result<()> {
+        let state = self.read_state();
+        let action = moderation.action();
+        if let ActionDecision::Blocked(reason) =
+            state.member_moderation_decision(guild_id, user_id, action)
+        {
+            return Err(action_blocked(action, reason));
+        }
+        let MemberModeration::Move(channel_id) = moderation else {
+            return Ok(());
+        };
+        let channel = state
+            .channel(*channel_id)
+            .filter(|channel| channel.guild_id == Some(guild_id))
+            .ok_or_else(|| action_blocked(action, ActionBlockReason::ChannelDataUnavailable))?;
+        match state.member_move_destination_decision(channel) {
+            ActionDecision::Allowed => Ok(()),
+            ActionDecision::Blocked(reason) => Err(action_blocked(action, reason)),
         }
     }
 

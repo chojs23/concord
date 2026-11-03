@@ -5,6 +5,7 @@ use super::broadcast::{
 use super::stream::{StreamGatewaySession, StreamRuntimeState, run_stream_gateway_session};
 use super::*;
 use std::future::Future;
+use std::sync::RwLock;
 use tokio::sync::oneshot;
 
 pub(super) const MAX_VOICE_RECONNECT_ATTEMPTS: u8 = 3;
@@ -511,7 +512,7 @@ async fn wait_for_capture_preparation_cancellation(
 #[derive(Default)]
 pub(super) struct VoiceRuntimeState {
     current_user_id: Option<Id<UserMarker>>,
-    requested: Option<CurrentVoiceConnectionState>,
+    pub(super) requested: Option<CurrentVoiceConnectionState>,
     current_voice: Option<ObservedSelfVoiceState>,
     server: Option<VoiceServerInfo>,
     active: Option<VoiceGatewaySession>,
@@ -779,6 +780,15 @@ impl VoiceRuntimeState {
         // A leave clears the channel; for a DM that also clears the scope, so we
         // treat any channel-less state for the current user as a disconnect.
         let Some(channel_id) = state.channel_id else {
+            if self.current_voice.as_ref().is_some_and(|voice| {
+                voice.channel_id == requested.channel_id
+                    && state
+                        .session_id
+                        .as_ref()
+                        .is_none_or(|session_id| *session_id == voice.session_id)
+            }) {
+                self.requested = None;
+            }
             self.current_voice = None;
             self.server = None;
             self.push_to_talk_pressed = false;
@@ -790,6 +800,16 @@ impl VoiceRuntimeState {
         let session_id = state
             .session_id
             .filter(|session_id| !session_id.is_empty())?;
+        if channel_id != requested.channel_id
+            && self.current_voice.as_ref().is_some_and(|voice| {
+                voice.channel_id == requested.channel_id && voice.session_id == session_id
+            })
+        {
+            self.requested = Some(CurrentVoiceConnectionState {
+                channel_id,
+                ..requested
+            });
+        }
         self.current_voice = Some(ObservedSelfVoiceState {
             scope: requested.scope,
             channel_id,
@@ -903,6 +923,7 @@ pub(crate) async fn run_voice_runtime(
     gateway_commands_tx: mpsc::UnboundedSender<GatewayCommand>,
     status_publisher: VoiceStatusPublisher,
     stream_preview_uploader: StreamPreviewUploader,
+    requested_voice: Arc<RwLock<Option<CurrentVoiceConnectionState>>>,
 ) {
     let mut state = VoiceRuntimeState::default();
     let mut stream_state = StreamRuntimeState::default();
@@ -984,10 +1005,19 @@ pub(crate) async fn run_voice_runtime(
         let broadcast_started = broadcast_controller.connection_started(&event);
         let stream_update = stream_state.apply(&event);
         let broadcast_update = broadcast_state.apply(&event);
+        let requested_before = state.requested;
         let VoiceRuntimeApplyResult {
             action,
             participant_playback_changed,
         } = state.apply_with_changes(event);
+        if state.requested != requested_before {
+            let mut shared = requested_voice
+                .write()
+                .expect("requested voice lock is not poisoned");
+            if *shared == requested_before {
+                *shared = state.requested;
+            }
+        }
         if let Some((requested_sources, active_sources, message)) = audio_sources_apply_failure {
             status_publisher
                 .publish_audio_sources_apply_failed(requested_sources, active_sources, message)

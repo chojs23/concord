@@ -3057,3 +3057,103 @@ fn encrypt_test_rtp_payload(
         other => panic!("unsupported test mode: {other}"),
     }
 }
+
+#[test]
+fn voice_runtime_follows_a_server_side_move_of_its_own_session() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    assert!(matches!(
+        state.apply(VoiceRuntimeEvent::VoiceServer(voice_server())),
+        Some(VoiceRuntimeAction::Connect(_))
+    ));
+
+    match state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(20)),
+    ))) {
+        Some(VoiceRuntimeAction::Connect(session)) => {
+            assert_eq!(session.channel_id, Id::new(20));
+            assert_eq!(session.session_id, "voice-session");
+        }
+        other => panic!("expected reconnect to the moved channel, got {other:?}"),
+    }
+    let requested = state.requested.expect("requested voice");
+    assert_eq!(requested.channel_id, Id::new(20));
+    assert!(requested.self_mute);
+}
+
+#[test]
+fn voice_runtime_does_not_follow_other_sessions_or_pending_joins() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    state.apply(VoiceRuntimeEvent::VoiceServer(voice_server()));
+
+    assert_eq!(
+        state.apply(VoiceRuntimeEvent::VoiceState(VoiceStateInfo {
+            session_id: Some("other-client-session".to_owned()),
+            ..voice_state(10, Some(Id::new(20)))
+        })),
+        Some(VoiceRuntimeAction::Close)
+    );
+    assert_eq!(
+        state.requested.map(|voice| voice.channel_id),
+        Some(Id::new(10))
+    );
+
+    let mut joining = requested_voice();
+    joining.channel_id = Id::new(30);
+    state.apply(VoiceRuntimeEvent::Requested(Some(joining)));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    assert_eq!(
+        state.requested.map(|voice| voice.channel_id),
+        Some(Id::new(30))
+    );
+}
+
+#[test]
+fn voice_runtime_forgets_the_channel_after_a_server_side_disconnect() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    state.apply(VoiceRuntimeEvent::VoiceServer(voice_server()));
+
+    assert_eq!(
+        state.apply(VoiceRuntimeEvent::VoiceState(voice_state(10, None))),
+        Some(VoiceRuntimeAction::Close)
+    );
+    assert_eq!(state.requested, None);
+}
+
+#[test]
+fn voice_runtime_keeps_a_pending_join_when_the_previous_channel_is_left() {
+    let mut state = VoiceRuntimeState::default();
+    state.apply(VoiceRuntimeEvent::CurrentUserReady(Some(Id::new(10))));
+    state.apply(VoiceRuntimeEvent::Requested(Some(requested_voice())));
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(
+        10,
+        Some(Id::new(10)),
+    )));
+    let mut joining = requested_voice();
+    joining.channel_id = Id::new(30);
+    state.apply(VoiceRuntimeEvent::Requested(Some(joining)));
+
+    state.apply(VoiceRuntimeEvent::VoiceState(voice_state(10, None)));
+    assert_eq!(state.requested, Some(joining));
+}

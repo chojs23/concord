@@ -1,5 +1,8 @@
 use super::*;
-use crate::discord::{DiscordPermission, PermissionDataGap, PermissionDecision};
+use crate::discord::{
+    ActionBlockReason, ActionDecision, DiscordAction, DiscordPermission, PermissionDataGap,
+    PermissionDecision,
+};
 
 // Keep these literals separate from the implementation constants so the tests
 // verify Discord's documented bit values instead of reusing the code under test.
@@ -1131,4 +1134,208 @@ fn missing_current_user_id_falls_back_to_visible() {
     }));
     let ch = state.channel(Id::new(2)).expect("channel");
     assert!(state.can_view_channel(ch));
+}
+
+const MUTE_MEMBERS: u64 = 0x0000_0000_0040_0000;
+const DEAFEN_MEMBERS: u64 = 0x0000_0000_0080_0000;
+const MOVE_MEMBERS: u64 = 0x0000_0000_0100_0000;
+
+const MODERATOR: Id<UserMarker> = Id::new(10);
+const TARGET: Id<UserMarker> = Id::new(20);
+const GUILD_OWNER: Id<UserMarker> = Id::new(99);
+const MODERATION_GUILD: Id<GuildMarker> = Id::new(1);
+const LOBBY: Id<ChannelMarker> = Id::new(2);
+const AFK: Id<ChannelMarker> = Id::new(3);
+const MODERATOR_ROLE: Id<RoleMarker> = Id::new(50);
+
+struct ModerationFixture {
+    owner: Id<UserMarker>,
+    moderator_permissions: u64,
+    lobby_overwrites: Vec<PermissionOverwriteInfo>,
+    afk_overwrites: Vec<PermissionOverwriteInfo>,
+    target_in_voice: bool,
+}
+
+impl ModerationFixture {
+    fn new(moderator_permissions: u64) -> Self {
+        Self {
+            owner: GUILD_OWNER,
+            moderator_permissions,
+            lobby_overwrites: Vec::new(),
+            afk_overwrites: Vec::new(),
+            target_in_voice: true,
+        }
+    }
+
+    fn build(self) -> DiscordState {
+        let mut state = DiscordState::default();
+        state.apply_event(&AppEvent::Ready {
+            user: "me".to_owned(),
+            user_id: Some(MODERATOR),
+        });
+        state.apply_event(&guild_create_event(GuildCreateFixture {
+            owner_id: Some(self.owner),
+            channels: vec![
+                ChannelInfo {
+                    permission_overwrites: self.lobby_overwrites,
+                    ..guild_voice_channel(MODERATION_GUILD, LOBBY)
+                },
+                ChannelInfo {
+                    name: "AFK".to_owned(),
+                    position: Some(1),
+                    permission_overwrites: self.afk_overwrites,
+                    ..guild_voice_channel(MODERATION_GUILD, AFK)
+                },
+            ],
+            members: vec![
+                member_with_roles(MODERATOR, "me", vec![MODERATOR_ROLE]),
+                member_with_roles(TARGET, "target", Vec::new()),
+            ],
+            roles: vec![
+                role_info(
+                    Id::new(MODERATION_GUILD.get()),
+                    "@everyone",
+                    VIEW_CHANNEL | CONNECT,
+                ),
+                RoleInfo {
+                    position: 1,
+                    permissions: self.moderator_permissions,
+                    ..RoleInfo::test(MODERATOR_ROLE, "Moderator")
+                },
+            ],
+            ..GuildCreateFixture::new(MODERATION_GUILD)
+        }));
+        if self.target_in_voice {
+            state.apply_event(&AppEvent::VoiceStateUpdate {
+                state: voice_state(MODERATION_GUILD, Some(LOBBY), TARGET),
+            });
+        }
+        state
+    }
+}
+
+fn moderation_decision(state: &DiscordState, action: DiscordAction) -> ActionDecision {
+    state.member_moderation_decision(MODERATION_GUILD, TARGET, action)
+}
+
+#[test]
+fn member_moderation_actions_require_their_discord_permission() {
+    for (action, bit, permission) in [
+        (
+            DiscordAction::MuteMember,
+            MUTE_MEMBERS,
+            DiscordPermission::MuteMembers,
+        ),
+        (
+            DiscordAction::DeafenMember,
+            DEAFEN_MEMBERS,
+            DiscordPermission::DeafenMembers,
+        ),
+        (
+            DiscordAction::MoveMember,
+            MOVE_MEMBERS,
+            DiscordPermission::MoveMembers,
+        ),
+    ] {
+        let allowed = ModerationFixture::new(bit).build();
+        assert_eq!(
+            moderation_decision(&allowed, action),
+            ActionDecision::Allowed,
+            "{action:?}"
+        );
+
+        let denied = ModerationFixture::new(0).build();
+        assert_eq!(
+            moderation_decision(&denied, action),
+            ActionDecision::Blocked(ActionBlockReason::PermissionDenied(permission)),
+            "{action:?}"
+        );
+    }
+}
+
+#[test]
+fn administrators_and_owners_can_moderate_voice_members() {
+    let admin = ModerationFixture::new(ADMINISTRATOR).build();
+    let owner = ModerationFixture {
+        owner: MODERATOR,
+        ..ModerationFixture::new(0)
+    }
+    .build();
+
+    for state in [admin, owner] {
+        for action in [
+            DiscordAction::MuteMember,
+            DiscordAction::DeafenMember,
+            DiscordAction::MoveMember,
+        ] {
+            assert_eq!(
+                moderation_decision(&state, action),
+                ActionDecision::Allowed,
+                "{action:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn voice_moderation_uses_the_target_voice_channel_permissions() {
+    let not_in_voice = ModerationFixture {
+        target_in_voice: false,
+        ..ModerationFixture::new(MUTE_MEMBERS)
+    }
+    .build();
+    assert_eq!(
+        moderation_decision(&not_in_voice, DiscordAction::MuteMember),
+        ActionDecision::Blocked(ActionBlockReason::MemberNotInVoice)
+    );
+
+    let denied_in_lobby = ModerationFixture {
+        lobby_overwrites: vec![perm_role(MODERATOR_ROLE.get(), 0, MUTE_MEMBERS)],
+        ..ModerationFixture::new(MUTE_MEMBERS | DEAFEN_MEMBERS)
+    }
+    .build();
+    assert_eq!(
+        moderation_decision(&denied_in_lobby, DiscordAction::MuteMember),
+        ActionDecision::Blocked(ActionBlockReason::PermissionDenied(
+            DiscordPermission::MuteMembers
+        ))
+    );
+    assert_eq!(
+        moderation_decision(&denied_in_lobby, DiscordAction::DeafenMember),
+        ActionDecision::Allowed
+    );
+}
+
+#[test]
+fn move_destination_requires_connect_and_move_members() {
+    let state = ModerationFixture {
+        afk_overwrites: vec![perm_role(MODERATION_GUILD.get(), 0, CONNECT)],
+        ..ModerationFixture::new(MOVE_MEMBERS)
+    }
+    .build();
+    let afk = state.channel(AFK).expect("afk channel");
+    assert_eq!(
+        state.member_move_destination_decision(afk),
+        ActionDecision::Blocked(ActionBlockReason::PermissionDenied(
+            DiscordPermission::Connect
+        ))
+    );
+
+    let state = ModerationFixture {
+        afk_overwrites: vec![perm_role(MODERATOR_ROLE.get(), 0, MOVE_MEMBERS)],
+        ..ModerationFixture::new(MOVE_MEMBERS)
+    }
+    .build();
+    let afk = state.channel(AFK).expect("afk channel");
+    assert_eq!(
+        state.member_move_destination_decision(afk),
+        ActionDecision::Blocked(ActionBlockReason::PermissionDenied(
+            DiscordPermission::MoveMembers
+        ))
+    );
+    let lobby = state.channel(LOBBY).expect("lobby channel");
+    assert_eq!(
+        state.member_move_destination_decision(lobby),
+        ActionDecision::Allowed
+    );
 }

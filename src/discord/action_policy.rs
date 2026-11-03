@@ -1,5 +1,9 @@
 use std::fmt;
 
+use super::ids::{
+    Id,
+    marker::{GuildMarker, UserMarker},
+};
 use super::{
     ChannelState, DiscordPermission, DiscordState, GuildParticipationDataGap,
     GuildParticipationDecision, GuildParticipationRestriction, PermissionDataGap,
@@ -32,6 +36,9 @@ pub enum DiscordAction {
     JoinVoiceChannel,
     StreamVoice,
     TransmitMicrophone,
+    MuteMember,
+    DeafenMember,
+    MoveMember,
 }
 
 impl DiscordAction {
@@ -59,6 +66,9 @@ impl DiscordAction {
             Self::ReopenThread => Some(DiscordPermission::ReopenThread),
             Self::JoinVoiceChannel => Some(DiscordPermission::Connect),
             Self::StreamVoice => Some(DiscordPermission::Stream),
+            Self::MuteMember => Some(DiscordPermission::MuteMembers),
+            Self::DeafenMember => Some(DiscordPermission::DeafenMembers),
+            Self::MoveMember => Some(DiscordPermission::MoveMembers),
             Self::RemoveMessageEmbeds
             | Self::ChangeThreadMembership
             | Self::EditMessage
@@ -96,6 +106,9 @@ impl fmt::Display for DiscordAction {
             Self::JoinVoiceChannel => "join this voice channel",
             Self::StreamVoice => "stream video",
             Self::TransmitMicrophone => "transmit microphone audio",
+            Self::MuteMember => "server mute this member",
+            Self::DeafenMember => "server deafen this member",
+            Self::MoveMember => "move this member",
         })
     }
 }
@@ -109,6 +122,7 @@ pub enum ActionBlockReason {
     PermissionDataUnavailable(PermissionDataGap),
     ParticipationRestricted(GuildParticipationRestriction),
     ParticipationDataUnavailable(GuildParticipationDataGap),
+    MemberNotInVoice,
 }
 
 impl fmt::Display for ActionBlockReason {
@@ -135,6 +149,7 @@ impl fmt::Display for ActionBlockReason {
                     "server participation cannot be verified because {gap}"
                 )
             }
+            Self::MemberNotInVoice => formatter.write_str("the member is not in a voice channel"),
         }
     }
 }
@@ -299,14 +314,49 @@ impl DiscordState {
         channel: &ChannelState,
         permission: DiscordPermission,
     ) -> Option<ActionBlockReason> {
-        match self.channel_permission_decision(channel, permission) {
-            PermissionDecision::Allowed => None,
-            PermissionDecision::Denied(permission) => {
-                Some(ActionBlockReason::PermissionDenied(permission))
-            }
-            PermissionDecision::Unavailable(gap) => {
-                Some(ActionBlockReason::PermissionDataUnavailable(gap))
-            }
+        permission_decision_block_reason(self.channel_permission_decision(channel, permission))
+    }
+
+    pub(crate) fn member_moderation_decision(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+        action: DiscordAction,
+    ) -> ActionDecision {
+        let Some(permission) = action.base_permission() else {
+            return ActionDecision::Allowed;
+        };
+        let Some(channel) = self
+            .user_voice_channel_in_guild(guild_id, user_id)
+            .and_then(|channel_id| self.channel(channel_id))
+        else {
+            return ActionDecision::Blocked(ActionBlockReason::MemberNotInVoice);
+        };
+        self.permission_block_reason(channel, permission)
+            .map_or(ActionDecision::Allowed, ActionDecision::Blocked)
+    }
+
+    pub(crate) fn member_move_destination_decision(
+        &self,
+        channel: &ChannelState,
+    ) -> ActionDecision {
+        [DiscordPermission::Connect, DiscordPermission::MoveMembers]
+            .into_iter()
+            .find_map(|permission| self.permission_block_reason(channel, permission))
+            .map_or(ActionDecision::Allowed, ActionDecision::Blocked)
+    }
+}
+
+const fn permission_decision_block_reason(
+    decision: PermissionDecision,
+) -> Option<ActionBlockReason> {
+    match decision {
+        PermissionDecision::Allowed => None,
+        PermissionDecision::Denied(permission) => {
+            Some(ActionBlockReason::PermissionDenied(permission))
+        }
+        PermissionDecision::Unavailable(gap) => {
+            Some(ActionBlockReason::PermissionDataUnavailable(gap))
         }
     }
 }
