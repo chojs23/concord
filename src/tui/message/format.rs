@@ -737,6 +737,7 @@ fn wrap_rendered_text_lines(
     width: usize,
     style: Style,
 ) -> Vec<MessageContentLine> {
+    let rendered = rendered_text_with_url_highlights(rendered);
     wrap_rendered_text_lines_with_styled_ranges(rendered, width, style, &[])
 }
 
@@ -746,7 +747,6 @@ fn wrap_rendered_text_lines_with_styled_ranges(
     style: Style,
     styled_ranges: &[StyledPrefix],
 ) -> Vec<MessageContentLine> {
-    let rendered = rendered_text_with_url_highlights(rendered);
     wrap_text_with_metadata(
         &rendered.text,
         &rendered.highlights,
@@ -1136,5 +1136,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["[Sticker: Laugh]"]
         );
+    }
+
+    #[test]
+    fn backslash_escapes_inline_markdown_markers() {
+        let message = MessageState {
+            content: Some(r"\*test\* and \*\*bold\*\* and *hello \* world*".to_owned()),
+            ..Default::default()
+        };
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+        let spans = lines[0].spans();
+
+        assert_eq!(lines[0].text, "*test* and **bold** and hello * world");
+        assert_eq!(spans[0].content.as_ref(), "*test* and **bold** and ");
+        assert!(!spans[0].style.add_modifier.contains(Modifier::ITALIC));
+        assert!(!spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(spans[1].content.as_ref(), "hello * world");
+        assert!(spans[1].style.add_modifier.contains(Modifier::ITALIC));
     }
 }
