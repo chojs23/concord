@@ -6,12 +6,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{TimeZone, Utc};
-use reqwest::header::{AUTHORIZATION, ORIGIN};
+use wreq::header::{AUTHORIZATION, ORIGIN};
 
 use crate::discord::ids::{
     Id,
@@ -54,9 +54,8 @@ use super::{
         parse_forum_post_data_response, parse_public_archived_threads_response,
     },
     messages::{
-        MessageEditRequest, edit_message_request_body, message_multipart_form,
-        message_request_body, message_request_body_with_tts, parse_pinned_messages_response,
-        upload_content_type,
+        MessageEditRequest, edit_message_request_body, message_request_body,
+        message_request_body_with_tts, parse_pinned_messages_response,
     },
     notification_settings::mute_request_body,
     polls::poll_vote_request_body,
@@ -66,6 +65,7 @@ use super::{
         MessageSearchResponse, message_search_date_snowflake_bounds, message_search_has_more,
         message_search_query_params, message_search_retry_delay,
     },
+    uploads::upload_content_type,
     user_settings::settings_proto_request_body,
 };
 
@@ -107,11 +107,11 @@ fn rest_rate_limit_routes_normalize_ids_but_keep_major_scope() {
 #[test]
 fn stream_preview_routes_keep_each_stream_as_a_major_scope() {
     let first = RestRateLimitRoute::from_request(&test_request_with_method(
-        reqwest::Method::POST,
+        wreq::Method::POST,
         "https://discord.com/api/v9/streams/guild:123:456:789/preview",
     ));
     let second = RestRateLimitRoute::from_request(&test_request_with_method(
-        reqwest::Method::POST,
+        wreq::Method::POST,
         "https://discord.com/api/v9/streams/guild:123:456:999/preview",
     ));
 
@@ -125,22 +125,22 @@ fn stream_preview_routes_keep_each_stream_as_a_major_scope() {
 fn rest_request_pacing_separates_message_sends_from_other_requests() {
     let cases = [
         (
-            reqwest::Method::POST,
+            wreq::Method::POST,
             "https://discord.com/api/v9/channels/123/messages",
             RestRequestPacingKind::MessageSend,
         ),
         (
-            reqwest::Method::POST,
+            wreq::Method::POST,
             "https://discord.com/api/v9/channels/123/typing",
             RestRequestPacingKind::Mutation,
         ),
         (
-            reqwest::Method::PATCH,
+            wreq::Method::PATCH,
             "https://discord.com/api/v9/channels/123/messages/456",
             RestRequestPacingKind::Mutation,
         ),
         (
-            reqwest::Method::GET,
+            wreq::Method::GET,
             "https://discord.com/api/v9/channels/123/messages",
             RestRequestPacingKind::None,
         ),
@@ -208,7 +208,7 @@ fn rest_rate_limiter_applies_learned_bucket_per_major_scope() {
         RestRateLimitDecision::Admit { key, probe } => (key, probe),
         _ => panic!("the first request should be admitted"),
     };
-    let mut headers = reqwest::header::HeaderMap::new();
+    let mut headers = wreq::header::HeaderMap::new();
     headers.insert(
         "x-ratelimit-bucket",
         "messages".parse().expect("valid header"),
@@ -225,7 +225,7 @@ fn rest_rate_limiter_applies_learned_bucket_per_major_scope() {
         probe,
         RestRateLimitResponse {
             headers: &headers,
-            status: reqwest::StatusCode::OK,
+            status: wreq::StatusCode::OK,
             body: None,
             now,
             wall_clock: SystemTime::now(),
@@ -243,7 +243,7 @@ fn rest_rate_limiter_applies_learned_bucket_per_major_scope() {
 
     let fallback_limiter = RestRateLimiter::default();
     let mutation_request = test_request_with_method(
-        reqwest::Method::POST,
+        wreq::Method::POST,
         "https://discord.com/api/v9/channels/123/messages",
     );
     let mutation_route = RestRateLimitRoute::from_request(&mutation_request);
@@ -256,8 +256,8 @@ fn rest_rate_limiter_applies_learned_bucket_per_major_scope() {
         &mutation_key,
         mutation_probe,
         RestRateLimitResponse {
-            headers: &reqwest::header::HeaderMap::new(),
-            status: reqwest::StatusCode::OK,
+            headers: &wreq::header::HeaderMap::new(),
+            status: wreq::StatusCode::OK,
             body: None,
             now,
             wall_clock: SystemTime::now(),
@@ -282,7 +282,7 @@ fn rest_rate_limiter_applies_global_retry_after_to_other_routes() {
         RestRateLimitDecision::Admit { key, probe } => (key, probe),
         _ => panic!("the first request should be admitted"),
     };
-    let headers = reqwest::header::HeaderMap::new();
+    let headers = wreq::header::HeaderMap::new();
 
     limiter.finish(
         &first_route,
@@ -290,7 +290,7 @@ fn rest_rate_limiter_applies_global_retry_after_to_other_routes() {
         probe,
         RestRateLimitResponse {
             headers: &headers,
-            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            status: wreq::StatusCode::TOO_MANY_REQUESTS,
             body: Some(RestRateLimitBody {
                 retry_after: Some(Duration::from_secs(3)),
                 global: true,
@@ -315,15 +315,15 @@ fn forbidden_circuit_resets_stale_failures_and_bounds_storage() {
         major_parameter: "none".to_owned(),
     };
     let start = std::time::Instant::now();
-    safety.record_response_at(&route, reqwest::StatusCode::FORBIDDEN, start);
+    safety.record_response_at(&route, wreq::StatusCode::FORBIDDEN, start);
     safety.record_response_at(
         &route,
-        reqwest::StatusCode::FORBIDDEN,
+        wreq::StatusCode::FORBIDDEN,
         start + Duration::from_secs(1),
     );
     let outside_window = start + FORBIDDEN_FAILURE_WINDOW + Duration::from_secs(1);
 
-    safety.record_response_at(&route, reqwest::StatusCode::FORBIDDEN, outside_window);
+    safety.record_response_at(&route, wreq::StatusCode::FORBIDDEN, outside_window);
 
     safety
         .preflight_at(&route, outside_window)
@@ -349,7 +349,7 @@ fn forbidden_circuit_resets_stale_failures_and_bounds_storage() {
                 path: format!("/messages/{index}"),
                 major_parameter: "none".to_owned(),
             },
-            reqwest::StatusCode::FORBIDDEN,
+            wreq::StatusCode::FORBIDDEN,
             start + Duration::from_millis(index as u64),
         );
     }
@@ -411,7 +411,7 @@ async fn authenticated_requests_stop_after_unauthorized_response() {
         Some("https://discord.com")
     );
 
-    let mut log_headers = reqwest::header::HeaderMap::new();
+    let mut log_headers = wreq::header::HeaderMap::new();
     log_headers.insert(AUTHORIZATION, "secret-token".parse().expect("valid header"));
     log_headers.insert(
         "x-super-properties",
@@ -584,18 +584,18 @@ fn test_rest() -> DiscordRest {
     let _ = rustls::crypto::ring::default_provider().install_default();
     DiscordRest::new(
         "test-token".to_owned(),
-        reqwest::Client::new(),
+        wreq::Client::new(),
         Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)),
     )
 }
 
-fn test_request(url: &str) -> reqwest::Request {
-    test_request_with_method(reqwest::Method::GET, url)
+fn test_request(url: &str) -> wreq::Request {
+    test_request_with_method(wreq::Method::GET, url)
 }
 
-fn test_request_with_method(method: reqwest::Method, url: &str) -> reqwest::Request {
+fn test_request_with_method(method: wreq::Method, url: &str) -> wreq::Request {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    reqwest::Client::new()
+    wreq::Client::new()
         .request(method, url)
         .build()
         .expect("test request should build")
@@ -681,18 +681,15 @@ fn validates_attachment_only_message_payload() {
             message_id: Id::new(44),
             mention_author: true,
         }),
-        &attachments,
     );
     assert_eq!(body["content"], "");
     assert_eq!(body["message_reference"]["message_id"], "44");
     assert!(body.get("allowed_mentions").is_none());
-    assert_eq!(body["attachments"][0]["id"], 0);
-    assert_eq!(body["attachments"][0]["filename"], "cat.png");
 }
 
 #[test]
 fn message_request_body_matches_web_defaults_and_carries_snowflake_nonce() {
-    let body = message_request_body("hi", Id::new(99), None, &[]);
+    let body = message_request_body("hi", Id::new(99), None);
     let nonce = body["nonce"].as_str().expect("nonce is a string");
     assert_eq!(nonce, "99");
     assert_eq!(body["enforce_nonce"], true);
@@ -700,7 +697,7 @@ fn message_request_body_matches_web_defaults_and_carries_snowflake_nonce() {
     assert_eq!(body["tts"], false);
     assert_eq!(body["flags"], 0);
 
-    let tts = message_request_body_with_tts("hi", Id::new(99), None, &[], true);
+    let tts = message_request_body_with_tts("hi", Id::new(99), None, true);
     assert_eq!(tts["tts"], true);
 }
 
@@ -713,7 +710,6 @@ fn message_request_body_suppresses_reply_ping_when_disabled() {
             message_id: Id::new(44),
             mention_author: false,
         }),
-        &[],
     );
     assert_eq!(body["message_reference"]["message_id"], "44");
     assert_eq!(body["allowed_mentions"]["replied_user"], false);
@@ -1193,38 +1189,6 @@ fn enforces_per_file_upload_limit() {
         .collect::<Vec<_>>();
     validate_message_payload("", &many_sub_limit_files, BASE_MESSAGE_LIMITS)
         .expect("files each under the per-file limit are accepted even if their sum exceeds it");
-}
-
-#[tokio::test]
-async fn multipart_form_rechecks_current_file_size() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is after unix epoch")
-        .as_nanos();
-    let directory = std::env::temp_dir().join(format!("concord-rest-{unique}"));
-    std::fs::create_dir_all(&directory).expect("temp upload directory can be created");
-    let path = directory.join("changed.bin");
-    std::fs::write(&path, [0_u8]).expect("small temp file can be written");
-    let attachment = MessageAttachmentUpload::from_path(path.clone(), "changed.bin".to_owned(), 1);
-    std::fs::write(
-        &path,
-        vec![0_u8; (BASE_ATTACHMENT_LIMIT_BYTES + 1) as usize],
-    )
-    .expect("oversized temp file can be written");
-
-    let result = message_multipart_form(
-        message_request_body("", Id::new(99), None, std::slice::from_ref(&attachment)),
-        &[attachment],
-        BASE_ATTACHMENT_LIMIT_BYTES,
-    )
-    .await;
-    let Err(error) = result else {
-        panic!("multipart form must re-check actual file size");
-    };
-
-    assert!(matches!(error, AppError::AttachmentTooLarge { .. }));
-    let _ = std::fs::remove_file(path);
-    let _ = std::fs::remove_dir(directory);
 }
 
 #[test]

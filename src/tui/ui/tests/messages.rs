@@ -1136,6 +1136,8 @@ fn discord_code_delimiters_render_without_residual_backticks() {
         ("`hello world`", "hello world"),
         ("``hello world``", "hello world"),
         ("``a ` **b**``", "a ` **b**"),
+        (r"`a\*b\*`", r"a\*b\*"),
+        (r"``a\*b\*``", r"a\*b\*"),
     ] {
         let message = message_with_content(Some(input.to_owned()));
         let lines = format_message_content_lines(&message, &state, 80);
@@ -1406,6 +1408,36 @@ fn message_content_resolves_user_mentions_by_precedence() {
 }
 
 #[test]
+fn message_content_preserves_literal_mention_names_with_markdown_escapes() {
+    for (name, content, expected, bold) in [
+        (r"a\!b", r"\*hello <@10>\*", r"*hello @a\!b*", false),
+        (
+            r"a\!b",
+            r"**hello <@10> \* world**",
+            r"hello @a\!b * world",
+            true,
+        ),
+        (r"a\*b\*", "**hello <@10>**", r"hello @a\*b\*", true),
+        (r"a\", "**hello <@10>**", r"hello @a\", true),
+        ("a``b", "``hello <@10> world``", "hello @a``b world", false),
+    ] {
+        let mut message = message_with_content(Some(content.to_owned()));
+        message.mentions = vec![mention_info(10, name)];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+        let spans = lines[0].spans();
+
+        assert_eq!(line_texts(&lines), vec![expected], "{content}: {name}");
+        let expected_mention = format!("@{name}");
+        let mention = spans
+            .iter()
+            .find(|span| span.content.as_ref() == expected_mention)
+            .expect("literal mention keeps its own highlight");
+        assert_eq!(mention.style.add_modifier.contains(Modifier::BOLD), bold);
+    }
+}
+
+#[test]
 fn message_content_highlights_current_user_mentions() {
     let mut message = message_with_content(Some("hello <@10>".to_owned()));
     message.mentions = vec![mention_info(10, "username")];
@@ -1520,6 +1552,49 @@ fn message_content_highlights_markdown_link_urls() {
         .expect("markdown link URL is rendered as its own span");
 
     assert!(url_span.style.add_modifier.contains(Modifier::UNDERLINED));
+}
+
+#[test]
+fn message_url_actions_match_links_after_markdown_escapes() {
+    for (content, expected_text, expected_url) in [
+        (r"https\://example.com", "https://example.com", None),
+        (
+            r"\! https://example.com/a\_b",
+            r"! https://example.com/a\_b",
+            Some(r"https://example.com/a\_b"),
+        ),
+        (
+            r"**open https://example.com/a\_b now**",
+            r"open https://example.com/a\_b now",
+            Some(r"https://example.com/a\_b"),
+        ),
+    ] {
+        let message = message_with_content(Some(content.to_owned()));
+        let mut state = state_with_message_id(Id::new(1), content);
+        state.focus_pane(FocusPane::Messages);
+
+        let lines = format_message_content_lines(&message, &state, 200);
+        let spans = lines[0].spans();
+        let link_spans = spans
+            .iter()
+            .filter(|span| span.style.add_modifier.contains(Modifier::UNDERLINED))
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(line_texts(&lines), vec![expected_text], "{content}");
+        assert_eq!(
+            link_spans,
+            expected_url.into_iter().collect::<Vec<_>>(),
+            "{content}"
+        );
+        assert_eq!(
+            state.direct_open_selected_message_url(),
+            expected_url.map(|url| crate::discord::AppCommand::OpenUrl {
+                url: url.to_owned(),
+            }),
+            "{content}",
+        );
+    }
 }
 
 #[test]

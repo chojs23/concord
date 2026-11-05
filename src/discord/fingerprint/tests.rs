@@ -1,9 +1,5 @@
 use super::*;
 use crate::discord::auth_http::DiscordAuthSession;
-use reqwest::header::{
-    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, CACHE_CONTROL, HeaderMap, ORIGIN, PRAGMA, REFERER,
-    USER_AGENT,
-};
 use serde_json::Value;
 use std::{
     io::{BufRead, BufReader, Write},
@@ -11,6 +7,10 @@ use std::{
     sync::Arc,
     thread,
     time::Duration,
+};
+use wreq::header::{
+    ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, CACHE_CONTROL, HeaderMap, ORIGIN, PRAGMA, REFERER,
+    USER_AGENT,
 };
 
 #[test]
@@ -101,7 +101,9 @@ fn rest_headers_and_persisted_identifiers_match_web_fingerprint_plan() {
         headers
             .get("Sec-CH-UA")
             .and_then(|value| value.to_str().ok()),
-        Some("\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"")
+        transport::browser_headers()
+            .get("sec-ch-ua")
+            .and_then(|value| value.to_str().ok())
     );
     assert_eq!(
         headers
@@ -239,7 +241,7 @@ fn super_properties_are_base64_encoded_web_fields() {
     assert_eq!(value["system_locale"], fingerprint.system_locale);
     assert_eq!(value["has_client_mods"], false);
     assert_eq!(value["browser_user_agent"], fingerprint.user_agent);
-    assert_eq!(value["browser_version"], CLIENT_BROWSER_VERSION);
+    assert_eq!(value["browser_version"], transport::browser_version());
     assert_eq!(value["os_version"], fingerprint.os_version);
     assert_eq!(value["client_build_number"], CLIENT_BUILD_NUMBER);
     assert!(value["client_event_source"].is_null());
@@ -261,9 +263,11 @@ fn super_properties_are_base64_encoded_web_fields() {
     assert_eq!(chrome_os_version("Mac OS X", "26.5.2"), "10.15.7");
     assert_eq!(chrome_os_version("Windows", "10.0.26100"), "10");
     assert_eq!(chrome_os_version("Linux", "6.12.0"), "6.12.0");
-    assert_eq!(
-        web_user_agent("Mac OS X", "10.15.7", "arm64"),
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+    assert_eq!(fingerprint.user_agent, transport::user_agent());
+    assert!(
+        fingerprint
+            .user_agent
+            .contains(&format!("Chrome/{}", transport::browser_version()))
     );
 }
 
@@ -335,7 +339,8 @@ fn shared_auth_session_sends_web_headers_and_persists_server_cookies() {
     let fingerprint = Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER));
     let state_dir = tempfile::tempdir().expect("temporary state directory should be created");
     let cookie_path = state_dir.path().join("discord-cookies.json");
-    let http = discord_http_client_with_cookie_path(&fingerprint, Some(cookie_path.clone()));
+    let http = discord_http_client_with_cookie_path(&fingerprint, Some(cookie_path.clone()))
+        .expect("test Discord client builds");
     let auth_session = DiscordAuthSession::with_http(Arc::clone(&fingerprint), http);
     let listener = TcpListener::bind("127.0.0.1:0").expect("test server should bind");
     let address = listener
@@ -420,7 +425,8 @@ fn shared_auth_session_sends_web_headers_and_persists_server_cookies() {
         .await
         .expect("server cookies should be persisted after the debounce");
         let restored_http =
-            discord_http_client_with_cookie_path(&fingerprint, Some(cookie_path.clone()));
+            discord_http_client_with_cookie_path(&fingerprint, Some(cookie_path.clone()))
+                .expect("test Discord client builds");
         restored_http
             .get(format!("http://{address}/third"))
             .headers(discord_rest_headers(&fingerprint))
@@ -509,7 +515,7 @@ fn session_identifier_fetch_preserves_http_and_json_failures() {
 
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime should start");
     runtime.block_on(async {
-        let client = reqwest::Client::new();
+        let client = wreq::Client::new();
         let headers = HeaderMap::new();
         let fetched = fetch_session_identifier(
             &client,
@@ -566,4 +572,42 @@ fn respond(mut stream: TcpStream, response: &str) {
     stream
         .write_all(response.as_bytes())
         .expect("test server should write response");
+}
+
+#[test]
+fn persistent_cookie_jar_uses_the_protocol_cookie_layout() {
+    let jar = LoggingCookieJar::load(None);
+    let uri = "https://discord.com/api/v9/users/@me"
+        .parse::<Uri>()
+        .expect("Discord URI is valid");
+    let cookie = HeaderValue::from_static("__dcfduid=server-cookie; Path=/; Secure");
+    jar.set_cookies(&mut std::iter::once(&cookie), &uri);
+    for version in [Version::HTTP_11, Version::HTTP_2] {
+        let values = match jar.cookies(&uri, version) {
+            Cookies::Compressed(value) => {
+                assert_eq!(version, Version::HTTP_11);
+                value
+                    .to_str()
+                    .expect("cookie is text")
+                    .split("; ")
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            }
+            Cookies::Uncompressed(values) => {
+                assert_eq!(version, Version::HTTP_2);
+                values
+                    .iter()
+                    .map(|value| value.to_str().expect("cookie is text").to_owned())
+                    .collect()
+            }
+            _ => panic!("stored cookies use a supported layout"),
+        };
+        assert_eq!(values.len(), 2);
+        assert!(
+            values
+                .iter()
+                .any(|value| value == "__dcfduid=server-cookie")
+        );
+        assert!(values.iter().any(|value| value == "locale=en-US"));
+    }
 }

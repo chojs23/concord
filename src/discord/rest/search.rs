@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use chrono::{NaiveDate, TimeZone, Utc};
-use reqwest::StatusCode;
 use serde_json::Value;
+use wreq::StatusCode;
 
 use crate::{
     AppError, Result,

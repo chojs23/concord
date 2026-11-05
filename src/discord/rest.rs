@@ -16,13 +16,13 @@ use crate::discord::{
 };
 use crate::{AppError, Result, logging};
 
-use reqwest::{
-    Method, RequestBuilder, Response, StatusCode,
-    header::{AUTHORIZATION, HeaderMap, HeaderValue, ORIGIN, REFERER, RETRY_AFTER},
-};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, Notify, OwnedMutexGuard};
+use wreq::{
+    Method, RequestBuilder, Response, StatusCode,
+    header::{AUTHORIZATION, HeaderMap, HeaderValue, ORIGIN, REFERER, RETRY_AFTER},
+};
 
 mod application;
 mod application_commands;
@@ -39,6 +39,7 @@ mod reactions;
 mod read_state;
 mod search;
 mod streams;
+mod uploads;
 mod user_settings;
 
 pub use forum::CreatedForumPost;
@@ -47,9 +48,9 @@ pub use reactions::ReactionUsersPage;
 
 use super::fingerprint::{ClientFingerprint, discord_channel_referer, discord_rest_headers};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DiscordRest {
-    raw_http: reqwest::Client,
+    raw_http: wreq::Client,
     fingerprint: Arc<ClientFingerprint>,
     page_referer: Arc<RwLock<Option<HeaderValue>>>,
     token: String,
@@ -59,6 +60,15 @@ pub struct DiscordRest {
     message_send_pacer: Arc<RestRequestPacer>,
     message_sends: Arc<MessageSendCoordinator>,
     preloaded_settings: Arc<AsyncMutex<Option<Vec<u8>>>>,
+}
+
+// The transport is opaque, and session secrets do not belong in debug output.
+impl std::fmt::Debug for DiscordRest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DiscordRest")
+            .finish_non_exhaustive()
+    }
 }
 
 const FORBIDDEN_CIRCUIT_THRESHOLD: u8 = 3;
@@ -76,7 +86,7 @@ const REST_UNKNOWN_MUTATION_ROUTE_INTERVAL: Duration = Duration::from_millis(500
 impl DiscordRest {
     pub(crate) fn new(
         token: String,
-        raw_http: reqwest::Client,
+        raw_http: wreq::Client,
         fingerprint: Arc<ClientFingerprint>,
     ) -> Self {
         Self {
@@ -194,7 +204,7 @@ impl DiscordRest {
                 "rest",
                 format!(
                     "request started action={label:?} method={method} endpoint={:?} headers={}",
-                    request.url().as_str(),
+                    request.uri(),
                     request_headers_for_log(request.headers())
                 ),
             );
@@ -277,7 +287,7 @@ impl DiscordRest {
     }
 }
 
-fn apply_authenticated_method_headers(request: &mut reqwest::Request) {
+fn apply_authenticated_method_headers(request: &mut wreq::Request) {
     if matches!(*request.method(), Method::GET | Method::HEAD) {
         request.headers_mut().remove(ORIGIN);
     } else {
@@ -417,7 +427,7 @@ enum RestRequestPacingKind {
 }
 
 impl RequestRoute {
-    fn from_request(request: &reqwest::Request) -> Self {
+    fn from_request(request: &wreq::Request) -> Self {
         let rate_limit_route = RestRateLimitRoute::from_request(request);
         Self {
             method: rate_limit_route.family.method,
@@ -751,9 +761,9 @@ impl RestRateLimitState {
 }
 
 impl RestRateLimitRoute {
-    fn from_request(request: &reqwest::Request) -> Self {
+    fn from_request(request: &wreq::Request) -> Self {
         let segments: Vec<&str> = request
-            .url()
+            .uri()
             .path()
             .split('/')
             .filter(|segment| !segment.is_empty())
@@ -946,11 +956,7 @@ impl MessageSendCoordinator {
 /// A captcha challenge becomes `CaptchaRequired` so callers stop instead of
 /// retrying. Retrying an unsolved captcha is what escalates to a temporary
 /// account block (issue #218).
-async fn request_error(
-    error: reqwest::Error,
-    response: reqwest::Response,
-    label: &str,
-) -> AppError {
+async fn request_error(error: wreq::Error, response: wreq::Response, label: &str) -> AppError {
     let status = response.status();
     let retry_after_header = header_f64(response.headers(), RETRY_AFTER.as_str());
     let body = response.text().await.ok();
@@ -961,7 +967,7 @@ async fn request_error(
 }
 
 fn request_error_from_parts(
-    error: reqwest::Error,
+    error: wreq::Error,
     status: StatusCode,
     retry_after_header: Option<f64>,
     body: Option<String>,

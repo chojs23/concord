@@ -6,14 +6,17 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::state::DashboardState;
-use crate::tui::text::{InlineEmojiSlot, RenderedText, TextHighlight, truncate_display_width};
+use crate::tui::text::{
+    InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind, truncate_display_width,
+};
 use crate::tui::theme;
 
 use super::wrap::wrap_text_line_with_styles;
 use super::{
     MessageContentLine, StyledPrefix, prefix_message_content_line_with_style, rendered_text_slice,
-    rendered_text_with_loaded_custom_emoji_placeholders, rendered_text_without_prefix,
-    wrap_rendered_text_lines, wrap_rendered_text_lines_with_styled_ranges,
+    rendered_text_with_loaded_custom_emoji_placeholders, rendered_text_with_url_highlights,
+    rendered_text_without_prefix, wrap_rendered_text_lines,
+    wrap_rendered_text_lines_with_styled_ranges,
 };
 
 const MARKDOWN_QUOTE_PREFIX: &str = "▎ ";
@@ -167,6 +170,9 @@ fn wrap_markdown_inline_text(
     width: usize,
     style: Style,
 ) -> Vec<MessageContentLine> {
+    // Link actions scan the original text. Unescaping must not invent new links
+    // or change the bytes of an existing URL.
+    let rendered = rendered_text_with_url_highlights(rendered);
     let inline = parse_inline_markdown(rendered);
     wrap_rendered_text_lines_with_styled_ranges(
         inline.rendered,
@@ -427,19 +433,42 @@ fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {
     let mut cursor = 0usize;
 
     while cursor < rendered.text.len() {
-        if let Some((marker, style)) = inline_markdown_marker_at(&rendered.text, cursor) {
+        if let Some(escaped_char) = escaped_markdown_char_at(&rendered, cursor) {
+            let char_start = cursor.saturating_add('\\'.len_utf8());
+            let char_end = char_start.saturating_add(escaped_char.len_utf8());
+            push_source_segment(
+                &mut output,
+                &mut source_segments,
+                &rendered.text,
+                char_start,
+                char_end,
+            );
+            cursor = char_end;
+            continue;
+        }
+
+        if let Some((marker, style)) = inline_markdown_marker_at(&rendered, cursor) {
             let content_start = cursor.saturating_add(marker.len());
-            if let Some(content_end) =
-                find_inline_markdown_closer(&rendered.text, content_start, marker)
+            if let Some(content_end) = find_inline_markdown_closer(&rendered, content_start, marker)
             {
                 let output_start = output.len();
-                push_source_segment(
-                    &mut output,
-                    &mut source_segments,
-                    &rendered.text,
-                    content_start,
-                    content_end,
-                );
+                if marker.starts_with('`') {
+                    push_source_segment(
+                        &mut output,
+                        &mut source_segments,
+                        &rendered.text,
+                        content_start,
+                        content_end,
+                    );
+                } else {
+                    push_unescaped_source_segments(
+                        &mut output,
+                        &mut source_segments,
+                        &rendered,
+                        content_start,
+                        content_end,
+                    );
+                }
                 let len = output.len().saturating_sub(output_start);
                 if len > 0 {
                     styled_ranges.push(StyledPrefix {
@@ -460,10 +489,10 @@ fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {
                     .bytes()
                     .take_while(|byte| *byte == b'`')
                     .count()
-        } else if let Some((marker, _)) = inline_markdown_marker_at(&rendered.text, cursor) {
+        } else if let Some((marker, _)) = inline_markdown_marker_at(&rendered, cursor) {
             cursor.saturating_add(marker.len())
         } else {
-            next_inline_markdown_marker(&rendered.text, cursor).unwrap_or(rendered.text.len())
+            next_inline_markdown_marker(&rendered, cursor).unwrap_or(rendered.text.len())
         };
         push_source_segment(
             &mut output,
@@ -485,18 +514,87 @@ fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {
     }
 }
 
-fn next_inline_markdown_marker(value: &str, cursor: usize) -> Option<usize> {
+// Resolved names, timestamps, and emoji labels are display text, not Markdown
+// source. Keep their contents and their boundaries literal in every scanner.
+fn inline_markdown_literal_end(value: &RenderedText, index: usize) -> Option<usize> {
+    value
+        .highlights
+        .iter()
+        .filter(|highlight| {
+            highlight.kind != TextHighlightKind::Url
+                && highlight.start <= index
+                && index < highlight.end
+        })
+        .map(|highlight| highlight.end)
+        .chain(value.emoji_slots.iter().filter_map(|slot| {
+            let end = slot.byte_start.saturating_add(slot.byte_len);
+            (slot.byte_start <= index && index < end).then_some(end)
+        }))
+        .max()
+}
+
+fn escaped_markdown_char_at(value: &RenderedText, index: usize) -> Option<char> {
+    let rest = value.text.get(index..)?.strip_prefix('\\')?;
+    let escaped = rest.chars().next().filter(char::is_ascii_punctuation)?;
+    let char_start = index.saturating_add('\\'.len_utf8());
+    if inline_markdown_literal_end(value, index).is_some()
+        || value.highlights.iter().any(|highlight| {
+            highlight.kind == TextHighlightKind::Url
+                && highlight.start <= char_start
+                && index < highlight.end
+        })
+    {
+        return None;
+    }
+    Some(escaped)
+}
+
+fn is_escaped_at(value: &RenderedText, index: usize) -> bool {
+    let mut start = index;
+    while start > 0
+        && value.text.as_bytes()[start - 1] == b'\\'
+        && inline_markdown_literal_end(value, start - 1).is_none()
+    {
+        start -= 1;
+    }
+    (index - start) % 2 == 1
+}
+
+fn next_inline_markdown_escape(value: &RenderedText, cursor: usize) -> Option<usize> {
+    let mut search_start = cursor;
+    while let Some(relative) = value.text[search_start..].find('\\') {
+        let index = search_start.saturating_add(relative);
+        if escaped_markdown_char_at(value, index).is_some() {
+            return Some(index);
+        }
+        search_start = index.saturating_add('\\'.len_utf8());
+    }
+    None
+}
+
+fn next_inline_markdown_marker(value: &RenderedText, cursor: usize) -> Option<usize> {
     ["`", "***", "**", "*", "__", "_", "~~"]
         .into_iter()
         .filter_map(|marker| next_inline_markdown_marker_for(value, cursor, marker))
+        .chain(next_inline_markdown_escape(value, cursor))
         .min()
 }
 
-fn next_inline_markdown_marker_for(value: &str, cursor: usize, marker: &str) -> Option<usize> {
+fn next_inline_markdown_marker_for(
+    value: &RenderedText,
+    cursor: usize,
+    marker: &str,
+) -> Option<usize> {
     let mut search_start = cursor;
-    while let Some(relative) = value[search_start..].find(marker) {
+    while let Some(relative) = value.text[search_start..].find(marker) {
         let index = search_start.saturating_add(relative);
-        if marker != "_" || should_open_underscore_marker(value, index) {
+        if let Some(end) = inline_markdown_literal_end(value, index) {
+            search_start = end;
+            continue;
+        }
+        if !is_escaped_at(value, index)
+            && (marker != "_" || should_open_underscore_marker(&value.text, index))
+        {
             return Some(index);
         }
         search_start = index.saturating_add(marker.len());
@@ -504,8 +602,11 @@ fn next_inline_markdown_marker_for(value: &str, cursor: usize, marker: &str) -> 
     None
 }
 
-fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str, Style)> {
-    let rest = &value[cursor..];
+fn inline_markdown_marker_at(value: &RenderedText, cursor: usize) -> Option<(&'static str, Style)> {
+    if inline_markdown_literal_end(value, cursor).is_some() || is_escaped_at(value, cursor) {
+        return None;
+    }
+    let rest = &value.text[cursor..];
     if rest.starts_with('`') {
         match rest.bytes().take_while(|byte| *byte == b'`').count() {
             1 => Some(("`", inline_code_style())),
@@ -523,7 +624,7 @@ fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str
         Some(("*", Style::default().add_modifier(Modifier::ITALIC)))
     } else if rest.starts_with("__") {
         Some(("__", Style::default().add_modifier(Modifier::UNDERLINED)))
-    } else if rest.starts_with('_') && should_open_underscore_marker(value, cursor) {
+    } else if rest.starts_with('_') && should_open_underscore_marker(&value.text, cursor) {
         Some(("_", Style::default().add_modifier(Modifier::ITALIC)))
     } else if rest.starts_with("~~") {
         Some(("~~", Style::default().add_modifier(Modifier::CROSSED_OUT)))
@@ -532,12 +633,16 @@ fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str
     }
 }
 
-fn find_inline_markdown_closer(value: &str, start: usize, marker: &str) -> Option<usize> {
+fn find_inline_markdown_closer(value: &RenderedText, start: usize, marker: &str) -> Option<usize> {
     if marker.starts_with('`') {
         let mut search_start = start;
-        while let Some(relative) = value[search_start..].find('`') {
+        while let Some(relative) = value.text[search_start..].find('`') {
             let index = search_start + relative;
-            let run_len = value[index..]
+            if let Some(end) = inline_markdown_literal_end(value, index) {
+                search_start = end;
+                continue;
+            }
+            let run_len = value.text[index..]
                 .bytes()
                 .take_while(|byte| *byte == b'`')
                 .count();
@@ -546,27 +651,34 @@ fn find_inline_markdown_closer(value: &str, start: usize, marker: &str) -> Optio
             }
             search_start = index + run_len;
         }
-        None
-    } else if matches!(marker, "*" | "_") {
-        let mut search_start = start;
-        while let Some(relative) = value[search_start..].find(marker) {
-            let index = search_start.saturating_add(relative);
-            if marker == "_" && !should_close_underscore_marker(value, index) {
-                search_start = index.saturating_add(1);
-                continue;
-            }
-            if marker == "_" || !value[index..].starts_with("**") {
-                return (start < index).then_some(index);
-            }
-            search_start = index.saturating_add(1);
-        }
-        None
-    } else {
-        value[start..]
-            .find(marker)
-            .map(|relative| start.saturating_add(relative))
-            .filter(|index| start < *index)
+        return None;
     }
+
+    let mut search_start = start;
+    while let Some(relative) = value.text[search_start..].find(marker) {
+        let index = search_start.saturating_add(relative);
+        if let Some(end) = inline_markdown_literal_end(value, index) {
+            search_start = end;
+            continue;
+        }
+        if is_escaped_at(value, index) {
+            search_start = index.saturating_add(1);
+            continue;
+        }
+        if marker == "_" && !should_close_underscore_marker(&value.text, index) {
+            search_start = index.saturating_add(1);
+            continue;
+        }
+        if marker == "*" && value.text[index..].starts_with("**") {
+            search_start = index.saturating_add(1);
+            continue;
+        }
+        if start < index {
+            return Some(index);
+        }
+        search_start = index.saturating_add(marker.len());
+    }
+    None
 }
 
 fn should_open_underscore_marker(value: &str, index: usize) -> bool {
@@ -585,6 +697,34 @@ fn should_close_underscore_marker(value: &str, index: usize) -> bool {
 
 fn is_inline_markdown_word_char(value: char) -> bool {
     value.is_alphanumeric()
+}
+
+fn push_unescaped_source_segments(
+    output: &mut String,
+    source_segments: &mut Vec<SourceSegment>,
+    source: &RenderedText,
+    source_start: usize,
+    source_end: usize,
+) {
+    let mut cursor = source_start;
+    while cursor < source_end {
+        let Some(escape_index) =
+            next_inline_markdown_escape(source, cursor).filter(|&index| index < source_end)
+        else {
+            push_source_segment(output, source_segments, &source.text, cursor, source_end);
+            break;
+        };
+        let char_start = escape_index.saturating_add('\\'.len_utf8());
+        if char_start >= source_end {
+            push_source_segment(output, source_segments, &source.text, cursor, source_end);
+            break;
+        }
+        push_source_segment(output, source_segments, &source.text, cursor, escape_index);
+        let escaped_len = escaped_markdown_char_at(source, escape_index).map_or(0, char::len_utf8);
+        let char_end = char_start.saturating_add(escaped_len).min(source_end);
+        push_source_segment(output, source_segments, &source.text, char_start, char_end);
+        cursor = char_end;
+    }
 }
 
 fn push_source_segment(

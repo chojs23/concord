@@ -1,4 +1,3 @@
-use reqwest::multipart::{Form, Part};
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -10,8 +9,8 @@ use crate::{
     AppError, Result,
     discord::{
         BASE_ATTACHMENT_LIMIT_BYTES, MessageAttachmentUpload, MessageInfo, MessageSendLimits,
-        ReplyReference, gateway::parse_message_info, validate_attachment_sizes,
-        validate_message_content, validate_message_payload,
+        ReplyReference, gateway::parse_message_info, validate_message_content,
+        validate_message_payload,
     },
     logging,
 };
@@ -39,12 +38,7 @@ impl DiscordRest {
         slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
         validate_message_payload(request.content, request.attachments, limits)?;
-        let body = message_request_body(
-            request.content,
-            request.nonce,
-            request.reply_to,
-            request.attachments,
-        );
+        let body = message_request_body(request.content, request.nonce, request.reply_to);
 
         self.send_message_body(
             channel_id,
@@ -93,7 +87,7 @@ impl DiscordRest {
         slow_mode: Option<Duration>,
     ) -> Result<MessageInfo> {
         validate_message_content(content, max_content_chars)?;
-        let body = message_request_body_with_tts(content, nonce, None, &[], true);
+        let body = message_request_body_with_tts(content, nonce, None, true);
 
         self.send_message_body(
             channel_id,
@@ -108,7 +102,7 @@ impl DiscordRest {
     async fn send_message_body(
         &self,
         channel_id: Id<ChannelMarker>,
-        body: Value,
+        mut body: Value,
         attachments: &[MessageAttachmentUpload],
         upload_limit: u64,
         slow_mode: Option<Duration>,
@@ -116,24 +110,27 @@ impl DiscordRest {
         let _channel_guard = self.message_sends.acquire(channel_id).await;
         self.message_sends.ensure_cooldown_elapsed(channel_id)?;
 
-        let request = self.raw_http.post(format!(
-            "https://discord.com/api/v9/channels/{}/messages",
-            channel_id.get()
-        ));
-
-        let request = if attachments.is_empty() {
-            request.json(&body)
-        } else {
-            request.multipart(message_multipart_form(body, attachments, upload_limit).await?)
-        };
-
-        let result = self
-            .send_json(request, "send message")
-            .await
-            .and_then(|raw| {
-                parse_message_response(raw, "send message response")
-                    .map(|response| response.message)
-            });
+        let result = async {
+            if !attachments.is_empty() {
+                body["attachments"] = Value::Array(
+                    self.upload_attachments(channel_id, attachments, upload_limit)
+                        .await?,
+                );
+            }
+            let raw = self
+                .send_json(
+                    self.raw_http
+                        .post(format!(
+                            "https://discord.com/api/v9/channels/{}/messages",
+                            channel_id.get()
+                        ))
+                        .json(&body),
+                    "send message",
+                )
+                .await?;
+            parse_message_response(raw, "send message response").map(|response| response.message)
+        }
+        .await;
         match &result {
             Ok(_) => {
                 if let Some(slow_mode) = slow_mode {
@@ -333,10 +330,10 @@ impl DiscordRest {
 }
 
 fn recent_mentions_request(
-    http: &reqwest::Client,
+    http: &wreq::Client,
     before: Option<Id<MessageMarker>>,
     limit: u16,
-) -> reqwest::RequestBuilder {
+) -> wreq::RequestBuilder {
     let mut request = http
         .get("https://discord.com/api/v9/users/@me/mentions")
         .query(&[
@@ -351,9 +348,9 @@ fn recent_mentions_request(
 }
 
 fn recent_mention_delete_request(
-    http: &reqwest::Client,
+    http: &wreq::Client,
     message_id: Id<MessageMarker>,
-) -> reqwest::RequestBuilder {
+) -> wreq::RequestBuilder {
     http.delete(format!(
         "https://discord.com/api/v9/users/@me/mentions/{}",
         message_id.get()
@@ -456,26 +453,23 @@ pub(super) fn message_request_body(
     content: &str,
     nonce: Id<MessageMarker>,
     reply_to: Option<ReplyReference>,
-    attachments: &[MessageAttachmentUpload],
 ) -> Value {
-    message_request_body_with_nonce(content, nonce, reply_to, attachments, false)
+    message_request_body_with_nonce(content, nonce, reply_to, false)
 }
 
 pub(super) fn message_request_body_with_tts(
     content: &str,
     nonce: Id<MessageMarker>,
     reply_to: Option<ReplyReference>,
-    attachments: &[MessageAttachmentUpload],
     tts: bool,
 ) -> Value {
-    message_request_body_with_nonce(content, nonce, reply_to, attachments, tts)
+    message_request_body_with_nonce(content, nonce, reply_to, tts)
 }
 
 fn message_request_body_with_nonce(
     content: &str,
     nonce: Id<MessageMarker>,
     reply_to: Option<ReplyReference>,
-    attachments: &[MessageAttachmentUpload],
     tts: bool,
 ) -> Value {
     let mut body = json!({
@@ -497,20 +491,6 @@ fn message_request_body_with_nonce(
             });
         }
     }
-    if !attachments.is_empty() {
-        body["attachments"] = Value::Array(
-            attachments
-                .iter()
-                .enumerate()
-                .map(|(index, attachment)| {
-                    json!({
-                        "id": index,
-                        "filename": attachment.filename,
-                    })
-                })
-                .collect(),
-        );
-    }
     body
 }
 
@@ -527,95 +507,6 @@ pub(super) fn edit_message_request_body(
     }
 }
 
-pub(super) async fn message_multipart_form(
-    body: Value,
-    attachments: &[MessageAttachmentUpload],
-    upload_limit: u64,
-) -> Result<Form> {
-    let actual_sizes = attachment_sizes(attachments).await?;
-    validate_attachment_sizes(
-        actual_sizes.len(),
-        actual_sizes
-            .iter()
-            .map(|(filename, size)| (filename.as_str(), *size)),
-        upload_limit,
-    )?;
-
-    let mut form = Form::new().part(
-        "payload_json",
-        Part::text(body.to_string())
-            .mime_str("application/json")
-            .map_err(|error| AppError::DiscordRequest(format!("upload payload failed: {error}")))?,
-    );
-
-    for (index, attachment) in attachments.iter().enumerate() {
-        let bytes = attachment_bytes(attachment).await?;
-        validate_attachment_sizes(
-            1,
-            std::iter::once((attachment.filename.as_str(), bytes.len() as u64)),
-            upload_limit,
-        )?;
-        let content_type = upload_content_type(&attachment.filename);
-        let part = Part::bytes(bytes)
-            .file_name(attachment.filename.clone())
-            .mime_str(&content_type)
-            .map_err(|error| {
-                AppError::DiscordRequest(format!(
-                    "attachment {} content type failed: {error}",
-                    attachment.filename
-                ))
-            })?;
-        form = form.part(format!("files[{index}]"), part);
-    }
-    Ok(form)
-}
-
-async fn attachment_sizes(attachments: &[MessageAttachmentUpload]) -> Result<Vec<(String, u64)>> {
-    let mut sizes = Vec::with_capacity(attachments.len());
-    for attachment in attachments {
-        let size = if let Some(path) = attachment.path() {
-            tokio::fs::metadata(path)
-                .await
-                .map_err(|error| {
-                    AppError::DiscordRequest(format!(
-                        "stat attachment {} failed: {error}",
-                        attachment.filename
-                    ))
-                })?
-                .len()
-        } else {
-            attachment.size_bytes
-        };
-        sizes.push((attachment.filename.clone(), size));
-    }
-    Ok(sizes)
-}
-
-async fn attachment_bytes(attachment: &MessageAttachmentUpload) -> Result<Vec<u8>> {
-    if let Some(bytes) = attachment.bytes() {
-        return Ok(bytes.to_vec());
-    }
-    let Some(path) = attachment.path() else {
-        return Err(AppError::DiscordRequest(format!(
-            "attachment {} has no data",
-            attachment.filename
-        )));
-    };
-    tokio::fs::read(path).await.map_err(|error| {
-        AppError::DiscordRequest(format!(
-            "read attachment {} failed: {error}",
-            attachment.filename
-        ))
-    })
-}
-
-pub(super) fn upload_content_type(filename: &str) -> String {
-    mime_guess::from_path(filename)
-        .first_or_octet_stream()
-        .essence_str()
-        .to_owned()
-}
-
 #[cfg(test)]
 mod recent_mentions_tests {
     use super::*;
@@ -623,12 +514,13 @@ mod recent_mentions_tests {
     #[test]
     fn recent_mention_requests_use_message_ids_and_documented_filters() {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let http = reqwest::Client::new();
+        let http = wreq::Client::new();
         let list = recent_mentions_request(&http, Some(Id::new(700)), 25)
             .build()
             .expect("recent mentions request builds");
-        assert_eq!(list.url().path(), "/api/v9/users/@me/mentions");
-        let query = list.url().query_pairs().collect::<Vec<_>>();
+        assert_eq!(list.uri().path(), "/api/v9/users/@me/mentions");
+        let url = url::Url::parse(&list.uri().to_string()).expect("request URI is a URL");
+        let query = url.query_pairs().collect::<Vec<_>>();
         assert!(query.contains(&("before".into(), "700".into())));
         assert!(query.contains(&("roles".into(), "true".into())));
         assert!(query.contains(&("everyone".into(), "true".into())));
@@ -636,7 +528,7 @@ mod recent_mentions_tests {
         let delete = recent_mention_delete_request(&http, Id::new(700))
             .build()
             .expect("recent mention delete request builds");
-        assert_eq!(delete.method(), reqwest::Method::DELETE);
-        assert_eq!(delete.url().path(), "/api/v9/users/@me/mentions/700");
+        assert_eq!(delete.method(), wreq::Method::DELETE);
+        assert_eq!(delete.uri().path(), "/api/v9/users/@me/mentions/700");
     }
 }
