@@ -719,12 +719,12 @@ impl KeyBindings {
         None
     }
 
-    /// Row movement aliases that keep their meaning outside text entry modes.
+    /// Unmodified arrows and Ctrl+n/p keep row movement outside text entry modes.
     pub(in crate::tui) fn fixed_selection_action(&self, key: KeyEvent) -> Option<SelectionAction> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Down => Some(SelectionAction::Next),
-            KeyCode::Up => Some(SelectionAction::Previous),
+            KeyCode::Down if key.modifiers.is_empty() => Some(SelectionAction::Next),
+            KeyCode::Up if key.modifiers.is_empty() => Some(SelectionAction::Previous),
             KeyCode::Char('n') if ctrl => Some(SelectionAction::Next),
             KeyCode::Char('p') if ctrl => Some(SelectionAction::Previous),
             _ => None,
