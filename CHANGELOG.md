@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.0] - 2026-11-06
+
+### Bug Fixes
+
+- _(rest)_ Upload Discord attachments before sending message JSON by @chojs23
+- _(ci)_ Run native encoder CI onlfy for related changes by @chojs23
+- _(tui)_ Support backslash escapes in inline markdown (#416) in [#416](https://github.com/chojs23/concord/pull/416) by @SailinEast
+- _(message)_ Render Discord code delimiters correctly (#420) in [#420](https://github.com/chojs23/concord/pull/420) by @mvanhorn
+- _(tui)_ Respect modified arrow key bindings (#423)
+
+### Features
+
+- _(rest)_ Use a shared Chrome transport (#422) in [#422](https://github.com/chojs23/concord/pull/422) by @chojs23
+
+### New Contributors
+
+- @SailinEast made their first contribution in [#416](https://github.com/chojs23/concord/pull/416)
+
 ## [2.6.4] - 2026-10-30
 
 ### Bug Fixes

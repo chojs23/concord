@@ -1,6 +1,6 @@
 [package]
 name = "concord"
-version = "2.6.4"
+version = "2.7.0"
 edition = "2024"
 rust-version = "1.99"
 description = "A terminal user interface client for Discord"
@@ -105,7 +105,9 @@ wreq = { version = "=0.16.3", default-features = false, features = [
   "system-proxy",
   "stream",
 ] }
-wreq-util = { version = "=0.2.0", default-features = false, features = ["emulation"] }
+wreq-util = { version = "=0.2.0", default-features = false, features = [
+  "emulation",
+] }
 rustls-native-certs = "0.8.5"
 url = "2.5.8"
 
