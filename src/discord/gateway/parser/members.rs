@@ -1,6 +1,13 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
+use super::{
+    presence::{parse_activities, parse_presence_entry},
+    shared::{
+        display_name_from_parts_or_unknown, extra_fields, parse_id, parse_id_array,
+        parse_presence_status,
+    },
+};
 use crate::discord::{
     GuildMemberListItem, GuildMemberListOperation, GuildMemberListUpdateInfo,
     GuildMembersChunkInfo, MemberInfo,
@@ -9,13 +16,6 @@ use crate::discord::{
     ids::{
         Id,
         marker::{GuildMarker, UserMarker},
-    },
-};
-
-use super::{
-    presence::{parse_activities, parse_presence_entry},
-    shared::{
-        display_name_from_parts_or_unknown, extra_fields, parse_id, parse_id_array, parse_status,
     },
 };
 
@@ -251,10 +251,7 @@ fn parse_member_list_item(
     };
     let user_id = member_info.user_id;
     let presence = item.get("presence").or_else(|| member.get("presence"));
-    let status = presence
-        .and_then(|presence| presence.get("status"))
-        .and_then(Value::as_str)
-        .map(parse_status);
+    let status = presence.and_then(parse_presence_status);
     let activities = presence.map(parse_activities).unwrap_or_default();
 
     let presence = status.map(|status| PresenceEventFields {
