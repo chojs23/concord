@@ -1371,6 +1371,50 @@ fn raw_presence_update_without_guild_id_emits_user_event_with_activities() {
 }
 
 #[test]
+fn raw_presence_update_distinguishes_mobile_only_online_status() {
+    let parse_status_for = |status: &str, client_status: serde_json::Value| {
+        parse_user_account_event(
+            &json!({
+                "t": "PRESENCE_UPDATE",
+                "d": {
+                    "user": { "id": "20" },
+                    "status": status,
+                    "client_status": client_status,
+                    "activities": []
+                }
+            })
+            .to_string(),
+        )
+        .into_iter()
+        .find_map(|event| match event {
+            AppEvent::PresenceUpdate { presence, .. } => Some(presence.status),
+            _ => None,
+        })
+        .expect("PRESENCE_UPDATE should produce a PresenceUpdate event")
+    };
+
+    assert_eq!(
+        parse_status_for("online", json!({ "mobile": "online" })),
+        PresenceStatus::OnlineMobile,
+    );
+    assert_eq!(
+        parse_status_for(
+            "online",
+            json!({ "desktop": "offline", "mobile": "online" })
+        ),
+        PresenceStatus::OnlineMobile,
+    );
+    assert_eq!(
+        parse_status_for("online", json!({ "desktop": "online", "mobile": "online" })),
+        PresenceStatus::Online,
+    );
+    assert_eq!(
+        parse_status_for("idle", json!({ "mobile": "idle" })),
+        PresenceStatus::Idle,
+    );
+}
+
+#[test]
 fn raw_ready_supplemental_aligns_merged_members_by_guild_index() {
     let events = parse_user_account_event(
         &json!({

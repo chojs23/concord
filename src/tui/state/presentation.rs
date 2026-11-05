@@ -62,7 +62,9 @@ pub fn discord_role_mention_background(color: u32) -> Color {
 pub fn presence_style(status: PresenceStatus) -> Style {
     let theme = theme::current();
     match status {
-        PresenceStatus::Online => theme.style(theme::HighlightGroup::PresenceOnline),
+        PresenceStatus::Online | PresenceStatus::OnlineMobile => {
+            theme.style(theme::HighlightGroup::PresenceOnline)
+        }
         PresenceStatus::Idle => theme.style(theme::HighlightGroup::PresenceIdle),
         PresenceStatus::DoNotDisturb => theme.style(theme::HighlightGroup::PresenceDnd),
         PresenceStatus::Offline | PresenceStatus::Unknown => {
@@ -137,7 +139,7 @@ pub(super) fn is_direct_message_channel(channel: &ChannelState) -> bool {
 
 pub(super) fn member_status_rank(status: PresenceStatus) -> u8 {
     match status {
-        PresenceStatus::Online => 0,
+        PresenceStatus::Online | PresenceStatus::OnlineMobile => 0,
         PresenceStatus::Idle => 1,
         PresenceStatus::DoNotDisturb => 2,
         PresenceStatus::Offline => 3,
@@ -147,6 +149,7 @@ pub(super) fn member_status_rank(status: PresenceStatus) -> u8 {
 
 pub fn presence_marker(status: PresenceStatus) -> char {
     match status {
+        PresenceStatus::OnlineMobile => '▮',
         PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb => '●',
         PresenceStatus::Offline | PresenceStatus::Unknown => '○',
     }
@@ -175,6 +178,7 @@ mod tests {
             (PresenceStatus::Offline, '○'),
             (PresenceStatus::Unknown, '○'),
             (PresenceStatus::Online, '●'),
+            (PresenceStatus::OnlineMobile, '▮'),
             (PresenceStatus::Idle, '●'),
             (PresenceStatus::DoNotDisturb, '●'),
         ] {

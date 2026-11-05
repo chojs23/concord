@@ -17,6 +17,29 @@ pub(super) fn parse_status(value: &str) -> PresenceStatus {
     }
 }
 
+pub(super) fn parse_presence_status(value: &Value) -> Option<PresenceStatus> {
+    let status = value.get("status").and_then(Value::as_str)?;
+    if status == "online" && is_mobile_only_client_status(value.get("client_status")) {
+        return Some(PresenceStatus::OnlineMobile);
+    }
+    Some(parse_status(status))
+}
+
+fn is_mobile_only_client_status(client_status: Option<&Value>) -> bool {
+    let Some(client_status) = client_status.and_then(Value::as_object) else {
+        return false;
+    };
+    let active = |key: &str| {
+        client_status
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|status| !matches!(status, "offline" | "invisible"))
+    };
+    client_status.get("mobile").and_then(Value::as_str) == Some("online")
+        && !active("desktop")
+        && !active("web")
+}
+
 pub(super) fn parse_id<M>(value: &Value) -> Option<Id<M>> {
     value
         .as_str()
