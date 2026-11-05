@@ -737,6 +737,7 @@ fn wrap_rendered_text_lines(
     width: usize,
     style: Style,
 ) -> Vec<MessageContentLine> {
+    let rendered = rendered_text_with_url_highlights(rendered);
     wrap_rendered_text_lines_with_styled_ranges(rendered, width, style, &[])
 }
 
@@ -746,7 +747,6 @@ fn wrap_rendered_text_lines_with_styled_ranges(
     style: Style,
     styled_ranges: &[StyledPrefix],
 ) -> Vec<MessageContentLine> {
-    let rendered = rendered_text_with_url_highlights(rendered);
     wrap_text_with_metadata(
         &rendered.text,
         &rendered.highlights,
