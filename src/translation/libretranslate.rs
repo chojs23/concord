@@ -8,14 +8,14 @@ use super::{
 const PROVIDER: &str = "LibreTranslate";
 
 pub(super) struct LibreTranslateProvider {
-    http: reqwest::Client,
-    endpoint: reqwest::Url,
+    http: wreq::Client,
+    endpoint: url::Url,
     api_key: Option<String>,
 }
 
 impl LibreTranslateProvider {
     pub(super) fn new(
-        http: reqwest::Client,
+        http: wreq::Client,
         endpoint: &str,
         api_key: Option<String>,
     ) -> Result<Self, TranslationError> {
@@ -26,9 +26,9 @@ impl LibreTranslateProvider {
         })
     }
 
-    fn request(&self, request: TranslationRequest<'_>) -> reqwest::RequestBuilder {
+    fn request(&self, request: TranslationRequest<'_>) -> wreq::RequestBuilder {
         self.http
-            .post(self.endpoint.clone())
+            .post(self.endpoint.as_str())
             .json(&LibreTranslateRequest {
                 q: request.text,
                 source: "auto",
@@ -92,18 +92,19 @@ struct LibreTranslateResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_body_util::BodyExt;
 
-    #[test]
-    fn request_and_response_follow_libretranslate_contract() {
+    #[tokio::test]
+    async fn request_and_response_follow_libretranslate_contract() {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let provider = LibreTranslateProvider::new(
-            reqwest::Client::new(),
+            wreq::Client::new(),
             "http://127.0.0.1:5000/translate",
             Some("secret".to_owned()),
         )
         .expect("test endpoint is valid");
 
-        let request = provider
+        let mut request = provider
             .request(TranslationRequest {
                 text: "hello",
                 target_language: "ko",
@@ -111,13 +112,15 @@ mod tests {
             .build()
             .expect("request should build");
 
-        let body: serde_json::Value = serde_json::from_slice(
-            request
-                .body()
-                .and_then(reqwest::Body::as_bytes)
-                .expect("JSON body"),
-        )
-        .expect("body should be JSON");
+        let body = request
+            .body_mut()
+            .take()
+            .expect("request has a JSON body")
+            .collect()
+            .await
+            .expect("request body is readable")
+            .to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("body should be JSON");
         assert_eq!(
             body,
             serde_json::json!({

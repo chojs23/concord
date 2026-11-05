@@ -4,36 +4,30 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    discord::ids::{
-        Id,
-        marker::{ChannelMarker, GuildMarker, UserMarker},
-    },
-    support::tls,
+use crate::discord::ids::{
+    Id,
+    marker::{ChannelMarker, GuildMarker, UserMarker},
 };
 use flate2::{Decompress, FlushDecompress, Status};
 use futures::{SinkExt, StreamExt};
 use rand::Rng;
-use reqwest::Url;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::{Instant, sleep, timeout};
-use tokio_tungstenite::{
-    connect_async_tls_with_config,
-    tungstenite::{
-        Message as WsMessage,
-        client::IntoClientRequest,
-        handshake::client::Request,
-        protocol::{CloseFrame, WebSocketConfig},
-    },
+use tokio_tungstenite::tungstenite::{
+    Message as WsMessage,
+    client::IntoClientRequest,
+    handshake::client::Request,
+    protocol::{CloseFrame, WebSocketConfig},
 };
+use url::Url;
 
 use super::{
     ActivityInfo, PresenceStatus, VoiceScope,
     client::AppEventPublisher,
     events::AppEvent,
     fingerprint::{
-        CLIENT_BROWSER, CLIENT_BROWSER_VERSION, ClientFingerprint, DISCORD_REFERRER_CURRENT,
+        CLIENT_BROWSER, ClientFingerprint, DISCORD_REFERRER_CURRENT,
         DISCORD_REFERRING_DOMAIN_CURRENT, discord_gateway_headers,
     },
     state::{ClientCacheState, DiscordState},
@@ -158,8 +152,7 @@ const MAX_PENDING_GUILD_MEMBER_REQUESTS: usize = 512;
 const MAX_SENT_GUILD_MEMBER_REQUESTS: usize = 512;
 const MAX_GATEWAY_RETRY_DELAY: Duration = Duration::from_secs(30 * 60);
 
-type GatewayStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type GatewayStream = super::transport::DiscordWebSocket;
 
 /// Discord uses one zlib stream for the lifetime of a Gateway connection.
 /// Individual JSON payloads end with a sync-flush marker and may span several
@@ -1105,23 +1098,16 @@ async fn connect_and_run(
 
     let request = gateway_request(&connection.url, fingerprint)
         .map_err(|error| gateway_setup_failure(session, &connection.handshake, publish, error))?;
-    let connector = tls::websocket_connector()
-        .map_err(|error| gateway_setup_failure(session, &connection.handshake, publish, error))?;
-    let (ws, _response) = connect_async_tls_with_config(
-        request,
-        Some(gateway_websocket_config()),
-        false,
-        Some(connector),
-    )
-    .await
-    .map_err(|error| {
-        gateway_setup_failure(
-            session,
-            &connection.handshake,
-            publish,
-            format!("websocket connect failed: {error}"),
-        )
-    })?;
+    let ws = super::transport::connect_websocket(request, gateway_websocket_config())
+        .await
+        .map_err(|error| {
+            gateway_setup_failure(
+                session,
+                &connection.handshake,
+                publish,
+                format!("websocket connect failed: {error}"),
+            )
+        })?;
     let (writer, mut reader) = ws.split();
     let writer = Arc::new(Mutex::new(writer));
     let (sender, mut gateway_send_error_rx, gateway_writer_task) =
@@ -2163,7 +2149,7 @@ fn build_identify_payload(
         "device": "",
         "system_locale": fingerprint.system_locale,
         "browser_user_agent": fingerprint.user_agent,
-        "browser_version": CLIENT_BROWSER_VERSION,
+        "browser_version": super::transport::browser_version(),
         "os_version": fingerprint.os_version,
         "referrer": "",
         "referring_domain": "",

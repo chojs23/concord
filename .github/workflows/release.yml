@@ -167,6 +167,18 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Configure macOS libclang
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew_prefix=$(brew --prefix)
+          echo "LIBCLANG_PATH=$brew_prefix/opt/llvm/lib" >> "$GITHUB_ENV"
+
+      - name: Configure Windows libclang
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "LIBCLANG_PATH=$(Join-Path $env:ProgramFiles 'LLVM\bin')" >> $env:GITHUB_ENV
       - name: Install Rust non-interactively if not already installed
         if: ${{ matrix.container }}
         run: |

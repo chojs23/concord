@@ -1,0 +1,14 @@
+# cargo-dist inserts these steps before installing system packages. The paths
+# become available once the declared LLVM build dependency has been installed.
+- name: Configure macOS libclang
+  if: runner.os == 'macOS'
+  shell: bash
+  run: |
+    brew_prefix=$(brew --prefix)
+    echo "LIBCLANG_PATH=$brew_prefix/opt/llvm/lib" >> "$GITHUB_ENV"
+
+- name: Configure Windows libclang
+  if: runner.os == 'Windows'
+  shell: pwsh
+  run: |
+    "LIBCLANG_PATH=$(Join-Path $env:ProgramFiles 'LLVM\bin')" >> $env:GITHUB_ENV

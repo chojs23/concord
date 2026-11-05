@@ -1,9 +1,11 @@
 //! Direct, opt-in KLIPY API access, separate from Discord authentication.
+use futures::StreamExt;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use reqwest::{Client, Url};
 use serde::Deserialize;
+use url::Url;
+use wreq::Client;
 
 use crate::config::KlipyOptions;
 
@@ -81,9 +83,10 @@ impl KlipyClient {
             .filter(|s| !s.trim().is_empty())
             .or_else(|| options.api_key.clone().filter(|s| !s.trim().is_empty()))
             .ok_or_else(|| format!("Set {env} or [klipy].api_key to use GIF search"))?;
-        let http = Client::builder()
+        let http = crate::support::tls::http_client_builder()
+            .map_err(|_| "Could not initialize KLIPY".to_owned())?
             .timeout(Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(wreq::redirect::Policy::none())
             .user_agent(concat!("concord/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|_| "Could not initialize KLIPY".to_owned())?;
@@ -107,7 +110,7 @@ impl KlipyClient {
         url
     }
 
-    fn search_request(&self, query: &str, page: u32) -> reqwest::RequestBuilder {
+    fn search_request(&self, query: &str, page: u32) -> wreq::RequestBuilder {
         let endpoint = self.endpoint(
             if query.is_empty() {
                 "trending"
@@ -116,7 +119,7 @@ impl KlipyClient {
             },
             None,
         );
-        let mut request = self.http.get(endpoint).query(&[
+        let mut request = self.http.get(endpoint.as_str()).query(&[
             ("page", page.to_string()),
             ("per_page", "8".to_owned()),
             ("format_filter", "gif".to_owned()),
@@ -140,7 +143,7 @@ impl KlipyClient {
     pub(crate) async fn share(&self, slug: &str, query: &str) -> Result<()> {
         let response = self
             .http
-            .post(self.endpoint("share", Some(slug)))
+            .post(self.endpoint("share", Some(slug)).as_str())
             .json(&serde_json::json!({"q": query}))
             .send()
             .await
@@ -159,7 +162,13 @@ impl KlipyClient {
         if !valid_media_url(url) {
             return Err("Invalid preview URL".to_owned());
         }
-        let response = self.http.get(url).send().await.map_err(api_error)?;
+        let url = Url::parse(url).expect("preview URL is validated");
+        let response = self
+            .http
+            .get(url.as_str())
+            .send()
+            .await
+            .map_err(api_error)?;
         response_bytes(response, MAX_PREVIEW_BYTES).await
     }
 }
@@ -185,8 +194,8 @@ fn parse_page(bytes: &[u8]) -> Result<GifPage> {
     Ok(page)
 }
 
-fn api_error(error: reqwest::Error) -> String {
-    // The API key is a URL path segment. Never log reqwest's URL or response bodies.
+fn api_error(error: wreq::Error) -> String {
+    // The API key is a URL path segment. Never log request URLs or response bodies.
     if error.is_timeout() {
         "KLIPY request timed out".to_owned()
     } else {
@@ -194,7 +203,7 @@ fn api_error(error: reqwest::Error) -> String {
     }
 }
 
-async fn response_bytes(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+async fn response_bytes(response: wreq::Response, limit: usize) -> Result<Vec<u8>> {
     match response.status().as_u16() {
         200..=299 => {}
         401 | 403 => return Err("KLIPY rejected the API key".to_owned()),
@@ -208,7 +217,8 @@ async fn response_bytes(mut response: reqwest::Response, limit: usize) -> Result
         return Err("KLIPY response is too large".to_owned());
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(api_error)? {
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await.transpose().map_err(api_error)? {
         if chunk.len() > limit.saturating_sub(bytes.len()) {
             return Err("KLIPY response is too large".to_owned());
         }
@@ -235,15 +245,21 @@ mod tests {
     fn klipy_requests_encode_key_and_verbatim_query_without_discord_auth() {
         let client = client();
         let request = client.search_request(" cats & 🐈+? ", 3).build().unwrap();
-        assert_eq!(request.url().path(), "/api/v1/private%2Fkey%3F/gifs/search");
-        let params = request.url().query_pairs().collect::<BTreeMap<_, _>>();
+        assert_eq!(request.uri().path(), "/api/v1/private%2Fkey%3F/gifs/search");
+        let url = Url::parse(&request.uri().to_string()).expect("request URI is a URL");
+        let params = url.query_pairs().collect::<BTreeMap<_, _>>();
         assert_eq!(params.get("q").unwrap(), " cats & 🐈+? ");
         assert_eq!(params.get("page").unwrap(), "3");
         assert_eq!(params.get("format_filter").unwrap(), "gif");
         assert!(!request.headers().contains_key("authorization"));
         let trending = client.search_request("", 1).build().unwrap();
-        assert!(trending.url().path().ends_with("/gifs/trending"));
-        assert!(!trending.url().query_pairs().any(|(key, _)| key == "q"));
+        assert!(trending.uri().path().ends_with("/gifs/trending"));
+        assert!(
+            !Url::parse(&trending.uri().to_string())
+                .expect("request URI is a URL")
+                .query_pairs()
+                .any(|(key, _)| key == "q")
+        );
         assert!(
             client
                 .endpoint("share", Some("a/b?"))
@@ -311,7 +327,7 @@ mod tests {
         }
     }
 
-    async fn response(status: u16, body: &'static str) -> reqwest::Response {
+    async fn response(status: u16, body: &'static str) -> wreq::Response {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

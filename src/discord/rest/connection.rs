@@ -1,4 +1,4 @@
-use reqwest::StatusCode;
+use wreq::StatusCode;
 
 use crate::{AppError, Result};
 

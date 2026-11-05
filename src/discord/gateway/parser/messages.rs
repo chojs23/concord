@@ -522,7 +522,7 @@ fn parse_embed_media(value: Option<&Value>) -> ParsedEmbedMedia {
 /// media path. Discord sends the MP4 as `video.url` for `gifv` embeds, while
 /// Concord's inline renderer consumes animated image frames.
 fn giphy_gifv_image_url(video_url: &str) -> Option<String> {
-    let mut url = reqwest::Url::parse(video_url).ok()?;
+    let mut url = url::Url::parse(video_url).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
         return None;
     }

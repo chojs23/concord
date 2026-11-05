@@ -11,8 +11,8 @@ use super::{
     voice_state_update_payload, watch_stream_payload,
 };
 use crate::discord::fingerprint::{
-    CLIENT_BROWSER, CLIENT_BROWSER_VERSION, CLIENT_BUILD_NUMBER, ClientFingerprint,
-    DISCORD_REFERRER_CURRENT, DISCORD_REFERRING_DOMAIN_CURRENT, accept_language,
+    CLIENT_BROWSER, CLIENT_BUILD_NUMBER, ClientFingerprint, DISCORD_REFERRER_CURRENT,
+    DISCORD_REFERRING_DOMAIN_CURRENT, accept_language,
 };
 use crate::discord::ids::{
     Id,
@@ -611,7 +611,7 @@ fn identify_payload_carries_user_account_capabilities() {
     );
     assert_eq!(
         payload["d"]["properties"]["browser_version"].as_str(),
-        Some(CLIENT_BROWSER_VERSION)
+        Some(super::super::transport::browser_version())
     );
     assert_eq!(
         payload["d"]["properties"]["os_version"].as_str(),

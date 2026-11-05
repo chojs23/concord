@@ -15,7 +15,7 @@ pub enum AppError {
     #[error("Discord token is not a valid HTTP authorization header")]
     InvalidDiscordTokenHeader {
         #[source]
-        source: reqwest::header::InvalidHeaderValue,
+        source: wreq::header::InvalidHeaderValue,
     },
     #[error("Discord rejected the token")]
     DiscordTokenRejected,
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn non_http_log_detail_includes_source_chain() {
         let error = AppError::InvalidDiscordTokenHeader {
-            source: reqwest::header::HeaderValue::from_str("bad\nvalue")
+            source: wreq::header::HeaderValue::from_str("bad\nvalue")
                 .expect_err("newline makes header invalid"),
         };
 

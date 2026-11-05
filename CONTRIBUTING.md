@@ -48,8 +48,10 @@ A Nix dev shell with the pinned toolchain and `rust-analyzer` is available:
 nix develop
 ```
 
-Cargo is the only build tool. There is no Makefile, Justfile, or workspace
-root.
+Use Cargo to build the project. Native dependencies also require CMake, a
+C11/C++17 compiler, and libclang, even with `--no-default-features`. See the
+[platform setup instructions](./README.md#build-from-source), including LLVM and
+`LIBCLANG_PATH` on macOS and Windows.
 
 ## Before you push
 

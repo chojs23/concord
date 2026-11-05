@@ -86,7 +86,8 @@ fn provider_from_options(
     kind: TranslationProviderKind,
     options: &TranslationOptions,
 ) -> std::result::Result<Arc<dyn TranslationProvider>, TranslationError> {
-    let http = reqwest::Client::builder()
+    let http = crate::support::tls::http_client_builder()
+        .map_err(TranslationError::Configuration)?
         .timeout(REQUEST_TIMEOUT)
         .user_agent(concat!("concord/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -155,8 +156,8 @@ fn select_api_key(environment_key: Option<&str>, config_key: Option<&str>) -> Op
 fn parse_endpoint(
     provider: &'static str,
     endpoint: &str,
-) -> std::result::Result<reqwest::Url, TranslationError> {
-    reqwest::Url::parse(endpoint.trim()).map_err(|error| TranslationError::InvalidEndpoint {
+) -> std::result::Result<url::Url, TranslationError> {
+    url::Url::parse(endpoint.trim()).map_err(|error| TranslationError::InvalidEndpoint {
         provider,
         message: error.to_string(),
     })
@@ -177,7 +178,7 @@ pub(crate) enum TranslationError {
     #[error("could not create the translation HTTP client")]
     Client {
         #[source]
-        source: reqwest::Error,
+        source: wreq::Error,
     },
     #[error("{provider} endpoint is not a valid URL: {message}")]
     InvalidEndpoint {
@@ -188,18 +189,18 @@ pub(crate) enum TranslationError {
     Request {
         provider: &'static str,
         #[source]
-        source: reqwest::Error,
+        source: wreq::Error,
     },
     #[error("{provider} returned HTTP {status}")]
     Http {
         provider: &'static str,
-        status: reqwest::StatusCode,
+        status: wreq::StatusCode,
     },
     #[error("{provider} returned an invalid response")]
     InvalidResponse {
         provider: &'static str,
         #[source]
-        source: reqwest::Error,
+        source: wreq::Error,
     },
     #[error("{provider} returned no translation")]
     EmptyResponse { provider: &'static str },

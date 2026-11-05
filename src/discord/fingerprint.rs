@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
         mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel},
     },
     thread,
@@ -11,19 +11,18 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use reqwest::{
-    Url,
-    cookie::CookieStore,
+use cookie_store::{CookieStore as PersistentCookieStore, RawCookie};
+use serde::{Deserialize, Serialize};
+use url::Url;
+use uuid::Uuid;
+use wreq::{
+    Uri, Version,
+    cookie::{CookieStore, Cookies},
     header::{
         ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, CACHE_CONTROL, HeaderMap, HeaderValue, ORIGIN,
         PRAGMA, REFERER, USER_AGENT,
     },
 };
-use reqwest_cookie_store::{
-    CookieStore as PersistentCookieStore, CookieStoreMutex as PersistentCookieStoreMutex,
-};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::{paths, support::private_file};
 
@@ -31,11 +30,11 @@ use super::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker},
 };
+use super::transport;
 
 /// Fallback used only when the live build number cannot be fetched at startup.
 pub(super) const CLIENT_BUILD_NUMBER: u64 = 580_004;
 pub(super) const CLIENT_BROWSER: &str = "Chrome";
-pub(super) const CLIENT_BROWSER_VERSION: &str = "150.0.0.0";
 pub(super) const DISCORD_ORIGIN: &str = "https://discord.com";
 
 const DISCORD_CHANNELS_REFERER: &str = "https://discord.com/channels/@me";
@@ -66,11 +65,10 @@ pub(crate) struct ClientFingerprint {
 impl ClientFingerprint {
     pub(super) fn new(client_build_number: u64) -> Self {
         let os = operating_system();
-        let os_arch = operating_system_arch();
         let os_version = chrome_os_version(os, &operating_system_version());
         Self {
             os,
-            user_agent: web_user_agent(os, &os_version, os_arch),
+            user_agent: transport::user_agent().to_owned(),
             os_version,
             system_locale: system_locale(),
             timezone: iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_owned()),
@@ -196,10 +194,10 @@ struct SessionIdentifierFetchFailure {
 /// Creates the login-session fingerprint after reading Discord's current web
 /// build. The returned HTTP client retains the cookies from that bootstrap
 /// request and is reused for authentication and REST.
-pub(crate) async fn load_client_fingerprint_and_http() -> (Arc<ClientFingerprint>, reqwest::Client)
-{
+pub(crate) async fn load_client_fingerprint_and_http()
+-> crate::Result<(Arc<ClientFingerprint>, wreq::Client)> {
     let bootstrap = Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER));
-    let client = discord_http_client(&bootstrap);
+    let client = discord_http_client(&bootstrap)?;
     let client_build_number = match fetch_client_build_number(&client).await {
         Some(build) => build,
         None => {
@@ -236,7 +234,7 @@ pub(crate) async fn load_client_fingerprint_and_http() -> (Arc<ClientFingerprint
             );
         }
     }
-    (Arc::new(fingerprint), client)
+    Ok((Arc::new(fingerprint), client))
 }
 
 fn session_identifier_fetch_summary(
@@ -320,23 +318,26 @@ fn save_session_identifiers_to_path(
     private_file::write_private_file(path, &content).map_err(|error| error.to_string())
 }
 
-pub(super) fn discord_http_client(fingerprint: &ClientFingerprint) -> reqwest::Client {
+pub(super) fn discord_http_client(fingerprint: &ClientFingerprint) -> crate::Result<wreq::Client> {
     discord_http_client_with_cookie_path(fingerprint, paths::discord_cookie_file())
 }
 
 fn discord_http_client_with_cookie_path(
     fingerprint: &ClientFingerprint,
     cookie_path: Option<PathBuf>,
-) -> reqwest::Client {
-    reqwest::Client::builder()
+) -> crate::Result<wreq::Client> {
+    transport::client_builder()
+        .map_err(crate::AppError::DiscordRequest)?
         .cookie_provider(Arc::new(LoggingCookieJar::load(cookie_path)))
         .default_headers(discord_browser_headers(fingerprint))
         .build()
-        .expect("static Discord REST client configuration is valid")
+        .map_err(|error| {
+            crate::AppError::DiscordRequest(format!("build Discord HTTP client: {error}"))
+        })
 }
 
 struct LoggingCookieJar {
-    inner: Arc<PersistentCookieStoreMutex>,
+    inner: Arc<Mutex<PersistentCookieStore>>,
     persistence: Option<CookiePersistence>,
 }
 
@@ -355,33 +356,76 @@ impl LoggingCookieJar {
                 }
             })
             .unwrap_or_default();
-        let inner = Arc::new(PersistentCookieStoreMutex::new(store));
+        let inner = Arc::new(Mutex::new(store));
         let persistence = path.and_then(|path| spawn_cookie_persistence(Arc::clone(&inner), path));
         Self { inner, persistence }
     }
 }
 
 impl CookieStore for LoggingCookieJar {
-    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url) {
-        self.inner.set_cookies(cookie_headers, url);
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri) {
+        let Ok(url) = Url::parse(&uri.to_string()) else {
+            return;
+        };
+        {
+            let mut store = self
+                .inner
+                .lock()
+                .expect("cookie store lock is not poisoned");
+            let cookies = cookie_headers.filter_map(|header| {
+                std::str::from_utf8(header.as_bytes())
+                    .ok()
+                    .and_then(|value| RawCookie::parse(value).ok())
+                    .map(RawCookie::into_owned)
+            });
+            store.store_response_cookies(cookies, &url);
+        }
         if let Some(persistence) = &self.persistence {
             persistence.request();
         }
     }
 
-    fn cookies(&self, url: &Url) -> Option<HeaderValue> {
-        let cookies = discord_cookies(self.inner.cookies(url), url);
+    fn cookies(&self, uri: &Uri, version: Version) -> Cookies {
+        let Ok(url) = Url::parse(&uri.to_string()) else {
+            return Cookies::Empty;
+        };
+        let stored = self
+            .inner
+            .lock()
+            .expect("cookie store lock is not poisoned")
+            .get_request_values(&url)
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let cookies = if stored.is_empty() {
+            None
+        } else {
+            HeaderValue::from_str(&stored).ok()
+        };
+        let cookies = discord_cookies(cookies, &url);
         if crate::logging::debug_logging_enabled() {
             crate::logging::debug(
                 "http",
                 format!(
                     "transport cookie endpoint={:?} names={:?}",
-                    url.as_str(),
+                    uri.to_string(),
                     cookie_names_for_log(cookies.as_ref())
                 ),
             );
         }
-        cookies
+        match cookies {
+            Some(cookies) if version == Version::HTTP_2 => Cookies::Uncompressed(
+                cookies
+                    .as_bytes()
+                    .split(|byte| *byte == b';')
+                    .map(<[u8]>::trim_ascii)
+                    .filter(|pair| !pair.is_empty())
+                    .filter_map(|pair| HeaderValue::from_bytes(pair).ok())
+                    .collect(),
+            ),
+            Some(cookies) => Cookies::Compressed(cookies),
+            None => Cookies::Empty,
+        }
     }
 }
 
@@ -412,7 +456,7 @@ impl Drop for CookiePersistence {
 }
 
 fn spawn_cookie_persistence(
-    inner: Arc<PersistentCookieStoreMutex>,
+    inner: Arc<Mutex<PersistentCookieStore>>,
     path: PathBuf,
 ) -> Option<CookiePersistence> {
     let (persist_tx, persist_rx) = sync_channel(1);
@@ -436,7 +480,7 @@ fn spawn_cookie_persistence(
 }
 
 fn persist_cookies_after_changes(
-    inner: Arc<PersistentCookieStoreMutex>,
+    inner: Arc<Mutex<PersistentCookieStore>>,
     path: PathBuf,
     persist_rx: Receiver<()>,
 ) {
@@ -461,7 +505,7 @@ fn persist_cookies_after_changes(
 }
 
 fn persist_cookie_store(
-    inner: &PersistentCookieStoreMutex,
+    inner: &Mutex<PersistentCookieStore>,
     path: &Path,
 ) -> std::result::Result<(), String> {
     if let Some(parent) = path.parent() {
@@ -530,7 +574,7 @@ fn discord_cookies(cookies: Option<HeaderValue>, url: &Url) -> Option<HeaderValu
 }
 
 fn discord_browser_headers(fingerprint: &ClientFingerprint) -> HeaderMap {
-    let mut headers = HeaderMap::new();
+    let mut headers = transport::browser_headers();
     headers.insert(
         USER_AGENT,
         HeaderValue::from_str(&fingerprint.user_agent).expect("web user agent is valid"),
@@ -540,7 +584,6 @@ fn discord_browser_headers(fingerprint: &ClientFingerprint) -> HeaderMap {
         HeaderValue::from_str(&accept_language(&fingerprint.system_locale))
             .expect("system locale is a valid header value"),
     );
-    insert_chrome_client_hints(&mut headers, fingerprint.os);
     headers
 }
 
@@ -595,24 +638,6 @@ pub(super) fn insert_fingerprint_header(headers: &mut HeaderMap, fingerprint: &C
     );
 }
 
-fn insert_chrome_client_hints(headers: &mut HeaderMap, os: &str) {
-    headers.insert(
-        "Sec-CH-UA",
-        HeaderValue::from_static(
-            "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Google Chrome\";v=\"150\"",
-        ),
-    );
-    headers.insert("Sec-CH-UA-Mobile", HeaderValue::from_static("?0"));
-    headers.insert(
-        "Sec-CH-UA-Platform",
-        HeaderValue::from_static(match os {
-            "Mac OS X" => "\"macOS\"",
-            "Windows" => "\"Windows\"",
-            _ => "\"Linux\"",
-        }),
-    );
-}
-
 pub(super) fn discord_gateway_headers(fingerprint: &ClientFingerprint) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -637,7 +662,7 @@ fn build_super_properties(fingerprint: &ClientFingerprint) -> String {
         device: "",
         system_locale: &fingerprint.system_locale,
         browser_user_agent: &fingerprint.user_agent,
-        browser_version: CLIENT_BROWSER_VERSION,
+        browser_version: transport::browser_version(),
         os_version: &fingerprint.os_version,
         referrer: "",
         referring_domain: "",
@@ -656,7 +681,7 @@ fn build_super_properties(fingerprint: &ClientFingerprint) -> String {
     STANDARD.encode(raw)
 }
 
-async fn fetch_client_build_number(client: &reqwest::Client) -> Option<u64> {
+async fn fetch_client_build_number(client: &wreq::Client) -> Option<u64> {
     let app_html = client
         .get(format!("{DISCORD_ORIGIN}/app"))
         .timeout(Duration::from_secs(5))
@@ -680,7 +705,7 @@ async fn fetch_client_build_number(client: &reqwest::Client) -> Option<u64> {
 }
 
 async fn fetch_session_identifiers(
-    client: &reqwest::Client,
+    client: &wreq::Client,
     fingerprint: &ClientFingerprint,
 ) -> SessionIdentifierFetchOutcome {
     let headers = discord_experiments_headers(fingerprint);
@@ -720,7 +745,7 @@ async fn fetch_session_identifiers(
 }
 
 async fn fetch_session_identifier(
-    client: &reqwest::Client,
+    client: &wreq::Client,
     url: &str,
     headers: HeaderMap,
 ) -> std::result::Result<SessionIdentifiers, String> {
@@ -771,19 +796,6 @@ fn parse_build_number(js: &str) -> Option<u64> {
         .take_while(|character| character.is_ascii_digit())
         .collect();
     digits.parse::<u64>().ok()
-}
-
-fn web_user_agent(os: &str, os_version: &str, os_arch: &str) -> String {
-    let platform = match os {
-        "Windows" => "Windows NT 10.0; Win64; x64".to_owned(),
-        "Mac OS X" => format!("Macintosh; Intel Mac OS X {}", os_version.replace('.', "_")),
-        _ if os_arch == "arm64" => "X11; Linux aarch64".to_owned(),
-        _ => "X11; Linux x86_64".to_owned(),
-    };
-    format!(
-        "Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) \
-         Chrome/{CLIENT_BROWSER_VERSION} Safari/537.36"
-    )
 }
 
 fn chrome_os_version(os: &str, host_os_version: &str) -> String {
@@ -910,14 +922,6 @@ fn windows_version(output: &str) -> Option<String> {
                     .all(|component| !component.is_empty() && component.parse::<u32>().is_ok())
         })
         .map(str::to_owned)
-}
-
-fn operating_system_arch() -> &'static str {
-    match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        arch => arch,
-    }
 }
 
 #[cfg(test)]
