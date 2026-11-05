@@ -87,19 +87,23 @@ fn discord_timestamp_matches(
     }
 
     let mut matches = Vec::new();
-    let mut in_code_block = false;
+    let mut code_block_lines = Vec::new();
     let mut line_start = 0usize;
     for line in value.split_inclusive('\n') {
         let (content, newline) = line
             .strip_suffix('\n')
             .map_or((line, ""), |content| (content, "\n"));
 
-        if in_code_block {
+        if !code_block_lines.is_empty() {
             if closes_markdown_code_block(content) {
-                in_code_block = false;
+                code_block_lines.clear();
+            } else {
+                code_block_lines.push((line_start, content));
             }
-        } else if content.trim_start().starts_with("```") {
-            in_code_block = true;
+        } else if let Some(after_fence) = content.trim_start().strip_prefix("```") {
+            if !closes_markdown_code_block(after_fence) {
+                code_block_lines.push((line_start, content));
+            }
         } else {
             collect_discord_timestamps_outside_inline_code(
                 &mut matches,
@@ -112,6 +116,16 @@ fn discord_timestamp_matches(
         line_start = line_start
             .saturating_add(content.len())
             .saturating_add(newline.len());
+    }
+    // Only a completed fence protects its contents from timestamp replacement.
+    for (line_start, content) in code_block_lines {
+        collect_discord_timestamps_outside_inline_code(
+            &mut matches,
+            content,
+            line_start,
+            hour_format_24,
+            now,
+        );
     }
     matches
 }
@@ -145,23 +159,27 @@ fn collect_discord_timestamps_outside_inline_code(
             now,
         );
 
-        let content_start = open.saturating_add(1);
-        let close = value[content_start..]
-            .find('`')
-            .filter(|relative_close| *relative_close > 0)
-            .map(|relative_close| content_start.saturating_add(relative_close));
-        let Some(close) = close else {
-            collect_discord_timestamp_markup(
-                matches,
-                &value[open..],
-                source_start.saturating_add(open),
-                hour_format_24,
-                now,
-            );
-            return;
-        };
-
-        cursor = close.saturating_add(1);
+        let run_len = value[open..]
+            .bytes()
+            .take_while(|byte| *byte == b'`')
+            .count();
+        let content_start = open + run_len;
+        cursor = content_start;
+        if run_len <= 2 {
+            let mut search_start = content_start;
+            while let Some(relative) = value[search_start..].find('`') {
+                let close = search_start + relative;
+                let closing_len = value[close..]
+                    .bytes()
+                    .take_while(|byte| *byte == b'`')
+                    .count();
+                if closing_len == run_len && content_start < close {
+                    cursor = close + closing_len;
+                    break;
+                }
+                search_start = close + closing_len;
+            }
+        }
     }
     collect_discord_timestamp_markup(
         matches,
