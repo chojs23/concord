@@ -27,6 +27,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: detect native encoder changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      native-encoder: ${{ steps.filter.outputs.native-encoder }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          # PRs use their full diff. Pushes compare with the previous main tip.
+          base: ${{ github.ref }}
+          filters: |
+            native-encoder:
+              - 'src/discord/voice.rs'
+              - 'src/discord/voice/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'build.rs'
+              - 'rust-toolchain*'
+              - '.cargo/**'
+              - '.github/workflows/ci.yml'
+              - '.github/build-setup.yml'
+
   check:
     name: fmt + clippy + test
     runs-on: ubuntu-24.04
@@ -118,6 +146,8 @@ jobs:
 
   platform-encoder-check:
     name: native encoder (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.native-encoder == 'true'
     strategy:
       fail-fast: false
       matrix:
