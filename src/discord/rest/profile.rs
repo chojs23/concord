@@ -1,6 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use reqwest::StatusCode;
 use serde_json::{Value, json};
+use wreq::StatusCode;
 
 use crate::discord::ids::{
     Id,

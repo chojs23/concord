@@ -50,7 +50,7 @@ impl App {
         };
 
         loop {
-            let (fingerprint, http) = crate::discord::load_client_fingerprint_and_http().await;
+            let (fingerprint, http) = crate::discord::load_client_fingerprint_and_http().await?;
             let auth_session = DiscordAuthSession::with_http(fingerprint, http);
             let resolved_token = resolve_token(auth_session.clone()).await?;
             let token = resolved_token.token;

@@ -1043,7 +1043,7 @@ fn dedupe_media_targets(targets: Vec<MediaPlaybackTarget>) -> Vec<MediaPlaybackT
 }
 
 fn is_playable_media_url(url: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(url) else {
+    let Ok(url) = url::Url::parse(url) else {
         return false;
     };
     if !matches!(url.scheme(), "http" | "https") {

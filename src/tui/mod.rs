@@ -55,7 +55,7 @@ pub fn initialize_theme(theme_options: &ThemeOptions) -> Vec<String> {
 }
 
 pub async fn prompt_login(notice: Option<String>) -> Result<String> {
-    let (fingerprint, http) = load_client_fingerprint_and_http().await;
+    let (fingerprint, http) = load_client_fingerprint_and_http().await?;
     let auth_session = DiscordAuthSession::with_http(fingerprint, http);
     login::prompt_login(notice, auth_session).await
 }

@@ -22,10 +22,10 @@ pub(in crate::discord) struct CaptchaChallenge {
 /// hCaptcha service count; any other 400 is an ordinary error and returns
 /// `None` so callers keep their existing handling.
 pub(in crate::discord) fn parse_captcha_challenge(
-    status: reqwest::StatusCode,
+    status: wreq::StatusCode,
     body: &str,
 ) -> Option<CaptchaChallenge> {
-    if status != reqwest::StatusCode::BAD_REQUEST {
+    if status != wreq::StatusCode::BAD_REQUEST {
         return None;
     }
 
@@ -45,7 +45,7 @@ pub(in crate::discord) fn parse_captcha_challenge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::StatusCode;
+    use wreq::StatusCode;
 
     #[test]
     fn detects_hcaptcha_required_only_on_bad_request() {

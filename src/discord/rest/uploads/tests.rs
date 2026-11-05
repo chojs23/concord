@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue};
+use wreq::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue};
 
 use super::*;
 use crate::discord::{
@@ -33,7 +33,7 @@ async fn attachments_use_cloud_uploads_before_message_and_forum_json() {
         headers.insert(COOKIE, HeaderValue::from_static("discord_cookie=private"));
         let rest = DiscordRest::new(
             "private-token".to_owned(),
-            Client::builder()
+            wreq::Client::builder()
                 .default_headers(headers)
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -42,7 +42,7 @@ async fn attachments_use_cloud_uploads_before_message_and_forum_json() {
         );
         // Only the fixture uses HTTP. Production storage uploads require HTTPS.
         let upload_http = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(wreq::redirect::Policy::none())
             .timeout(Duration::from_secs(5))
             .build()
             .expect("test upload client configuration is valid");
@@ -146,7 +146,7 @@ async fn attachment_uploads_recheck_current_file_size() {
     .expect("attachment can be updated");
     let rest = DiscordRest::new(
         "test-token".to_owned(),
-        Client::new(),
+        wreq::Client::new(),
         Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)),
     );
     let error = rest
@@ -211,7 +211,7 @@ fn read_request(stream: TcpStream) -> (TcpStream, CapturedRequest) {
         }
         let (name, value) = line.split_once(':').expect("header has a value");
         headers.insert(
-            reqwest::header::HeaderName::from_bytes(name.as_bytes()).expect("header name is valid"),
+            wreq::header::HeaderName::from_bytes(name.as_bytes()).expect("header name is valid"),
             HeaderValue::from_str(value.trim()).expect("header value is valid"),
         );
     }

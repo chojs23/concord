@@ -32,7 +32,7 @@ impl PartialOrd for ComparableVersion {
 }
 
 pub async fn check_latest_version() -> std::result::Result<Option<String>, String> {
-    let client = reqwest::Client::builder()
+    let client = super::tls::http_client_builder()?
         .timeout(VERSION_CHECK_TIMEOUT)
         .user_agent(format!("concord/{}", env!("CARGO_PKG_VERSION")))
         .build()

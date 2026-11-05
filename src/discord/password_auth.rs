@@ -294,7 +294,7 @@ fn mfa_token_from_body(body: &str) -> Result<String, String> {
         .ok_or_else(|| "Discord MFA response did not include a token".to_owned())
 }
 
-fn format_login_error(status: reqwest::StatusCode, body: &str) -> String {
+fn format_login_error(status: wreq::StatusCode, body: &str) -> String {
     #[derive(Deserialize)]
     struct DiscordError {
         code: Option<i64>,
@@ -340,7 +340,7 @@ mod tests {
         LoginOutcome, MfaMethod, format_login_error, normalize_login_identifier,
         parse_login_success,
     };
-    use reqwest::StatusCode;
+    use wreq::StatusCode;
 
     #[test]
     fn parse_login_success_prioritizes_required_actions_before_token() {

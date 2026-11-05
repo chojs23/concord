@@ -330,10 +330,10 @@ impl DiscordRest {
 }
 
 fn recent_mentions_request(
-    http: &reqwest::Client,
+    http: &wreq::Client,
     before: Option<Id<MessageMarker>>,
     limit: u16,
-) -> reqwest::RequestBuilder {
+) -> wreq::RequestBuilder {
     let mut request = http
         .get("https://discord.com/api/v9/users/@me/mentions")
         .query(&[
@@ -348,9 +348,9 @@ fn recent_mentions_request(
 }
 
 fn recent_mention_delete_request(
-    http: &reqwest::Client,
+    http: &wreq::Client,
     message_id: Id<MessageMarker>,
-) -> reqwest::RequestBuilder {
+) -> wreq::RequestBuilder {
     http.delete(format!(
         "https://discord.com/api/v9/users/@me/mentions/{}",
         message_id.get()
@@ -514,12 +514,13 @@ mod recent_mentions_tests {
     #[test]
     fn recent_mention_requests_use_message_ids_and_documented_filters() {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let http = reqwest::Client::new();
+        let http = wreq::Client::new();
         let list = recent_mentions_request(&http, Some(Id::new(700)), 25)
             .build()
             .expect("recent mentions request builds");
-        assert_eq!(list.url().path(), "/api/v9/users/@me/mentions");
-        let query = list.url().query_pairs().collect::<Vec<_>>();
+        assert_eq!(list.uri().path(), "/api/v9/users/@me/mentions");
+        let url = url::Url::parse(&list.uri().to_string()).expect("request URI is a URL");
+        let query = url.query_pairs().collect::<Vec<_>>();
         assert!(query.contains(&("before".into(), "700".into())));
         assert!(query.contains(&("roles".into(), "true".into())));
         assert!(query.contains(&("everyone".into(), "true".into())));
@@ -527,7 +528,7 @@ mod recent_mentions_tests {
         let delete = recent_mention_delete_request(&http, Id::new(700))
             .build()
             .expect("recent mention delete request builds");
-        assert_eq!(delete.method(), reqwest::Method::DELETE);
-        assert_eq!(delete.url().path(), "/api/v9/users/@me/mentions/700");
+        assert_eq!(delete.method(), wreq::Method::DELETE);
+        assert_eq!(delete.uri().path(), "/api/v9/users/@me/mentions/700");
     }
 }

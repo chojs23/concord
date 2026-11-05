@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
-use reqwest::{Client, Url, header::CONTENT_TYPE};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
+use url::Url;
+use wreq::{Client, header::CONTENT_TYPE};
 
 use crate::{
     AppError, Result,
@@ -43,10 +44,11 @@ impl DiscordRest {
 
         // Signed storage URLs are not Discord API endpoints. Do not inherit
         // Discord cookies or headers, follow redirects, or retry uploads.
-        let upload_http = Client::builder()
+        let upload_http = crate::support::tls::http_client_builder()
+            .map_err(AppError::DiscordRequest)?
             .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
+            .redirect(wreq::redirect::Policy::none())
+            .retry(wreq::retry::Policy::never())
             .build()
             .map_err(|error| {
                 AppError::DiscordRequest(format!("create attachment upload client failed: {error}"))
@@ -157,7 +159,7 @@ impl DiscordRest {
                 )));
             }
             let response = upload_http
-                .put(url)
+                .put(url.as_str())
                 .header(CONTENT_TYPE, upload_content_type(&attachment.filename))
                 .body(bytes)
                 .send()
@@ -168,7 +170,7 @@ impl DiscordRest {
                     AppError::DiscordRequest(format!(
                         "upload attachment {} failed: {}",
                         attachment.filename,
-                        error.without_url()
+                        error.without_uri()
                     ))
                 })?;
             if !response.status().is_success() {

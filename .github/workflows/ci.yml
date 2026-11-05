@@ -11,6 +11,7 @@ on:
       - "!LICENSE"
       - "!.github/**"
       - ".github/workflows/ci.yml"
+      - ".github/build-setup.yml"
   pull_request:
     branches: [main]
     paths:
@@ -21,6 +22,7 @@ on:
       - "!LICENSE"
       - "!.github/**"
       - ".github/workflows/ci.yml"
+      - ".github/build-setup.yml"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -126,6 +128,7 @@ jobs:
                 build-base \
                 clang20-dev \
                 cmake \
+                git \
                 libva-dev \
                 libx11-dev \
                 libxi-dev \
@@ -153,20 +156,33 @@ jobs:
       matrix:
         include:
           - name: macOS
-            os: macos-14
+            os: macos-26-intel
           - name: Windows
             os: windows-2022
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: install macOS media dependencies
+      - name: install macOS native dependencies
         if: runner.os == 'macOS'
-        run: brew install cmake nasm pkg-config
+        run: brew install cmake llvm nasm pkg-config
 
-      - name: install Windows media dependencies
+      - name: install Windows native dependencies
         if: runner.os == 'Windows'
-        run: choco install cmake nasm --no-progress -y
+        run: choco install cmake llvm nasm --no-progress -y
+
+      - name: Configure macOS libclang
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew_prefix=$(brew --prefix)
+          echo "LIBCLANG_PATH=$brew_prefix/opt/llvm/lib" >> "$GITHUB_ENV"
+
+      - name: Configure Windows libclang
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "LIBCLANG_PATH=$(Join-Path $env:ProgramFiles 'LLVM\bin')" >> $env:GITHUB_ENV
 
       - uses: dtolnay/rust-toolchain@stable
         with:
