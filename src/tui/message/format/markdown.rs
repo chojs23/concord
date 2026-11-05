@@ -70,9 +70,26 @@ pub(super) fn wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
                 code_block_lines.push(rendered_line);
             }
         } else if let Some(label) = markdown_code_fence_label(&rendered_line.text) {
-            in_code_block = true;
-            code_block_label = (!label.is_empty()).then_some(label);
-            code_block_fence = Some(rendered_line);
+            let content_start =
+                rendered_line.text.len() - rendered_line.text.trim_start().len() + 3;
+            if let Some(content_end) =
+                markdown_code_fence_closing_content_end(&rendered_line.text[content_start..])
+            {
+                lines.extend(wrap_code_block_lines_and_highlight(
+                    state,
+                    vec![rendered_text_slice(
+                        &rendered_line,
+                        content_start,
+                        content_start + content_end,
+                    )],
+                    width,
+                    None,
+                ));
+            } else {
+                in_code_block = true;
+                code_block_label = (!label.is_empty()).then_some(label);
+                code_block_fence = Some(rendered_line);
+            }
         } else {
             let rendered_line = rendered_text_with_loaded_custom_emoji_placeholders(
                 rendered_line,
@@ -83,17 +100,10 @@ pub(super) fn wrap_markdown_message_lines_with_loaded_custom_emoji_urls(
         line_start = line_end.saturating_add(1);
     }
     if in_code_block {
-        if code_block_lines.is_empty() {
-            if let Some(fence) = code_block_fence {
-                lines.extend(wrap_markdown_inline_text(fence, width, style));
-            }
-        } else {
-            lines.extend(wrap_code_block_lines_and_highlight(
-                state,
-                code_block_lines,
-                width,
-                code_block_label,
-            ));
+        for line in code_block_fence.into_iter().chain(code_block_lines) {
+            let line =
+                rendered_text_with_loaded_custom_emoji_placeholders(line, loaded_custom_emoji_urls);
+            lines.extend(wrap_markdown_message_line(line, width, style));
         }
     }
     lines
@@ -444,7 +454,13 @@ fn parse_inline_markdown(rendered: RenderedText) -> InlineMarkdownText {
             }
         }
 
-        let next = if let Some((marker, _)) = inline_markdown_marker_at(&rendered.text, cursor) {
+        let next = if rendered.text[cursor..].starts_with('`') {
+            cursor
+                + rendered.text[cursor..]
+                    .bytes()
+                    .take_while(|byte| *byte == b'`')
+                    .count()
+        } else if let Some((marker, _)) = inline_markdown_marker_at(&rendered.text, cursor) {
             cursor.saturating_add(marker.len())
         } else {
             next_inline_markdown_marker(&rendered.text, cursor).unwrap_or(rendered.text.len())
@@ -491,7 +507,11 @@ fn next_inline_markdown_marker_for(value: &str, cursor: usize, marker: &str) -> 
 fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str, Style)> {
     let rest = &value[cursor..];
     if rest.starts_with('`') {
-        Some(("`", inline_code_style()))
+        match rest.bytes().take_while(|byte| *byte == b'`').count() {
+            1 => Some(("`", inline_code_style())),
+            2 => Some(("``", inline_code_style())),
+            _ => None,
+        }
     } else if rest.starts_with("***") {
         Some((
             "***",
@@ -513,7 +533,21 @@ fn inline_markdown_marker_at(value: &str, cursor: usize) -> Option<(&'static str
 }
 
 fn find_inline_markdown_closer(value: &str, start: usize, marker: &str) -> Option<usize> {
-    if matches!(marker, "*" | "_") {
+    if marker.starts_with('`') {
+        let mut search_start = start;
+        while let Some(relative) = value[search_start..].find('`') {
+            let index = search_start + relative;
+            let run_len = value[index..]
+                .bytes()
+                .take_while(|byte| *byte == b'`')
+                .count();
+            if run_len == marker.len() && start < index {
+                return Some(index);
+            }
+            search_start = index + run_len;
+        }
+        None
+    } else if matches!(marker, "*" | "_") {
         let mut search_start = start;
         while let Some(relative) = value[search_start..].find(marker) {
             let index = search_start.saturating_add(relative);
