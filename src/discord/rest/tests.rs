@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
@@ -54,9 +54,8 @@ use super::{
         parse_forum_post_data_response, parse_public_archived_threads_response,
     },
     messages::{
-        MessageEditRequest, edit_message_request_body, message_multipart_form,
-        message_request_body, message_request_body_with_tts, parse_pinned_messages_response,
-        upload_content_type,
+        MessageEditRequest, edit_message_request_body, message_request_body,
+        message_request_body_with_tts, parse_pinned_messages_response,
     },
     notification_settings::mute_request_body,
     polls::poll_vote_request_body,
@@ -66,6 +65,7 @@ use super::{
         MessageSearchResponse, message_search_date_snowflake_bounds, message_search_has_more,
         message_search_query_params, message_search_retry_delay,
     },
+    uploads::upload_content_type,
     user_settings::settings_proto_request_body,
 };
 
@@ -681,18 +681,15 @@ fn validates_attachment_only_message_payload() {
             message_id: Id::new(44),
             mention_author: true,
         }),
-        &attachments,
     );
     assert_eq!(body["content"], "");
     assert_eq!(body["message_reference"]["message_id"], "44");
     assert!(body.get("allowed_mentions").is_none());
-    assert_eq!(body["attachments"][0]["id"], 0);
-    assert_eq!(body["attachments"][0]["filename"], "cat.png");
 }
 
 #[test]
 fn message_request_body_matches_web_defaults_and_carries_snowflake_nonce() {
-    let body = message_request_body("hi", Id::new(99), None, &[]);
+    let body = message_request_body("hi", Id::new(99), None);
     let nonce = body["nonce"].as_str().expect("nonce is a string");
     assert_eq!(nonce, "99");
     assert_eq!(body["enforce_nonce"], true);
@@ -700,7 +697,7 @@ fn message_request_body_matches_web_defaults_and_carries_snowflake_nonce() {
     assert_eq!(body["tts"], false);
     assert_eq!(body["flags"], 0);
 
-    let tts = message_request_body_with_tts("hi", Id::new(99), None, &[], true);
+    let tts = message_request_body_with_tts("hi", Id::new(99), None, true);
     assert_eq!(tts["tts"], true);
 }
 
@@ -713,7 +710,6 @@ fn message_request_body_suppresses_reply_ping_when_disabled() {
             message_id: Id::new(44),
             mention_author: false,
         }),
-        &[],
     );
     assert_eq!(body["message_reference"]["message_id"], "44");
     assert_eq!(body["allowed_mentions"]["replied_user"], false);
@@ -1193,38 +1189,6 @@ fn enforces_per_file_upload_limit() {
         .collect::<Vec<_>>();
     validate_message_payload("", &many_sub_limit_files, BASE_MESSAGE_LIMITS)
         .expect("files each under the per-file limit are accepted even if their sum exceeds it");
-}
-
-#[tokio::test]
-async fn multipart_form_rechecks_current_file_size() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is after unix epoch")
-        .as_nanos();
-    let directory = std::env::temp_dir().join(format!("concord-rest-{unique}"));
-    std::fs::create_dir_all(&directory).expect("temp upload directory can be created");
-    let path = directory.join("changed.bin");
-    std::fs::write(&path, [0_u8]).expect("small temp file can be written");
-    let attachment = MessageAttachmentUpload::from_path(path.clone(), "changed.bin".to_owned(), 1);
-    std::fs::write(
-        &path,
-        vec![0_u8; (BASE_ATTACHMENT_LIMIT_BYTES + 1) as usize],
-    )
-    .expect("oversized temp file can be written");
-
-    let result = message_multipart_form(
-        message_request_body("", Id::new(99), None, std::slice::from_ref(&attachment)),
-        &[attachment],
-        BASE_ATTACHMENT_LIMIT_BYTES,
-    )
-    .await;
-    let Err(error) = result else {
-        panic!("multipart form must re-check actual file size");
-    };
-
-    assert!(matches!(error, AppError::AttachmentTooLarge { .. }));
-    let _ = std::fs::remove_file(path);
-    let _ = std::fs::remove_dir(directory);
 }
 
 #[test]
