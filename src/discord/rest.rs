@@ -39,6 +39,7 @@ mod reactions;
 mod read_state;
 mod search;
 mod streams;
+mod uploads;
 mod user_settings;
 
 pub use forum::CreatedForumPost;

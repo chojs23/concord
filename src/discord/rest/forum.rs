@@ -19,7 +19,6 @@ use crate::{
     },
 };
 
-use super::messages::message_multipart_form;
 use super::{DiscordRest, extra_fields};
 
 const ARCHIVED_THREAD_PAGE_LIMIT: u16 = 50;
@@ -193,30 +192,38 @@ impl DiscordRest {
         let _channel_guard = self.message_sends.acquire(post.channel_id).await;
         self.message_sends
             .ensure_cooldown_elapsed(post.channel_id)?;
-        let body = create_forum_post_request_body(
+        let mut body = create_forum_post_request_body(
             &post.title,
             &post.content,
             &post.applied_tags,
             &post.attachments,
             limits,
         )?;
-        let request = self.raw_http.post(format!(
-            "https://discord.com/api/v9/channels/{}/threads",
-            post.channel_id.get()
-        ));
-        let request = if post.attachments.is_empty() {
-            request.json(&body)
-        } else {
-            request.multipart(
-                message_multipart_form(body, &post.attachments, limits.max_attachment_bytes)
+        let result = async {
+            if !post.attachments.is_empty() {
+                body["message"]["attachments"] = Value::Array(
+                    self.upload_attachments(
+                        post.channel_id,
+                        &post.attachments,
+                        limits.max_attachment_bytes,
+                    )
                     .await?,
-            )
-        };
-
-        let result = self
-            .send_json(request, "create forum post")
-            .await
-            .and_then(|raw: Value| parse_create_forum_post_response(&raw, Some(post.channel_id)));
+                );
+            }
+            let raw = self
+                .send_json(
+                    self.raw_http
+                        .post(format!(
+                            "https://discord.com/api/v9/channels/{}/threads",
+                            post.channel_id.get()
+                        ))
+                        .json(&body),
+                    "create forum post",
+                )
+                .await?;
+            parse_create_forum_post_response(&raw, Some(post.channel_id))
+        }
+        .await;
         match &result {
             Ok(_) => {
                 if let Some(slow_mode) = slow_mode {
@@ -285,20 +292,6 @@ pub(super) fn create_forum_post_request_body(
             applied_tags
                 .iter()
                 .map(|tag_id| Value::String(tag_id.to_string()))
-                .collect(),
-        );
-    }
-    if !attachments.is_empty() {
-        body["message"]["attachments"] = Value::Array(
-            attachments
-                .iter()
-                .enumerate()
-                .map(|(index, attachment)| {
-                    json!({
-                        "id": index,
-                        "filename": attachment.filename,
-                    })
-                })
                 .collect(),
         );
     }
