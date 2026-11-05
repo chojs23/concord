@@ -6,8 +6,10 @@ use super::{MessageRowContentMetrics, MessageRowContentMetricsCacheKey, *};
 use crate::tui::{
     media,
     message::{
-        format as message_format, layout::standalone_message_rendered_height,
-        rows::MessageRowMetrics, time as message_time,
+        format as message_format,
+        layout::{MessageViewportPlan, standalone_message_rendered_height},
+        rows::MessageRowMetrics,
+        time as message_time,
     },
 };
 
@@ -439,6 +441,70 @@ impl DashboardState {
                 return Some((message.id, emoji));
             }
             rendered_row = rendered_row.saturating_add(visible_height);
+        }
+        None
+    }
+
+    /// Resolves a click at the given viewport row/column to the inline image
+    /// preview thumbnail it landed on, if any, identified by message id and
+    /// attachment filename. `row`/`col` are relative to the top-left of the
+    /// message list area, as in `reaction_chip_at_viewport_position`. Walks
+    /// the same per-message layout the renderer uses to place inline preview
+    /// albums (`media::image_preview_album_layout`, consumed by
+    /// `inline_preview_spacer_for_message`) and recomputes album cell
+    /// geometry on demand, mirroring how `InteractionMap` derives every other
+    /// hit region rather than caching one. Does not cover thread-card or
+    /// Components-V2 section thumbnails.
+    pub(in crate::tui) fn image_preview_at_viewport_position(
+        &self,
+        row: usize,
+        col: usize,
+        avatar_offset: u16,
+    ) -> Option<(Id<MessageMarker>, String)> {
+        if self.message_pane_uses_thread_cards() {
+            return None;
+        }
+        if self.messages.message_content_width == usize::MAX {
+            return None;
+        }
+        let col = col.checked_sub(avatar_offset as usize)?;
+        let content_width = self.messages.message_content_width;
+        let preview_width = self.messages.message_preview_width;
+        let max_preview_height = self.messages.message_max_preview_height;
+        let messages = self.visible_messages();
+        let selected = self.focused_message_selection();
+        let plan = MessageViewportPlan::new(
+            &messages,
+            selected,
+            self,
+            content_width,
+            preview_width,
+            max_preview_height,
+        );
+        let row = row as isize;
+        let col = u16::try_from(col).unwrap_or(u16::MAX);
+
+        for viewport_row in plan.rows() {
+            let previews = viewport_row.message.flow_inline_previews();
+            if previews.is_empty() {
+                continue;
+            }
+            let album =
+                media::image_preview_album_layout(&previews, preview_width, max_preview_height);
+            let preview_top = viewport_row.body_top + viewport_row.metrics.body_rows() as isize;
+            for cell in &album.cells {
+                let cell_top = preview_top.saturating_add(cell.y_offset_rows as isize);
+                if row < cell_top || row >= cell_top.saturating_add(cell.height as isize) {
+                    continue;
+                }
+                if col < cell.x_offset_columns
+                    || col >= cell.x_offset_columns.saturating_add(cell.width)
+                {
+                    continue;
+                }
+                let filename = previews[cell.preview_index].filename.to_owned();
+                return Some((viewport_row.message.id, filename));
+            }
         }
         None
     }
