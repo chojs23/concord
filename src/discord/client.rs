@@ -298,6 +298,7 @@ impl DiscordClient {
                 self.gateway_commands_tx.clone(),
                 voice_status_publisher,
                 stream_preview_uploader,
+                Arc::clone(&self.requested_voice),
             ));
             *self
                 .voice_runtime_task

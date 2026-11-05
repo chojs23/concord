@@ -195,6 +195,17 @@ impl DiscordState {
             .unwrap_or(false)
     }
 
+    pub(crate) fn user_voice_channel_in_guild(
+        &self,
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+    ) -> Option<Id<ChannelMarker>> {
+        self.voice
+            .states
+            .get(&(VoiceScope::Guild(guild_id), user_id))
+            .map(|state| state.channel_id)
+    }
+
     pub(crate) fn voice_sound_for_state_update(
         &self,
         state: &VoiceStateInfo,

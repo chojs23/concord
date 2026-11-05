@@ -340,6 +340,10 @@ MarkAsRead = { keys = ["m"], description = "mark as read" }
 CloseDm = { keys = ["c"], description = "close DM" }
 LeaveGroup = { keys = ["L"], description = "leave group" }
 ToggleMute = { keys = ["u"], description = "mute channel" }
+ServerMute = { keys = ["M"], description = "server mute" }
+ServerDeafen = { keys = ["D"], description = "server deafen" }
+MoveMember = { keys = ["v"], description = "move member" }
+DisconnectMember = { keys = ["x"], description = "disconnect member" }
 ```
 
 | Scoped action           | Default | Action                                                                  |
@@ -355,6 +359,10 @@ ToggleMute = { keys = ["u"], description = "mute channel" }
 | `CloseDm`               | `c`     | Close a one-to-one DM.                                                  |
 | `LeaveGroup`            | `L`     | Open confirmation to leave a group DM.                                  |
 | `ToggleMute`            | `u`     | Mute or unmute the selected channel or category.                        |
+| `ServerMute`            | `M`     | Server mute or unmute the selected voice participant.                   |
+| `ServerDeafen`          | `D`     | Server deafen or undeafen the selected voice participant.               |
+| `MoveMember`            | `v`     | Move the selected voice participant to another voice channel.           |
+| `DisconnectMember`      | `x`     | Disconnect the selected voice participant from voice.                   |
 
 Member pane actions:
 
@@ -366,6 +374,9 @@ ShowProfile = { keys = ["p"], description = "show profile" }
 | Scoped action | Default | Action                              |
 | ------------- | ------- | ----------------------------------- |
 | `ShowProfile` | `p`     | Open the selected member's profile. |
+
+Voice moderation actions only appear when you have the matching Discord
+permission in the participant's voice channel.
 
 Message pane actions:
 

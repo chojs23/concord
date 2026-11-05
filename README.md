@@ -668,6 +668,10 @@ MarkAsRead = "m"
 CloseDm = "c"
 LeaveGroup = "L"
 ToggleMute = "u"
+ServerMute = "M"
+ServerDeafen = "D"
+MoveMember = "v"
+DisconnectMember = "x"
 
 [keymap.message_actions]
 CopyMessage = "y"

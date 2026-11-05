@@ -22,7 +22,7 @@ use crate::{
     AppError,
     discord::{
         ApplicationCommandInfo, ApplicationCommandInteraction, ApplicationCommandInteractionOption,
-        BASE_ATTACHMENT_LIMIT_BYTES, BASE_MESSAGE_CHARACTER_LIMIT, GuildFolder,
+        BASE_ATTACHMENT_LIMIT_BYTES, BASE_MESSAGE_CHARACTER_LIMIT, GuildFolder, MemberModeration,
         MessageAttachmentUpload, MessageSearchAuthorType, MessageSearchHas, MessageSearchQuery,
         MessageSendLimits, NITRO_MESSAGE_CHARACTER_LIMIT, ReactionEmoji, ReplyReference,
         application_commands::{
@@ -1474,4 +1474,49 @@ fn user_profile_parser_resolves_avatar_url() {
         guild_avatar.avatar_url.as_deref(),
         Some("https://cdn.discordapp.com/guilds/77/users/10/avatars/def456.png")
     );
+}
+
+fn member_moderation_request(moderation: MemberModeration) -> reqwest::Request {
+    test_rest()
+        .member_moderation_request(Id::new(1), Id::new(20), &moderation)
+        .build()
+        .expect("moderation request should build")
+}
+
+fn request_json(request: &reqwest::Request) -> Option<serde_json::Value> {
+    request
+        .body()
+        .and_then(reqwest::Body::as_bytes)
+        .map(|body| serde_json::from_slice(body).expect("request body should be JSON"))
+}
+
+#[test]
+fn member_moderation_requests_patch_the_guild_member() {
+    for (moderation, body) in [
+        (
+            MemberModeration::SetMute(true),
+            serde_json::json!({ "mute": true }),
+        ),
+        (
+            MemberModeration::SetDeaf(false),
+            serde_json::json!({ "deaf": false }),
+        ),
+        (
+            MemberModeration::Move(Id::new(30)),
+            serde_json::json!({ "channel_id": "30" }),
+        ),
+        (
+            MemberModeration::Disconnect,
+            serde_json::json!({ "channel_id": null }),
+        ),
+    ] {
+        let request = member_moderation_request(moderation.clone());
+        assert_eq!(request.method(), reqwest::Method::PATCH, "{moderation:?}");
+        assert_eq!(
+            request.url().as_str(),
+            "https://discord.com/api/v9/guilds/1/members/20",
+            "{moderation:?}"
+        );
+        assert_eq!(request_json(&request), Some(body), "{moderation:?}");
+    }
 }

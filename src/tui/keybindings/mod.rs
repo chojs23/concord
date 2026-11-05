@@ -857,6 +857,10 @@ impl ChannelActionKind {
             "ToggleMute" => Some(Self::ToggleMute),
             "WatchStream" => Some(Self::WatchStream),
             "VoiceParticipantAudio" => Some(Self::ParticipantAudioSettings),
+            "ServerMute" => Some(Self::ServerMute),
+            "ServerDeafen" => Some(Self::ServerDeafen),
+            "MoveMember" => Some(Self::MoveMember),
+            "DisconnectMember" => Some(Self::DisconnectMember),
             _ => None,
         }
     }
@@ -874,6 +878,10 @@ impl ChannelActionKind {
             Self::ToggleMute => "ToggleMute",
             Self::WatchStream => "WatchStream",
             Self::ParticipantAudioSettings => "VoiceParticipantAudio",
+            Self::ServerMute => "ServerMute",
+            Self::ServerDeafen => "ServerDeafen",
+            Self::MoveMember => "MoveMember",
+            Self::DisconnectMember => "DisconnectMember",
         }
     }
 }

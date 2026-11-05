@@ -17,7 +17,7 @@ use super::application_commands::{
 };
 use super::emoji::custom_emoji_image_url;
 use super::message::MessageInfo;
-use super::{ActivityInfo, PresenceStatus, RichPresenceSelection, VoiceScope};
+use super::{ActivityInfo, DiscordAction, PresenceStatus, RichPresenceSelection, VoiceScope};
 
 pub const MAX_UPLOAD_ATTACHMENT_COUNT: usize = 10;
 pub const MAX_PROFILE_AVATAR_BYTES: u64 = 10 * 1024 * 1024;
@@ -255,6 +255,24 @@ impl ReactionEmoji {
 pub enum MuteDuration {
     Minutes(u64),
     Permanent,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MemberModeration {
+    SetMute(bool),
+    SetDeaf(bool),
+    Move(Id<ChannelMarker>),
+    Disconnect,
+}
+
+impl MemberModeration {
+    pub const fn action(&self) -> DiscordAction {
+        match self {
+            Self::SetMute(_) => DiscordAction::MuteMember,
+            Self::SetDeaf(_) => DiscordAction::DeafenMember,
+            Self::Move(_) | Self::Disconnect => DiscordAction::MoveMember,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -495,6 +513,11 @@ pub enum AppCommand {
     LeaveGuild {
         guild_id: Id<GuildMarker>,
         label: String,
+    },
+    ModerateMember {
+        guild_id: Id<GuildMarker>,
+        user_id: Id<UserMarker>,
+        moderation: MemberModeration,
     },
     CloseDm {
         channel_id: Id<ChannelMarker>,
