@@ -3,7 +3,7 @@ use crate::tui::message::syntax_highlight::SyntaxHighlightCache;
 use super::{
     ComposerUiState, DiscordUiState, LayoutCacheState, MessageHistoryRefreshState,
     MessageViewportState, NavigationState, PendingMessageUiState, PopupUiState,
-    RequestTrackingState, RuntimeUiState, SettingsState, ThreadCardListCacheState,
+    RequestTrackingState, RuntimeUiState, SettingsState, SpoilerUiState, ThreadCardListCacheState,
     TranslationUiState,
 };
 
@@ -23,6 +23,7 @@ pub struct DashboardState {
     pub(super) layout_cache: LayoutCacheState,
     pub(super) thread_cards: ThreadCardListCacheState,
     pub(super) translations: TranslationUiState,
+    pub(super) spoilers: SpoilerUiState,
     pub(in crate::tui) syntax_highlight_cache: SyntaxHighlightCache,
 }
 

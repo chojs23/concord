@@ -228,9 +228,17 @@ fn handle_click(
             if !state.select_visible_pane_row(pane, row) {
                 return MouseEventResult::handled(None);
             }
-            let command = double_click
-                .then(|| activate_focused_target(state))
-                .flatten();
+            // A single click on a message toggles its spoiler reveal; the
+            // second click of a double-click activates the message instead,
+            // so a double-click ends up revealed-and-activated.
+            let command = if double_click {
+                activate_focused_target(state)
+            } else {
+                if pane == FocusPane::Messages {
+                    state.toggle_selected_message_spoilers();
+                }
+                None
+            };
             MouseEventResult::handled(command)
         }
         InteractionTarget::ReactionChip { row, col } => {
