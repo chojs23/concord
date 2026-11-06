@@ -9,7 +9,7 @@ use super::{
 };
 
 const DISPLAY_OPTION_COUNT: usize = DisplayOption::ALL.len();
-const COMPOSER_OPTION_COUNT: usize = 1;
+const COMPOSER_OPTION_COUNT: usize = ComposerOption::ALL.len();
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = VoiceOption::ALL.len();
 const OPTION_CATEGORY_COUNT: usize = 4;
@@ -82,6 +82,20 @@ impl VoiceOption {
         Self::MicrophoneVolume,
         Self::VoiceVolume,
     ];
+
+    fn at(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ComposerOption {
+    EmojisAsLinks,
+    TypingIndicator,
+}
+
+impl ComposerOption {
+    const ALL: [Self; 2] = [Self::EmojisAsLinks, Self::TypingIndicator];
 
     fn at(index: usize) -> Option<Self> {
         Self::ALL.get(index).copied()
@@ -339,15 +353,32 @@ impl DashboardState {
     }
 
     fn display_option_items_for_composer(&self) -> Vec<DisplayOptionItem> {
+        ComposerOption::ALL
+            .iter()
+            .map(|option| self.composer_option_item(*option))
+            .collect()
+    }
+
+    fn composer_option_item(&self, option: ComposerOption) -> DisplayOptionItem {
         let options = self.options.composer_options;
-        vec![DisplayOptionItem {
-            label: "Emojis as links",
-            enabled: options.emojis_as_links,
-            value: None,
-            gauge: None,
-            effective: options.emojis_as_links,
-            description: "Sends unavailable emojis as a link instead.",
-        }]
+        match option {
+            ComposerOption::EmojisAsLinks => DisplayOptionItem {
+                label: "Emojis as links",
+                enabled: options.emojis_as_links,
+                value: None,
+                gauge: None,
+                effective: options.emojis_as_links,
+                description: "Sends unavailable emojis as a link instead.",
+            },
+            ComposerOption::TypingIndicator => DisplayOptionItem {
+                label: "Typing indicator",
+                enabled: options.typing_indicator,
+                value: None,
+                gauge: None,
+                effective: options.typing_indicator,
+                description: "Broadcast your typing status while composing.",
+            },
+        }
     }
 
     fn display_option_items_for_notifications(&self) -> Vec<DisplayOptionItem> {
@@ -518,9 +549,11 @@ impl DashboardState {
                 };
                 self.toggle_display_option(option);
             }
-            OptionsCategory::Composer if selected == 0 => {
-                self.options.composer_options.emojis_as_links =
-                    !self.options.composer_options.emojis_as_links
+            OptionsCategory::Composer => {
+                let Some(option) = ComposerOption::at(selected) else {
+                    return;
+                };
+                self.toggle_composer_option(option);
             }
             OptionsCategory::Notifications if selected == 0 => {
                 self.options.notification_options.desktop_notifications =
@@ -602,6 +635,14 @@ impl DashboardState {
             VoiceOption::MicrophoneSensitivity
             | VoiceOption::MicrophoneVolume
             | VoiceOption::VoiceVolume => {}
+        }
+    }
+
+    fn toggle_composer_option(&mut self, option: ComposerOption) {
+        let options = &mut self.options.composer_options;
+        match option {
+            ComposerOption::EmojisAsLinks => options.emojis_as_links = !options.emojis_as_links,
+            ComposerOption::TypingIndicator => options.typing_indicator = !options.typing_indicator,
         }
     }
 

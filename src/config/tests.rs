@@ -118,6 +118,10 @@ fn app_config_parses_partial_toml_with_defaults() {
             app_options_with(|options| options.composer.emojis_as_links = true),
         ),
         (
+            "[composer]\ntyping_indicator = false\n",
+            app_options_with(|options| options.composer.typing_indicator = false),
+        ),
+        (
             "[credentials]\nstore = \"plain\"\n",
             app_options_with(|options| options.credentials.store = CredentialStoreMode::Plain),
         ),
@@ -689,6 +693,7 @@ fn options_save_and_load_round_trip() {
         composer: ComposerOptions {
             emojis_as_links: true,
             ping_on_reply: false,
+            typing_indicator: false,
         },
         safety: SafetyOptions { enabled: false },
         reactions: Default::default(),
