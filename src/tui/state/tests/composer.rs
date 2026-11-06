@@ -10,6 +10,7 @@ use crate::discord::{
     MessageAttachmentUpload,
 };
 use crate::tui::keybindings::ScrollAction;
+use crate::tui::state::popups::OptionsCategory;
 use crate::tui::state::{ActiveModalPopupKind, ForumPostComposerField, LocalUploadPreviewView};
 use crate::tui::text_input::TextEditAction;
 use serde_json::json;
@@ -3177,6 +3178,20 @@ fn composer_typing_indicator_throttles_and_resends() {
         state.note_composer_typing_at(start + Duration::from_secs(8)),
         typing
     );
+}
+
+#[test]
+fn composer_typing_indicator_can_be_disabled() {
+    use std::time::Instant;
+
+    let mut state = state_with_writable_channel();
+    state.open_options_category(OptionsCategory::Composer);
+    state.move_option_down();
+    state.toggle_selected_display_option();
+    state.start_composer();
+
+    assert!(!state.options.composer_options.typing_indicator);
+    assert_eq!(state.note_composer_typing_at(Instant::now()), None);
 }
 
 #[test]
