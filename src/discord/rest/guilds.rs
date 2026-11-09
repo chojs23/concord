@@ -1,5 +1,5 @@
-use reqwest::RequestBuilder;
 use serde_json::{Value, json};
+use wreq::RequestBuilder;
 
 use crate::Result;
 use crate::discord::gateway::parse_member_info;

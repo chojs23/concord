@@ -1476,22 +1476,28 @@ fn user_profile_parser_resolves_avatar_url() {
     );
 }
 
-fn member_moderation_request(moderation: MemberModeration) -> reqwest::Request {
+fn member_moderation_request(moderation: MemberModeration) -> wreq::Request {
     test_rest()
         .member_moderation_request(Id::new(1), Id::new(20), &moderation)
         .build()
         .expect("moderation request should build")
 }
 
-fn request_json(request: &reqwest::Request) -> Option<serde_json::Value> {
-    request
-        .body()
-        .and_then(reqwest::Body::as_bytes)
-        .map(|body| serde_json::from_slice(body).expect("request body should be JSON"))
+async fn request_json(mut request: wreq::Request) -> Option<serde_json::Value> {
+    use http_body_util::BodyExt;
+
+    let body = request
+        .body_mut()
+        .take()?
+        .collect()
+        .await
+        .expect("request body is readable")
+        .to_bytes();
+    Some(serde_json::from_slice(&body).expect("request body should be JSON"))
 }
 
-#[test]
-fn member_moderation_requests_patch_the_guild_member() {
+#[tokio::test]
+async fn member_moderation_requests_patch_the_guild_member() {
     for (moderation, body) in [
         (
             MemberModeration::SetMute(true),
@@ -1511,12 +1517,12 @@ fn member_moderation_requests_patch_the_guild_member() {
         ),
     ] {
         let request = member_moderation_request(moderation.clone());
-        assert_eq!(request.method(), reqwest::Method::PATCH, "{moderation:?}");
+        assert_eq!(request.method(), wreq::Method::PATCH, "{moderation:?}");
         assert_eq!(
-            request.url().as_str(),
+            request.uri().to_string(),
             "https://discord.com/api/v9/guilds/1/members/20",
             "{moderation:?}"
         );
-        assert_eq!(request_json(&request), Some(body), "{moderation:?}");
+        assert_eq!(request_json(request).await, Some(body), "{moderation:?}");
     }
 }
