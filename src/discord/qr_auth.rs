@@ -11,12 +11,9 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use tokio::{sync::mpsc, task::JoinHandle};
-use tokio_tungstenite::{
-    connect_async_tls_with_config,
-    tungstenite::{Message, client::IntoClientRequest, handshake::client::Request},
+use tokio_tungstenite::tungstenite::{
+    Message, client::IntoClientRequest, handshake::client::Request,
 };
-
-use crate::support::tls;
 
 use super::{
     DiscordAuthSession,
@@ -43,7 +40,12 @@ pub enum QrEvent {
 }
 
 pub fn spawn(events_tx: mpsc::Sender<QrEvent>) -> JoinHandle<()> {
-    spawn_with_auth_session(DiscordAuthSession::fallback(), events_tx)
+    match DiscordAuthSession::fallback() {
+        Ok(session) => spawn_with_auth_session(session, events_tx),
+        Err(error) => tokio::spawn(async move {
+            let _ = events_tx.send(QrEvent::Failed(error.to_string())).await;
+        }),
+    }
 }
 
 pub(crate) fn spawn_with_auth_session(
@@ -117,10 +119,7 @@ async fn run_connection(
 
     let request = remote_auth_request(auth_session.fingerprint())?;
 
-    let connector = tls::websocket_connector()?;
-    let (ws, _) = connect_async_tls_with_config(request, None, false, Some(connector))
-        .await
-        .map_err(err)?;
+    let ws = super::transport::connect_websocket(request, Default::default()).await?;
     let (mut writer, mut reader) = ws.split();
 
     let _ = tx
@@ -385,7 +384,7 @@ async fn send_ticket_exchange(
     auth_session: &DiscordAuthSession,
     ticket: &str,
     remote_fingerprint: Option<&str>,
-) -> Result<reqwest::Response, reqwest::Error> {
+) -> Result<wreq::Response, wreq::Error> {
     let mut request = auth_session
         .http()
         .post(TICKET_EXCHANGE_URL)
@@ -399,8 +398,8 @@ async fn send_ticket_exchange(
 }
 
 async fn checked_ticket_exchange_response(
-    response: reqwest::Response,
-) -> Result<reqwest::Response, String> {
+    response: wreq::Response,
+) -> Result<wreq::Response, String> {
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.map_err(err)?;
@@ -410,7 +409,7 @@ async fn checked_ticket_exchange_response(
     Ok(response)
 }
 
-fn format_ticket_exchange_error(status: reqwest::StatusCode, body: &str) -> String {
+fn format_ticket_exchange_error(status: wreq::StatusCode, body: &str) -> String {
     if super::captcha::parse_captcha_challenge(status, body).is_some() {
         "Discord requires captcha verification, so QR login cannot continue in this terminal. Log in with a token instead.".into()
     } else {
@@ -418,7 +417,7 @@ fn format_ticket_exchange_error(status: reqwest::StatusCode, body: &str) -> Stri
     }
 }
 
-fn format_discord_error_response(status: reqwest::StatusCode, body: &str) -> String {
+fn format_discord_error_response(status: wreq::StatusCode, body: &str) -> String {
     let body = sanitize_response_body(body);
     if body.is_empty() {
         format!("Discord ticket exchange failed with status {status}")
@@ -611,7 +610,7 @@ mod tests {
     #[test]
     fn captcha_response_fails_without_local_fallback() {
         let message = format_ticket_exchange_error(
-            reqwest::StatusCode::BAD_REQUEST,
+            wreq::StatusCode::BAD_REQUEST,
             r#"{"captcha_key":["captcha-required"],"captcha_service":"hcaptcha"}"#,
         );
 

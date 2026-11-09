@@ -31,6 +31,7 @@ mod rest;
 mod rpc;
 mod state;
 mod thread;
+mod transport;
 mod upload;
 mod user_settings;
 mod verification;

@@ -377,6 +377,45 @@ fn navigation_selection_uses_configured_row_movement_keys() {
 }
 
 #[test]
+fn modified_arrows_use_configured_navigation_actions() {
+    let mut state = state_with_keymap(KeymapOptions {
+        mappings: [
+            ("HalfPageDown", "<S-down>"),
+            ("HalfPageUp", "<S-up>"),
+            ("ScrollViewportDown", "<C-down>"),
+            ("ScrollViewportUp", "<C-up>"),
+        ]
+        .into_iter()
+        .map(|(action, key)| (action.to_owned(), KeymapBinding::one(key)))
+        .collect(),
+        ..Default::default()
+    });
+    for id in 1..=8 {
+        state.push_event(guild_create_event(GuildCreateFixture {
+            name: format!("guild {id}"),
+            ..GuildCreateFixture::new(Id::new(id))
+        }));
+    }
+    state.focus_pane(FocusPane::Guilds);
+    state.set_guild_view_height(4);
+    assert!(state.select_visible_pane_row(FocusPane::Guilds, 0));
+
+    for (code, modifiers, selected, scroll) in [
+        (KeyCode::Down, KeyModifiers::SHIFT, 2, 0),
+        (KeyCode::Up, KeyModifiers::SHIFT, 0, 0),
+        (KeyCode::Down, KeyModifiers::CONTROL, 0, 1),
+        (KeyCode::Up, KeyModifiers::CONTROL, 0, 0),
+    ] {
+        handle_key(&mut state, KeyEvent::new(code, modifiers));
+        assert_eq!(
+            (state.selected_guild(), state.guild_scroll()),
+            (selected, scroll),
+            "{modifiers:?} + {code:?} should use the configured action"
+        );
+    }
+}
+
+#[test]
 fn uppercase_h_l_scroll_focused_side_panes_horizontally() {
     let mut state = state_with_messages(1);
 

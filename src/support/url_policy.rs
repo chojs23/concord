@@ -1,5 +1,5 @@
 pub(crate) fn normalize_openable_url(value: &str) -> Option<String> {
-    let url = reqwest::Url::parse(value).ok()?;
+    let url = url::Url::parse(value).ok()?;
     matches!(url.scheme(), "http" | "https").then(|| url.to_string())
 }
 

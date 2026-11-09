@@ -10,20 +10,20 @@ pub(super) const DISCORD_LOGIN_REFERER: &str = "https://discord.com/login";
 #[derive(Clone)]
 pub(crate) struct DiscordAuthSession {
     fingerprint: Arc<ClientFingerprint>,
-    http: reqwest::Client,
+    http: wreq::Client,
 }
 
 impl DiscordAuthSession {
-    pub(crate) fn fallback() -> Self {
+    pub(crate) fn fallback() -> crate::Result<Self> {
         Self::new(Arc::new(ClientFingerprint::new(CLIENT_BUILD_NUMBER)))
     }
 
-    pub(crate) fn new(fingerprint: Arc<ClientFingerprint>) -> Self {
-        let http = discord_http_client(&fingerprint);
-        Self { fingerprint, http }
+    pub(crate) fn new(fingerprint: Arc<ClientFingerprint>) -> crate::Result<Self> {
+        let http = discord_http_client(&fingerprint)?;
+        Ok(Self { fingerprint, http })
     }
 
-    pub(crate) fn with_http(fingerprint: Arc<ClientFingerprint>, http: reqwest::Client) -> Self {
+    pub(crate) fn with_http(fingerprint: Arc<ClientFingerprint>, http: wreq::Client) -> Self {
         Self { fingerprint, http }
     }
 
@@ -35,13 +35,13 @@ impl DiscordAuthSession {
         Arc::clone(&self.fingerprint)
     }
 
-    pub(crate) fn http(&self) -> reqwest::Client {
+    pub(crate) fn http(&self) -> wreq::Client {
         self.http.clone()
     }
 }
 
-pub(super) fn discord_login_headers(fingerprint: &ClientFingerprint) -> reqwest::header::HeaderMap {
-    use reqwest::header::{CACHE_CONTROL, HeaderValue, ORIGIN, PRAGMA};
+pub(super) fn discord_login_headers(fingerprint: &ClientFingerprint) -> wreq::header::HeaderMap {
+    use wreq::header::{CACHE_CONTROL, HeaderValue, ORIGIN, PRAGMA};
 
     let mut headers = discord_api_request_headers(fingerprint, DISCORD_LOGIN_REFERER);
     headers.insert(ORIGIN, HeaderValue::from_static(DISCORD_ORIGIN));
@@ -53,7 +53,7 @@ pub(super) fn discord_login_headers(fingerprint: &ClientFingerprint) -> reqwest:
 
 #[cfg(test)]
 mod tests {
-    use reqwest::header::{CACHE_CONTROL, ORIGIN, PRAGMA, REFERER};
+    use wreq::header::{CACHE_CONTROL, ORIGIN, PRAGMA, REFERER};
 
     use super::*;
     use crate::discord::fingerprint::{CLIENT_BUILD_NUMBER, discord_rest_headers};

@@ -1111,6 +1111,128 @@ fn message_content_applies_supported_markdown_formatting() {
 }
 
 #[test]
+fn discord_code_delimiters_render_without_residual_backticks() {
+    let state = DashboardState::new();
+    let message = message_with_content(Some("```hello world```\nafter\n```\nlast```".to_owned()));
+    let lines = format_message_content_lines(&message, &state, 80);
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            "╭─────────────╮",
+            "│ hello world │",
+            "╰─────────────╯",
+            "after",
+            "╭──────╮",
+            "│ last │",
+            "╰──────╯",
+        ]
+    );
+    assert_eq!(
+        lines[0].style,
+        theme::current().style(theme::HighlightGroup::CodeBlockBorder)
+    );
+
+    for (input, expected) in [
+        ("`hello world`", "hello world"),
+        ("``hello world``", "hello world"),
+        ("``a ` **b**``", "a ` **b**"),
+        (r"`a\*b\*`", r"a\*b\*"),
+        (r"``a\*b\*``", r"a\*b\*"),
+    ] {
+        let message = message_with_content(Some(input.to_owned()));
+        let lines = format_message_content_lines(&message, &state, 80);
+        assert_eq!(line_texts(&lines), vec![expected], "{input}");
+        let spans = lines[0].spans();
+        assert_eq!(spans.len(), 1, "{input}");
+        assert_eq!(
+            spans[0].style,
+            theme::current().style(theme::HighlightGroup::InlineCode)
+        );
+    }
+    for input in ["``hello`", "`hello``", "``hello", "```hello"] {
+        let message = message_with_content(Some(input.to_owned()));
+        let lines = format_message_content_lines(&message, &state, 80);
+        assert_eq!(line_texts(&lines), vec![input]);
+        assert!(
+            lines[0].spans().iter().all(
+                |span| span.style == theme::current().style(theme::HighlightGroup::MessageBody)
+            )
+        );
+    }
+}
+
+#[test]
+fn unclosed_code_fences_preserve_text_and_mention_metadata() {
+    for input in [
+        "```rs",
+        "```rs\n",
+        "```rs\npub fn main",
+        "```rs\npub fn main\n漢 <@10>\nafter",
+    ] {
+        let mut message = message_with_content(Some(input.to_owned()));
+        message.mentions = vec![mention_info(10, "alice")];
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+        let expected = input.replace("<@10>", "@alice");
+        assert_eq!(line_texts(&lines), expected.split('\n').collect::<Vec<_>>());
+        assert!(
+            lines
+                .iter()
+                .flat_map(MessageContentLine::spans)
+                .all(|span| span.style.fg
+                    != theme::current().style(theme::HighlightGroup::InlineCode).fg)
+        );
+        if input.contains("<@10>") {
+            let mention = lines[2]
+                .spans()
+                .into_iter()
+                .find(|span| span.content == "@alice")
+                .expect("resolved mention");
+            assert_eq!(
+                mention.style.bg,
+                text_highlight_style(TextHighlightKind::OtherMention).bg
+            );
+        }
+    }
+}
+
+#[test]
+fn message_timestamp_scanner_matches_discord_code_delimiters() {
+    let timestamp = 1_735_689_600;
+    let markup = format!("<t:{timestamp}:d>");
+    let expected = chrono::DateTime::from_timestamp(timestamp, 0)
+        .expect("static timestamp is valid")
+        .with_timezone(&chrono::Local)
+        .format("%m/%d/%Y")
+        .to_string();
+    let message = message_with_content(Some(format!(
+        "{markup}\n``{markup}`` {markup}\n```{markup}```\n{markup}\n```rs\n{markup}"
+    )));
+    let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
+    assert_eq!(
+        line_texts(&lines),
+        vec![
+            expected.clone(),
+            format!("{markup} {expected}"),
+            "╭──────────────────╮".to_owned(),
+            format!("│ {markup} │"),
+            "╰──────────────────╯".to_owned(),
+            expected.clone(),
+            "```rs".to_owned(),
+            expected,
+        ]
+    );
+    let timestamp_style = theme::current().style(theme::HighlightGroup::InlineTimestamp);
+    assert_eq!(
+        lines
+            .iter()
+            .flat_map(MessageContentLine::spans)
+            .filter(|span| span.style.bg == timestamp_style.bg)
+            .count(),
+        4
+    );
+}
+
+#[test]
 fn fenced_code_block_preserves_space_indentation() {
     let message = message_with_content(Some("```\nfunc f() {\n    return\n}\n```".to_owned()));
     let lines = format_message_content_lines(&message, &DashboardState::new(), 80);
@@ -1286,6 +1408,36 @@ fn message_content_resolves_user_mentions_by_precedence() {
 }
 
 #[test]
+fn message_content_preserves_literal_mention_names_with_markdown_escapes() {
+    for (name, content, expected, bold) in [
+        (r"a\!b", r"\*hello <@10>\*", r"*hello @a\!b*", false),
+        (
+            r"a\!b",
+            r"**hello <@10> \* world**",
+            r"hello @a\!b * world",
+            true,
+        ),
+        (r"a\*b\*", "**hello <@10>**", r"hello @a\*b\*", true),
+        (r"a\", "**hello <@10>**", r"hello @a\", true),
+        ("a``b", "``hello <@10> world``", "hello @a``b world", false),
+    ] {
+        let mut message = message_with_content(Some(content.to_owned()));
+        message.mentions = vec![mention_info(10, name)];
+
+        let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
+        let spans = lines[0].spans();
+
+        assert_eq!(line_texts(&lines), vec![expected], "{content}: {name}");
+        let expected_mention = format!("@{name}");
+        let mention = spans
+            .iter()
+            .find(|span| span.content.as_ref() == expected_mention)
+            .expect("literal mention keeps its own highlight");
+        assert_eq!(mention.style.add_modifier.contains(Modifier::BOLD), bold);
+    }
+}
+
+#[test]
 fn message_content_highlights_current_user_mentions() {
     let mut message = message_with_content(Some("hello <@10>".to_owned()));
     message.mentions = vec![mention_info(10, "username")];
@@ -1400,6 +1552,49 @@ fn message_content_highlights_markdown_link_urls() {
         .expect("markdown link URL is rendered as its own span");
 
     assert!(url_span.style.add_modifier.contains(Modifier::UNDERLINED));
+}
+
+#[test]
+fn message_url_actions_match_links_after_markdown_escapes() {
+    for (content, expected_text, expected_url) in [
+        (r"https\://example.com", "https://example.com", None),
+        (
+            r"\! https://example.com/a\_b",
+            r"! https://example.com/a\_b",
+            Some(r"https://example.com/a\_b"),
+        ),
+        (
+            r"**open https://example.com/a\_b now**",
+            r"open https://example.com/a\_b now",
+            Some(r"https://example.com/a\_b"),
+        ),
+    ] {
+        let message = message_with_content(Some(content.to_owned()));
+        let mut state = state_with_message_id(Id::new(1), content);
+        state.focus_pane(FocusPane::Messages);
+
+        let lines = format_message_content_lines(&message, &state, 200);
+        let spans = lines[0].spans();
+        let link_spans = spans
+            .iter()
+            .filter(|span| span.style.add_modifier.contains(Modifier::UNDERLINED))
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(line_texts(&lines), vec![expected_text], "{content}");
+        assert_eq!(
+            link_spans,
+            expected_url.into_iter().collect::<Vec<_>>(),
+            "{content}"
+        );
+        assert_eq!(
+            state.direct_open_selected_message_url(),
+            expected_url.map(|url| crate::discord::AppCommand::OpenUrl {
+                url: url.to_owned(),
+            }),
+            "{content}",
+        );
+    }
 }
 
 #[test]

@@ -16,12 +16,12 @@ use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, GuildMarker, UserMarker},
 };
-use reqwest::header::HeaderValue;
 use tokio::{
     sync::{Mutex as AsyncMutex, Notify, mpsc, watch},
     task::JoinHandle,
     time::{Duration, timeout},
 };
+use wreq::header::HeaderValue;
 
 use crate::{AppError, Result};
 
@@ -123,7 +123,7 @@ impl DiscordClient {
         token: String,
         fingerprint: Arc<ClientFingerprint>,
     ) -> Result<Self> {
-        let http = discord_http_client(&fingerprint);
+        let http = discord_http_client(&fingerprint)?;
         Self::new_with_fingerprint_and_http(token, fingerprint, http)
     }
 
@@ -141,7 +141,7 @@ impl DiscordClient {
     fn new_with_fingerprint_and_http(
         token: String,
         fingerprint: Arc<ClientFingerprint>,
-        http: reqwest::Client,
+        http: wreq::Client,
     ) -> Result<Self> {
         validate_token_header(&token)?;
         let rest = DiscordRest::new(token.clone(), http, Arc::clone(&fingerprint));

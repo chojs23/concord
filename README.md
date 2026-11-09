@@ -128,26 +128,33 @@ VideoToolbox on macOS, and Media Foundation on Windows. If hardware encoding is 
 <details>
 <summary>Build dependencies and commands</summary>
 
-Install the Rust stable toolchain and the native dependencies for your platform:
+Requirements: Rust 1.99+, CMake 3.22+, a C11/C++17 compiler, and libclang.
 
 ```sh
 # macOS
 xcode-select --install
-brew install cmake pkg-config
+brew install cmake llvm pkg-config
 brew install nasm # Intel only
+export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
 
 # Fedora
-sudo dnf install alsa-lib-devel clang-devel cmake gcc gcc-c++ libva-devel nasm pipewire-devel pkgconf-pkg-config
+sudo dnf install alsa-lib-devel ca-certificates clang-devel cmake gcc gcc-c++ libva-devel nasm pipewire-devel pkgconf-pkg-config
 
 # Debian or Ubuntu
-sudo apt install build-essential cmake libasound2-dev libclang-dev libpipewire-0.3-dev libva-dev nasm pkg-config
+sudo apt install build-essential ca-certificates cmake libasound2-dev libclang-dev libpipewire-0.3-dev libva-dev nasm pkg-config
 
 # Arch Linux
-sudo pacman -S alsa-lib base-devel clang cmake libva mesa nasm pipewire pkgconf
+sudo pacman -S alsa-lib base-devel ca-certificates clang cmake libva mesa nasm pipewire pkgconf
 ```
 
-Windows source builds require the MSVC Rust toolchain, Visual Studio 2022 Build
-Tools with Desktop development with C++, CMake, and NASM.
+Windows also requires the MSVC Rust toolchain and Visual Studio 2022 Build Tools
+with the C++ desktop workload and Windows SDK.
+
+```powershell
+# Administrator PowerShell
+choco install cmake llvm nasm --no-progress -y
+$env:LIBCLANG_PATH = Join-Path $env:ProgramFiles 'LLVM\bin'
+```
 
 ```sh
 git clone https://github.com/chojs23/concord.git

@@ -4,6 +4,7 @@ use std::{
     process::{Command, Stdio},
 };
 
+use futures::StreamExt;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::time::{Duration, Instant as TokioInstant, sleep, timeout};
@@ -25,31 +26,27 @@ const MEDIA_PLAYER_READY_TIMEOUT: Duration = Duration::from_secs(300);
 const MEDIA_PLAYER_IPC_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MEDIA_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// One pooled client for every media fetch.
-///
-/// `reqwest::get` builds a whole client per call, so a screen of attachments,
-/// avatars, and emoji opened as many TCP connections and TLS handshakes as it
-/// had images. Discord's CDN starts refusing those, which surfaced as
-/// "error sending request" and preview timeouts. Reusing one client keeps the
-/// connection pool alive across requests. Deliberately unauthenticated: these
-/// URLs include proxies for third-party content, which must never see the
-/// session cookies the Discord API client carries.
-fn media_client() -> &'static reqwest::Client {
-    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .connect_timeout(MEDIA_CONNECT_TIMEOUT)
-            // Pooling is the point, but the default keeps unlimited idle
-            // connections per host and each one holds TLS buffers.
-            .pool_max_idle_per_host(6)
-            .build()
-            .unwrap_or_default()
-    })
+/// Pools unauthenticated media requests to avoid a TLS handshake for every image.
+/// These URLs can proxy third-party content and must never receive Discord cookies.
+fn media_client() -> Result<&'static wreq::Client, String> {
+    static CLIENT: std::sync::OnceLock<Result<wreq::Client, String>> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            crate::support::tls::http_client_builder()?
+                .connect_timeout(MEDIA_CONNECT_TIMEOUT)
+                .pool_max_idle_per_host(6)
+                .build()
+                .map_err(|error| format!("build media HTTP client: {error}"))
+        })
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
 pub(super) async fn fetch_attachment_preview(url: &str) -> std::result::Result<Vec<u8>, String> {
-    let response = media_client()
-        .get(url)
+    let url =
+        url::Url::parse(url).map_err(|error| format!("invalid image preview URL: {error}"))?;
+    let response = media_client()?
+        .get(url.as_str())
         .send()
         .await
         .map_err(|error| format!("download image preview failed: {error}"))?
@@ -64,11 +61,12 @@ pub(super) async fn fetch_attachment_preview(url: &str) -> std::result::Result<V
         ));
     }
 
-    let mut response = response;
+    let mut stream = response.bytes_stream();
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
+    while let Some(chunk) = stream
+        .next()
         .await
+        .transpose()
         .map_err(|error| format!("read image preview failed: {error}"))?
     {
         if bytes.len().saturating_add(chunk.len()) > MAX_ATTACHMENT_PREVIEW_BYTES {
@@ -90,9 +88,10 @@ pub(super) async fn download_attachment(
     filename: &str,
     source: DownloadAttachmentSource,
 ) -> std::result::Result<PathBuf, String> {
-    let mut response = timeout(
+    let url = url::Url::parse(url).map_err(|error| format!("invalid attachment URL: {error}"))?;
+    let response = timeout(
         ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT,
-        media_client().get(url).send(),
+        media_client()?.get(url.as_str()).send(),
     )
     .await
     .map_err(|_| "download attachment timed out".to_owned())?
@@ -118,9 +117,11 @@ pub(super) async fn download_attachment(
     let mut downloaded_bytes = 0u64;
     let mut last_reported_bytes = 0u64;
     let mut next_progress_at = TokioInstant::now() + ATTACHMENT_DOWNLOAD_PROGRESS_INTERVAL;
-    while let Some(chunk) = timeout(ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT, response.chunk())
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = timeout(ATTACHMENT_DOWNLOAD_IDLE_TIMEOUT, stream.next())
         .await
         .map_err(|_| "read attachment timed out".to_owned())?
+        .transpose()
         .map_err(|error| format!("read attachment failed: {error}"))?
     {
         file.write_all(&chunk)
@@ -509,12 +510,59 @@ mod tests {
     use std::{fs, io::Write};
 
     use super::{
-        media_player_command_spec_for_url, media_player_spawn_error,
-        mpv_video_output_response_readiness, open_url, persist_unique_download_file,
-        sanitize_filename, wait_for_mpv_video_output_ready, windows_open_url_command_spec,
+        Duration, fetch_attachment_preview, media_player_command_spec_for_url,
+        media_player_spawn_error, mpv_video_output_response_readiness, open_url,
+        persist_unique_download_file, sanitize_filename, wait_for_mpv_video_output_ready,
+        windows_open_url_command_spec,
     };
     use serde_json::{Value, json};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[tokio::test]
+    async fn attachment_preview_streams_without_discord_session_headers() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local listener binds");
+        let address = listener.local_addr().expect("listener has an address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("preview client connects");
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(
+                    socket
+                        .read_u8()
+                        .await
+                        .expect("request headers are readable"),
+                );
+            }
+            let request = String::from_utf8(request).expect("request headers are text");
+            let names = request
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .map(|(name, _)| name.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            for name in ["authorization", "cookie", "x-super-properties", "sec-ch-ua"] {
+                assert!(
+                    !names.iter().any(|actual| actual == name),
+                    "media request must not carry {name}"
+                );
+            }
+            socket.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n")
+                .await.expect("chunked preview response sends");
+        });
+        let bytes = tokio::time::timeout(
+            Duration::from_secs(5),
+            fetch_attachment_preview(&format!("http://{address}/한글 preview")),
+        )
+        .await
+        .expect("local preview finishes")
+        .expect("preview downloads");
+        assert_eq!(bytes, b"abcdef");
+        server.await.expect("preview server finishes");
+    }
 
     #[test]
     fn persist_unique_download_file_uses_next_available_name() {

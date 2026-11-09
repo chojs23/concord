@@ -1,6 +1,6 @@
 [package]
 name = "concord"
-version = "2.6.4"
+version = "2.7.0"
 edition = "2024"
 rust-version = "1.99"
 description = "A terminal user interface client for Discord"
@@ -42,20 +42,6 @@ ratatui-image = { version = "11.0.8", default-features = false, features = [
   "crossterm",
   "image-defaults",
 ] }
-reqwest = { version = "0.13.5", default-features = false, features = [
-  "rustls-no-provider",
-  "json",
-  "query",
-  "charset",
-  "http2",
-  "cookies",
-  "gzip",
-  "deflate",
-  "brotli",
-  "zstd",
-  "multipart",
-] }
-reqwest_cookie_store = "0.10.0"
 rsa = "0.9"
 rustls = { version = "0.23.39", default-features = false, features = [
   "ring",
@@ -76,6 +62,7 @@ tokio = { version = "1.52.1", features = [
   "net",
   "sync",
   "time",
+  "io-util",
 ] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = [
   "connect",
@@ -104,6 +91,25 @@ thorvg = { version = "0.5.1", default-features = false, features = [
   "vendored",
   "lottie",
 ] }
+wreq = { version = "=0.16.3", default-features = false, features = [
+  "tokio-rt",
+  "cookies",
+  "json",
+  "query",
+  "charset",
+  "gzip",
+  "deflate",
+  "brotli",
+  "zstd",
+  "ws",
+  "system-proxy",
+  "stream",
+] }
+wreq-util = { version = "=0.2.0", default-features = false, features = [
+  "emulation",
+] }
+rustls-native-certs = "0.8.5"
+url = "2.5.8"
 
 [features]
 default = ["voice-playback", "stream-broadcast"]
@@ -277,3 +283,6 @@ inherits = "release"
 lto = true
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+http-body-util = "0.1.5"
