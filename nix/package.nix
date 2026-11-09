@@ -2,6 +2,7 @@
 , stdenv
 , craneLib
 , cmake
+, git
 , rustPlatform
 , pkg-config
 , makeWrapper
@@ -27,8 +28,11 @@ let
     # BoringSSL and PipeWire generate bindings at build time. The bindgen hook
     # supplies libclang and its search path without hard-coding a Nix store location.
     # OpenH264 uses NASM on x86_64, while AArch64 builds its NEON sources with cc.
+    # btls-sys's build script runs `git init` in its BoringSSL output directory,
+    # so git must be on PATH inside the sandbox.
     nativeBuildInputs = [
       cmake
+      git
       pkg-config
       rustPlatform.bindgenHook
     ] ++ lib.optionals stdenv.isLinux [
