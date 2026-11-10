@@ -9,6 +9,7 @@ use super::emoji::custom_emoji_image_url;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum PresenceStatus {
     Online,
+    OnlineMobile,
     Idle,
     DoNotDisturb,
     Offline,
@@ -19,6 +20,7 @@ impl PresenceStatus {
     pub fn label(self) -> &'static str {
         match self {
             Self::Online => "Online",
+            Self::OnlineMobile => "Online (Mobile)",
             Self::Idle => "Idle",
             Self::DoNotDisturb => "Do Not Disturb",
             Self::Offline => "Offline",
@@ -28,7 +30,7 @@ impl PresenceStatus {
 
     pub(crate) fn gateway_status(self) -> &'static str {
         match self {
-            Self::Online => "online",
+            Self::Online | Self::OnlineMobile => "online",
             Self::Idle => "idle",
             Self::DoNotDisturb => "dnd",
             Self::Offline => "invisible",

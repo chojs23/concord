@@ -425,10 +425,7 @@ fn parse_current_user_session_presence(
 ) -> Option<(PresenceStatus, Vec<crate::discord::ActivityInfo>)> {
     let sessions = data.get("sessions").and_then(Value::as_array)?;
     let parse = |session: &Value| {
-        let status = session
-            .get("status")
-            .and_then(Value::as_str)
-            .map(parse_status)?;
+        let status = parse_status(session)?;
         Some((status, parse_activities(session)))
     };
 
