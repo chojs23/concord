@@ -2,12 +2,12 @@ use std::fmt;
 
 use super::ids::{
     Id,
-    marker::{GuildMarker, UserMarker},
+    marker::{ChannelMarker, GuildMarker, UserMarker},
 };
 use super::{
     ChannelState, DiscordPermission, DiscordState, GuildParticipationDataGap,
     GuildParticipationDecision, GuildParticipationRestriction, PermissionDataGap,
-    PermissionDecision,
+    PermissionDecision, VoiceScope,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -315,6 +315,35 @@ impl DiscordState {
         permission: DiscordPermission,
     ) -> Option<ActionBlockReason> {
         permission_decision_block_reason(self.channel_permission_decision(channel, permission))
+    }
+
+    pub(crate) fn voice_capture_decision(
+        &self,
+        scope: VoiceScope,
+        channel_id: Id<ChannelMarker>,
+        push_to_talk: bool,
+    ) -> ActionDecision {
+        let Some(guild_id) = scope.guild_id() else {
+            return ActionDecision::Allowed;
+        };
+        let Some(channel) = self
+            .channel(channel_id)
+            .filter(|channel| channel.guild_id == Some(guild_id))
+        else {
+            return ActionDecision::Blocked(ActionBlockReason::ChannelDataUnavailable);
+        };
+        let decision = self.channel_action_decision(channel, DiscordAction::TransmitMicrophone);
+        if decision != ActionDecision::Allowed {
+            return decision;
+        }
+        [
+            Some(DiscordPermission::Speak),
+            (!push_to_talk).then_some(DiscordPermission::UseVoiceActivity),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|permission| self.permission_block_reason(channel, permission))
+        .map_or(ActionDecision::Allowed, ActionDecision::Blocked)
     }
 
     pub(crate) fn member_moderation_decision(

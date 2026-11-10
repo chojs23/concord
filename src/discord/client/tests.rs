@@ -1046,6 +1046,18 @@ async fn microphone_transmit_requires_speak_and_voice_activity_permissions() {
                 .expect("voice request")
                 .allow_microphone_transmit
         );
+        let mut voice_events = client
+            .voice_events_rx
+            .lock()
+            .expect("voice event receiver mutex is not poisoned")
+            .take()
+            .expect("voice event receiver exists");
+        let last_event = std::iter::from_fn(|| voice_events.try_recv().ok()).last();
+        assert!(matches!(
+            last_event,
+            Some(VoiceRuntimeEvent::AudioSettingsChanged(settings))
+                if settings.allow_microphone_transmit
+        ));
     }
 }
 

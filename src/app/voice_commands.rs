@@ -52,14 +52,6 @@ pub(super) async fn join_channel(client: DiscordClient, request: JoinRequest) {
     if let Err(message) = client.update_voice_capture_permission(scope, channel_id, audio_settings)
     {
         logging::error("app", &message);
-        let _ = client.update_voice_capture_permission(
-            scope,
-            channel_id,
-            VoiceAudioSettings {
-                allow_microphone_transmit: false,
-                ..audio_settings
-            },
-        );
         client
             .publish_event(AppEvent::GatewayError {
                 message: format!("Joined voice listen-only: {message}"),

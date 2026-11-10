@@ -10,6 +10,8 @@ use super::*;
 #[cfg(feature = "voice-playback")]
 use crate::support::audio_output::{f32_sample_to_i16, f32_sample_to_u8, f32_sample_to_u16};
 
+mod requests;
+
 fn requested_voice() -> CurrentVoiceConnectionState {
     CurrentVoiceConnectionState {
         self_mute: true,

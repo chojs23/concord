@@ -4,6 +4,7 @@ use super::broadcast::{
 };
 use super::stream::{StreamGatewaySession, StreamRuntimeState, run_stream_gateway_session};
 use super::*;
+use crate::discord::{ActionDecision, DiscordState};
 use std::future::Future;
 use std::sync::RwLock;
 use tokio::sync::oneshot;
@@ -521,6 +522,7 @@ pub(super) struct VoiceRuntimeState {
     reconnect_attempts: u8,
     push_to_talk: bool,
     push_to_talk_pressed: bool,
+    requested_audio_settings: Option<VoiceAudioSettings>,
     audio_sources: VoiceAudioSources,
     audio_sources_generation: u64,
     participant_playback_settings: HashMap<Id<UserMarker>, VoiceParticipantPlaybackSettings>,
@@ -540,6 +542,62 @@ impl VoiceRuntimeState {
         self.apply_with_changes(event).action
     }
 
+    #[cfg(test)]
+    pub(super) fn apply_shared(
+        &mut self,
+        event: VoiceRuntimeEvent,
+        requested_voice: &RwLock<Option<CurrentVoiceConnectionState>>,
+        discord_state: &RwLock<DiscordState>,
+    ) -> Option<VoiceRuntimeAction> {
+        self.apply_with_context(event, requested_voice, discord_state)
+            .action
+    }
+
+    fn apply_with_context(
+        &mut self,
+        event: VoiceRuntimeEvent,
+        requested_voice: &RwLock<Option<CurrentVoiceConnectionState>>,
+        discord_state: &RwLock<DiscordState>,
+    ) -> VoiceRuntimeApplyResult {
+        let requested_before = self.requested;
+        let result = self.apply_with_changes(event);
+        if let Some(mut voice) = self.requested {
+            let settings = self
+                .requested_audio_settings
+                .unwrap_or_else(|| voice.audio_settings());
+            voice.set_audio_settings(settings);
+            if settings.allow_microphone_transmit {
+                voice.allow_microphone_transmit = discord_state
+                    .read()
+                    .expect("Discord state lock is not poisoned")
+                    .voice_capture_decision(voice.scope, voice.channel_id, self.push_to_talk)
+                    == ActionDecision::Allowed;
+            }
+            self.requested = Some(voice);
+        }
+        if self.requested != requested_before {
+            let mut shared = requested_voice
+                .write()
+                .expect("requested voice lock is not poisoned");
+            // Audio edits may already be queued. They must not prevent a move
+            // or disconnect from being mirrored, but a pending join must win.
+            let gateway_state = |voice: Option<CurrentVoiceConnectionState>| {
+                voice.map(|voice| {
+                    (
+                        voice.scope,
+                        voice.channel_id,
+                        voice.self_mute,
+                        voice.self_deaf,
+                    )
+                })
+            };
+            if gateway_state(*shared) == gateway_state(requested_before) {
+                *shared = self.requested;
+            }
+        }
+        result
+    }
+
     fn apply_with_changes(&mut self, event: VoiceRuntimeEvent) -> VoiceRuntimeApplyResult {
         let mut participant_playback_changed = false;
         match event {
@@ -553,6 +611,8 @@ impl VoiceRuntimeState {
                 };
                 if target_changed {
                     self.push_to_talk_pressed = false;
+                    self.requested_audio_settings =
+                        requested.map(CurrentVoiceConnectionState::audio_settings);
                 }
                 if requested.is_none() || self.current_voice.is_none() {
                     self.blocked = None;
@@ -581,11 +641,18 @@ impl VoiceRuntimeState {
                 if target_changed {
                     self.server = None;
                     self.push_to_talk_pressed = false;
+                    self.requested_audio_settings = Some(requested.audio_settings());
                 }
                 self.requested = Some(requested);
                 self.blocked = None;
                 self.reconnect_target = None;
                 self.reconnect_attempts = 0;
+            }
+            VoiceRuntimeEvent::AudioSettingsChanged(settings) => {
+                self.requested_audio_settings = Some(settings);
+                if let Some(voice) = &mut self.requested {
+                    voice.set_audio_settings(settings);
+                }
             }
             VoiceRuntimeEvent::AudioSourcesChanged(sources) => {
                 if self.audio_sources == sources {
@@ -924,6 +991,7 @@ pub(crate) async fn run_voice_runtime(
     status_publisher: VoiceStatusPublisher,
     stream_preview_uploader: StreamPreviewUploader,
     requested_voice: Arc<RwLock<Option<CurrentVoiceConnectionState>>>,
+    discord_state: Arc<RwLock<DiscordState>>,
 ) {
     let mut state = VoiceRuntimeState::default();
     let mut stream_state = StreamRuntimeState::default();
@@ -1005,19 +1073,10 @@ pub(crate) async fn run_voice_runtime(
         let broadcast_started = broadcast_controller.connection_started(&event);
         let stream_update = stream_state.apply(&event);
         let broadcast_update = broadcast_state.apply(&event);
-        let requested_before = state.requested;
         let VoiceRuntimeApplyResult {
             action,
             participant_playback_changed,
-        } = state.apply_with_changes(event);
-        if state.requested != requested_before {
-            let mut shared = requested_voice
-                .write()
-                .expect("requested voice lock is not poisoned");
-            if *shared == requested_before {
-                *shared = state.requested;
-            }
-        }
+        } = state.apply_with_context(event, &requested_voice, &discord_state);
         if let Some((requested_sources, active_sources, message)) = audio_sources_apply_failure {
             status_publisher
                 .publish_audio_sources_apply_failed(requested_sources, active_sources, message)
