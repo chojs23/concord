@@ -1001,3 +1001,63 @@ fn moving_down_scrolls_only_when_the_next_message_is_not_already_visible() {
         );
     }
 }
+
+#[test]
+fn clicking_message_toggles_text_spoiler_reveal() {
+    let mut state = state_with_single_message_content("psst ||secret|| ok");
+    state.focus_pane(FocusPane::Messages);
+    let message_id = state
+        .selected_message_state()
+        .expect("single message is selected")
+        .id;
+
+    assert!(!state.message_spoilers_revealed(message_id));
+
+    assert!(state.toggle_selected_message_spoilers());
+    assert!(state.message_spoilers_revealed(message_id));
+
+    assert!(state.toggle_selected_message_spoilers());
+    assert!(!state.message_spoilers_revealed(message_id));
+}
+
+#[test]
+fn toggling_message_without_spoiler_is_a_noop() {
+    let mut state = state_with_single_message_content("just plain text");
+    state.focus_pane(FocusPane::Messages);
+    let message_id = state
+        .selected_message_state()
+        .expect("single message is selected")
+        .id;
+
+    assert!(!state.toggle_selected_message_spoilers());
+    assert!(!state.message_spoilers_revealed(message_id));
+}
+
+#[test]
+fn message_with_only_a_spoiler_image_still_toggles_reveal() {
+    let mut attachment = image_attachment(1);
+    attachment.filename = "SPOILER_image-1.png".to_owned();
+    let mut state = DashboardState::new();
+    let guild_id: Id<GuildMarker> = Id::new(1);
+    let channel_id: Id<ChannelMarker> = Id::new(2);
+    state.push_event(guild_create_event(
+        guild_id,
+        "guild",
+        vec![text_channel_info(guild_id, channel_id, "general")],
+    ));
+    state.activate_guild(ActiveGuildScope::Guild(guild_id));
+    state.activate_channel(channel_id);
+    state.push_event(message_create_event(
+        MessageCreateFixture::guild_message(guild_id, channel_id, Id::new(1))
+            .with_attachments(vec![attachment]),
+    ));
+    state.focus_pane(FocusPane::Messages);
+    let message_id = state
+        .selected_message_state()
+        .expect("single message is selected")
+        .id;
+
+    assert!(!state.message_spoilers_revealed(message_id));
+    assert!(state.toggle_selected_message_spoilers());
+    assert!(state.message_spoilers_revealed(message_id));
+}

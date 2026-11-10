@@ -138,6 +138,7 @@ mod tests {
             top_clip_rows: 0,
             accent_color: None,
             show_play_marker: false,
+            spoiler: false,
             message_id: Id::<MessageMarker>::new(message_id),
             url: "https://cdn.discordapp.com/image.png".to_owned(),
             filename: "image.png".to_owned(),

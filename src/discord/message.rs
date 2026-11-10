@@ -21,6 +21,7 @@ pub const MESSAGE_FLAG_SUPPRESS_EMBEDS: u64 = 1 << 2;
 pub const MESSAGE_FLAG_IS_COMPONENTS_V2: u64 = 1 << 15;
 const MEDIA_FLAG_IS_ANIMATED: u64 = 1 << 5;
 const UNFURLED_MEDIA_FLAG_IS_ANIMATED: u64 = 1 << 0;
+const ATTACHMENT_FLAG_IS_SPOILER: u64 = 1 << 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MentionInfo {
@@ -228,6 +229,7 @@ impl StickerInfo {
             animated: self.format.is_animated(),
             proxy_preview_only: false,
             show_play_marker: false,
+            spoiler: false,
         })
     }
 }
@@ -376,6 +378,8 @@ pub struct InlinePreviewInfo<'a> {
     pub animated: bool,
     pub proxy_preview_only: bool,
     pub show_play_marker: bool,
+    /// Masked until the reader reveals the message it belongs to.
+    pub spoiler: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -770,6 +774,13 @@ impl AttachmentInfo {
             .and_then(|_| self.preferred_url())
     }
 
+    /// Discord marks an attachment as a spoiler either with the dedicated
+    /// attachment flag or, historically (and in every client-rendered
+    /// payload), by prefixing the filename with `SPOILER_`. Accept both.
+    pub fn is_spoiler(&self) -> bool {
+        self.flags & ATTACHMENT_FLAG_IS_SPOILER != 0 || self.filename.starts_with("SPOILER_")
+    }
+
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
         if self.media_type() == Some(AttachmentMediaType::Video) && !self.proxy_url.is_empty() {
             return Some(InlinePreviewInfo {
@@ -782,6 +793,7 @@ impl AttachmentInfo {
                 animated: false,
                 proxy_preview_only: true,
                 show_play_marker: true,
+                spoiler: self.is_spoiler(),
             });
         }
 
@@ -795,6 +807,7 @@ impl AttachmentInfo {
             animated: media_is_animated(self.flags, &self.filename, self.url.as_str()),
             proxy_preview_only: false,
             show_play_marker: false,
+            spoiler: self.is_spoiler(),
         })
     }
 }
@@ -816,6 +829,7 @@ impl EmbedInfo {
                 animated: true,
                 proxy_preview_only: false,
                 show_play_marker: false,
+                spoiler: false,
             }];
         }
 
@@ -834,6 +848,7 @@ impl EmbedInfo {
                     animated: media_is_animated(self.thumbnail_flags, "", url),
                     proxy_preview_only: false,
                     show_play_marker: true,
+                    spoiler: false,
                 }];
             }
             if let Some(url) = self.image_url.as_deref() {
@@ -847,6 +862,7 @@ impl EmbedInfo {
                     animated: media_is_animated(self.image_flags, "", url),
                     proxy_preview_only: false,
                     show_play_marker: true,
+                    spoiler: false,
                 }];
             }
             if let Some(url) = self.video_proxy_url.as_deref() {
@@ -860,6 +876,7 @@ impl EmbedInfo {
                     animated: false,
                     proxy_preview_only: true,
                     show_play_marker: true,
+                    spoiler: false,
                 }];
             }
         }
@@ -876,6 +893,7 @@ impl EmbedInfo {
                 animated: media_is_animated(self.image_flags, "", url),
                 proxy_preview_only: false,
                 show_play_marker: false,
+                spoiler: false,
             });
         }
         if let Some(url) = self.thumbnail_url.as_deref()
@@ -891,6 +909,7 @@ impl EmbedInfo {
                 animated: media_is_animated(self.thumbnail_flags, "", url),
                 proxy_preview_only: false,
                 show_play_marker: false,
+                spoiler: false,
             });
         }
         previews
@@ -918,10 +937,15 @@ impl ComponentMediaInfo {
         media_type_from(self.content_type.as_deref(), self.display_filename())
     }
 
+    /// `spoiler` is the caller's already-resolved spoiler state (the
+    /// component's own spoiler flag OR'd with any ancestor `Container`'s);
+    /// it's OR'd with the matched attachment's own spoiler signal when one
+    /// is found via `attachment://` lookup.
     fn inline_preview_info<'a>(
         &'a self,
         attachments: &'a [AttachmentInfo],
         accent_color: Option<u32>,
+        spoiler: bool,
     ) -> Option<InlinePreviewInfo<'a>> {
         if let Some(filename) = self.attachment_filename()
             && let Some(attachment) = attachments
@@ -930,6 +954,7 @@ impl ComponentMediaInfo {
         {
             let mut preview = attachment.inline_preview_info()?;
             preview.accent_color = accent_color;
+            preview.spoiler |= spoiler;
             return Some(preview);
         }
 
@@ -948,6 +973,7 @@ impl ComponentMediaInfo {
                 animated: false,
                 proxy_preview_only: proxy_url.is_some(),
                 show_play_marker: true,
+                spoiler,
             });
         }
         (media_type == AttachmentMediaType::Image).then(|| InlinePreviewInfo {
@@ -960,6 +986,7 @@ impl ComponentMediaInfo {
             animated: component_media_is_animated(self.flags, filename, url),
             proxy_preview_only: false,
             show_play_marker: false,
+            spoiler,
         })
     }
 }
@@ -1087,7 +1114,7 @@ impl MessageComponentInfo {
         attachments: &'a [AttachmentInfo],
     ) -> Vec<InlinePreviewInfo<'a>> {
         let mut previews = Vec::new();
-        Self::collect_inline_previews(components, attachments, None, true, &mut previews);
+        Self::collect_inline_previews(components, attachments, None, false, true, &mut previews);
         previews
     }
 
@@ -1096,7 +1123,7 @@ impl MessageComponentInfo {
         attachments: &'a [AttachmentInfo],
     ) -> Vec<InlinePreviewInfo<'a>> {
         let mut previews = Vec::new();
-        Self::collect_inline_previews(components, attachments, None, false, &mut previews);
+        Self::collect_inline_previews(components, attachments, None, false, false, &mut previews);
         previews
     }
 
@@ -1110,6 +1137,7 @@ impl MessageComponentInfo {
             components,
             attachments,
             None,
+            false,
             next_index,
             previews,
         );
@@ -1119,6 +1147,7 @@ impl MessageComponentInfo {
         components: &'a [Self],
         attachments: &'a [AttachmentInfo],
         accent_color: Option<u32>,
+        spoiler_ancestor: bool,
         next_index: &mut usize,
         previews: &mut Vec<(usize, InlinePreviewInfo<'a>)>,
     ) {
@@ -1129,6 +1158,7 @@ impl MessageComponentInfo {
                         components,
                         attachments,
                         accent_color,
+                        spoiler_ancestor,
                         next_index,
                         previews,
                     )
@@ -1137,11 +1167,14 @@ impl MessageComponentInfo {
                     components,
                     accessory,
                 } => {
-                    if let Some(Self::Thumbnail { media, .. }) = accessory.as_deref() {
+                    if let Some(Self::Thumbnail { media, spoiler, .. }) = accessory.as_deref() {
                         let index = *next_index;
                         *next_index = (*next_index).saturating_add(1);
-                        if let Some(preview) = media.inline_preview_info(attachments, accent_color)
-                        {
+                        if let Some(preview) = media.inline_preview_info(
+                            attachments,
+                            accent_color,
+                            *spoiler || spoiler_ancestor,
+                        ) {
                             previews.push((index, preview));
                         }
                     }
@@ -1149,6 +1182,7 @@ impl MessageComponentInfo {
                         components,
                         attachments,
                         accent_color,
+                        spoiler_ancestor,
                         next_index,
                         previews,
                     );
@@ -1156,11 +1190,13 @@ impl MessageComponentInfo {
                 Self::Container {
                     components,
                     accent_color: container_accent,
+                    spoiler: container_spoiler,
                     ..
                 } => Self::collect_section_thumbnail_previews_with_accent(
                     components,
                     attachments,
                     container_accent.or(accent_color),
+                    *container_spoiler || spoiler_ancestor,
                     next_index,
                     previews,
                 ),
@@ -1180,6 +1216,7 @@ impl MessageComponentInfo {
         components: &'a [Self],
         attachments: &'a [AttachmentInfo],
         accent_color: Option<u32>,
+        spoiler_ancestor: bool,
         include_section_thumbnails: bool,
         previews: &mut Vec<InlinePreviewInfo<'a>>,
     ) {
@@ -1189,6 +1226,7 @@ impl MessageComponentInfo {
                     components,
                     attachments,
                     accent_color,
+                    spoiler_ancestor,
                     include_section_thumbnails,
                     previews,
                 ),
@@ -1200,6 +1238,7 @@ impl MessageComponentInfo {
                         components,
                         attachments,
                         accent_color,
+                        spoiler_ancestor,
                         include_section_thumbnails,
                         previews,
                     );
@@ -1211,21 +1250,28 @@ impl MessageComponentInfo {
                             std::slice::from_ref(accessory.as_ref()),
                             attachments,
                             accent_color,
+                            spoiler_ancestor,
                             include_section_thumbnails,
                             previews,
                         );
                     }
                 }
-                Self::Thumbnail { media, .. } => {
-                    if let Some(preview) = media.inline_preview_info(attachments, accent_color) {
+                Self::Thumbnail { media, spoiler, .. } => {
+                    if let Some(preview) = media.inline_preview_info(
+                        attachments,
+                        accent_color,
+                        *spoiler || spoiler_ancestor,
+                    ) {
                         previews.push(preview);
                     }
                 }
                 Self::MediaGallery { items } => {
                     for item in items {
-                        if let Some(preview) =
-                            item.media.inline_preview_info(attachments, accent_color)
-                        {
+                        if let Some(preview) = item.media.inline_preview_info(
+                            attachments,
+                            accent_color,
+                            item.spoiler || spoiler_ancestor,
+                        ) {
                             previews.push(preview);
                         }
                     }
@@ -1233,11 +1279,13 @@ impl MessageComponentInfo {
                 Self::Container {
                     components,
                     accent_color: container_accent,
+                    spoiler: container_spoiler,
                     ..
                 } => Self::collect_inline_previews(
                     components,
                     attachments,
                     container_accent.or(accent_color),
+                    *container_spoiler || spoiler_ancestor,
                     include_section_thumbnails,
                     previews,
                 ),
@@ -1313,7 +1361,7 @@ fn filename_has_extension(filename: &str, extensions: &[&str]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{StickerFormat, StickerInfo};
+    use super::{AttachmentInfo, StickerFormat, StickerInfo};
     use crate::discord::ids::Id;
 
     #[test]
@@ -1356,5 +1404,26 @@ mod tests {
             assert_eq!(preview.animated, expected_animated, "format={format:?}");
             assert_eq!(preview.filename, name, "format={format:?}");
         }
+    }
+
+    #[test]
+    fn attachment_is_spoiler_detects_flag_filename_prefix_or_both() {
+        let plain = AttachmentInfo::test(Id::new(1), "image.png");
+        assert!(!plain.is_spoiler());
+
+        let flagged = AttachmentInfo {
+            flags: 1 << 3,
+            ..AttachmentInfo::test(Id::new(2), "image.png")
+        };
+        assert!(flagged.is_spoiler());
+
+        let prefixed = AttachmentInfo::test(Id::new(3), "SPOILER_image.png");
+        assert!(prefixed.is_spoiler());
+
+        let both = AttachmentInfo {
+            flags: 1 << 3,
+            ..AttachmentInfo::test(Id::new(4), "SPOILER_image.png")
+        };
+        assert!(both.is_spoiler());
     }
 }

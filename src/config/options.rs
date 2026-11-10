@@ -546,6 +546,7 @@ define_highlight_groups! {
     SearchContext => "SearchContext",
     Timestamp => "Timestamp",
     Placeholder => "Placeholder",
+    Spoiler => "Spoiler",
     Disabled => "Disabled",
     Loading => "Loading",
     Edited => "Edited",

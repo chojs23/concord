@@ -21,13 +21,17 @@ impl DashboardState {
         let Some(message) = self.selected_message_state() else {
             return false;
         };
-        if message.attachments_in_display_order().next().is_none() {
+        let message_id = message.id;
+        if self
+            .attachment_viewer_attachments(message_id)
+            .is_none_or(|attachments| attachments.is_empty())
+        {
             return false;
         }
 
         self.popups
             .set_modal(ModalPopup::AttachmentViewer(AttachmentViewerState {
-                message_id: message.id,
+                message_id,
                 selection: Default::default(),
                 zoom: AttachmentViewerZoom::default(),
             }));
@@ -162,14 +166,23 @@ impl DashboardState {
         })
     }
 
+    /// Excludes spoiler-flagged attachments until the reader reveals the
+    /// message, so opening the viewer (or stepping through it) never shows
+    /// a hidden spoiler unmasked.
     fn attachment_viewer_attachments(
         &self,
         message_id: Id<MessageMarker>,
     ) -> Option<Vec<&AttachmentInfo>> {
+        let revealed = self.message_spoilers_revealed(message_id);
         self.messages()
             .into_iter()
             .find(|message| message.id == message_id)
-            .map(|message| message.attachments_in_display_order().collect())
+            .map(|message| {
+                message
+                    .attachments_in_display_order()
+                    .filter(|attachment| revealed || !attachment.is_spoiler())
+                    .collect()
+            })
     }
 
     fn selected_attachment_viewer_attachment(
