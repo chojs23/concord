@@ -42,6 +42,10 @@ pub(crate) enum InteractionTarget {
         row: usize,
         col: usize,
     },
+    ImageThumbnail {
+        row: usize,
+        col: usize,
+    },
     Composer,
     PopupItem {
         target: SelectablePopupTarget,
@@ -334,6 +338,15 @@ fn message_target_at(
             .is_some()
         {
             return Some(InteractionTarget::ReactionChip {
+                row: list_row,
+                col: list_col,
+            });
+        }
+        if state
+            .image_preview_at_viewport_position(list_row, list_col, avatar_offset)
+            .is_some()
+        {
+            return Some(InteractionTarget::ImageThumbnail {
                 row: list_row,
                 col: list_col,
             });

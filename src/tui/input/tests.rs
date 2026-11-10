@@ -31,14 +31,14 @@ use crate::{
     },
     discord::{
         ActivityInfo, AppEvent, ApplicationCommandInfo, ApplicationCommandOptionInfo,
-        AttachmentDownloadId, ChannelInfo, ChannelNotificationOverrideInfo, ChannelRecipientInfo,
-        CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildFolder, GuildMemberListItem,
-        GuildMemberListOperation, GuildMemberListUpdateInfo, GuildNotificationSettingsInfo,
-        MemberInfo, MessageInfo, MessageReferenceInfo, MessageSnapshotInfo,
-        MicrophoneSensitivityDb, NotificationLevel, PollAnswerInfo, PollInfo, PresenceEventFields,
-        PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo, ReadStateInfo,
-        RichPresenceSelection, RoleInfo, UserGuildSettingsInfo, UserProfileInfo, UserSettingsInfo,
-        VoiceConnectionStatus, VoiceVolumePercent,
+        AttachmentDownloadId, AttachmentInfo, ChannelInfo, ChannelNotificationOverrideInfo,
+        ChannelRecipientInfo, CustomEmojiInfo, DownloadAttachmentSource, EmbedInfo, GuildFolder,
+        GuildMemberListItem, GuildMemberListOperation, GuildMemberListUpdateInfo,
+        GuildNotificationSettingsInfo, MemberInfo, MessageInfo, MessageReferenceInfo,
+        MessageSnapshotInfo, MicrophoneSensitivityDb, NotificationLevel, PollAnswerInfo, PollInfo,
+        PresenceEventFields, PresenceStatus, ReactionEmoji, ReactionInfo, ReactionUserInfo,
+        ReadStateInfo, RichPresenceSelection, RoleInfo, UserGuildSettingsInfo, UserProfileInfo,
+        UserSettingsInfo, VoiceConnectionStatus, VoiceVolumePercent,
     },
     tui::state::{
         ChannelPaneEntry, DashboardState, FocusPane, FolderSettingsField, GuildPaneEntry,
@@ -386,6 +386,52 @@ fn state_with_reaction_messages(
                 ..MessageInfo::test(channel_id, Id::new(id))
             })
             .collect(),
+        ..MessageHistoryLoadedFixture::new()
+    }));
+    state
+}
+
+fn image_attachment(id: u64, filename: &str) -> AttachmentInfo {
+    AttachmentInfo {
+        url: format!("https://cdn.discordapp.com/{filename}"),
+        proxy_url: format!("https://media.discordapp.net/{filename}"),
+        content_type: Some("image/png".to_owned()),
+        size: 2048,
+        width: Some(640),
+        height: Some(480),
+        ..AttachmentInfo::test(Id::new(id), filename)
+    }
+}
+
+fn state_with_image_attachment_message(filenames: &[&str]) -> DashboardState {
+    let mut state = DashboardState::new();
+    let guild_id = Id::new(1);
+    let channel_id = Id::new(2);
+    let current_user_id = Id::new(10);
+    push_test_ready(&mut state, current_user_id);
+    state.push_event(guild_create_event(message_test_guild_fixture(
+        guild_id,
+        current_user_id,
+        vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            name: "general".to_owned(),
+            ..ChannelInfo::test(channel_id, "GuildText")
+        }],
+        MESSAGE_TEST_PERMISSIONS,
+    )));
+    select_test_guild(&mut state, guild_id);
+    select_test_channel(&mut state, channel_id);
+    state.push_event(message_history_loaded_event(MessageHistoryLoadedFixture {
+        channel_id,
+        messages: vec![MessageInfo {
+            guild_id: Some(guild_id),
+            attachments: filenames
+                .iter()
+                .enumerate()
+                .map(|(index, filename)| image_attachment(index as u64 + 1, filename))
+                .collect(),
+            ..MessageInfo::test(channel_id, Id::new(1))
+        }],
         ..MessageHistoryLoadedFixture::new()
     }));
     state

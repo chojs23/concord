@@ -591,6 +591,59 @@ fn left_click_on_a_reaction_chip_toggles_the_users_own_reaction() {
 }
 
 #[test]
+fn left_click_on_an_image_thumbnail_opens_the_attachment_viewer_for_that_attachment() {
+    let mut state = state_with_image_attachment_message(&["first.png", "second.png"]);
+    let area = dashboard_area();
+    state.focus_pane(FocusPane::Messages);
+    crate::tui::ui::sync_view_heights(area, &mut state);
+    let layout = crate::tui::ui::image_preview_layout(area, &state);
+    state.clamp_message_viewport_for_image_previews(
+        layout.content_width,
+        layout.preview_width,
+        layout.max_preview_height,
+    );
+
+    let targets: Vec<(u16, u16)> = (0..area.height)
+        .flat_map(|row| (0..area.width).map(move |column| (column, row)))
+        .filter(|&(column, row)| {
+            matches!(
+                crate::tui::ui::InteractionMap::new(area, &state).target_at(column, row),
+                Some(crate::tui::ui::InteractionTarget::ImageThumbnail { .. })
+            )
+        })
+        .collect();
+    assert!(
+        !targets.is_empty(),
+        "at least one image thumbnail should be clickable"
+    );
+
+    // The two attachments lay out side by side; the rightmost clickable
+    // column belongs to the second attachment's cell.
+    let &(column, row) = targets
+        .iter()
+        .max_by_key(|&&(column, _)| column)
+        .expect("targets is non-empty");
+
+    let mut clicks = MouseInputState::default();
+    let outcome = handle_mouse_event(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+        area,
+        &mut clicks,
+    );
+    assert!(outcome.handled);
+    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::AttachmentViewer));
+    assert_eq!(
+        state
+            .selected_attachment_viewer_item()
+            .map(|item| item.filename),
+        Some("second.png".to_owned())
+    );
+    assert_eq!(state.focus(), FocusPane::Messages);
+    assert_eq!(state.selected_message(), 0);
+}
+
+#[test]
 fn right_click_selects_dashboard_item_and_opens_its_action_menu() {
     let mut guild_state = state_with_channel_tree();
     let guild = interaction_point(
