@@ -437,6 +437,9 @@ hour_format_24 = true
 # Send custom emoji your account cannot use directly as image links.
 emojis_as_links = false
 
+# Broadcast your typing status in channels while composing.
+typing_indicator = true
+
 [safety]
 # Enable Concord's extra account-risk safeguards for spam/message-request DMs,
 # new conversations, empty channels, and server screening/onboarding/verification.
