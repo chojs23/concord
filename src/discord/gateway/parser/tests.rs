@@ -1888,6 +1888,47 @@ fn thread_participant_snapshot_parses_profiles_without_implying_current_membersh
 }
 
 #[test]
+fn thread_member_events_preserve_mobile_only_presence() {
+    let member = json!({
+        "user_id": "20",
+        "member": {
+            "user": { "id": "20", "username": "alice" },
+            "roles": []
+        },
+        "presence": {
+            "user": { "id": "20" },
+            "status": "online",
+            "client_status": { "mobile": "online" },
+            "activities": []
+        }
+    });
+    for (event_type, data) in [
+        (
+            "THREAD_MEMBERS_UPDATE",
+            json!({ "guild_id": "1", "id": "10", "added_members": [member] }),
+        ),
+        (
+            "THREAD_MEMBER_LIST_UPDATE",
+            json!({ "guild_id": "1", "thread_id": "10", "members": [member] }),
+        ),
+    ] {
+        let events = parse_user_account_event(&json!({ "t": event_type, "d": data }).to_string());
+        let mut state = DiscordState::default();
+        for event in &events {
+            state.apply_event(event);
+        }
+
+        for guild_id in [None, Some(Id::new(1))] {
+            assert_eq!(
+                state.user_presence_for_guild(guild_id, Id::new(20)),
+                Some(PresenceStatus::OnlineMobile),
+                "{event_type}, guild {guild_id:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn guild_create_marks_every_user_snapshot_thread_as_joined() {
     let mut joined = thread_payload(10, "joined");
     joined["member"] = json!({ "id": "10", "user_id": "99", "flags": 4 });
