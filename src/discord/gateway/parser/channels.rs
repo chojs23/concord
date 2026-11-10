@@ -18,7 +18,7 @@ use super::members::parse_member_info;
 use super::presence::parse_activities;
 use super::shared::{
     display_name_from_parts, display_name_from_parts_or_unknown, extra_fields, parse_id,
-    parse_id_array, parse_mute_config, parse_presence_status, parse_status,
+    parse_id_array, parse_mute_config, parse_status,
 };
 
 pub(crate) fn parse_channel_info(
@@ -241,10 +241,7 @@ pub(super) fn parse_channel_recipient_info(value: &Value) -> Option<ChannelRecip
     let username = value.get("username").and_then(Value::as_str);
     let display_name = display_name_from_parts_or_unknown(None, global_name, username);
     let is_bot = value.get("bot").and_then(Value::as_bool).unwrap_or(false);
-    let status = value
-        .get("status")
-        .and_then(Value::as_str)
-        .map(parse_status);
+    let status = parse_status(value);
 
     Some(ChannelRecipientInfo {
         user_id,
@@ -486,7 +483,7 @@ pub(crate) fn parse_thread_member_info(
     }
     let presence = value.get("presence").and_then(|presence| {
         let user_id = user_id?;
-        let status = parse_presence_status(presence)?;
+        let status = parse_status(presence)?;
         Some(crate::discord::PresenceEventFields {
             user_id,
             status,

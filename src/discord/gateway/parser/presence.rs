@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::{
     members::parse_member_info,
-    shared::{extra_fields, parse_id, parse_presence_status},
+    shared::{extra_fields, parse_id, parse_status},
 };
 use crate::discord::{
     ActivityAssets, ActivityButton, ActivityEmoji, ActivityInfo, ActivityKind, ActivityParty,
@@ -63,7 +63,7 @@ pub(super) fn parse_typing_start(data: &Value) -> Option<AppEvent> {
 
 pub(super) fn parse_presence_entry(value: &Value) -> Option<PresenceEventFields> {
     let user_id = presence_user_id(value)?;
-    let status = parse_presence_status(value)?;
+    let status = parse_status(value)?;
     let activities = parse_activities(value);
     Some(PresenceEventFields {
         user_id,
