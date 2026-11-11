@@ -26,9 +26,9 @@ use wreq::header::HeaderValue;
 use crate::{AppError, Result};
 
 use super::{
-    ActivityInfo, ApplicationCommandAutocompleteInvocation, ApplicationCommandInfo,
-    ApplicationCommandInvocation, DiscordAction, DiscordAuthSession, DiscordPermission,
-    PresenceStatus, RichPresenceSelection,
+    ActionDecision, ActivityInfo, ApplicationCommandAutocompleteInvocation, ApplicationCommandInfo,
+    ApplicationCommandInvocation, DiscordAction, DiscordAuthSession, PresenceStatus,
+    RichPresenceSelection,
     application_commands::{
         application_command_autocomplete_from_invocation,
         application_command_interaction_from_invocation,
@@ -298,6 +298,8 @@ impl DiscordClient {
                 self.gateway_commands_tx.clone(),
                 voice_status_publisher,
                 stream_preview_uploader,
+                Arc::clone(&self.requested_voice),
+                Arc::clone(&self.state),
             ));
             *self
                 .voice_runtime_task
@@ -625,38 +627,16 @@ impl DiscordClient {
         channel_id: Id<ChannelMarker>,
         settings: VoiceAudioSettings,
     ) -> std::result::Result<(), String> {
-        if settings.allow_microphone_transmit && scope.guild_id().is_some() {
-            let state = self.read_state();
-            let Some(channel) = state.channel(channel_id) else {
-                return Err("cannot verify voice channel permissions".to_owned());
-            };
-            rest_actions::ensure_channel_action_policy(
-                &state,
-                channel,
-                DiscordAction::TransmitMicrophone,
-            )
-            .map_err(|error| error.to_string())?;
-            rest_actions::ensure_permission(
-                &state,
-                channel,
-                DiscordAction::TransmitMicrophone,
-                DiscordPermission::Speak,
-            )
-            .map_err(|error| error.to_string())?;
+        let decision = if settings.allow_microphone_transmit {
             let push_to_talk = *self
                 .push_to_talk
                 .read()
                 .expect("push-to-talk lock is not poisoned");
-            if !push_to_talk {
-                rest_actions::ensure_permission(
-                    &state,
-                    channel,
-                    DiscordAction::TransmitMicrophone,
-                    DiscordPermission::UseVoiceActivity,
-                )
-                .map_err(|error| error.to_string())?;
-            }
-        }
+            self.read_state()
+                .voice_capture_decision(scope, channel_id, push_to_talk)
+        } else {
+            ActionDecision::Allowed
+        };
         let mut requested = self
             .requested_voice
             .write()
@@ -667,16 +647,23 @@ impl DiscordClient {
         if voice.scope != scope || voice.channel_id != channel_id {
             return Ok(());
         }
-        if voice.audio_settings() == settings {
-            return Ok(());
-        }
-
-        voice.set_audio_settings(settings);
+        let mut effective_settings = settings;
+        effective_settings.allow_microphone_transmit &= decision == ActionDecision::Allowed;
+        voice.set_audio_settings(effective_settings);
         *requested = Some(voice);
+        // Keep user intent even when this channel only permits listening. A
+        // later server-side move must check the new channel, not reuse this result.
         let _ = self
             .voice_events_tx
-            .send(VoiceRuntimeEvent::Requested(Some(voice)));
-        Ok(())
+            .send(VoiceRuntimeEvent::AudioSettingsChanged(settings));
+        match decision {
+            ActionDecision::Allowed => Ok(()),
+            ActionDecision::Blocked(reason) => Err(AppError::DiscordActionBlocked {
+                action: DiscordAction::TransmitMicrophone,
+                reason,
+            }
+            .to_string()),
+        }
     }
 
     pub(crate) fn update_voice_audio_sources(&self, sources: VoiceAudioSources) {

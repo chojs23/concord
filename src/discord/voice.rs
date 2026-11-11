@@ -329,6 +329,7 @@ type VoiceReader = futures::stream::SplitStream<VoiceGatewayStream>;
 pub(crate) enum VoiceRuntimeEvent {
     Requested(Option<CurrentVoiceConnectionState>),
     ManualRetry(CurrentVoiceConnectionState),
+    AudioSettingsChanged(VoiceAudioSettings),
     AudioSourcesChanged(VoiceAudioSources),
     AudioSourcesApplyFailed {
         connection_id: u64,

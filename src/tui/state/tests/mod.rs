@@ -56,6 +56,7 @@ mod members;
 mod message_actions;
 mod message_layout;
 mod message_viewport;
+mod moderation;
 mod notifications;
 mod options_voice;
 mod panes;
