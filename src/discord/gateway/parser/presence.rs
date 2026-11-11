@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use super::{
+    members::parse_member_info,
+    shared::{extra_fields, parse_id, parse_status},
+};
 use crate::discord::{
     ActivityAssets, ActivityButton, ActivityEmoji, ActivityInfo, ActivityKind, ActivityParty,
     ActivitySecrets, ActivityTimestamps,
@@ -10,11 +14,6 @@ use crate::discord::{
         Id,
         marker::{ChannelMarker, EmojiMarker, GuildMarker, UserMarker},
     },
-};
-
-use super::{
-    members::parse_member_info,
-    shared::{extra_fields, parse_id, parse_status},
 };
 
 pub(super) fn parse_presence_update(data: &Value) -> Vec<AppEvent> {
@@ -64,10 +63,7 @@ pub(super) fn parse_typing_start(data: &Value) -> Option<AppEvent> {
 
 pub(super) fn parse_presence_entry(value: &Value) -> Option<PresenceEventFields> {
     let user_id = presence_user_id(value)?;
-    let status = value
-        .get("status")
-        .and_then(Value::as_str)
-        .map(parse_status)?;
+    let status = parse_status(value)?;
     let activities = parse_activities(value);
     Some(PresenceEventFields {
         user_id,

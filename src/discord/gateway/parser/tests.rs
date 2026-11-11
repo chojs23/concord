@@ -1371,6 +1371,50 @@ fn raw_presence_update_without_guild_id_emits_user_event_with_activities() {
 }
 
 #[test]
+fn raw_presence_update_distinguishes_mobile_only_online_status() {
+    let parse_status_for = |status: &str, client_status: serde_json::Value| {
+        parse_user_account_event(
+            &json!({
+                "t": "PRESENCE_UPDATE",
+                "d": {
+                    "user": { "id": "20" },
+                    "status": status,
+                    "client_status": client_status,
+                    "activities": []
+                }
+            })
+            .to_string(),
+        )
+        .into_iter()
+        .find_map(|event| match event {
+            AppEvent::PresenceUpdate { presence, .. } => Some(presence.status),
+            _ => None,
+        })
+        .expect("PRESENCE_UPDATE should produce a PresenceUpdate event")
+    };
+
+    assert_eq!(
+        parse_status_for("online", json!({ "mobile": "online" })),
+        PresenceStatus::OnlineMobile,
+    );
+    assert_eq!(
+        parse_status_for(
+            "online",
+            json!({ "desktop": "offline", "mobile": "online" })
+        ),
+        PresenceStatus::OnlineMobile,
+    );
+    assert_eq!(
+        parse_status_for("online", json!({ "desktop": "online", "mobile": "online" })),
+        PresenceStatus::Online,
+    );
+    assert_eq!(
+        parse_status_for("idle", json!({ "mobile": "idle" })),
+        PresenceStatus::Idle,
+    );
+}
+
+#[test]
 fn raw_ready_supplemental_aligns_merged_members_by_guild_index() {
     let events = parse_user_account_event(
         &json!({
@@ -1841,6 +1885,47 @@ fn thread_participant_snapshot_parses_profiles_without_implying_current_membersh
             .map(|presence| presence.status),
         Some(PresenceStatus::Online)
     );
+}
+
+#[test]
+fn thread_member_events_preserve_mobile_only_presence() {
+    let member = json!({
+        "user_id": "20",
+        "member": {
+            "user": { "id": "20", "username": "alice" },
+            "roles": []
+        },
+        "presence": {
+            "user": { "id": "20" },
+            "status": "online",
+            "client_status": { "mobile": "online" },
+            "activities": []
+        }
+    });
+    for (event_type, data) in [
+        (
+            "THREAD_MEMBERS_UPDATE",
+            json!({ "guild_id": "1", "id": "10", "added_members": [member] }),
+        ),
+        (
+            "THREAD_MEMBER_LIST_UPDATE",
+            json!({ "guild_id": "1", "thread_id": "10", "members": [member] }),
+        ),
+    ] {
+        let events = parse_user_account_event(&json!({ "t": event_type, "d": data }).to_string());
+        let mut state = DiscordState::default();
+        for event in &events {
+            state.apply_event(event);
+        }
+
+        for guild_id in [None, Some(Id::new(1))] {
+            assert_eq!(
+                state.user_presence_for_guild(guild_id, Id::new(20)),
+                Some(PresenceStatus::OnlineMobile),
+                "{event_type}, guild {guild_id:?}"
+            );
+        }
+    }
 }
 
 #[test]

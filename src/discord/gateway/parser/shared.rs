@@ -7,14 +7,33 @@ pub(super) use crate::discord::display_name::{
 };
 pub(super) use crate::discord::json::extra_fields;
 
-pub(super) fn parse_status(value: &str) -> PresenceStatus {
-    match value {
+pub(super) fn parse_status(value: &Value) -> Option<PresenceStatus> {
+    let status = value.get("status").and_then(Value::as_str)?;
+    Some(match status {
+        "online" if is_mobile_only_client_status(value.get("client_status")) => {
+            PresenceStatus::OnlineMobile
+        }
         "online" => PresenceStatus::Online,
         "idle" => PresenceStatus::Idle,
         "dnd" => PresenceStatus::DoNotDisturb,
         "offline" | "invisible" => PresenceStatus::Offline,
         _ => PresenceStatus::Unknown,
-    }
+    })
+}
+
+fn is_mobile_only_client_status(client_status: Option<&Value>) -> bool {
+    let Some(client_status) = client_status.and_then(Value::as_object) else {
+        return false;
+    };
+    let active = |key: &str| {
+        client_status
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|status| !matches!(status, "offline" | "invisible"))
+    };
+    client_status.get("mobile").and_then(Value::as_str) == Some("online")
+        && !active("desktop")
+        && !active("web")
 }
 
 pub(super) fn parse_id<M>(value: &Value) -> Option<Id<M>> {
