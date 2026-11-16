@@ -198,6 +198,7 @@ storage is unavailable. See the Security section below for details.
 - Voice calls with push-to-talk
 - Noise suppression
 - Watch and broadcast screen shares
+- [Export voice state to local overlays](docs/voice-state-export.md)
 
 ### Guilds & Channels
 
@@ -540,6 +541,9 @@ microphone_volume = 100
 
 # Received voice playback volume percentage, from 0 to 200.
 voice_output_volume = 100
+
+# Share voice channel state with local overlays. No audio or tokens are exported.
+export_state = true
 ```
 
 macOS may require Input Monitoring permission for Concord or the terminal that

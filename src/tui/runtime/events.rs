@@ -63,13 +63,14 @@ pub(super) fn handle_terminal_event(
     Ok(outcome)
 }
 
-pub(super) fn save_options_if_needed(state: &mut DashboardState) {
-    if let Some(options) = state.take_options_save_request()
-        && let Err(error) = config::save_options(&options)
-    {
-        state.push_effect(AppEvent::GatewayError {
-            message: format!("save options failed: {error}"),
-        });
+pub(super) fn save_options_if_needed(state: &mut DashboardState, client: &crate::DiscordClient) {
+    if let Some(options) = state.take_options_save_request() {
+        client.set_voice_export_enabled(options.voice.export_state);
+        if let Err(error) = config::save_options(&options) {
+            state.push_effect(AppEvent::GatewayError {
+                message: format!("save options failed: {error}"),
+            });
+        }
     }
 
     if let Some(ui_state) = state.take_ui_state_save_request()
