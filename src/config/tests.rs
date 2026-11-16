@@ -159,6 +159,25 @@ fn safety_checks_default_to_enabled_and_follow_config() {
 }
 
 #[test]
+fn voice_state_export_defaults_to_enabled_and_follows_config() {
+    assert!(VoiceOptions::default().export_state);
+
+    for (content, enabled) in [
+        ("", true),
+        ("[voice]\n", true),
+        ("[voice]\nexport_state = true\n", true),
+        ("[voice]\nexport_state = false\n", false),
+    ] {
+        let direct: AppOptions = toml::from_str(content).expect("voice export config parses");
+        let (loaded, warnings) = parse_app_options(content).expect("voice export config loads");
+
+        assert_eq!(direct.voice.export_state, enabled, "{content}");
+        assert_eq!(loaded.voice, direct.voice, "{content}");
+        assert!(warnings.is_empty(), "{content}");
+    }
+}
+
+#[test]
 fn update_check_defaults_to_enabled_and_follows_config() {
     for (content, enabled) in [
         ("", true),
@@ -720,6 +739,7 @@ fn options_save_and_load_round_trip() {
             microphone_sensitivity: MicrophoneSensitivityDb::new(-50),
             microphone_volume: VoiceVolumePercent::new(80),
             voice_output_volume: VoiceVolumePercent::new(60),
+            export_state: false,
         },
         presence: PresenceOptions {
             share_rich_presence: false,

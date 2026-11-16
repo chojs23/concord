@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::discord::ids::{
     Id,
     marker::{ChannelMarker, EmojiMarker, RoleMarker, UserMarker},
@@ -441,19 +443,24 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
     scored.extend(emojis::iter().flat_map(|emoji| {
         let identity = ReactionEmoji::Unicode(emoji.as_str().to_owned());
         let pinned = is_pinned(&identity);
-        emoji.shortcodes().filter_map(move |shortcode| {
-            let score = fuzzy_text_score(shortcode, query)
+        let shortcodes = emoji
+            .shortcodes()
+            .map(Cow::Borrowed)
+            .chain(discord_flag_shortcode(emoji).map(Cow::Owned));
+        shortcodes.filter_map(move |shortcode| {
+            let score = fuzzy_text_score(&shortcode, query)
                 .into_iter()
                 .chain(fuzzy_text_score(emoji.name(), query))
                 .min()?;
+            let shortcode = shortcode.into_owned();
             Some((
                 UNICODE_EMOJI_TIER,
                 u8::from(!pinned),
                 score,
-                shortcode.to_owned(),
+                shortcode.clone(),
                 EmojiPickerEntry {
                     emoji: emoji.as_str().to_owned(),
-                    shortcode: shortcode.to_owned(),
+                    shortcode,
                     name: emoji.name().to_owned(),
                     wire_format: None,
                     available: true,
@@ -482,6 +489,40 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
 
 const CUSTOM_EMOJI_TIER: u8 = 0;
 const UNICODE_EMOJI_TIER: u8 = 1;
+
+const REGIONAL_INDICATOR_A: u32 = 0x1f1e6;
+
+// Discord uses `flag_us` while the emoji data uses GitHub names such as `us`
+// or `ascension_island`. Derive region aliases from the flag's Unicode pair.
+fn discord_flag_shortcode(emoji: &emojis::Emoji) -> Option<String> {
+    let mut characters = emoji.as_str().chars();
+    let first = u32::from(characters.next()?).checked_sub(REGIONAL_INDICATOR_A)?;
+    let second = u32::from(characters.next()?).checked_sub(REGIONAL_INDICATOR_A)?;
+    if first >= 26 || second >= 26 || characters.next().is_some() {
+        return None;
+    }
+    let first = char::from(b'a' + first as u8);
+    let second = char::from(b'a' + second as u8);
+    Some(format!("flag_{first}{second}"))
+}
+
+fn emoji_for_shortcode(shortcode: &str) -> Option<&'static emojis::Emoji> {
+    emojis::get_by_shortcode(shortcode).or_else(|| {
+        let region = shortcode.strip_prefix("flag_")?;
+        if region.len() != 2 || !region.bytes().all(|letter| letter.is_ascii_lowercase()) {
+            return None;
+        }
+        let flag: String = region
+            .bytes()
+            .map(|letter| {
+                char::from_u32(REGIONAL_INDICATOR_A + u32::from(letter - b'a'))
+                    .expect("regional indicators are valid Unicode")
+            })
+            .collect();
+        // Only known flags are expanded, not every possible pair of letters.
+        emojis::get(&flag)
+    })
+}
 
 fn custom_emoji_markup(name: &str, id: Id<EmojiMarker>, animated: bool, as_link: bool) -> String {
     if as_link {
@@ -528,7 +569,9 @@ pub(in crate::tui::state) fn expand_emoji_shortcodes(input: &str) -> String {
             )
         })
     }) {
-        if starts_custom_emoji_markup(rest, start) {
+        // Earlier colon scans can leave `rest` starting inside custom markup.
+        let absolute_start = input.len() - rest.len() + start;
+        if starts_custom_emoji_markup(input, absolute_start) {
             output.push_str(&rest[..name_start]);
             rest = &rest[name_start..];
             continue;
@@ -549,7 +592,7 @@ pub(in crate::tui::state) fn expand_emoji_shortcodes(input: &str) -> String {
             rest = &rest[keep_to..];
             continue;
         }
-        if let Some(emoji) = emojis::get_by_shortcode(shortcode) {
+        if let Some(emoji) = emoji_for_shortcode(shortcode) {
             output.push_str(&rest[..start]);
             output.push_str(emoji.as_str());
             rest = &rest[end..];

@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.1] - 2026-11-16
+
+### Bug Fixes
+
+- _(nix)_ Add git to native build inputs (#427) in [#427](https://github.com/chojs23/concord/pull/427) by @LordHerdier
+- _(tui)_ Serialize Lottie decoding to prevent native crashes (#430) in [#430](https://github.com/chojs23/concord/pull/430) by @chojs23
+- _(tui)_ Support Discord-style flag emoji shortcodes (#431) by @chojs23
+
+### Features
+
+- Distinguish mobile-only online presence in TUI (#424) in [#424](https://github.com/chojs23/concord/pull/424) by @SailinEast
+- _(voice)_ Add voice-state export over secure local IPC (#432) in [#432](https://github.com/chojs23/concord/pull/432) by @chojs23
+
+### New Contributors
+
+- @LordHerdier made their first contribution in [#427](https://github.com/chojs23/concord/pull/427)
+
 ## [2.7.0] - 2026-11-06
 
 ### Bug Fixes

@@ -124,6 +124,7 @@ pub struct VoiceOptions {
     pub microphone_sensitivity: MicrophoneSensitivityDb,
     pub microphone_volume: VoiceVolumePercent,
     pub voice_output_volume: VoiceVolumePercent,
+    pub export_state: bool,
 }
 
 impl Default for VoiceOptions {
@@ -141,6 +142,7 @@ impl Default for VoiceOptions {
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
             microphone_volume: VoiceVolumePercent::default(),
             voice_output_volume: VoiceVolumePercent::default(),
+            export_state: true,
         }
     }
 }

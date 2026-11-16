@@ -66,10 +66,11 @@ enum VoiceOption {
     MicrophoneSensitivity,
     MicrophoneVolume,
     VoiceVolume,
+    ExportState,
 }
 
 impl VoiceOption {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::Muted,
         Self::Deafened,
         Self::InputSource,
@@ -81,6 +82,7 @@ impl VoiceOption {
         Self::MicrophoneSensitivity,
         Self::MicrophoneVolume,
         Self::VoiceVolume,
+        Self::ExportState,
     ];
 
     fn at(index: usize) -> Option<Self> {
@@ -511,6 +513,14 @@ impl DashboardState {
                 effective: !voice.self_deaf,
                 description: "",
             },
+            VoiceOption::ExportState => DisplayOptionItem {
+                label: "Export voice state",
+                enabled: voice.export_state,
+                value: None,
+                gauge: None,
+                effective: true,
+                description: "Share participant and speaking state with local overlays. No audio or tokens.",
+            },
         }
     }
 
@@ -632,6 +642,10 @@ impl DashboardState {
                 self.mark_options_changed();
                 self.queue_current_voice_capture_permission_update();
             }
+            VoiceOption::ExportState => {
+                self.options.voice_options.export_state = !self.options.voice_options.export_state;
+                self.mark_options_changed();
+            }
             VoiceOption::MicrophoneSensitivity
             | VoiceOption::MicrophoneVolume
             | VoiceOption::VoiceVolume => {}
@@ -711,7 +725,8 @@ impl DashboardState {
             | VoiceOption::AllowMicrophoneTransmit
             | VoiceOption::PushToTalk
             | VoiceOption::PushToTalkShortcut
-            | VoiceOption::NoiseSuppression => {}
+            | VoiceOption::NoiseSuppression
+            | VoiceOption::ExportState => {}
         }
     }
 
