@@ -2834,6 +2834,38 @@ fn media_decoder_rasterizes_and_plays_lottie_animation_frames() {
 }
 
 #[test]
+fn media_decoder_renders_lottie_animations_from_concurrent_workers() {
+    let bytes = include_bytes!("testdata/moving-square-lottie.json");
+    let expected = decode_media_image_bytes(bytes).expect("serial Lottie decode should succeed");
+    let expected_frames = (0..expected.frame_count())
+        .map(|index| expected.frame_shared(index).to_rgba8())
+        .collect::<Vec<_>>();
+    let start = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        let workers = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    start.wait();
+                    for _ in 0..16 {
+                        let image = decode_media_image_bytes(bytes)
+                            .expect("each worker should decode its Lottie animation");
+
+                        assert_eq!(image.frame_count(), expected_frames.len());
+                        for (index, expected_frame) in expected_frames.iter().enumerate() {
+                            assert_eq!(&image.frame_shared(index).to_rgba8(), expected_frame);
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            worker.join().expect("Lottie worker should finish");
+        }
+    });
+}
+
+#[test]
 fn media_decoder_rejects_invalid_lottie_documents() {
     let mut oversized = vec![b' '; MAX_LOTTIE_JSON_BYTES + 1];
     oversized[0] = b'{';
