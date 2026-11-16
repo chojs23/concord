@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::Cursor,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -615,6 +615,14 @@ fn decode_lottie_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImag
     if bytes.len() > MAX_LOTTIE_JSON_BYTES {
         return Err("decode failed: Lottie document exceeds source byte limit".to_owned());
     }
+
+    // ThorVG is built without thread support, so independent decoders share
+    // unlocked native pools and engine state. Keep the lock until every native
+    // object, including the engine guard, has been dropped.
+    static LOTTIE_RENDERER_LOCK: Mutex<()> = Mutex::new(());
+    let _renderer_guard = LOTTIE_RENDERER_LOCK
+        .lock()
+        .map_err(|_| "decode failed: Lottie renderer lock is poisoned".to_owned())?;
 
     let engine = Thorvg::init()
         .map_err(|error| format!("decode failed: initialize Lottie renderer: {error}"))?;

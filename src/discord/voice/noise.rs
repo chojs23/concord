@@ -35,9 +35,9 @@ impl VoiceNoiseSuppressor {
 
         for frame_index in 0..RNNOISE_FRAMES_PER_OPUS_FRAME {
             let mono_start = frame_index * DenoiseState::FRAME_SIZE;
-            for sample_index in 0..DenoiseState::FRAME_SIZE {
+            for (sample_index, input_sample) in self.input.iter_mut().enumerate() {
                 let stereo_index = (mono_start + sample_index) * 2;
-                self.input[sample_index] =
+                *input_sample =
                     (f32::from(samples[stereo_index]) + f32::from(samples[stereo_index + 1])) * 0.5;
             }
 
@@ -46,9 +46,9 @@ impl VoiceNoiseSuppressor {
             // Voice capture is treated as mono even when the device supplies two
             // channels. Writing the same cleaned sample to both channels avoids
             // phase differences that can weaken speech during downmixing.
-            for sample_index in 0..DenoiseState::FRAME_SIZE {
+            for (sample_index, output_sample) in self.output.iter().enumerate() {
                 let stereo_index = (mono_start + sample_index) * 2;
-                let sample = self.output[sample_index]
+                let sample = output_sample
                     .round()
                     .clamp(f32::from(i16::MIN), f32::from(i16::MAX))
                     as i16;
