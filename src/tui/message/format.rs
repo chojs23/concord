@@ -55,7 +55,8 @@ use crate::tui::{
     },
     text::{
         EmojiImageSize, InlineEmojiSlot, RenderedText, TextHighlight, TextHighlightKind,
-        TextReplacement, detected_url_ranges, truncate_display_width, truncate_text,
+        TextReplacement, detected_url_ranges, spoiler_ranges, truncate_display_width,
+        truncate_text,
     },
     theme,
 };
@@ -550,13 +551,21 @@ fn format_message_text_section_with_loaded_custom_emoji_urls(
     loaded_custom_emoji_urls: &[String],
 ) -> (Vec<MessageContentLine>, Option<usize>) {
     let rendered = render_discord_timestamps(text, state.hour_format_24());
-    let rendered = state.render_user_mentions_with_highlights(
+    let mut rendered = state.render_user_mentions_with_highlights(
         message.guild_id,
         &message.mentions,
         message.mention_everyone,
         &message.mention_roles,
         rendered,
     );
+    // Mask `||spoiler||` spans until the reader reveals this message by
+    // clicking it. Revealed messages fall through with no spoiler highlight
+    // so the text renders normally.
+    if !state.message_spoilers_revealed(message.id) {
+        rendered
+            .highlights
+            .extend(spoiler_highlights(&rendered.text));
+    }
     let body_style = theme::current().style(theme::HighlightGroup::MessageBody);
     if state.show_custom_emoji()
         && let Some(standalone_emojis) = standalone_emojis(&rendered)
@@ -810,6 +819,17 @@ fn url_highlights(value: &str) -> Vec<TextHighlight> {
             start,
             end,
             kind: TextHighlightKind::Url,
+        })
+        .collect()
+}
+
+fn spoiler_highlights(value: &str) -> Vec<TextHighlight> {
+    spoiler_ranges(value)
+        .into_iter()
+        .map(|(start, end)| TextHighlight {
+            start,
+            end,
+            kind: TextHighlightKind::Spoiler,
         })
         .collect()
 }
@@ -1078,6 +1098,7 @@ pub(in crate::tui) fn text_highlight_style(kind: TextHighlightKind) -> Style {
         }
         TextHighlightKind::Url => theme.style(theme::HighlightGroup::MessageLink),
         TextHighlightKind::Timestamp => theme.style(theme::HighlightGroup::InlineTimestamp),
+        TextHighlightKind::Spoiler => theme.style(theme::HighlightGroup::Spoiler),
     }
 }
 

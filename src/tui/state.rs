@@ -31,6 +31,7 @@ mod presentation;
 mod request_tracking;
 mod runtime_state;
 mod scroll;
+mod spoilers;
 mod stream_info;
 mod subscriptions;
 mod text_completion;
@@ -59,6 +60,7 @@ use runtime_state::{
 };
 pub(in crate::tui) use scroll::SCROLL_OFF;
 use scroll::clamp_selected_index;
+use spoilers::SpoilerUiState;
 pub(in crate::tui) use translation::MessageTranslationDisplay;
 use translation::TranslationUiState;
 

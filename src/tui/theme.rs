@@ -234,6 +234,12 @@ fn default_definitions() -> [HighlightDefinition; HighlightGroup::COUNT] {
     define(H::SearchContext, Some(H::Muted), Style::default());
     define(H::Timestamp, Some(H::Muted), Style::default());
     define(H::Placeholder, Some(H::Muted), Style::default());
+    // Same foreground and background renders as a solid masked block.
+    define(
+        H::Spoiler,
+        None,
+        Style::default().fg(Color::DarkGray).bg(Color::DarkGray),
+    );
     define(H::Disabled, Some(H::Muted), Style::default());
     define(H::Loading, Some(H::Muted), Style::default());
     define(

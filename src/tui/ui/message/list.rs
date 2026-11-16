@@ -600,6 +600,12 @@ pub(in crate::tui::ui) fn render_image_preview(
         ImagePreviewState::Ready { protocol, .. } => {
             frame.render_widget(RatatuiImage::new(protocol), area);
         }
+        ImagePreviewState::Spoiler { filename } => render_image_preview_status(
+            frame,
+            area,
+            format!("{filename}: spoiler, click to reveal"),
+            theme::HighlightGroup::Spoiler,
+        ),
     }
 }
 
