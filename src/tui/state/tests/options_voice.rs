@@ -65,6 +65,36 @@ fn complete_voice_audio_source_load(
 }
 
 #[test]
+fn voice_state_export_option_toggles_and_saves_while_disconnected() {
+    let mut state = DashboardState::new();
+    state.open_options_category(OptionsCategory::Voice);
+    complete_voice_audio_source_load(&mut state, &[], &[]);
+
+    let items = state.display_option_items();
+    let export_index = items
+        .iter()
+        .position(|item| item.label == "Export voice state")
+        .expect("voice export option is present");
+    assert_eq!(export_index, items.len() - 1);
+    assert!(items[export_index].enabled);
+    for _ in 0..export_index {
+        state.move_option_down();
+    }
+
+    for enabled in [false, true] {
+        state.toggle_selected_display_option();
+
+        assert_eq!(state.voice_options().export_state, enabled);
+        assert_eq!(state.display_option_items()[export_index].enabled, enabled);
+        let saved = state
+            .take_options_save_request()
+            .expect("voice export change is saved");
+        assert_eq!(saved.voice.export_state, enabled);
+        assert!(state.drain_pending_commands().is_empty());
+    }
+}
+
+#[test]
 fn voice_options_show_push_to_talk_toggle_and_shortcut() {
     let mut state = DashboardState::new_with_voice_options(VoiceOptions {
         push_to_talk: true,
@@ -558,6 +588,7 @@ fn voice_channel_action_emits_join_then_leave_command() {
         microphone_sensitivity: Default::default(),
         microphone_volume: Default::default(),
         voice_output_volume: Default::default(),
+        export_state: true,
     });
     state.push_event(guild_create_event(GuildCreateFixture {
         channels: vec![voice_channel_info(Id::new(1), Id::new(11), "Lobby")],
@@ -824,6 +855,7 @@ fn other_client_voice_state_shows_header_only() {
         microphone_sensitivity: Default::default(),
         microphone_volume: Default::default(),
         voice_output_volume: Default::default(),
+        export_state: true,
     });
     state.push_event(AppEvent::Ready {
         user: "me".to_owned(),

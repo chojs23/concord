@@ -73,6 +73,7 @@ impl App {
             let mut config_warnings = theme_warnings.clone();
             config_warnings.extend(app_warnings);
             client.configure_safety(app_options.safety);
+            client.set_voice_export_enabled(app_options.voice.export_state);
             let serve_rich_presence = app_options.presence.share_rich_presence;
             let gateway_task = client.start_gateway(serve_rich_presence);
             let command_task =

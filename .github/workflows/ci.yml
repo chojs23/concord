@@ -49,6 +49,8 @@ jobs:
             native-encoder:
               - 'src/discord/voice.rs'
               - 'src/discord/voice/**'
+              - 'src/discord/voice_export.rs'
+              - 'src/discord/voice_export/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'build.rs'
@@ -197,3 +199,6 @@ jobs:
 
       - name: encoder tests
         run: cargo test --locked --all-features discord::voice::capture::encoder::tests
+
+      - name: voice export tests
+        run: cargo test --locked --all-features voice_export
