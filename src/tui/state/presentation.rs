@@ -149,7 +149,7 @@ pub(super) fn member_status_rank(status: PresenceStatus) -> u8 {
 
 pub fn presence_marker(status: PresenceStatus) -> char {
     match status {
-        PresenceStatus::OnlineMobile => '▮',
+        PresenceStatus::OnlineMobile => '',
         PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb => '●',
         PresenceStatus::Offline | PresenceStatus::Unknown => '○',
     }
@@ -178,7 +178,7 @@ mod tests {
             (PresenceStatus::Offline, '○'),
             (PresenceStatus::Unknown, '○'),
             (PresenceStatus::Online, '●'),
-            (PresenceStatus::OnlineMobile, '▮'),
+            (PresenceStatus::OnlineMobile, ''),
             (PresenceStatus::Idle, '●'),
             (PresenceStatus::DoNotDisturb, '●'),
         ] {
