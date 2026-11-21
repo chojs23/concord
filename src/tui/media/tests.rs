@@ -3238,6 +3238,39 @@ fn emoji_image_targets_include_visible_custom_reactions() {
 }
 
 #[test]
+fn hidden_message_reactions_request_only_body_emoji_images() {
+    let mut state = state_with_image_messages_and_display_options(
+        0,
+        &[],
+        DisplayOptions {
+            show_reaction_emoji: false,
+            ..DisplayOptions::default()
+        },
+    );
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some("hello <:wave:42>".to_owned()),
+            reactions: vec![ReactionInfo::test(ReactionEmoji::Custom {
+                id: Id::new(50),
+                name: Some("party".to_owned()),
+                animated: false,
+            })],
+            ..guild_message_create_fixture()
+        },
+    );
+
+    assert_eq!(
+        visible_emoji_image_targets(&state),
+        vec![EmojiImageTarget {
+            url: "https://cdn.discordapp.com/emojis/42.png".to_owned(),
+            image_size: EmojiImageSize::Compact,
+        }]
+    );
+}
+
+#[test]
 fn emoji_image_targets_deduplicate_and_promote_emoji_only_message_slots() {
     let mut state = state_with_image_messages(0, &[]);
     push_media_message(
@@ -3685,7 +3718,10 @@ fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
     let thread_id = Id::new(30);
-    let mut state = DashboardState::new();
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        show_reaction_emoji: false,
+        ..DisplayOptions::default()
+    });
 
     state.push_event(guild_create_event(GuildCreateFixture {
         emojis: vec![CustomEmojiInfo {
@@ -3733,6 +3769,30 @@ fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
     }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
+
+    state.push_event(AppEvent::ForumPostDataLoaded {
+        channel_id: forum_id,
+        requested_thread_ids: vec![thread_id],
+        posts: vec![ForumPostDataInfo {
+            thread_id,
+            owner: None,
+            first_message: Some(MessageInfo {
+                guild_id: Some(guild_id),
+                channel_id: thread_id,
+                message_id: Id::new(thread_id.get()),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                content: Some("first post".to_owned()),
+                reactions: vec![ReactionInfo::test(ReactionEmoji::Custom {
+                    id: Id::new(50),
+                    name: Some("party".to_owned()),
+                    animated: false,
+                })],
+                ..MessageInfo::default()
+            }),
+            extra_fields: std::collections::BTreeMap::new(),
+        }],
+    });
 
     let targets = visible_emoji_image_targets(&state);
 

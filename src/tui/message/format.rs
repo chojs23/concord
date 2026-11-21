@@ -537,8 +537,12 @@ pub(in crate::tui) fn format_message_content_sections_with_loaded_custom_emoji_u
         }
     }
 
-    let reaction_lines =
-        format_message_reaction_lines(&message.reactions, width, state.show_custom_emoji());
+    let reaction_lines = format_message_reaction_lines(
+        &message.reactions,
+        width,
+        state.show_custom_emoji(),
+        state.show_reaction_emoji(),
+    );
     (lines, reaction_lines)
 }
 

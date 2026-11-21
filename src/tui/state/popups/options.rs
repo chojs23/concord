@@ -22,6 +22,7 @@ enum DisplayOption {
     ImagePreviewQuality,
     AttachmentViewerQuality,
     ShowCustomEmoji,
+    ShowReactionEmoji,
     CircularAvatars,
     MediaPlayback,
     HourFormat24,
@@ -29,13 +30,14 @@ enum DisplayOption {
 }
 
 impl DisplayOption {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::DisableImagePreview,
         Self::ShowAvatars,
         Self::ShowImages,
         Self::ImagePreviewQuality,
         Self::AttachmentViewerQuality,
         Self::ShowCustomEmoji,
+        Self::ShowReactionEmoji,
         Self::CircularAvatars,
         Self::MediaPlayback,
         Self::HourFormat24,
@@ -304,6 +306,14 @@ impl DashboardState {
                 effective: options.custom_emoji_visible(),
                 description: "When off, custom emoji are shown as their emoji id.",
             },
+            DisplayOption::ShowReactionEmoji => DisplayOptionItem {
+                label: "Show reactions",
+                enabled: options.show_reaction_emoji,
+                value: None,
+                gauge: None,
+                effective: options.reaction_emoji_visible(),
+                description: "When off, all reactions are hidden.",
+            },
             DisplayOption::CircularAvatars => DisplayOptionItem {
                 label: "Circular avatars",
                 enabled: options.circular_avatars,
@@ -560,6 +570,9 @@ impl DashboardState {
             }
             DisplayOption::ShowCustomEmoji => {
                 options.show_custom_emoji = !options.show_custom_emoji
+            }
+            DisplayOption::ShowReactionEmoji => {
+                options.show_reaction_emoji = !options.show_reaction_emoji
             }
             DisplayOption::CircularAvatars => options.circular_avatars = !options.circular_avatars,
             DisplayOption::MediaPlayback => options.media_playback = !options.media_playback,

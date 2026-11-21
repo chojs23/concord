@@ -101,30 +101,29 @@ pub(in crate::tui::ui) fn render_messages(
             thread_scrollbar_visible,
         );
         frame.render_widget(
-            Paragraph::new(
-                thread_card::thread_card_viewport_lines_with_custom_emoji_images(
-                    &posts,
-                    selected,
-                    thread_card_width,
-                    is_loading,
-                    state.animation_frame(),
-                    state.show_custom_emoji(),
-                    state.show_images(),
-                ),
-            )
+            Paragraph::new(thread_card::thread_card_viewport_lines_with_state(
+                &posts,
+                selected,
+                thread_card_width,
+                is_loading,
+                state.animation_frame(),
+                state,
+            ))
             .style(theme::current().style(theme::HighlightGroup::Normal)),
             message_areas.list,
         );
         if state.show_custom_emoji() {
-            thread_card::render_thread_card_reaction_emojis(
-                frame,
-                message_areas.list,
-                &posts,
-                thread_card_width,
-                media.emoji_images,
-                media_occlusion_areas,
-                state.show_images(),
-            );
+            if state.show_reaction_emoji() {
+                thread_card::render_thread_card_reaction_emojis(
+                    frame,
+                    message_areas.list,
+                    &posts,
+                    thread_card_width,
+                    media.emoji_images,
+                    media_occlusion_areas,
+                    state.show_images(),
+                );
+            }
             thread_card::render_thread_card_tag_emojis(
                 frame,
                 message_areas.list,
@@ -225,14 +224,16 @@ pub(in crate::tui::ui) fn render_messages(
             frame.render_widget(RatatuiImage::new(avatar.protocol), area);
         }
     }
-    render_inline_reaction_emojis(
-        frame,
-        message_areas.list,
-        &render_plan,
-        media.emoji_images,
-        media_occlusion_areas,
-        avatar_offset,
-    );
+    if state.show_reaction_emoji() && state.show_custom_emoji() {
+        render_inline_reaction_emojis(
+            frame,
+            message_areas.list,
+            &render_plan,
+            media.emoji_images,
+            media_occlusion_areas,
+            avatar_offset,
+        );
+    }
     render_inline_message_body_emojis(
         frame,
         message_areas.list,

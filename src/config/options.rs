@@ -26,6 +26,7 @@ pub struct DisplayOptions {
     pub image_protocol: ImageProtocolPreference,
     pub animate_previews: AnimatePreviews,
     pub show_custom_emoji: bool,
+    pub show_reaction_emoji: bool,
     pub circular_avatars: bool,
     pub hour_format_24: bool,
 }
@@ -805,6 +806,7 @@ impl Default for DisplayOptions {
             animate_previews: AnimatePreviews::default(),
             image_protocol: ImageProtocolPreference::default(),
             show_custom_emoji: true,
+            show_reaction_emoji: true,
             circular_avatars: false,
             hour_format_24: true,
         }
@@ -826,5 +828,9 @@ impl DisplayOptions {
 
     pub fn custom_emoji_visible(self) -> bool {
         !self.disable_image_preview && self.show_custom_emoji
+    }
+
+    pub fn reaction_emoji_visible(self) -> bool {
+        self.show_reaction_emoji
     }
 }

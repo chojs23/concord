@@ -865,12 +865,14 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
     // Reactions + every body slot the renderer will draw. Walking the same
     // formatter as `message_viewport_lines` keeps prefetch and render in lockstep.
     for message in state.visible_messages() {
-        for reaction in &message.reactions {
-            if reaction.count == 0 {
-                continue;
-            }
-            if let Some(url) = reaction.emoji.custom_image_url() {
-                collector.push(url, EmojiImageSize::Compact);
+        if state.show_reaction_emoji() {
+            for reaction in &message.reactions {
+                if reaction.count == 0 {
+                    continue;
+                }
+                if let Some(url) = reaction.emoji.custom_image_url() {
+                    collector.push(url, EmojiImageSize::Compact);
+                }
             }
         }
         for line in format_message_content_lines(message, state, EMOJI_PREFETCH_FORMAT_WIDTH) {
@@ -883,9 +885,11 @@ pub(in crate::tui) fn visible_emoji_image_targets(state: &DashboardState) -> Vec
     // Thread cards render preview reactions outside `visible_messages()`, so
     // collect their URLs here for the shared emoji image cache.
     for post in state.visible_thread_card_items() {
-        for reaction in thread_card::thread_card_visible_reactions(&post) {
-            if let Some(url) = reaction.emoji.custom_image_url() {
-                collector.push(url, EmojiImageSize::Compact);
+        if state.show_reaction_emoji() {
+            for reaction in thread_card::thread_card_visible_reactions(&post) {
+                if let Some(url) = reaction.emoji.custom_image_url() {
+                    collector.push(url, EmojiImageSize::Compact);
+                }
             }
         }
         // Custom forum-tag emoji are overlaid as images on the card's tags row,
