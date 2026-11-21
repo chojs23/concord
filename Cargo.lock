@@ -6368,9 +6368,9 @@ dependencies = [
 
 [[package]]
 name = "thorvg"
-version = "0.5.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f215040262696e1d9c33b786b09b74b6935d0d30bd90ffd6439d592d22aabfbf"
+checksum = "1d9b8161002409c059a3c18fdd29f979c37d2d541bb9b090adb3b9da3ead0f43"
 dependencies = [
  "libm",
  "thorvg-sys",
@@ -6378,8 +6378,8 @@ dependencies = [
 
 [[package]]
 name = "thorvg-sys"
-version = "0.3.2+thorvg-1.1.0"
-source = "git+https://github.com/chojs23/thorvg-rs.git?rev=2548bdbb1487cf473d2c1fe580891b57d973f0dc#2548bdbb1487cf473d2c1fe580891b57d973f0dc"
+version = "0.4.0+thorvg-1.1.2"
+source = "git+https://github.com/chojs23/thorvg-rs.git?rev=c1d75dcdbc8cf4c76c1d7db76f3f37f3fb2193b6#c1d75dcdbc8cf4c76c1d7db76f3f37f3fb2193b6"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
