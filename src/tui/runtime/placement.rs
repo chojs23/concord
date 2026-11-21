@@ -140,6 +140,8 @@ mod tests {
             show_play_marker: false,
             message_id: Id::<MessageMarker>::new(message_id),
             url: "https://cdn.discordapp.com/image.png".to_owned(),
+            fallback_url: None,
+            scaled: false,
             filename: "image.png".to_owned(),
         }
     }

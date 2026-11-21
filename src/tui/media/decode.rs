@@ -25,9 +25,9 @@ use super::{
 /// in the client.
 const MAX_SHARED_DECODED_MEDIA_IMAGES: usize = 32;
 const MAX_SHARED_DECODED_MEDIA_BYTES: u64 = 128 * 1024 * 1024;
-pub(super) const MAX_DECODED_IMAGE_WIDTH: u32 = 4096;
-pub(super) const MAX_DECODED_IMAGE_HEIGHT: u32 = 4096;
-const MAX_DECODED_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+pub(super) const MAX_DECODED_IMAGE_WIDTH: u32 = 8192;
+pub(super) const MAX_DECODED_IMAGE_HEIGHT: u32 = 8192;
+const MAX_DECODED_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_ANIMATION_SOURCE_FRAMES: usize = 4096;
 pub(super) const MAX_RETAINED_ANIMATION_FRAMES: usize = 32;
 /// Total decoded pixel work accepted from one raster animation. This is larger
@@ -569,38 +569,53 @@ pub(in crate::tui) fn spawn_media_image_decode(
 }
 
 fn decode_media_image(job: MediaImageDecodeJob) -> MediaImageDecodeResult {
-    let result = decode_media_image_bytes(&job.bytes).map_err(MediaWorkError::Failed);
+    let result = decode_media_image_bytes(&job.bytes);
     MediaImageDecodeResult {
         url: job.url,
         result,
     }
 }
 
-pub(in crate::tui) fn decode_image_bytes(
-    bytes: &[u8],
-) -> std::result::Result<DynamicImage, String> {
+pub(in crate::tui) fn decode_image_bytes(bytes: &[u8]) -> MediaWorkResult<DynamicImage> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|error| format!("decode failed: {error}"))?;
+        .map_err(|error| MediaWorkError::Failed(format!("decode failed: {error}")))?;
     reader.limits(decode_limits());
     reader
         .decode()
-        .map_err(|error| format!("decode failed: {error}"))
+        .map_err(|error| image_decode_error(error, "decode failed"))
 }
 
-pub(in crate::tui) fn decode_media_image_bytes(
-    bytes: &[u8],
-) -> std::result::Result<DecodedMediaImage, String> {
+pub(in crate::tui) fn decode_media_image_bytes(bytes: &[u8]) -> MediaWorkResult<DecodedMediaImage> {
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|error| format!("decode failed: {error}"))?;
+        .map_err(|error| MediaWorkError::Failed(format!("decode failed: {error}")))?;
 
     match reader.format() {
         Some(ImageFormat::Gif) => decode_gif_animation(bytes),
         Some(ImageFormat::WebP) => decode_webp_animation(bytes),
         Some(ImageFormat::Png) => decode_png_animation(bytes),
-        None if looks_like_json(bytes) => decode_lottie_animation(bytes),
+        None if looks_like_json(bytes) => {
+            decode_lottie_animation(bytes).map_err(MediaWorkError::Failed)
+        }
         _ => decode_image_bytes(bytes).map(DecodedMediaImage::still),
+    }
+}
+
+fn image_decode_error(error: image::ImageError, context: &str) -> MediaWorkError {
+    let message = format!("{context}: {error}");
+    if matches!(
+        &error,
+        image::ImageError::Limits(limit)
+            if matches!(
+                limit.kind(),
+                image::error::LimitErrorKind::DimensionError
+                    | image::error::LimitErrorKind::InsufficientMemory
+            )
+    ) {
+        MediaWorkError::DecodeLimit(message)
+    } else {
+        MediaWorkError::Failed(message)
     }
 }
 
@@ -787,7 +802,7 @@ fn lottie_frame_delay(duration_seconds: f32, retained_frame_count: usize) -> Dur
         .clamp(MIN_ANIMATION_FRAME_DELAY, MAX_ANIMATION_FRAME_DELAY)
 }
 
-fn decode_gif_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
+fn decode_gif_animation(bytes: &[u8]) -> MediaWorkResult<DecodedMediaImage> {
     decode_gif_animation_with_limits(
         bytes,
         MAX_ANIMATION_SOURCE_FRAMES,
@@ -799,12 +814,12 @@ pub(super) fn decode_gif_animation_with_limits(
     bytes: &[u8],
     max_source_frames: usize,
     max_decode_work_bytes: u64,
-) -> std::result::Result<DecodedMediaImage, String> {
-    let mut decoder =
-        GifDecoder::new(Cursor::new(bytes)).map_err(|error| format!("decode failed: {error}"))?;
+) -> MediaWorkResult<DecodedMediaImage> {
+    let mut decoder = GifDecoder::new(Cursor::new(bytes))
+        .map_err(|error| image_decode_error(error, "decode failed"))?;
     decoder
         .set_limits(decode_limits())
-        .map_err(|error| format!("decode failed: {error}"))?;
+        .map_err(|error| image_decode_error(error, "decode failed"))?;
     decode_animation_frames_with_limits(
         decoder.into_frames(),
         max_source_frames,
@@ -812,39 +827,37 @@ pub(super) fn decode_gif_animation_with_limits(
     )
 }
 
-fn decode_webp_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
-    let mut decoder =
-        WebPDecoder::new(Cursor::new(bytes)).map_err(|error| format!("decode failed: {error}"))?;
+fn decode_webp_animation(bytes: &[u8]) -> MediaWorkResult<DecodedMediaImage> {
+    let mut decoder = WebPDecoder::new(Cursor::new(bytes))
+        .map_err(|error| image_decode_error(error, "decode failed"))?;
     decoder
         .set_limits(decode_limits())
-        .map_err(|error| format!("decode failed: {error}"))?;
+        .map_err(|error| image_decode_error(error, "decode failed"))?;
     if !decoder.has_animation() {
         return decode_image_bytes(bytes).map(DecodedMediaImage::still);
     }
     decode_animation_frames(decoder.into_frames())
 }
 
-fn decode_png_animation(bytes: &[u8]) -> std::result::Result<DecodedMediaImage, String> {
-    let mut decoder =
-        PngDecoder::new(Cursor::new(bytes)).map_err(|error| format!("decode failed: {error}"))?;
-    decoder
-        .set_limits(decode_limits())
-        .map_err(|error| format!("decode failed: {error}"))?;
+fn decode_png_animation(bytes: &[u8]) -> MediaWorkResult<DecodedMediaImage> {
+    // Later set_limits calls cannot cap PNG's internal buffer allocations.
+    let decoder = PngDecoder::with_limits(Cursor::new(bytes), decode_limits())
+        .map_err(|error| image_decode_error(error, "decode failed"))?;
     if !decoder
         .is_apng()
-        .map_err(|error| format!("decode failed: {error}"))?
+        .map_err(|error| image_decode_error(error, "decode failed"))?
     {
         return decode_image_bytes(bytes).map(DecodedMediaImage::still);
     }
     let apng = decoder
         .apng()
-        .map_err(|error| format!("decode failed: {error}"))?;
+        .map_err(|error| image_decode_error(error, "decode failed"))?;
     decode_animation_frames(apng.into_frames())
 }
 
 fn decode_animation_frames(
     frames: impl Iterator<Item = image::ImageResult<Frame>>,
-) -> std::result::Result<DecodedMediaImage, String> {
+) -> MediaWorkResult<DecodedMediaImage> {
     decode_animation_frames_with_limits(
         frames,
         MAX_ANIMATION_SOURCE_FRAMES,
@@ -856,7 +869,7 @@ fn decode_animation_frames_with_limits(
     frames: impl Iterator<Item = image::ImageResult<Frame>>,
     max_source_frames: usize,
     max_decode_work_bytes: u64,
-) -> std::result::Result<DecodedMediaImage, String> {
+) -> MediaWorkResult<DecodedMediaImage> {
     let mut sampled_frames = Vec::new();
     let mut retained_bytes = 0u64;
     let mut decode_work_bytes = 0u64;
@@ -866,12 +879,12 @@ fn decode_animation_frames_with_limits(
     // mistaken for a complete animation that happens to end at the limit.
     for (frame_index, result) in frames.take(max_source_frames.saturating_add(1)).enumerate() {
         if frame_index >= max_source_frames {
-            return first_sampled_frame_fallback(sampled_frames);
+            return first_sampled_frame_fallback(sampled_frames).map_err(MediaWorkError::Failed);
         }
         let frame = result.map_err(|error| {
-            format!(
-                "decode failed at animation frame {}: {error}",
-                frame_index + 1
+            image_decode_error(
+                error,
+                &format!("decode failed at animation frame {}", frame_index + 1),
             )
         })?;
         source_frame_count = frame_index + 1;
@@ -880,7 +893,7 @@ fn decode_animation_frames_with_limits(
         if frame_bytes > MAX_DECODED_IMAGE_BYTES
             || decode_work_bytes.saturating_add(frame_bytes) > max_decode_work_bytes
         {
-            return first_sampled_frame_fallback(sampled_frames);
+            return first_sampled_frame_fallback(sampled_frames).map_err(MediaWorkError::Failed);
         }
 
         decode_work_bytes = decode_work_bytes.saturating_add(frame_bytes);
@@ -898,7 +911,7 @@ fn decode_animation_frames_with_limits(
         compact_animation_frames(&mut sampled_frames, &mut retained_bytes);
     }
 
-    finish_sampled_animation(sampled_frames, source_frame_count)
+    finish_sampled_animation(sampled_frames, source_frame_count).map_err(MediaWorkError::Failed)
 }
 
 fn first_sampled_frame_fallback(

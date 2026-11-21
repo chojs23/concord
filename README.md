@@ -420,6 +420,10 @@ media_playback = false
 image_preview_quality = "balanced"
 
 # Attachment viewer quality: efficient, balanced, high, or original.
+# Decoding is limited to 8192 pixels per dimension and 128 MiB of allocations.
+# On a decode-limit error, the viewer tries a scaled Discord proxy image when
+# available and labels it as a scaled preview. Opening or downloading still
+# uses the original file.
 attachment_viewer_quality = "original"
 
 # Which animated GIF and WebP previews keep playing: always, selected, or never.

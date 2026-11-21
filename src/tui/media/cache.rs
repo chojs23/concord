@@ -210,7 +210,7 @@ where
                 self.insert(key, protocol, bytes);
             }
             Err(MediaWorkError::Busy) => {}
-            Err(MediaWorkError::Failed(_)) => {
+            Err(MediaWorkError::Failed(_) | MediaWorkError::DecodeLimit(_)) => {
                 let attempts = self.failed_attempts.entry(key).or_default();
                 *attempts = attempts.saturating_add(1);
             }
