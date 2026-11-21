@@ -827,7 +827,7 @@ impl DisplayOptions {
     }
 
     pub fn custom_emoji_visible(self) -> bool {
-        !self.disable_image_preview && self.show_custom_emoji && self.show_reaction_emoji
+        !self.disable_image_preview && self.show_custom_emoji
     }
 
     pub fn reaction_emoji_visible(self) -> bool {

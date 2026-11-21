@@ -1886,11 +1886,7 @@ fn thread_created_message_uses_shared_thread_card_layout() {
         .expect("kind-18 message yields a thread card item");
     let card_width = crate::tui::ui::thread_card::thread_card_width_in_message(200);
     let expected_card = line_texts_from_ratatui(&crate::tui::ui::thread_card::thread_card_lines(
-        &item,
-        false,
-        card_width,
-        state.show_custom_emoji(),
-        state.show_images(),
+        &item, false, card_width, &state,
     ));
 
     let lines = format_message_content_lines(&message, &state, 200);

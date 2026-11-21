@@ -1454,6 +1454,49 @@ fn forum_post_metadata_shows_three_leading_reactions() {
 }
 
 #[test]
+fn hidden_thread_card_reactions_preserve_counts_and_tag_emoji() {
+    let state = DashboardState::new_with_display_options(DisplayOptions {
+        show_reaction_emoji: false,
+        ..DisplayOptions::default()
+    });
+    let post = ChannelThreadItem {
+        label: "Tagged post".to_owned(),
+        applied_tags: vec![AppliedForumTag {
+            name: "fire".to_owned(),
+            unicode_emoji: Some("🔥".to_owned()),
+            custom_emoji_url: None,
+        }],
+        preview_reactions: vec![
+            ReactionInfo::test(ReactionEmoji::Unicode("👍".to_owned())),
+            ReactionInfo::test(ReactionEmoji::Custom {
+                id: Id::new(50),
+                name: Some("party".to_owned()),
+                animated: false,
+            }),
+        ],
+        comment_count: Some(4),
+        new_message_count: 3,
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+
+    let lines = crate::tui::ui::thread_card::thread_card_viewport_lines_with_state(
+        &[post],
+        None,
+        80,
+        false,
+        0,
+        &state,
+    );
+    let text = line_texts_from_ratatui(&lines).join("\n");
+
+    assert!(text.contains("4 comments"));
+    assert!(text.contains("3 new messages"));
+    assert!(text.contains("🔥 fire"));
+    assert!(!text.contains("👍"));
+    assert!(!text.contains("party"));
+}
+
+#[test]
 fn forum_post_tag_line_renders_unicode_emoji_and_reserves_custom_image_slot() {
     let unicode_tag = AppliedForumTag {
         name: "fire".to_owned(),

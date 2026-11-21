@@ -147,15 +147,9 @@ fn format_thread_created_lines(
     let card_width = thread_card_width_in_message(width);
     if let Some(item) = state.thread_card_item_for_message(message) {
         lines.extend(
-            thread_card_lines(
-                &item,
-                false,
-                card_width,
-                state.show_custom_emoji(),
-                state.show_images(),
-            )
-            .into_iter()
-            .map(MessageContentLine::from_line),
+            thread_card_lines(&item, false, card_width, state)
+                .into_iter()
+                .map(MessageContentLine::from_line),
         );
     }
     lines

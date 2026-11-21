@@ -33,6 +33,32 @@ fn saving_display_options_preserves_disabled_update_check() {
 }
 
 #[test]
+fn show_reactions_option_tracks_visibility_independently_of_image_settings() {
+    for show_reaction_emoji in [true, false] {
+        for (show_custom_emoji, disable_image_preview) in
+            [(true, false), (false, false), (true, true), (false, true)]
+        {
+            let mut state = DashboardState::new_with_display_options(DisplayOptions {
+                show_reaction_emoji,
+                show_custom_emoji,
+                disable_image_preview,
+                ..DisplayOptions::default()
+            });
+            state.open_options_popup();
+            let item = state
+                .display_option_items()
+                .into_iter()
+                .find(|item| item.label == "Show reactions")
+                .expect("display options include reaction visibility");
+
+            assert_eq!(item.enabled, show_reaction_emoji);
+            assert_eq!(item.effective, show_reaction_emoji);
+            assert_eq!(state.show_reaction_emoji(), show_reaction_emoji);
+        }
+    }
+}
+
+#[test]
 fn every_display_option_changes_only_its_own_setting() {
     let cases: [(&str, DisplayOptionChange); 11] = [
         ("disable image preview", |mut options| {

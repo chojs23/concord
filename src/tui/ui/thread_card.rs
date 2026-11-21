@@ -53,21 +53,26 @@ pub(super) fn thread_card_viewport_lines(
     width: usize,
     is_loading: bool,
 ) -> Vec<Line<'static>> {
-    thread_card_viewport_lines_with_custom_emoji_images(
-        posts, selected, width, is_loading, 0, true, true,
+    thread_card_viewport_lines_with_state(
+        posts,
+        selected,
+        width,
+        is_loading,
+        0,
+        &DashboardState::new(),
     )
 }
 
-pub(super) fn thread_card_viewport_lines_with_custom_emoji_images(
+pub(super) fn thread_card_viewport_lines_with_state(
     posts: &[ChannelThreadItem],
     selected: Option<usize>,
     width: usize,
     is_loading: bool,
     animation_frame: usize,
-    show_custom_emoji: bool,
-    show_images: bool,
+    state: &DashboardState,
 ) -> Vec<Line<'static>> {
     let width = width.max(1);
+    let show_images = state.show_images();
     if posts.is_empty() {
         // Shared by the forum post list and a channel's thread list; "threads"
         // reads correctly for both since forum posts are themselves threads.
@@ -100,8 +105,7 @@ pub(super) fn thread_card_viewport_lines_with_custom_emoji_images(
             post,
             selected == Some(index),
             width,
-            show_custom_emoji,
-            show_images,
+            state,
         ));
     }
     lines
@@ -115,9 +119,9 @@ pub(in crate::tui) fn thread_card_lines(
     post: &ChannelThreadItem,
     selected: bool,
     width: usize,
-    show_custom_emoji: bool,
-    show_images: bool,
+    state: &DashboardState,
 ) -> Vec<Line<'static>> {
+    let show_images = state.show_images();
     let marker_style = if selected {
         theme::current().style(theme::HighlightGroup::ForumSelectedBorder)
     } else {
@@ -189,7 +193,12 @@ pub(in crate::tui) fn thread_card_lines(
     }
     lines.push(thread_card_inner_line(
         &marker_placeholder,
-        thread_card_metadata_spans(post, text_width, show_custom_emoji),
+        thread_card_metadata_spans(
+            post,
+            text_width,
+            state.show_custom_emoji(),
+            state.show_reaction_emoji(),
+        ),
         inner_width,
         selected,
     ));
@@ -603,6 +612,7 @@ fn thread_card_metadata_spans(
     post: &ChannelThreadItem,
     width: usize,
     show_custom_emoji: bool,
+    show_reaction_emoji: bool,
 ) -> Vec<Span<'static>> {
     let theme = theme::current();
     let primary_style = Style::default();
@@ -635,19 +645,21 @@ fn thread_card_metadata_spans(
             theme.style(theme::HighlightGroup::UnreadNotice),
         );
     }
-    let reactions = thread_card_visible_reactions(post)
-        .cloned()
-        .collect::<Vec<_>>();
-    if let Some(layout) =
-        thread_card_reaction_layout_for_width(&reactions, width, show_custom_emoji)
-    {
-        push_forum_metadata_reaction_part(
-            &mut spans,
-            &mut used_width,
-            width,
-            reaction_style,
-            layout,
-        );
+    if show_reaction_emoji {
+        let reactions = thread_card_visible_reactions(post)
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Some(layout) =
+            thread_card_reaction_layout_for_width(&reactions, width, show_custom_emoji)
+        {
+            push_forum_metadata_reaction_part(
+                &mut spans,
+                &mut used_width,
+                width,
+                reaction_style,
+                layout,
+            );
+        }
     }
     if let Some(message_id) = post.last_activity_message_id {
         push_forum_metadata_part(

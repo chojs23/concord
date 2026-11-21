@@ -311,7 +311,7 @@ impl DashboardState {
                 enabled: options.show_reaction_emoji,
                 value: None,
                 gauge: None,
-                effective: options.custom_emoji_visible(),
+                effective: options.reaction_emoji_visible(),
                 description: "When off, all reactions are hidden.",
             },
             DisplayOption::CircularAvatars => DisplayOptionItem {
