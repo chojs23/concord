@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use super::{
     AnimatePreviews, AppOptions, BorderShape, BorderSurface, ComposerOptions, CredentialOptions,
-    CredentialStoreMode, DisplayOptions, HighlightGroup, ImagePreviewQualityPreset,
+    CredentialStoreMode, DisplayOptions, HighlightGroup, IconSet, ImagePreviewQualityPreset,
     ImageProtocolPreference, KeymapBinding, KeymapOptions, NotificationOptions, PresenceOptions,
     SafetyOptions, ThemeOptions, TranslationOptions, TranslationProviderKind, UpdateOptions,
     VoiceOptions, load_keymap_options_from_path, load_options_from_path, parse_app_options,
@@ -280,6 +280,20 @@ fn unknown_theme_fields_warn_and_leave_the_default_theme() {
     .expect("unknown theme fields should not fail parsing");
     assert_eq!(theme, ThemeOptions::default());
     assert_eq!(warnings.len(), 5);
+}
+
+#[test]
+fn theme_icon_set_defaults_to_nerd_and_accepts_supported_sets() {
+    for (content, expected) in [
+        ("", IconSet::Nerd),
+        ("[ui]\n", IconSet::Nerd),
+        ("[ui]\nicon_set = \"unicode\"\n", IconSet::Unicode),
+        ("[ui]\nicon_set = \"nerd\"\n", IconSet::Nerd),
+    ] {
+        let (theme, warnings) = parse_theme_options(content).expect("theme icon set parses");
+        assert_eq!(theme.icon_set(), expected);
+        assert!(warnings.is_empty());
+    }
 }
 
 #[test]

@@ -328,7 +328,7 @@ fn member_panel_title_shows_online_and_total_when_counts_available() {
 
     let title = state.member_panel_title();
     let rendered: String = title.spans.iter().map(|s| s.content.as_ref()).collect();
-    assert_eq!(rendered, "● 25  ○ 100");
+    assert_eq!(rendered, "\u{f111} 25  \u{f10c} 100");
 }
 
 #[test]

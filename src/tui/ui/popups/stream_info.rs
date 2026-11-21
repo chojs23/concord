@@ -70,7 +70,11 @@ pub(in crate::tui::ui) fn stream_info_lines_for_width(
             ));
         }
 
-        let status = if section.paused { "⏸" } else { "🔴" };
+        let status = if section.paused {
+            Icon::StreamPaused.glyph()
+        } else {
+            Icon::StreamLive.glyph()
+        };
         lines.push(Line::from(vec![
             Span::raw(section.broadcaster.clone()),
             Span::styled(

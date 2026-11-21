@@ -2,6 +2,7 @@ use super::activity::{ActivityLeading, build_activity_render};
 use super::message::list::render_image_preview;
 use super::*;
 use crate::discord::ActivityKind;
+use crate::tui::icons::Icon;
 use crate::tui::selection;
 use crate::tui::state::SCROLL_OFF;
 use crate::tui::text::format_byte_size;
@@ -800,8 +801,12 @@ fn wrapped_styled_popup_lines(text: &str, width: usize, style: Style) -> Vec<Lin
     lines
 }
 
-fn editable_field_marker(active: bool) -> &'static str {
-    if active { "› " } else { "  " }
+fn editable_field_marker(active: bool) -> String {
+    if active {
+        format!("{} ", Icon::ChevronRight.glyph())
+    } else {
+        " ".repeat(Icon::ChevronRight.glyph().width() + 1)
+    }
 }
 
 fn editable_field_label_style(active: bool, editing: bool) -> Style {

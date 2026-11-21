@@ -298,7 +298,7 @@ fn build_composer_layout(
         "Tags",
         view.requires_tag,
         &super::thread_edit::forum_tag_summary(&view.tags, width),
-        (!view.tags.is_empty()).then_some("Enter ›"),
+        (!view.tags.is_empty()).then_some(format!("Enter {}", Icon::ChevronRight.glyph()).as_str()),
         view.active_field == ForumPostComposerField::Tags,
         !view.tags.is_empty(),
         width,

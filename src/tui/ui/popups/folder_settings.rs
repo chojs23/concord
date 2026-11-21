@@ -95,8 +95,8 @@ pub(in crate::tui::ui) fn folder_settings_input_line_for_test(active: bool) -> L
 
 fn folder_settings_input_prefix_width(name_active: bool) -> usize {
     if name_active {
-        "› Name: ".width()
+        format!("{}Name: ", editable_field_marker(true)).width()
     } else {
-        "› Color code: ".width()
+        format!("{}Color code: ", editable_field_marker(true)).width()
     }
 }

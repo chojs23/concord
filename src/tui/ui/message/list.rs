@@ -1028,7 +1028,10 @@ pub(in crate::tui::ui) fn new_messages_notice_line(count: usize, width: usize) -
 }
 
 fn new_messages_notice_label(count: usize) -> String {
-    format!("↓ {count} new messages ")
+    format!(
+        "{} {count} new messages ",
+        crate::tui::icons::Icon::NewMessages.glyph()
+    )
 }
 
 fn separator_line(label: &str, width: usize, style: Style) -> Line<'static> {

@@ -388,16 +388,17 @@ impl<'a> Iterator for ThreadCardTagParts<'a> {
     }
 }
 
-/// Text for one tag chip (`# name`). A custom emoji reserves a fixed-width blank
+/// Text for one tag chip. A custom emoji reserves a fixed-width blank
 /// gap so the overlaid image does not reflow the row when it loads.
 fn thread_card_tag_text(tag: &AppliedForumTag) -> String {
+    let marker = crate::tui::icons::Icon::Tag.glyph();
     if let Some(emoji) = tag.unicode_emoji.as_deref() {
-        format!("# {emoji} {}", tag.name)
+        format!("{marker} {emoji} {}", tag.name)
     } else if tag.custom_emoji_url.is_some() {
         let placeholder = " ".repeat(usize::from(EmojiImageSize::Compact.width()));
-        format!("# {placeholder} {}", tag.name)
+        format!("{marker} {placeholder} {}", tag.name)
     } else {
-        format!("# {}", tag.name)
+        format!("{marker} {}", tag.name)
     }
 }
 
@@ -867,7 +868,9 @@ fn thread_card_tag_image_slots(
     ThreadCardTagParts::new(&post.applied_tags, inner_width)
         .filter_map(|part| {
             let url = part.custom_emoji_url?;
-            let emoji_col = part.start.saturating_add("# ".width());
+            let emoji_col = part
+                .start
+                .saturating_add(crate::tui::icons::Icon::Tag.glyph().width() + 1);
             (emoji_col + usize::from(EmojiImageSize::Compact.width())
                 <= part.start.saturating_add(part.text.width()))
             .then(|| (emoji_col, url.to_owned()))
@@ -886,7 +889,7 @@ pub(super) fn render_thread_card_tag_emojis(
     show_images: bool,
 ) {
     let list_left = list.x as isize;
-    let content_start = 4isize;
+    let content_start = selection_marker_width().saturating_add(2) as isize;
     let full_inner_width = thread_card_inner_width_for_reactions(width);
     let list_height = usize::from(list.height);
 

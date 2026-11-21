@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::icons::Icon;
 use crate::tui::state::MINIMUM_ESTABLISHED_DM_MESSAGES;
 use crate::tui::text::{TextReplacement, remap_text_offset};
 use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_column, overlay_emoji_slots};
@@ -434,8 +435,10 @@ fn mention_picker_lines(
             );
             let marker = match entry.target {
                 MentionPickerTarget::User(_) => presence_marker(entry.status).to_string(),
-                MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => "@".to_owned(),
-                MentionPickerTarget::Channel(_) => "#".to_owned(),
+                MentionPickerTarget::Everyone(_) | MentionPickerTarget::Role(_) => {
+                    Icon::MentionRole.glyph().to_owned()
+                }
+                MentionPickerTarget::Channel(_) => Icon::TextChannel.glyph().to_owned(),
             };
             let marker_style = if matches!(entry.target, MentionPickerTarget::User(_)) {
                 selected_presence_style(selected, entry.status)
@@ -540,7 +543,11 @@ pub(in crate::tui::ui) fn emoji_picker_lines(
             let description_width = description
                 .map(|value| value.width().saturating_add(" - ".width()))
                 .unwrap_or_default();
-            let pin_marker = if entry.pinned { "★ " } else { "" };
+            let pin_marker = if entry.pinned {
+                format!("{} ", Icon::Pinned.glyph())
+            } else {
+                String::new()
+            };
             let max_label_width = width
                 .saturating_sub(cursor_width)
                 .saturating_sub(prefix_width)
@@ -982,7 +989,10 @@ fn pending_upload_texts(state: &DashboardState, width: u16) -> Vec<String> {
         .collect();
     if state.clipboard_paste_pending() {
         lines.push(truncate_display_width(
-            "upload: ⠋ processing clipboard attachment...",
+            &format!(
+                "upload: {} processing clipboard attachment...",
+                Icon::Loading.glyph()
+            ),
             max_width,
         ));
     }
@@ -1141,15 +1151,15 @@ fn reply_target_hint(message: &MessageState, state: &DashboardState, width: u16)
     )
 }
 
-fn reply_ping_indicator(state: &DashboardState) -> (&'static str, Style) {
+fn reply_ping_indicator(state: &DashboardState) -> (String, Style) {
     if state.ping_on_reply() {
         (
-            "@ on",
+            format!("{} on", Icon::MentionRole.glyph()),
             theme::current().style(theme::HighlightGroup::ReplyPingEnabled),
         )
     } else {
         (
-            "@ off",
+            format!("{} off", Icon::MentionRole.glyph()),
             theme::current().style(theme::HighlightGroup::Disabled),
         )
     }

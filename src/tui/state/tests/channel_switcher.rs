@@ -104,9 +104,9 @@ fn channel_switcher_includes_joined_active_threads_and_forums_with_type_icons() 
             .map(|item| item.display().label.as_str())
     };
 
-    assert_eq!(label(general_id), Some("# general"));
-    assert_eq!(label(forum_id), Some("📝 announcements"));
-    assert_eq!(label(thread_id), Some("🧵 a thread"));
+    assert_eq!(label(general_id), Some("\u{f0423} general"));
+    assert_eq!(label(forum_id), Some("\u{f028c} announcements"));
+    assert_eq!(label(thread_id), Some("\u{f0369} a thread"));
 
     let thread = items
         .iter()
@@ -516,4 +516,44 @@ fn channel_switcher_query_edits_at_cursor() {
         .expect("channel switcher view");
     assert_eq!(view.query, "random");
     assert_eq!(view.query_cursor, "ra".len());
+}
+
+#[test]
+fn nerd_channel_switcher_keeps_typed_channel_and_dm_search_syntax() {
+    use crate::config::{IconSet, ThemeOptions};
+    use crate::tui::{icons::Icon, theme};
+
+    let mut options = ThemeOptions::default();
+    options.set_icon_set(IconSet::Nerd);
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+    theme::with_test_theme(custom, || {
+        let mut state = DashboardState::new();
+        state.push_event(AppEvent::ChannelUpsert(dm_channel_info(
+            Id::new(40),
+            "general chat",
+        )));
+        state.push_event(guild_create_event(
+            Id::new(1),
+            "guild",
+            vec![text_channel_info(Id::new(1), Id::new(11), "general chat")],
+        ));
+
+        for (query, channel_id, icon) in [
+            ("#general chat", Id::new(11), Icon::TextChannel),
+            ("@general chat", Id::new(40), Icon::DirectMessage),
+        ] {
+            state.open_channel_switcher();
+            for ch in query.chars() {
+                state.push_channel_switcher_char(ch);
+            }
+            let items = channel_switcher_items(&state);
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].channel_id(), Some(channel_id));
+            assert_eq!(
+                items[0].display().label,
+                format!("{} general chat", icon.glyph())
+            );
+            state.close_channel_switcher();
+        }
+    });
 }

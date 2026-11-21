@@ -1,3 +1,4 @@
+use crate::tui::icons::Icon;
 use std::{
     cell::{Ref, RefCell},
     collections::{BTreeMap, BTreeSet},
@@ -1279,12 +1280,15 @@ impl DashboardState {
             .active_stream_broadcast
             .as_ref()
             .is_some_and(|target| target.matches(scope, channel_id));
-        let suffix = match (other_client, broadcasting) {
-            (true, true) => " (other client) 🔴",
-            (true, false) => " (other client)",
-            (false, true) => " 🔴",
-            (false, false) => "",
+        let mut suffix = if other_client {
+            " (other client)".to_owned()
+        } else {
+            String::new()
         };
+        if broadcasting {
+            suffix.push(' ');
+            suffix.push_str(Icon::StreamLive.glyph());
+        }
         // Guild voice shows "guild - channel"; a DM/group-DM call has no guild,
         // so it is labeled under "Direct Messages" instead.
         let prefix = match scope.guild_id() {

@@ -1,3 +1,4 @@
+use crate::tui::icons::Icon;
 use std::collections::{BTreeMap, BTreeSet};
 
 use ratatui::{
@@ -284,12 +285,13 @@ impl DashboardState {
         let total = guild.and_then(|g| g.member_count).unwrap_or(0);
         Line::from(vec![
             Span::styled(
-                "●",
+                Icon::PresenceOnline.glyph(),
                 theme::current().style(theme::HighlightGroup::PresenceOnline),
             ),
             Span::raw(format!(
-                " {}  ○ {}",
+                " {}  {} {}",
                 fmt_with_separators(online as u64),
+                Icon::PresenceOffline.glyph(),
                 fmt_with_separators(total)
             )),
         ])

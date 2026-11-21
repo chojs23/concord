@@ -51,7 +51,7 @@ fn render_pane_filter_bar(
     cursor_byte: Option<usize>,
     focused: bool,
 ) -> usize {
-    let prompt = "/ ";
+    let prompt = format!("{} ", crate::tui::icons::Icon::Filter.glyph());
     let prompt_width = prompt.width();
     let available = (area.width as usize).saturating_sub(prompt_width + 1);
 

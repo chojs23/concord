@@ -106,6 +106,9 @@ development with C++, CMake, and NASM; see [Build from source](#build-from-sourc
 
 ### Runtime requirements
 
+The default icons require a Nerd Font. Without one, use Unicode icons by setting
+`icon_set = "unicode"` under `[ui]` in `theme.toml`.
+
 macOS 13 or later is required. Linux release builds need these packages:
 
 ```sh
@@ -740,7 +743,7 @@ ToggleReplyPing = "<A-p>"
 ### Theme
 
 See [Theme options](./docs/theme-options.md) for available groups, values,
-border shapes, and selection marker settings.
+border shapes, icon sets, and selection marker settings.
 
 <details>
 <summary>Default theme config</summary>
@@ -758,6 +761,10 @@ border shapes, and selection marker settings.
 # clears that color channel after inheritance. A linked group inherits fields
 # it does not set. Use `link = "none"` to detach a built-in link.
 
+# Icons: nerd or unicode.
+[ui]
+icon_set = "nerd"
+
 # Border shapes are UI geometry rather than Highlight Group styles. An omitted
 # surface uses `default`. These values reproduce Concord's built-in layout.
 [ui.border]
@@ -768,8 +775,9 @@ forum = "rounded"
 
 # Selection markers are UI glyphs. This value is shared by list panes and
 # pickers, while `highlight.SelectionMarker` controls its style.
+# Leave this commented to use the selected icon set's default marker.
 [ui.indicator]
-selection = "▸ "
+# selection = "▸ "
 
 [highlight.Normal]
 foreground = "terminal_default"

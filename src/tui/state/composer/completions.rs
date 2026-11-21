@@ -401,7 +401,11 @@ pub(in crate::tui::state) fn build_emoji_candidates<'a>(
                 && (!is_foreign || can_use_external_emojis);
             let as_link = emojis_as_links && !can_send_directly;
             let shortcode = emoji.name.clone();
-            let marker = if emoji.animated { "◇" } else { "◆" };
+            let marker = if emoji.animated {
+                crate::tui::icons::Icon::AnimatedEmoji.glyph()
+            } else {
+                crate::tui::icons::Icon::CustomEmoji.glyph()
+            };
             let label = if emoji.animated {
                 "animated custom emoji"
             } else {
@@ -705,6 +709,51 @@ struct CompletionReplacement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_emoji_picker_icons_follow_the_palette_without_changing_markup() {
+        let mut animated = CustomEmojiInfo::test(Id::new(51), "party_animated");
+        animated.animated = true;
+        let emojis = [CustomEmojiInfo::test(Id::new(50), "party_static"), animated];
+        for icon_set in [
+            crate::config::IconSet::Unicode,
+            crate::config::IconSet::Nerd,
+        ] {
+            let mut options = crate::config::ThemeOptions::default();
+            options.set_icon_set(icon_set);
+            let custom = crate::tui::theme::Theme::from_options(&options, &mut Vec::new());
+            crate::tui::theme::with_test_theme(custom, || {
+                let candidates = build_emoji_candidates(
+                    "party",
+                    std::iter::empty(),
+                    emojis.iter(),
+                    true,
+                    true,
+                    false,
+                    &[],
+                );
+                for (name, icon, markup) in [
+                    (
+                        "party_static",
+                        crate::tui::icons::Icon::CustomEmoji,
+                        "<:party_static:50>",
+                    ),
+                    (
+                        "party_animated",
+                        crate::tui::icons::Icon::AnimatedEmoji,
+                        "<a:party_animated:51>",
+                    ),
+                ] {
+                    let candidate = candidates
+                        .iter()
+                        .find(|entry| entry.shortcode == name)
+                        .expect("custom emoji candidate");
+                    assert_eq!(candidate.emoji, icon.for_set(icon_set));
+                    assert_eq!(candidate.wire_format.as_deref(), Some(markup));
+                }
+            });
+        }
+    }
 
     fn role(id: u64, name: &str) -> RoleState {
         RoleState {

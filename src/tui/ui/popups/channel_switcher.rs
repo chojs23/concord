@@ -149,7 +149,7 @@ fn channel_switcher_search_line(query: &str, query_cursor: usize, width: usize) 
     };
     Line::from(vec![
         Span::styled(
-            "🔎 ",
+            format!("{} ", Icon::Search.glyph()),
             theme::current().style(theme::HighlightGroup::ActiveField),
         ),
         shown_query,
@@ -157,7 +157,7 @@ fn channel_switcher_search_line(query: &str, query_cursor: usize, width: usize) 
 }
 
 fn visible_channel_switcher_query(query: &str, cursor: usize, width: usize) -> (String, usize) {
-    let prefix_width = "🔎 ".width();
+    let prefix_width = Icon::Search.glyph().width() + 1;
     let available = width.saturating_sub(prefix_width).max(1);
     let cursor = clamp_query_cursor(query, cursor);
     let mut start = 0usize;

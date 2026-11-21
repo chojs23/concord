@@ -86,7 +86,9 @@ pub(in crate::tui::ui) fn render_gif_picker(
         return;
     }
     let query_area = gif_picker_search_area(area);
-    let query_width = usize::from(query_area.width.saturating_sub(2));
+    let query_marker = editable_field_marker(picker.query_selected);
+    let query_prefix_width = query_marker.width();
+    let query_width = usize::from(query_area.width).saturating_sub(query_prefix_width);
     let (query, cursor) = visible_query(
         picker.query.value(),
         picker.query.cursor_byte_index(),
@@ -101,14 +103,19 @@ pub(in crate::tui::ui) fn render_gif_picker(
     frame.render_widget(
         Paragraph::new(format!(
             "{}{}",
-            if picker.query_selected { "› " } else { "  " },
+            query_marker,
             if placeholder { "Search KLIPY" } else { &query }
         ))
         .style(search_style),
         query_area,
     );
     if picker.query_editing {
-        frame.set_cursor_position((query_area.x.saturating_add(2 + cursor as u16), query_area.y));
+        frame.set_cursor_position((
+            query_area
+                .x
+                .saturating_add(query_prefix_width as u16 + cursor as u16),
+            query_area.y,
+        ));
     }
     frame.render_widget(
         Paragraph::new("─".repeat(usize::from(inner.width)))
@@ -148,14 +155,12 @@ pub(in crate::tui::ui) fn render_gif_picker(
                     .chars()
                     .filter(|c| !c.is_control())
                     .collect::<String>();
-                let title_width = usize::from(list.width.saturating_sub(2));
+                let marker = editable_field_marker(Some(i) == selected);
+                let title_width = usize::from(list.width).saturating_sub(marker.width());
                 let title =
                     truncate_display_width_from(&title, picker.horizontal_scroll, title_width);
                 Line::from(Span::styled(
-                    truncate_display_width(
-                        &format!("{} {}", if Some(i) == selected { "›" } else { " " }, title),
-                        usize::from(list.width),
-                    ),
+                    truncate_display_width(&format!("{marker}{title}"), usize::from(list.width)),
                     selectable_popup_label_style(
                         Some(i) == selected,
                         gif.media_url(false).is_some(),
