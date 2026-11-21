@@ -59,7 +59,10 @@ fn every_display_option_changes_only_its_own_setting() {
             options.show_custom_emoji = !options.show_custom_emoji;
             options
         }),
-        ("circular avatars", |mut options| {
+        ("show reactions", |mut options| {
+            options.show_reaction_emoji = !options.show_reaction_emoji;
+            options
+        })("circular avatars", |mut options| {
             options.circular_avatars = !options.circular_avatars;
             options
         }),

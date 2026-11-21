@@ -354,6 +354,10 @@ impl DashboardState {
         self.options.display_options.custom_emoji_visible()
     }
 
+    pub fn show_reaction_emoji(&self) -> bool {
+        self.options.display_options.reaction_emoji_visible()
+    }
+
     pub fn desktop_notifications_enabled(&self) -> bool {
         self.options.notification_options.desktop_notifications
     }
