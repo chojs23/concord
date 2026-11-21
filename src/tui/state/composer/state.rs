@@ -751,7 +751,9 @@ impl DashboardState {
         now: Instant,
     ) -> Option<AppCommand> {
         // Discord does not broadcast typing while editing an existing message.
-        if self.composer.edit_target_message.is_some() {
+        if self.composer.edit_target_message.is_some()
+            || !self.options.composer_options.typing_indicator
+        {
             return None;
         }
         let channel_id = self.selected_channel_id()?;

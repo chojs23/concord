@@ -36,6 +36,7 @@ pub struct DisplayOptions {
 pub struct ComposerOptions {
     pub emojis_as_links: bool,
     pub ping_on_reply: bool,
+    pub typing_indicator: bool,
 }
 
 impl Default for ComposerOptions {
@@ -43,6 +44,7 @@ impl Default for ComposerOptions {
         Self {
             emojis_as_links: false,
             ping_on_reply: true,
+            typing_indicator: true,
         }
     }
 }
