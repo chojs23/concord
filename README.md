@@ -428,6 +428,9 @@ animate_previews = "always"
 # Render custom Discord emoji as images when possible.
 show_custom_emoji = true
 
+# Render reaction emojis
+show_reaction_emoji = true
+
 # Crop avatars into circles instead of showing square images.
 circular_avatars = false
 

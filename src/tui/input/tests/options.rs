@@ -34,7 +34,7 @@ fn saving_display_options_preserves_disabled_update_check() {
 
 #[test]
 fn every_display_option_changes_only_its_own_setting() {
-    let cases: [(&str, DisplayOptionChange); 10] = [
+    let cases: [(&str, DisplayOptionChange); 11] = [
         ("disable image preview", |mut options| {
             options.disable_image_preview = !options.disable_image_preview;
             options
@@ -62,7 +62,8 @@ fn every_display_option_changes_only_its_own_setting() {
         ("show reactions", |mut options| {
             options.show_reaction_emoji = !options.show_reaction_emoji;
             options
-        })("circular avatars", |mut options| {
+        }),
+        ("circular avatars", |mut options| {
             options.circular_avatars = !options.circular_avatars;
             options
         }),

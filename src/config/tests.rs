@@ -44,6 +44,7 @@ fn global_disable_overrides_individual_toggles() {
         image_protocol: ImageProtocolPreference::Auto,
         animate_previews: AnimatePreviews::Selected,
         show_custom_emoji: true,
+        show_reaction_emoji: true,
         circular_avatars: false,
         hour_format_24: true,
     };
@@ -702,6 +703,7 @@ fn options_save_and_load_round_trip() {
             image_protocol: ImageProtocolPreference::Kitty,
             animate_previews: AnimatePreviews::Never,
             show_custom_emoji: false,
+            show_reaction_emoji: true,
             circular_avatars: true,
             hour_format_24: false,
         },
