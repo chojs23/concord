@@ -35,21 +35,15 @@ impl DashboardState {
         true
     }
 
-    /// Opens the attachment viewer for the image thumbnail clicked at the
-    /// given viewport position, selecting both the message it belongs to and
-    /// that specific attachment. Mirrors `toggle_reaction_chip_at`: the hit
-    /// test lives on `DashboardState` (`image_preview_at_viewport_position`)
-    /// so `InteractionMap` can resolve it the same way it resolves every
-    /// other click target. Returns `false` (and opens nothing) when the
-    /// clicked preview belongs to an embed or sticker rather than a message
-    /// attachment, since the viewer only navigates real attachments.
+    /// Selects the clicked attachment by ID so duplicate filenames and forwarded
+    /// files cannot redirect the viewer to another item.
     pub(in crate::tui) fn open_image_preview_at_viewport_position(
         &mut self,
         row: usize,
         col: usize,
         avatar_offset: u16,
     ) -> bool {
-        let Some((message_id, filename)) =
+        let Some((message_id, attachment_id)) =
             self.image_preview_at_viewport_position(row, col, avatar_offset)
         else {
             return false;
@@ -62,7 +56,7 @@ impl DashboardState {
             .and_then(|(index, message)| {
                 message
                     .attachments_in_display_order()
-                    .position(|attachment| attachment.filename == filename)
+                    .position(|attachment| attachment.id == attachment_id)
                     .map(|attachment_index| (index, attachment_index))
             })
         else {

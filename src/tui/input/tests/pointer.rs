@@ -590,57 +590,147 @@ fn left_click_on_a_reaction_chip_toggles_the_users_own_reaction() {
     }
 }
 
-#[test]
-fn left_click_on_an_image_thumbnail_opens_the_attachment_viewer_for_that_attachment() {
-    let mut state = state_with_image_attachment_message(&["first.png", "second.png"]);
-    let area = dashboard_area();
-    state.focus_pane(FocusPane::Messages);
-    crate::tui::ui::sync_view_heights(area, &mut state);
-    let layout = crate::tui::ui::image_preview_layout(area, &state);
+fn image_thumbnail_rects(state: &mut DashboardState, area: Rect) -> Vec<Rect> {
+    use crate::tui::{media, message::layout::MessageViewportPlan, ui};
+
+    ui::sync_view_heights(area, state);
+    let layout = ui::image_preview_layout(area, state);
     state.clamp_message_viewport_for_image_previews(
         layout.content_width,
         layout.preview_width,
         layout.max_preview_height,
     );
-
-    let targets: Vec<(u16, u16)> = (0..area.height)
-        .flat_map(|row| (0..area.width).map(move |column| (column, row)))
-        .filter(|&(column, row)| {
-            matches!(
-                crate::tui::ui::InteractionMap::new(area, &state).target_at(column, row),
-                Some(crate::tui::ui::InteractionTarget::ImageThumbnail { .. })
+    let messages = state.visible_messages();
+    let plan = MessageViewportPlan::new(
+        &messages,
+        state.focused_message_selection(),
+        state,
+        layout.content_width,
+        layout.preview_width,
+        layout.max_preview_height,
+    );
+    let list = ui::image_preview_list_area(area, state);
+    media::visible_image_preview_targets_from_plan(state, layout, &plan)
+        .into_iter()
+        .filter_map(|target| {
+            let row = plan
+                .row(target.message_index)?
+                .image_preview_row(target.body_line_index, target.preview_y_offset_rows);
+            ui::inline_image_preview_screen_area(
+                list,
+                row,
+                target.preview_x_offset_columns,
+                target.preview_width,
+                target.preview_height,
+                target.accent_color,
+                ui::avatar_gutter_width(state.show_avatars()),
             )
         })
-        .collect();
-    assert!(
-        !targets.is_empty(),
-        "at least one image thumbnail should be clickable"
-    );
+        .collect()
+}
 
-    // The two attachments lay out side by side; the rightmost clickable
-    // column belongs to the second attachment's cell.
-    let &(column, row) = targets
-        .iter()
-        .max_by_key(|&&(column, _)| column)
-        .expect("targets is non-empty");
-
-    let mut clicks = MouseInputState::default();
-    let outcome = handle_mouse_event(
-        &mut state,
-        mouse(MouseEventKind::Down(MouseButton::Left), column, row),
-        area,
-        &mut clicks,
-    );
-    assert!(outcome.handled);
-    assert!(state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::AttachmentViewer));
-    assert_eq!(
-        state
+#[test]
+fn left_click_on_an_image_thumbnail_opens_the_attachment_viewer_for_that_attachment() {
+    for filenames in [["first.png", "second.png"], ["image.png", "image.png"]] {
+        let mut state = state_with_thumbnail_message(MessageInfo {
+            attachments: filenames
+                .iter()
+                .enumerate()
+                .map(|(index, filename)| image_attachment(index as u64 + 1, filename))
+                .collect(),
+            ..MessageInfo::default()
+        });
+        let area = dashboard_area();
+        state.focus_pane(FocusPane::Messages);
+        let bounds = image_thumbnail_rects(&mut state, area)[1];
+        let outcome = handle_mouse_event(
+            &mut state,
+            mouse(MouseEventKind::Down(MouseButton::Left), bounds.x, bounds.y),
+            area,
+            &mut MouseInputState::default(),
+        );
+        assert!(outcome.handled);
+        assert!(
+            state.is_active_modal_popup(crate::tui::state::ActiveModalPopupKind::AttachmentViewer)
+        );
+        let item = state
             .selected_attachment_viewer_item()
-            .map(|item| item.filename),
-        Some("second.png".to_owned())
-    );
+            .expect("viewer item");
+        assert_eq!(item.index, 2);
+        assert_eq!(item.filename, filenames[1]);
+        assert_eq!(
+            item.url,
+            Some(format!("https://cdn.discordapp.com/2/{}", filenames[1]))
+        );
+        assert_eq!(state.focus(), FocusPane::Messages);
+        assert_eq!(state.selected_message(), 0);
+    }
+}
+
+#[test]
+fn right_click_on_an_image_thumbnail_opens_message_actions() {
+    let mut state = state_with_thumbnail_message(MessageInfo {
+        attachments: vec![image_attachment(1, "image.png")],
+        ..MessageInfo::default()
+    });
+    let area = dashboard_area();
+    state.focus_pane(FocusPane::Channels);
+    let bounds = image_thumbnail_rects(&mut state, area)[0];
+    assert!(handle_mouse(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Right), bounds.x, bounds.y),
+        area,
+    ));
     assert_eq!(state.focus(), FocusPane::Messages);
-    assert_eq!(state.selected_message(), 0);
+    assert!(state.is_message_action_menu_active());
+}
+
+#[test]
+fn colored_gallery_thumbnail_edges_open_the_attachment_viewer() {
+    use crate::discord::{
+        ComponentMediaInfo, ComponentMediaItemInfo, MESSAGE_FLAG_IS_COMPONENTS_V2,
+        MessageComponentInfo,
+    };
+
+    for width in [120, 220] {
+        let mut state = state_with_thumbnail_message(MessageInfo {
+            flags: MESSAGE_FLAG_IS_COMPONENTS_V2,
+            attachments: vec![image_attachment(1, "cover.png")],
+            components: vec![MessageComponentInfo::Container {
+                accent_color: Some(0x3366cc),
+                spoiler: false,
+                components: vec![MessageComponentInfo::MediaGallery {
+                    items: vec![ComponentMediaItemInfo {
+                        media: ComponentMediaInfo {
+                            url: "attachment://cover.png".to_owned(),
+                            ..ComponentMediaInfo::default()
+                        },
+                        description: None,
+                        spoiler: false,
+                    }],
+                }],
+            }],
+            ..MessageInfo::default()
+        });
+        let area = Rect::new(0, 0, width, 40);
+        state.focus_pane(FocusPane::Messages);
+        let bounds = image_thumbnail_rects(&mut state, area)[0];
+        for column in [bounds.x, bounds.right() - 1] {
+            assert!(handle_mouse(
+                &mut state,
+                mouse(MouseEventKind::Down(MouseButton::Left), column, bounds.y),
+                area,
+            ));
+            assert_eq!(
+                state
+                    .selected_attachment_viewer_item()
+                    .map(|item| item.filename),
+                Some("cover.png".to_owned()),
+                "gallery edge at column {column}, terminal width {width}",
+            );
+            state.close_attachment_viewer();
+        }
+    }
 }
 
 #[test]

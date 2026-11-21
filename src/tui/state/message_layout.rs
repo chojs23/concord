@@ -1,6 +1,11 @@
 use std::time::Duration;
 
-use crate::discord::{Id, MessageState, ReactionEmoji, marker::MessageMarker};
+use ratatui::layout::Rect;
+
+use crate::discord::{
+    Id, MessageState, ReactionEmoji,
+    marker::{AttachmentMarker, MessageMarker},
+};
 
 use super::{MessageRowContentMetrics, MessageRowContentMetricsCacheKey, *};
 use crate::tui::{
@@ -445,65 +450,66 @@ impl DashboardState {
         None
     }
 
-    /// Resolves a click at the given viewport row/column to the inline image
-    /// preview thumbnail it landed on, if any, identified by message id and
-    /// attachment filename. `row`/`col` are relative to the top-left of the
-    /// message list area, as in `reaction_chip_at_viewport_position`. Walks
-    /// the same per-message layout the renderer uses to place inline preview
-    /// albums (`media::image_preview_album_layout`, consumed by
-    /// `inline_preview_spacer_for_message`) and recomputes album cell
-    /// geometry on demand, mirroring how `InteractionMap` derives every other
-    /// hit region rather than caching one. Does not cover thread-card or
-    /// Components-V2 section thumbnails.
+    /// Resolves an attachment-backed flow preview using the renderer's final bounds.
+    /// Coordinates are relative to the message list. Embeds, stickers, thread cards,
+    /// and section thumbnails keep their normal message-row actions.
     pub(in crate::tui) fn image_preview_at_viewport_position(
         &self,
         row: usize,
         col: usize,
         avatar_offset: u16,
-    ) -> Option<(Id<MessageMarker>, String)> {
-        if self.message_pane_uses_thread_cards() {
+    ) -> Option<(Id<MessageMarker>, Id<AttachmentMarker>)> {
+        if self.message_pane_uses_thread_cards()
+            || self.messages.message_content_width == usize::MAX
+        {
             return None;
         }
-        if self.messages.message_content_width == usize::MAX {
-            return None;
-        }
-        let col = col.checked_sub(avatar_offset as usize)?;
+        let row = u16::try_from(row).ok()?;
+        let col = u16::try_from(col).ok()?;
+        let list = Rect::new(
+            0,
+            0,
+            u16::try_from(self.messages.message_view_width).ok()?,
+            u16::try_from(self.messages.message_view_height).ok()?,
+        );
         let content_width = self.messages.message_content_width;
         let preview_width = self.messages.message_preview_width;
         let max_preview_height = self.messages.message_max_preview_height;
         let messages = self.visible_messages();
-        let selected = self.focused_message_selection();
         let plan = MessageViewportPlan::new(
             &messages,
-            selected,
+            self.focused_message_selection(),
             self,
             content_width,
             preview_width,
             max_preview_height,
         );
-        let row = row as isize;
-        let col = u16::try_from(col).unwrap_or(u16::MAX);
 
         for viewport_row in plan.rows() {
             let previews = viewport_row.message.flow_inline_previews();
-            if previews.is_empty() {
-                continue;
-            }
             let album =
                 media::image_preview_album_layout(&previews, preview_width, max_preview_height);
-            let preview_top = viewport_row.body_top + viewport_row.metrics.body_rows() as isize;
+            let accent_color = (previews.len() == 1)
+                .then(|| previews[0].accent_color)
+                .flatten();
             for cell in &album.cells {
-                let cell_top = preview_top.saturating_add(cell.y_offset_rows as isize);
-                if row < cell_top || row >= cell_top.saturating_add(cell.height as isize) {
+                let Some(attachment_id) = previews[cell.preview_index].attachment_id else {
                     continue;
-                }
-                if col < cell.x_offset_columns
-                    || col >= cell.x_offset_columns.saturating_add(cell.width)
-                {
+                };
+                let Some(bounds) = crate::tui::ui::inline_image_preview_screen_area(
+                    list,
+                    viewport_row.image_preview_row(None, cell.y_offset_rows),
+                    cell.x_offset_columns,
+                    cell.width,
+                    cell.height,
+                    accent_color,
+                    avatar_offset,
+                ) else {
                     continue;
+                };
+                if bounds.contains((col, row).into()) {
+                    return Some((viewport_row.message.id, attachment_id));
                 }
-                let filename = previews[cell.preview_index].filename.to_owned();
-                return Some((viewport_row.message.id, filename));
             }
         }
         None

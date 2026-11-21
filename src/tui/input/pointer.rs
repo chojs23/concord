@@ -349,6 +349,13 @@ fn handle_context_menu(state: &mut DashboardState, target: InteractionTarget) ->
             }
             MouseEventResult::handled(None)
         }
+        InteractionTarget::ImageThumbnail { row, .. } => handle_context_menu(
+            state,
+            InteractionTarget::PaneItem {
+                pane: FocusPane::Messages,
+                row,
+            },
+        ),
         InteractionTarget::Pane(pane) => {
             state.focus_pane(pane);
             MouseEventResult::handled(None)
@@ -357,7 +364,6 @@ fn handle_context_menu(state: &mut DashboardState, target: InteractionTarget) ->
         | InteractionTarget::ModalBackdrop
         | InteractionTarget::PopupItem { .. }
         | InteractionTarget::ReactionChip { .. }
-        | InteractionTarget::ImageThumbnail { .. }
         | InteractionTarget::UserProfileControl(_)
         | InteractionTarget::ConfirmationButton(_)
         | InteractionTarget::FormButton(_)

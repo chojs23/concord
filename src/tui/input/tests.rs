@@ -393,8 +393,8 @@ fn state_with_reaction_messages(
 
 fn image_attachment(id: u64, filename: &str) -> AttachmentInfo {
     AttachmentInfo {
-        url: format!("https://cdn.discordapp.com/{filename}"),
-        proxy_url: format!("https://media.discordapp.net/{filename}"),
+        url: format!("https://cdn.discordapp.com/{id}/{filename}"),
+        proxy_url: format!("https://media.discordapp.net/{id}/{filename}"),
         content_type: Some("image/png".to_owned()),
         size: 2048,
         width: Some(640),
@@ -403,7 +403,7 @@ fn image_attachment(id: u64, filename: &str) -> AttachmentInfo {
     }
 }
 
-fn state_with_image_attachment_message(filenames: &[&str]) -> DashboardState {
+fn state_with_thumbnail_message(message: MessageInfo) -> DashboardState {
     let mut state = DashboardState::new();
     let guild_id = Id::new(1);
     let channel_id = Id::new(2);
@@ -425,12 +425,8 @@ fn state_with_image_attachment_message(filenames: &[&str]) -> DashboardState {
         channel_id,
         messages: vec![MessageInfo {
             guild_id: Some(guild_id),
-            attachments: filenames
-                .iter()
-                .enumerate()
-                .map(|(index, filename)| image_attachment(index as u64 + 1, filename))
-                .collect(),
-            ..MessageInfo::test(channel_id, Id::new(1))
+            channel_id,
+            ..message
         }],
         ..MessageHistoryLoadedFixture::new()
     }));
