@@ -97,6 +97,7 @@ pub struct DiscordClient {
     /// presence debounce loop re-broadcasts. Lives on the client (not inside
     /// the RPC server) so the app layer can also trigger a broadcast.
     rich_presence_dirty: Arc<Notify>,
+    voice_export_enabled: watch::Sender<bool>,
     /// `application_id -> (external image url -> media-proxy path)`, so a url is
     /// registered with Discord only once.
     external_assets: Arc<Mutex<HashMap<String, HashMap<String, String>>>>,
@@ -179,6 +180,7 @@ impl DiscordClient {
             push_to_talk: Arc::new(RwLock::new(false)),
             rich_presence_selection: Arc::new(RwLock::new(RichPresenceSelection::Automatic)),
             rich_presence_dirty: Arc::new(Notify::new()),
+            voice_export_enabled: watch::channel(true).0,
             external_assets: Arc::new(Mutex::new(HashMap::new())),
             gateway_session_id: Arc::new(RwLock::new(None)),
             application_command_requests,
@@ -214,6 +216,16 @@ impl DiscordClient {
 
     pub fn subscribe_snapshots(&self) -> watch::Receiver<SnapshotRevision> {
         self.snapshots_tx.subscribe()
+    }
+
+    pub(crate) fn set_voice_export_enabled(&self, enabled: bool) {
+        self.voice_export_enabled.send_if_modified(|current| {
+            if *current == enabled {
+                return false;
+            }
+            *current = enabled;
+            true
+        });
     }
 
     /// Test-only access to the gateway command stream, so sibling modules (for
@@ -308,14 +320,17 @@ impl DiscordClient {
         }
 
         let presence_client = self.clone();
+        let export_client = self.clone();
+        let export_enabled = self.voice_export_enabled.subscribe();
         tokio::spawn(async move {
-            // Selection changes still need a coordinator when IPC is disabled.
-            // Owning the task here also stops it when this session ends.
-            let mut presence_tasks = tokio::task::JoinSet::new();
-            presence_tasks.spawn(crate::discord::rpc::run_rich_presence(
+            // These services belong to the signed-in session, including when
+            // the gateway task is cancelled instead of returning normally.
+            let mut session_tasks = tokio::task::JoinSet::new();
+            session_tasks.spawn(crate::discord::rpc::run_rich_presence(
                 presence_client,
                 serve_rich_presence,
             ));
+            session_tasks.spawn(super::voice_export::run(export_client, export_enabled));
             let runtime = GatewayRuntime {
                 fingerprint,
                 state,
@@ -323,7 +338,7 @@ impl DiscordClient {
                 event_publisher,
             };
             run_gateway(token, gateway_commands, runtime).await;
-            presence_tasks.shutdown().await;
+            session_tasks.shutdown().await;
         })
     }
 

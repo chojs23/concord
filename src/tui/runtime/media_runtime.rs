@@ -415,6 +415,8 @@ impl DashboardMediaRuntime {
             ui::avatar_gutter_width(state.show_avatars()),
         );
         admit_image_preview_targets(&mut self.image_targets);
+        self.image_previews
+            .apply_decode_fallbacks(&mut self.image_targets);
         self.avatar_targets = visible_avatar_targets_from_plan(state, layout, plan);
         self.emoji_targets = visible_emoji_image_targets(state);
     }
@@ -859,7 +861,7 @@ fn build_local_upload_preview_protocol(
     attachment: &MessageAttachmentUpload,
 ) -> std::result::Result<Protocol, String> {
     let bytes = local_upload_preview_bytes(attachment)?;
-    let image = decode_image_bytes(&bytes)?;
+    let image = decode_image_bytes(&bytes).map_err(|error| error.to_string())?;
     clipped_media_protocol(
         picker,
         &image,
@@ -1215,6 +1217,151 @@ mod tests {
     use image::{DynamicImage, ImageFormat};
     use ratatui::{Terminal, backend::TestBackend};
     use std::io::Cursor;
+
+    #[test]
+    fn attachment_viewer_recovers_decode_limits_with_a_labeled_scaled_preview() {
+        use crate::discord::test_builders::{
+            GuildCreateFixture, MessageCreateFixture, empty_latest_message_history_loaded_event,
+            guild_create_event, guild_message_create_fixture, message_create_event,
+        };
+        use crate::discord::{AttachmentInfo, ChannelInfo};
+        use crate::tui::state::FocusPane;
+
+        for (proxy, dimensions, message) in [
+            (
+                "https://media.discordapp.net/attachments/1/2/photo.png",
+                (Some(12000), Some(9000)),
+                "decode failed: Memory limit exceeded",
+            ),
+            (
+                "https://media.discordapp.net/ephemeral-attachments/1/2/photo.png",
+                (Some(12000), Some(9000)),
+                "decode failed: Image size exceeds limit",
+            ),
+            (
+                "https://media.discordapp.net/external/hash/photo.png",
+                (None, None),
+                "decode failed: Memory limit exceeded",
+            ),
+            (
+                "https://images-ext-1.discordapp.net/external/hash/photo.png",
+                (None, None),
+                "decode failed: Image size exceeds limit",
+            ),
+        ] {
+            let mut state = DashboardState::default();
+            let guild_id = Id::new(1);
+            let channel_id = Id::new(2);
+            state.push_event(guild_create_event(GuildCreateFixture {
+                channels: vec![ChannelInfo {
+                    guild_id: Some(guild_id),
+                    name: "general".to_owned(),
+                    ..ChannelInfo::test(channel_id, "GuildText")
+                }],
+                ..GuildCreateFixture::new(guild_id)
+            }));
+            state.confirm_selected_guild();
+            state.confirm_selected_channel();
+            let original_url = "https://cdn.discordapp.com/attachments/1/2/photo.png";
+            state.push_event(message_create_event(MessageCreateFixture {
+                channel_id,
+                content: Some("photo".to_owned()),
+                attachments: vec![AttachmentInfo {
+                    url: original_url.to_owned(),
+                    proxy_url: format!("{proxy}?ex=abc&is=def&hm=123&width=9000&height=9000"),
+                    content_type: Some("image/png".to_owned()),
+                    width: dimensions.0,
+                    height: dimensions.1,
+                    ..AttachmentInfo::test(Id::new(1), "photo.png")
+                }],
+                ..guild_message_create_fixture()
+            }));
+            state.push_event(empty_latest_message_history_loaded_event(channel_id));
+            state.focus_pane(FocusPane::Messages);
+            assert!(state.open_attachment_viewer_for_selected_message());
+
+            let mut runtime = DashboardMediaRuntime::with_picker(Some(Picker::halfblocks()));
+            let area = Rect::new(0, 0, 120, 40);
+            runtime.prepare_frame(&mut state, area);
+            let original_targets = runtime.image_targets.clone();
+            assert!(!original_targets[0].scaled);
+            assert!(matches!(
+                preview_commands(&mut runtime, &original_targets).as_slice(),
+                [AppCommand::LoadAttachmentPreview { url }] if url == original_url
+            ));
+            start_source_decode(&mut runtime, original_url);
+            runtime.store_media_decode(MediaImageDecodeResult {
+                url: original_url.to_owned(),
+                result: Err(MediaWorkError::DecodeLimit(message.to_owned())),
+            });
+
+            runtime.prepare_frame(&mut state, area);
+            let scaled_targets = runtime.image_targets.clone();
+            let scaled = &scaled_targets[0];
+            assert!(scaled.viewer && scaled.scaled);
+            assert!(scaled.fallback_url.is_none());
+            let scaled_url = url::Url::parse(&scaled.url).expect("scaled URL is valid");
+            let params = scaled_url
+                .query_pairs()
+                .collect::<std::collections::HashMap<_, _>>();
+            for (key, value) in [
+                ("ex", "abc"),
+                ("is", "def"),
+                ("hm", "123"),
+                ("format", "webp"),
+            ] {
+                assert_eq!(params.get(key).map(|value| value.as_ref()), Some(value));
+            }
+            for dimension in ["width", "height"] {
+                let pixels = params[dimension].parse::<u32>().expect("numeric dimension");
+                assert!((1..=1000).contains(&pixels));
+            }
+            assert!(matches!(
+                preview_commands(&mut runtime, &scaled_targets).as_slice(),
+                [AppCommand::LoadAttachmentPreview { url }] if url == &scaled.url
+            ));
+
+            runtime.prepare_frame(&mut state, area);
+            assert!(preview_commands(&mut runtime, &scaled_targets).is_empty());
+            start_source_decode(&mut runtime, &scaled.url);
+            finish_source_decode(&mut runtime, &scaled.url);
+            runtime.prepare_frame(&mut state, area);
+            prepare_preview_protocols(&mut runtime, &scaled_targets);
+
+            let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
+                .expect("test terminal initializes");
+            terminal
+                .draw(|frame| {
+                    draw_dashboard_frame(frame, &mut state, &runtime);
+                })
+                .expect("scaled preview renders");
+            let rendered = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(rendered.contains("[Scaled preview]"), "{rendered}");
+            assert_eq!(
+                state
+                    .selected_attachment_viewer_item()
+                    .expect("viewer stays open")
+                    .url
+                    .as_deref(),
+                Some(original_url)
+            );
+
+            runtime.forget_failed_media();
+            runtime.prepare_frame(&mut state, area);
+            let refreshed_targets = runtime.image_targets.clone();
+            assert!(!refreshed_targets[0].scaled);
+            assert!(matches!(
+                preview_commands(&mut runtime, &refreshed_targets).as_slice(),
+                [AppCommand::LoadAttachmentPreview { url }] if url == original_url
+            ));
+        }
+    }
 
     #[test]
     fn scrolling_loaded_previews_reuses_sources_and_keeps_draw_passes_read_only() {
@@ -1872,6 +2019,8 @@ mod tests {
             show_play_marker: false,
             message_id: Id::<MessageMarker>::new(1),
             url: "https://cdn.discordapp.com/image.png".to_owned(),
+            fallback_url: None,
+            scaled: false,
             filename: "image.png".to_owned(),
         }
     }

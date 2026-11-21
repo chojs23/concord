@@ -626,7 +626,7 @@ pub(super) async fn run_dashboard(
         dirty |= command_scheduler
             .schedule_state_driven_commands(&mut state, &client, &commands)
             .await;
-        events::save_options_if_needed(&mut state);
+        events::save_options_if_needed(&mut state, &client);
     }
 
     #[cfg(feature = "voice-playback")]

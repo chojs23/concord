@@ -1,3 +1,4 @@
+use crate::tui::icons::Icon;
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -28,13 +29,13 @@ pub(in crate::tui::ui) fn render_header(frame: &mut Frame, area: Rect, state: &D
         let (self_mute, self_deaf) = state.current_voice_self_status();
         if self_mute {
             spans.push(Span::styled(
-                "🔇 ",
+                format!("{} ", Icon::VoiceMuted.glyph()),
                 theme.style(theme::HighlightGroup::VoiceDisabled),
             ));
         }
         if self_deaf {
             spans.push(Span::styled(
-                "🎧 ",
+                format!("{} ", Icon::VoiceDeafened.glyph()),
                 theme.style(theme::HighlightGroup::VoiceDisabled),
             ));
         }

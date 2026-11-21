@@ -84,6 +84,51 @@ fn custom_emoji_reactions_use_name_fallback_when_disabled() {
 }
 
 #[test]
+fn hidden_message_reactions_preserve_inline_custom_emoji_images() {
+    let state = DashboardState::new_with_display_options(DisplayOptions {
+        show_reaction_emoji: false,
+        ..DisplayOptions::default()
+    });
+    let mut message = message_with_content(Some("hello <:wave:42>".to_owned()));
+    message.reactions = vec![
+        ReactionInfo::test(ReactionEmoji::Unicode("👍".to_owned())),
+        ReactionInfo::test(ReactionEmoji::Custom {
+            id: Id::new(43),
+            name: Some("party".to_owned()),
+            animated: false,
+        }),
+    ];
+    let loaded_urls = vec![
+        "https://cdn.discordapp.com/emojis/42.png".to_owned(),
+        "https://cdn.discordapp.com/emojis/43.png".to_owned(),
+    ];
+
+    let (content, reactions) =
+        crate::tui::message::format::format_message_content_sections_with_loaded_custom_emoji_urls(
+            &message,
+            &state,
+            200,
+            &loaded_urls,
+        );
+    assert_eq!(line_texts(&content), vec!["hello   "]);
+    assert_eq!(content[0].image_slots.len(), 1);
+    assert_eq!(content[0].image_slots[0].url, loaded_urls[0]);
+    assert!(reactions.is_empty());
+
+    let lines = message_viewport_lines(
+        &[&message],
+        None,
+        &state,
+        super::default_message_viewport_layout(),
+        &loaded_urls,
+    );
+    let text = line_texts_from_ratatui(&lines).join("\n");
+    assert!(text.contains("hello"));
+    assert!(!text.contains("👍"));
+    assert!(!text.contains("party"));
+}
+
+#[test]
 fn loaded_custom_emoji_message_uses_image_width() {
     let message = message_with_content(Some("<:long_custom:42>text".to_owned()));
     let loaded_urls = vec!["https://cdn.discordapp.com/emojis/42.png".to_owned()];
@@ -392,6 +437,7 @@ fn loading_image_preview_at_message_offset(preview_y_offset_rows: usize) -> Imag
         preview_height: 4,
         visible_preview_height: 4,
         accent_color: None,
+        scaled: false,
         state: ImagePreviewState::Loading {
             filename: "cat.png".to_owned(),
         },

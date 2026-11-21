@@ -34,7 +34,12 @@ pub(super) fn format_message_kind_line(message_kind: MessageKind) -> Option<Mess
 
     let label = match message_kind.code() {
         7 => "joined the server",
-        19 => "↳ Reply",
+        19 => {
+            return Some(MessageContentLine::dim(format!(
+                "{} Reply",
+                crate::tui::icons::Icon::Reply.glyph()
+            )));
+        }
         _ => message_kind
             .known_label()
             .unwrap_or("<unsupported message type>"),
@@ -147,15 +152,9 @@ fn format_thread_created_lines(
     let card_width = thread_card_width_in_message(width);
     if let Some(item) = state.thread_card_item_for_message(message) {
         lines.extend(
-            thread_card_lines(
-                &item,
-                false,
-                card_width,
-                state.show_custom_emoji(),
-                state.show_images(),
-            )
-            .into_iter()
-            .map(MessageContentLine::from_line),
+            thread_card_lines(&item, false, card_width, state)
+                .into_iter()
+                .map(MessageContentLine::from_line),
         );
     }
     lines
@@ -240,7 +239,10 @@ pub(super) fn format_forwarded_snapshot(
     } else {
         format_attachment_summary_lines(&snapshot.attachments)
     };
-    let mut lines = vec![MessageContentLine::plain("↱ Forwarded".to_owned())];
+    let mut lines = vec![MessageContentLine::plain(format!(
+        "{} Forwarded",
+        crate::tui::icons::Icon::Forward.glyph()
+    ))];
     if !is_components_v2
         && let Some(content) =
             display_text_with_stickers(snapshot.content.as_deref(), &snapshot.stickers)

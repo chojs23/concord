@@ -1,6 +1,6 @@
 [package]
 name = "concord"
-version = "2.7.0"
+version = "2.7.1"
 edition = "2024"
 rust-version = "1.99"
 description = "A terminal user interface client for Discord"
@@ -87,7 +87,7 @@ fast_image_resize = { version = "6.1.0", features = [
   "only_u8x4",
 ], optional = true }
 yuv = { version = "0.8.16", features = ["fast_mode"], optional = true }
-thorvg = { version = "0.5.1", default-features = false, features = [
+thorvg = { version = "0.6.0", default-features = false, features = [
   "vendored",
   "lottie",
 ] }
@@ -119,7 +119,6 @@ voice-playback = [
   "dep:nnnoiseless",
   "dep:global-hotkey",
   "dep:ashpd",
-  "dep:windows-sys",
   "dep:x11rb",
   "dep:xkeysym",
 ]
@@ -201,9 +200,11 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_Security_Authorization",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
-], optional = true }
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = { version = "0.6.2", default-features = false, features = [
@@ -276,7 +277,7 @@ objc2-video-toolbox = { version = "0.3.2", default-features = false, features = 
 # Keep bindgen on the ARM Linux ABI until the upstream fix is released.
 # https://github.com/goyox86/thorvg-rs/pull/8
 [patch.crates-io]
-thorvg-sys = { git = "https://github.com/chojs23/thorvg-rs.git", rev = "2548bdbb1487cf473d2c1fe580891b57d973f0dc" }
+thorvg-sys = { git = "https://github.com/chojs23/thorvg-rs.git", rev = "c1d75dcdbc8cf4c76c1d7db76f3f37f3fb2193b6" }
 
 [profile.dist]
 inherits = "release"

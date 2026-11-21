@@ -11,7 +11,11 @@ pub(in crate::tui) fn format_message_reaction_lines(
     reactions: &[ReactionInfo],
     width: usize,
     show_custom_emoji: bool,
+    show_reaction_emoji: bool,
 ) -> Vec<MessageContentLine> {
+    if !show_reaction_emoji {
+        return Vec::new();
+    }
     let layout =
         lay_out_reaction_chips_with_custom_emoji_images(reactions, width, show_custom_emoji);
     let ReactionLayout {

@@ -165,7 +165,11 @@ fn format_poll_answer(
     answer: &crate::discord::PollAnswerInfo,
     total_votes: u64,
 ) -> String {
-    let marker = if answer.me_voted { "◉" } else { "◯" };
+    let marker = if answer.me_voted {
+        crate::tui::icons::Icon::PollSelected.glyph()
+    } else {
+        crate::tui::icons::Icon::PollUnselected.glyph()
+    };
     let results = answer.vote_count.map(|count| {
         let percent = count
             .saturating_mul(100)

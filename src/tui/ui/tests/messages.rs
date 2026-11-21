@@ -345,7 +345,7 @@ fn attachment_summary_replaces_or_follows_the_message_body() {
         (
             "forwarded, no body",
             message_with_forwarded_snapshot(forwarded_snapshot(Some(""), vec![image_attachment()])),
-            "↱ Forwarded │ [image: cat.png] 640x480",
+            "\u{f0496} Forwarded │ [image: cat.png] 640x480",
         ),
         (
             "forwarded, with body",
@@ -353,7 +353,7 @@ fn attachment_summary_replaces_or_follows_the_message_body() {
                 Some("hello"),
                 vec![image_attachment()],
             )),
-            "↱ Forwarded │ hello │ [image: cat.png] 640x480",
+            "\u{f0496} Forwarded │ hello │ [image: cat.png] 640x480",
         ),
     ];
 
@@ -1886,11 +1886,7 @@ fn thread_created_message_uses_shared_thread_card_layout() {
         .expect("kind-18 message yields a thread card item");
     let card_width = crate::tui::ui::thread_card::thread_card_width_in_message(200);
     let expected_card = line_texts_from_ratatui(&crate::tui::ui::thread_card::thread_card_lines(
-        &item,
-        false,
-        card_width,
-        state.show_custom_emoji(),
-        state.show_images(),
+        &item, false, card_width, &state,
     ));
 
     let lines = format_message_content_lines(&message, &state, 200);
@@ -2063,7 +2059,10 @@ fn forwarded_snapshot_without_source_channel_keeps_raw_mentions() {
 
     let lines = format_message_content_lines(&message, &state, 200);
 
-    assert_eq!(line_texts(&lines), vec!["↱ Forwarded", "│ hello <@10>"]);
+    assert_eq!(
+        line_texts(&lines),
+        vec!["\u{f0496} Forwarded", "│ hello <@10>"]
+    );
 }
 
 #[test]
@@ -2086,7 +2085,7 @@ fn forwarded_snapshot_content_uses_source_channel_guild_for_mentions() {
 
     assert_eq!(
         line_texts(&lines),
-        vec!["↱ Forwarded", "│ hello @source", "│ #source"]
+        vec!["\u{f0496} Forwarded", "│ hello @source", "│ #source"]
     );
 }
 
@@ -2098,7 +2097,10 @@ fn forwarded_snapshot_content_renders_mentions_from_snapshot_metadata() {
 
     let lines = format_message_content_lines(&message, &DashboardState::new(), 200);
 
-    assert_eq!(line_texts(&lines), vec!["↱ Forwarded", "│ hello @alice"]);
+    assert_eq!(
+        line_texts(&lines),
+        vec!["\u{f0496} Forwarded", "│ hello @alice"]
+    );
 }
 
 #[test]
@@ -2477,7 +2479,7 @@ fn new_messages_notice_line_centers_count_within_full_width() {
         .collect::<String>();
 
     assert_eq!(text.width(), 30);
-    assert!(text.contains("↓ 3 new messages"));
+    assert!(text.contains("\u{f0045} 3 new messages"));
     assert_eq!(
         line.spans[0].style.fg,
         theme::current()

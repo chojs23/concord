@@ -1,3 +1,4 @@
+use crate::tui::icons::Icon;
 use std::collections::HashSet;
 
 use crate::discord::{ChannelState, ChannelUnreadState};
@@ -516,7 +517,7 @@ fn channel_switcher_match_score(
         return fuzzy_name_match_score(&display.search_text, query);
     }
     if let Some(prefix) = channel_switcher_query_label_prefix(query)
-        && !display.label.starts_with(prefix)
+        && !display.label.starts_with(prefix.glyph())
     {
         return None;
     }
@@ -553,42 +554,47 @@ fn filter_channel_switcher_items(
 }
 
 fn channel_switcher_search_channel_name(channel_label: &str) -> &str {
-    // Match known icon tokens rather than splitting on the first space, since
-    // thread and forum names can themselves contain spaces.
-    for prefix in CHANNEL_SWITCHER_ICON_PREFIXES {
-        if let Some(rest) = channel_label.strip_prefix(prefix) {
+    // Strip the resolved display icon as a whole token. Names may contain spaces.
+    for icon in [
+        Icon::TextChannel,
+        Icon::DirectMessage,
+        Icon::ThreadList,
+        Icon::Forum,
+    ] {
+        if let Some(rest) = channel_label
+            .strip_prefix(icon.glyph())
+            .and_then(|rest| rest.strip_prefix(' '))
+        {
             return rest;
         }
     }
-    // A typed query has no trailing space (e.g. "#general", "@alice").
+    // Typed query syntax is independent of the selected display palette.
     channel_label
         .strip_prefix('#')
         .or_else(|| channel_label.strip_prefix('@'))
         .unwrap_or(channel_label)
 }
 
-fn channel_switcher_query_label_prefix(query: &str) -> Option<char> {
-    query
-        .chars()
-        .next()
-        .filter(|prefix| matches!(prefix, '#' | '@'))
+fn channel_switcher_query_label_prefix(query: &str) -> Option<Icon> {
+    match query.chars().next()? {
+        '#' => Some(Icon::TextChannel),
+        '@' => Some(Icon::DirectMessage),
+        _ => None,
+    }
 }
 
-/// Must stay in sync with the prefixes emitted by
-/// `channel_switcher_channel_label` so the search helper can strip them back off.
-const CHANNEL_SWITCHER_ICON_PREFIXES: [&str; 4] = ["# ", "@ ", "🧵 ", "📝 "];
-
 fn channel_switcher_channel_label(channel: &ChannelState) -> String {
-    if is_direct_message_channel(channel) {
+    let icon = if is_direct_message_channel(channel) {
         match channel.kind.as_str() {
-            "dm" | "Private" => format!("@ {}", channel.name),
-            _ => channel.name.clone(),
+            "dm" | "Private" => Icon::DirectMessage,
+            _ => return channel.name.clone(),
         }
     } else if channel.is_thread() {
-        format!("🧵 {}", channel.name)
+        Icon::ThreadList
     } else if channel.is_forum() {
-        format!("📝 {}", channel.name)
+        Icon::Forum
     } else {
-        format!("# {}", channel.name)
-    }
+        Icon::TextChannel
+    };
+    format!("{} {}", icon.glyph(), channel.name)
 }

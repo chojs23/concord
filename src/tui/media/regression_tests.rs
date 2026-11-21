@@ -168,7 +168,7 @@ fn avatar_refresh_retries_failed_layout_without_using_another_layout() {
         cache.store_decoded(
             cache_url.clone(),
             1,
-            decode_media_image_bytes(&encoded_png()).map_err(MediaWorkError::Failed),
+            decode_media_image_bytes(&encoded_png()),
         );
 
         if has_full_layout_protocol {
@@ -255,11 +255,7 @@ fn emoji_refresh_retries_each_failed_size_without_downloading() {
                 last_used: 1,
             },
         );
-        cache.store_decoded(
-            url.clone(),
-            1,
-            decode_media_image_bytes(&encoded_png()).map_err(MediaWorkError::Failed),
-        );
+        cache.store_decoded(url.clone(), 1, decode_media_image_bytes(&encoded_png()));
 
         for attempt in 0..2 {
             cache.prepare(std::slice::from_ref(&target));

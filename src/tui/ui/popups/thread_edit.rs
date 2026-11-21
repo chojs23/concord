@@ -165,7 +165,8 @@ fn build_edit_layout(view: &ThreadEditView, width: usize) -> EditLayout {
             "Tags",
             view.requires_tag,
             &forum_tag_summary(&view.tags, width),
-            (!view.tags.is_empty()).then_some("Enter ›"),
+            (!view.tags.is_empty())
+                .then_some(format!("Enter {}", Icon::ChevronRight.glyph()).as_str()),
             view.active_field == ThreadEditField::Tags,
             !view.tags.is_empty(),
             width,
@@ -383,8 +384,12 @@ pub(super) fn forum_tag_line(
     thumbnail_ready: bool,
     dim_unselectable: bool,
 ) -> Line<'static> {
-    let marker = if tag.active { "▸" } else { " " };
-    let checkbox = if tag.selected { "[x]" } else { "[ ]" };
+    let marker = selection_marker(tag.active).content;
+    let checkbox = if tag.selected {
+        Icon::Checked.glyph()
+    } else {
+        Icon::Unchecked.glyph()
+    };
     let emoji = tag_emoji_text(
         tag.unicode_emoji.as_deref(),
         tag.custom_emoji_url.as_deref(),
@@ -399,7 +404,7 @@ pub(super) fn forum_tag_line(
         Style::default()
     };
     Line::from(Span::styled(
-        truncate_display_width(&format!("{marker} {checkbox}{emoji} {}", tag.name), width),
+        truncate_display_width(&format!("{marker}{checkbox}{emoji} {}", tag.name), width),
         style,
     ))
 }
@@ -430,9 +435,9 @@ pub(super) fn tag_emoji_text(
 }
 
 /// Column of the reserved custom-emoji gap within a picker row, measured from
-/// the row start: marker + space + `[x]` + space.
+/// the row start: selection prefix + checkbox + space.
 fn tag_line_emoji_column() -> u16 {
-    "  [x] ".width() as u16
+    (selection_marker_width() + Icon::Checked.glyph().width() + 1) as u16
 }
 
 pub(super) fn ready_emoji_urls(emoji_images: &[EmojiImage<'_>]) -> Vec<String> {
@@ -487,4 +492,45 @@ fn cursor_column(value: &str, cursor: usize) -> usize {
         end -= 1;
     }
     value[..end].width()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tag_picker_respects_custom_selection_and_emoji_columns_in_each_palette() {
+        for icon_set in [
+            crate::config::IconSet::Unicode,
+            crate::config::IconSet::Nerd,
+        ] {
+            let mut options = crate::config::ThemeOptions::default();
+            options.set_icon_set(icon_set);
+            options.set_selection_marker("👉 ".to_owned());
+            let custom = theme::Theme::from_options(&options, &mut Vec::new());
+            theme::with_test_theme(custom, || {
+                let mut tag = ForumPostComposerTagView {
+                    name: "bug".to_owned(),
+                    unicode_emoji: None,
+                    custom_emoji_url: Some("https://example.com/emoji.png".to_owned()),
+                    custom_emoji_label: Some(":bug:".to_owned()),
+                    selected: true,
+                    active: true,
+                    selectable: true,
+                };
+                let checkbox = Icon::Checked.glyph();
+                let line = forum_tag_line(&tag, 40, true, false).to_string();
+                assert!(line.starts_with(&format!("👉 {checkbox} ")));
+                assert_eq!(
+                    tag_line_emoji_column(),
+                    format!("👉 {checkbox} ").width() as u16
+                );
+
+                tag.active = false;
+                let inactive = forum_tag_line(&tag, 40, true, false).to_string();
+                assert!(inactive.starts_with(&format!("   {checkbox} ")));
+                assert_eq!(line.width(), inactive.width());
+            });
+        }
+    }
 }

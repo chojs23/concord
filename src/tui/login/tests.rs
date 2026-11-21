@@ -152,14 +152,14 @@ fn password_input_accepts_paste_and_renders_field_states() {
             (0..buffer.area.width)
                 .map(|column| buffer[(column, *row)].symbol())
                 .collect::<String>()
-                .contains("> Password")
+                .contains("\u{f0142} Password")
         })
         .expect("active password field should render");
     let marker_column = (0..buffer.area.width)
-        .find(|column| buffer[(*column, password_row)].symbol() == ">")
+        .find(|column| buffer[(*column, password_row)].symbol() == "\u{f0142}")
         .expect("active password marker should render");
     let active_value = "•".repeat(state.password.password.chars().count());
-    let active_width = format!("> Password     {active_value}").width() as u16;
+    let active_width = format!("\u{f0142} Password     {active_value}").width() as u16;
     for column in marker_column..marker_column.saturating_add(active_width) {
         assert_eq!(
             buffer[(column, password_row)].fg,

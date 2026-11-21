@@ -106,6 +106,9 @@ development with C++, CMake, and NASM; see [Build from source](#build-from-sourc
 
 ### Runtime requirements
 
+The default icons require a Nerd Font. Without one, use Unicode icons by setting
+`icon_set = "unicode"` under `[ui]` in `theme.toml`.
+
 macOS 13 or later is required. Linux release builds need these packages:
 
 ```sh
@@ -198,6 +201,7 @@ storage is unavailable. See the Security section below for details.
 - Voice calls with push-to-talk
 - Noise suppression
 - Watch and broadcast screen shares
+- [Export voice state to local overlays](docs/voice-state-export.md)
 
 ### Guilds & Channels
 
@@ -416,6 +420,10 @@ media_playback = false
 image_preview_quality = "balanced"
 
 # Attachment viewer quality: efficient, balanced, high, or original.
+# Decoding is limited to 8192 pixels per dimension and 128 MiB of allocations.
+# On a decode-limit error, the viewer tries a scaled Discord proxy image when
+# available and labels it as a scaled preview. Opening or downloading still
+# uses the original file.
 attachment_viewer_quality = "original"
 
 # Which animated GIF and WebP previews keep playing: always, selected, or never.
@@ -427,6 +435,9 @@ animate_previews = "always"
 # Render custom Discord emoji as images when possible.
 show_custom_emoji = true
 
+# Render reaction emojis
+show_reaction_emoji = true
+
 # Crop avatars into circles instead of showing square images.
 circular_avatars = false
 
@@ -436,6 +447,9 @@ hour_format_24 = true
 [composer]
 # Send custom emoji your account cannot use directly as image links.
 emojis_as_links = false
+
+# Broadcast your typing status in channels while composing.
+typing_indicator = true
 
 [safety]
 # Enable Concord's extra account-risk safeguards for spam/message-request DMs,
@@ -540,6 +554,9 @@ microphone_volume = 100
 
 # Received voice playback volume percentage, from 0 to 200.
 voice_output_volume = 100
+
+# Share voice channel state with local overlays. No audio or tokens are exported.
+export_state = true
 ```
 
 macOS may require Input Monitoring permission for Concord or the terminal that
@@ -737,7 +754,7 @@ ToggleReplyPing = "<A-p>"
 ### Theme
 
 See [Theme options](./docs/theme-options.md) for available groups, values,
-border shapes, and selection marker settings.
+border shapes, icon sets, and selection marker settings.
 
 <details>
 <summary>Default theme config</summary>
@@ -755,6 +772,10 @@ border shapes, and selection marker settings.
 # clears that color channel after inheritance. A linked group inherits fields
 # it does not set. Use `link = "none"` to detach a built-in link.
 
+# Icons: nerd or unicode.
+[ui]
+icon_set = "nerd"
+
 # Border shapes are UI geometry rather than Highlight Group styles. An omitted
 # surface uses `default`. These values reproduce Concord's built-in layout.
 [ui.border]
@@ -765,8 +786,9 @@ forum = "rounded"
 
 # Selection markers are UI glyphs. This value is shared by list panes and
 # pickers, while `highlight.SelectionMarker` controls its style.
+# Leave this commented to use the selected icon set's default marker.
 [ui.indicator]
-selection = "▸ "
+# selection = "▸ "
 
 [highlight.Normal]
 foreground = "terminal_default"

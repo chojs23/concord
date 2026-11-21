@@ -26,6 +26,7 @@ pub struct DisplayOptions {
     pub image_protocol: ImageProtocolPreference,
     pub animate_previews: AnimatePreviews,
     pub show_custom_emoji: bool,
+    pub show_reaction_emoji: bool,
     pub circular_avatars: bool,
     pub hour_format_24: bool,
 }
@@ -35,6 +36,7 @@ pub struct DisplayOptions {
 pub struct ComposerOptions {
     pub emojis_as_links: bool,
     pub ping_on_reply: bool,
+    pub typing_indicator: bool,
 }
 
 impl Default for ComposerOptions {
@@ -42,6 +44,7 @@ impl Default for ComposerOptions {
         Self {
             emojis_as_links: false,
             ping_on_reply: true,
+            typing_indicator: true,
         }
     }
 }
@@ -122,6 +125,7 @@ pub struct VoiceOptions {
     pub microphone_sensitivity: MicrophoneSensitivityDb,
     pub microphone_volume: VoiceVolumePercent,
     pub voice_output_volume: VoiceVolumePercent,
+    pub export_state: bool,
 }
 
 impl Default for VoiceOptions {
@@ -139,6 +143,7 @@ impl Default for VoiceOptions {
             microphone_sensitivity: MicrophoneSensitivityDb::default(),
             microphone_volume: VoiceVolumePercent::default(),
             voice_output_volume: VoiceVolumePercent::default(),
+            export_state: true,
         }
     }
 }
@@ -362,9 +367,35 @@ pub struct ThemeOptions {
     highlights: BTreeMap<HighlightGroup, HighlightDefinitionOptions>,
     border_shapes: BorderShapeOptions,
     selection_marker: Option<String>,
+    icon_set: IconSet,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum IconSet {
+    Unicode,
+    #[default]
+    Nerd,
+}
+
+impl IconSet {
+    pub(super) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "unicode" => Some(Self::Unicode),
+            "nerd" => Some(Self::Nerd),
+            _ => None,
+        }
+    }
 }
 
 impl ThemeOptions {
+    pub(crate) const fn icon_set(&self) -> IconSet {
+        self.icon_set
+    }
+
+    pub(crate) fn set_icon_set(&mut self, icon_set: IconSet) {
+        self.icon_set = icon_set;
+    }
+
     pub(crate) fn highlights(&self) -> &BTreeMap<HighlightGroup, HighlightDefinitionOptions> {
         &self.highlights
     }
@@ -803,6 +834,7 @@ impl Default for DisplayOptions {
             animate_previews: AnimatePreviews::default(),
             image_protocol: ImageProtocolPreference::default(),
             show_custom_emoji: true,
+            show_reaction_emoji: true,
             circular_avatars: false,
             hour_format_24: true,
         }
@@ -824,5 +856,9 @@ impl DisplayOptions {
 
     pub fn custom_emoji_visible(self) -> bool {
         !self.disable_image_preview && self.show_custom_emoji
+    }
+
+    pub fn reaction_emoji_visible(self) -> bool {
+        self.show_reaction_emoji
     }
 }

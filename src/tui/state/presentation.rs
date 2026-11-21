@@ -1,3 +1,4 @@
+use crate::tui::icons::Icon;
 use ratatui::style::{Color, Style};
 
 use crate::discord::{
@@ -149,10 +150,16 @@ pub(super) fn member_status_rank(status: PresenceStatus) -> u8 {
 
 pub fn presence_marker(status: PresenceStatus) -> char {
     match status {
-        PresenceStatus::OnlineMobile => '▮',
-        PresenceStatus::Online | PresenceStatus::Idle | PresenceStatus::DoNotDisturb => '●',
-        PresenceStatus::Offline | PresenceStatus::Unknown => '○',
+        PresenceStatus::OnlineMobile => Icon::PresenceMobile,
+        PresenceStatus::Online => Icon::PresenceOnline,
+        PresenceStatus::Idle => Icon::PresenceIdle,
+        PresenceStatus::DoNotDisturb => Icon::PresenceDnd,
+        PresenceStatus::Offline | PresenceStatus::Unknown => Icon::PresenceOffline,
     }
+    .glyph()
+    .chars()
+    .next()
+    .expect("presence icons contain one glyph")
 }
 
 pub(super) fn sort_channels(channels: &mut [&ChannelState]) {
@@ -173,16 +180,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn presence_marker_fills_the_circle_only_for_online_like_statuses() {
-        for (status, marker) in [
-            (PresenceStatus::Offline, '○'),
-            (PresenceStatus::Unknown, '○'),
-            (PresenceStatus::Online, '●'),
-            (PresenceStatus::OnlineMobile, '▮'),
-            (PresenceStatus::Idle, '●'),
-            (PresenceStatus::DoNotDisturb, '●'),
-        ] {
-            assert_eq!(presence_marker(status), marker, "{status:?}");
-        }
+    fn nerd_presence_markers_distinguish_each_online_state() {
+        let mut options = crate::config::ThemeOptions::default();
+        options.set_icon_set(crate::config::IconSet::Nerd);
+        let custom = theme::Theme::from_options(&options, &mut Vec::new());
+        theme::with_test_theme(custom, || {
+            for (status, expected) in [
+                (PresenceStatus::Online, '\u{f111}'),
+                (PresenceStatus::OnlineMobile, '\u{f10b}'),
+                (PresenceStatus::Idle, '\u{f0594}'),
+                (PresenceStatus::DoNotDisturb, '\u{f0376}'),
+                (PresenceStatus::Offline, '\u{f10c}'),
+                (PresenceStatus::Unknown, '\u{f10c}'),
+            ] {
+                assert_eq!(presence_marker(status), expected, "{status:?}");
+            }
+        });
+    }
+
+    #[test]
+    fn unicode_presence_markers_keep_the_original_symbols() {
+        let mut options = crate::config::ThemeOptions::default();
+        options.set_icon_set(crate::config::IconSet::Unicode);
+        let custom = theme::Theme::from_options(&options, &mut Vec::new());
+        theme::with_test_theme(custom, || {
+            for (status, marker) in [
+                (PresenceStatus::Offline, '○'),
+                (PresenceStatus::Unknown, '○'),
+                (PresenceStatus::Online, '●'),
+                (PresenceStatus::OnlineMobile, '▮'),
+                (PresenceStatus::Idle, '●'),
+                (PresenceStatus::DoNotDisturb, '●'),
+            ] {
+                assert_eq!(presence_marker(status), marker, "{status:?}");
+            }
+        });
     }
 }

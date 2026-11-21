@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::icons::Icon;
 use crate::tui::ui::emoji_overlay::{EmojiSlot, overlay_emoji_slots};
 
 pub(in crate::tui::ui) fn render_channels(
@@ -108,7 +109,15 @@ pub(in crate::tui::ui) fn render_channels(
             styled_list_item(
                 match entry {
                     ChannelPaneEntry::CategoryHeader { state, collapsed } => {
-                        let arrow = if *collapsed { "▶ " } else { "▼ " };
+                        let arrow = format!(
+                            "{} ",
+                            if *collapsed {
+                                Icon::Collapsed
+                            } else {
+                                Icon::Expanded
+                            }
+                            .glyph()
+                        );
                         let label_width = max_width.saturating_sub(arrow.width());
                         let mut label_style =
                             theme::current().style(theme::HighlightGroup::CategoryHeading);
@@ -134,15 +143,22 @@ pub(in crate::tui::ui) fn render_channels(
                         let branch_prefix = branch.prefix();
                         let dm_prefix_span = dm_presence_dot_span(state);
                         let channel_prefix = channel_prefix(&state.kind);
-                        let prefix_width = dm_prefix_span
-                            .as_ref()
-                            .map_or_else(|| channel_prefix.width(), |span| span.content.width());
                         let voice_participant_count = voice_participant_counts
                             .get(&state.id)
                             .copied()
                             .unwrap_or(0);
                         let populated_voice_channel =
                             state.is_voice() && voice_participant_count > 0;
+                        let prefix_width = dm_prefix_span.as_ref().map_or_else(
+                            || {
+                                if populated_voice_channel {
+                                    Icon::VoiceActive.glyph().width() + 1
+                                } else {
+                                    channel_prefix.width()
+                                }
+                            },
+                            |span| span.content.width(),
+                        );
                         let base_style = active_text_style(is_active, Style::default());
                         let is_muted = dashboard.channel_notification_muted(state.id);
                         let unread = dashboard.sidebar_channel_unread(state.id);
@@ -216,7 +232,7 @@ pub(in crate::tui::ui) fn render_channels(
                             spans.push(prefix_span);
                         } else if populated_voice_channel {
                             spans.push(Span::styled(
-                                "🔊",
+                                Icon::VoiceActive.glyph(),
                                 theme::current().style(theme::HighlightGroup::ChannelTypeMarker),
                             ));
                             spans.push(Span::raw(" "));
@@ -265,11 +281,12 @@ pub(in crate::tui::ui) fn render_channels(
                     } => {
                         let parent_prefix = parent_branch.participant_prefix();
                         let branch_prefix = branch.prefix();
-                        let thread_prefix = if dashboard.is_forum_post_thread(state.id) {
-                            "💬 "
+                        let thread_icon = if dashboard.is_forum_post_thread(state.id) {
+                            Icon::ThreadPost
                         } else {
-                            "🧵 "
+                            Icon::ThreadList
                         };
+                        let thread_prefix = format!("{} ", thread_icon.glyph());
                         let base_style = active_text_style(is_active, Style::default());
                         let is_muted = dashboard.channel_notification_muted(state.id);
                         let unread = dashboard.sidebar_channel_unread(state.id);
@@ -326,7 +343,7 @@ pub(in crate::tui::ui) fn render_channels(
                         } else {
                             theme::current().style(theme::HighlightGroup::Muted)
                         };
-                        let prefix = "  • ";
+                        let prefix = format!("  {} ", Icon::ListItem.glyph());
                         let label_width = max_width
                             .saturating_sub(branch_prefix.width())
                             .saturating_sub(prefix.width());
@@ -426,7 +443,11 @@ fn selected_channel_boost_label(state: &DashboardState) -> Option<String> {
     }
     let (tier, count) = state.selected_guild_boost()?;
     let boosts = if count == 1 { "boost" } else { "boosts" };
-    Some(format!("⚡ Level {} · {count} {boosts}", tier.level()))
+    Some(format!(
+        "{} Level {} · {count} {boosts}",
+        Icon::Boost.glyph(),
+        tier.level()
+    ))
 }
 
 fn voice_participant_label(
@@ -436,13 +457,16 @@ fn voice_participant_label(
 ) -> String {
     let mut indicators = String::new();
     if participant.self_stream {
-        indicators.push_str(" 🔴");
+        indicators.push(' ');
+        indicators.push_str(Icon::StreamLive.glyph());
     }
     if participant.mute || participant.self_mute {
-        indicators.push_str(" 🔇");
+        indicators.push(' ');
+        indicators.push_str(Icon::VoiceMuted.glyph());
     }
     if participant.deaf || participant.self_deaf {
-        indicators.push_str(" 🎧");
+        indicators.push(' ');
+        indicators.push_str(Icon::VoiceDeafened.glyph());
     }
 
     let indicator_width = indicators.width();

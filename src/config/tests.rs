@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use super::{
     AnimatePreviews, AppOptions, BorderShape, BorderSurface, ComposerOptions, CredentialOptions,
-    CredentialStoreMode, DisplayOptions, HighlightGroup, ImagePreviewQualityPreset,
+    CredentialStoreMode, DisplayOptions, HighlightGroup, IconSet, ImagePreviewQualityPreset,
     ImageProtocolPreference, KeymapBinding, KeymapOptions, NotificationOptions, PresenceOptions,
     SafetyOptions, ThemeOptions, TranslationOptions, TranslationProviderKind, UpdateOptions,
     VoiceOptions, load_keymap_options_from_path, load_options_from_path, parse_app_options,
@@ -44,6 +44,7 @@ fn global_disable_overrides_individual_toggles() {
         image_protocol: ImageProtocolPreference::Auto,
         animate_previews: AnimatePreviews::Selected,
         show_custom_emoji: true,
+        show_reaction_emoji: true,
         circular_avatars: false,
         hour_format_24: true,
     };
@@ -118,6 +119,10 @@ fn app_config_parses_partial_toml_with_defaults() {
             app_options_with(|options| options.composer.emojis_as_links = true),
         ),
         (
+            "[composer]\ntyping_indicator = false\n",
+            app_options_with(|options| options.composer.typing_indicator = false),
+        ),
+        (
             "[credentials]\nstore = \"plain\"\n",
             app_options_with(|options| options.credentials.store = CredentialStoreMode::Plain),
         ),
@@ -150,6 +155,25 @@ fn safety_checks_default_to_enabled_and_follow_config() {
 
         assert_eq!(direct.safety.enabled, enabled, "{content}");
         assert_eq!(loaded.safety, direct.safety, "{content}");
+        assert!(warnings.is_empty(), "{content}");
+    }
+}
+
+#[test]
+fn voice_state_export_defaults_to_enabled_and_follows_config() {
+    assert!(VoiceOptions::default().export_state);
+
+    for (content, enabled) in [
+        ("", true),
+        ("[voice]\n", true),
+        ("[voice]\nexport_state = true\n", true),
+        ("[voice]\nexport_state = false\n", false),
+    ] {
+        let direct: AppOptions = toml::from_str(content).expect("voice export config parses");
+        let (loaded, warnings) = parse_app_options(content).expect("voice export config loads");
+
+        assert_eq!(direct.voice.export_state, enabled, "{content}");
+        assert_eq!(loaded.voice, direct.voice, "{content}");
         assert!(warnings.is_empty(), "{content}");
     }
 }
@@ -260,6 +284,20 @@ fn unknown_theme_fields_warn_and_leave_the_default_theme() {
     .expect("unknown theme fields should not fail parsing");
     assert_eq!(theme, ThemeOptions::default());
     assert_eq!(warnings.len(), 5);
+}
+
+#[test]
+fn theme_icon_set_defaults_to_nerd_and_accepts_supported_sets() {
+    for (content, expected) in [
+        ("", IconSet::Nerd),
+        ("[ui]\n", IconSet::Nerd),
+        ("[ui]\nicon_set = \"unicode\"\n", IconSet::Unicode),
+        ("[ui]\nicon_set = \"nerd\"\n", IconSet::Nerd),
+    ] {
+        let (theme, warnings) = parse_theme_options(content).expect("theme icon set parses");
+        assert_eq!(theme.icon_set(), expected);
+        assert!(warnings.is_empty());
+    }
 }
 
 #[test]
@@ -683,12 +721,14 @@ fn options_save_and_load_round_trip() {
             image_protocol: ImageProtocolPreference::Kitty,
             animate_previews: AnimatePreviews::Never,
             show_custom_emoji: false,
+            show_reaction_emoji: true,
             circular_avatars: true,
             hour_format_24: false,
         },
         composer: ComposerOptions {
             emojis_as_links: true,
             ping_on_reply: false,
+            typing_indicator: false,
         },
         safety: SafetyOptions { enabled: false },
         reactions: Default::default(),
@@ -715,6 +755,7 @@ fn options_save_and_load_round_trip() {
             microphone_sensitivity: MicrophoneSensitivityDb::new(-50),
             microphone_volume: VoiceVolumePercent::new(80),
             voice_output_volume: VoiceVolumePercent::new(60),
+            export_state: false,
         },
         presence: PresenceOptions {
             share_rich_presence: false,

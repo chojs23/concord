@@ -313,7 +313,7 @@ impl EmojiImageCache {
                 );
             }
             Err(MediaWorkError::Busy) => {}
-            Err(MediaWorkError::Failed(_)) => {
+            Err(MediaWorkError::Failed(_) | MediaWorkError::DecodeLimit(_)) => {
                 self.cache
                     .entries
                     .insert(url, EmojiImageEntry::Failed { last_used });

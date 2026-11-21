@@ -51,6 +51,7 @@ pub(in crate::tui) struct ImagePreviewCache {
     pub(super) protocol_jobs: Vec<MediaProtocolBuildJob>,
     prepared_specs: HashMap<ImagePreviewKey, HashSet<MediaProtocolRenderSpec>>,
     protocol_failures: HashMap<(ImagePreviewKey, MediaProtocolRenderSpec), String>,
+    decode_limited_urls: HashSet<String>,
 }
 
 pub(super) enum ImagePreviewEntry {
@@ -85,6 +86,26 @@ impl ImagePreviewCache {
             protocol_jobs: Vec::new(),
             prepared_specs: HashMap::new(),
             protocol_failures: HashMap::new(),
+            decode_limited_urls: HashSet::new(),
+        }
+    }
+
+    pub(in crate::tui) fn apply_decode_fallbacks(&mut self, targets: &mut [ImagePreviewTarget]) {
+        // Keep the original failure while its scaled target is visible, even
+        // if cache pressure evicts the failed entry. Otherwise each draw could
+        // switch back to the original and start the same decode again.
+        self.decode_limited_urls.retain(|url| {
+            targets.iter().any(|target| &target.url == url)
+                || self.cache.entries.keys().any(|key| &key.url == url)
+        });
+        for target in targets {
+            if self.decode_limited_urls.contains(&target.url)
+                && let Some(url) = target.fallback_url.take()
+                && url != target.url
+            {
+                target.url = url;
+                target.scaled = true;
+            }
         }
     }
 
@@ -444,6 +465,9 @@ impl ImagePreviewCache {
         let last_used = self.cache.next_tick();
         self.protocol_failures
             .retain(|(failed_key, _), _| failed_key != &key);
+        if matches!(result, Err(MediaWorkError::DecodeLimit(_))) {
+            self.decode_limited_urls.insert(key.url.clone());
+        }
         match result {
             Ok(image) => {
                 if self.picker.is_none() {
@@ -472,7 +496,7 @@ impl ImagePreviewCache {
                 // The shared decode cache keeps the downloaded bytes and retries
                 // decoding, so keep this consumer attached to its generation.
             }
-            Err(MediaWorkError::Failed(message)) => {
+            Err(MediaWorkError::Failed(message) | MediaWorkError::DecodeLimit(message)) => {
                 self.cache.entries.insert(
                     key,
                     ImagePreviewEntry::Failed {
@@ -547,6 +571,7 @@ impl ImagePreviewCache {
     pub(in crate::tui) fn forget_failures(&mut self) {
         self.cache.forget_failures();
         self.protocol_failures.clear();
+        self.decode_limited_urls.clear();
         for entry in self.cache.entries.values_mut() {
             if let ImagePreviewEntry::Ready { protocols, .. } = entry {
                 protocols.forget_failures();
@@ -637,7 +662,9 @@ impl ImagePreviewCache {
             frame_index,
         };
         let failed_message = match &completed.result {
-            Err(MediaWorkError::Failed(message)) => Some(message.clone()),
+            Err(MediaWorkError::Failed(message) | MediaWorkError::DecodeLimit(message)) => {
+                Some(message.clone())
+            }
             Ok(_) | Err(MediaWorkError::Busy) => None,
         };
         let stored = match self.cache.entries.get_mut(&key) {
@@ -863,6 +890,7 @@ impl ImagePreviewTarget {
             preview_height: self.preview_height,
             visible_preview_height: self.visible_preview_height,
             accent_color: self.accent_color,
+            scaled: self.scaled,
             state,
         }
     }

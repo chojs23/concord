@@ -495,7 +495,7 @@ pub struct MuteActionDurationItem {
 }
 
 /// A single row in the thread notification-settings submenu. The label already
-/// includes the `[x]`/`[ ]` radio prefix so the renderer needs no extra logic.
+/// includes the selected palette's checkbox so the renderer needs no extra logic.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ThreadNotificationItem {
     pub label: String,
@@ -505,12 +505,12 @@ pub struct ThreadNotificationItem {
 impl ThreadNotificationItem {
     pub(crate) fn new(raw_label: &str, flags: u64, current_flags: u64) -> Self {
         let prefix = if flags == current_flags {
-            "[x] "
+            crate::tui::icons::Icon::Checked.glyph()
         } else {
-            "[ ] "
+            crate::tui::icons::Icon::Unchecked.glyph()
         };
         Self {
-            label: format!("{prefix}{raw_label}"),
+            label: format!("{prefix} {raw_label}"),
             flags,
         }
     }
@@ -823,6 +823,33 @@ impl GuildPaneEntry<'_> {
             Self::DirectMessages => "Direct Messages",
             Self::FolderHeader { folder, .. } => folder.name.as_deref().unwrap_or("Folder"),
             Self::Guild { state, .. } => state.name.as_str(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::ThreadNotificationItem;
+
+    #[test]
+    fn thread_notification_choices_use_the_selected_palette() {
+        for (icon_set, checked, unchecked) in [
+            (crate::config::IconSet::Unicode, "[x]", "[ ]"),
+            (crate::config::IconSet::Nerd, "\u{f0132}", "\u{f0131}"),
+        ] {
+            let mut options = crate::config::ThemeOptions::default();
+            options.set_icon_set(icon_set);
+            let custom = crate::tui::theme::Theme::from_options(&options, &mut Vec::new());
+            crate::tui::theme::with_test_theme(custom, || {
+                assert_eq!(
+                    ThreadNotificationItem::new("All messages", 2, 2).label,
+                    format!("{checked} All messages")
+                );
+                assert_eq!(
+                    ThreadNotificationItem::new("Nothing", 8, 2).label,
+                    format!("{unchecked} Nothing")
+                );
+            });
         }
     }
 }

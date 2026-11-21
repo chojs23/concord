@@ -337,7 +337,7 @@ fn key_sequence_hint_lines(state: &DashboardState, max_lines: usize) -> Vec<Line
         .into_iter()
         .map(|item| {
             let label = if item.has_children {
-                format!("{} ›", item.label)
+                format!("{} {}", item.label, Icon::ChevronRight.glyph())
             } else {
                 item.label
             };

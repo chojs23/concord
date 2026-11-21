@@ -10,6 +10,7 @@ use crate::discord::{
     MessageAttachmentUpload,
 };
 use crate::tui::keybindings::ScrollAction;
+use crate::tui::state::popups::OptionsCategory;
 use crate::tui::state::{ActiveModalPopupKind, ForumPostComposerField, LocalUploadPreviewView};
 use crate::tui::text_input::TextEditAction;
 use serde_json::json;
@@ -1190,7 +1191,7 @@ fn forum_post_body_expands_emoji_shortcodes_on_submit() {
     // unicode emoji are still expanded on submit, like the main composer.
     let mut state = state_with_forum_post_channel(false);
     forum_post_editing_body(&mut state, "Title");
-    state.insert_forum_post_text("love :heart:");
+    state.insert_forum_post_text("love :heart: :flag_us:");
 
     state.activate_forum_post_composer(); // commit Body
     let Some(AppCommand::CreateForumPost { post }) = state.save_forum_post_composer() else {
@@ -1199,7 +1200,7 @@ fn forum_post_body_expands_emoji_shortcodes_on_submit() {
     let heart = emojis::get_by_shortcode("heart")
         .expect("heart shortcode exists")
         .as_str();
-    assert_eq!(post.content, format!("love {heart}"));
+    assert_eq!(post.content, format!("love {heart} 🇺🇸"));
 }
 
 #[test]
@@ -2956,6 +2957,34 @@ fn confirm_emoji_inserts_unicode_and_closes_picker() {
 }
 
 #[test]
+fn discord_flag_shortcodes_can_be_selected_from_the_emoji_picker() {
+    for (shortcode, expected) in [
+        ("flag_us", "🇺🇸"),
+        ("flag_kr", "🇰🇷"),
+        ("flag_gb", "🇬🇧"),
+        ("flag_ac", "🇦🇨"),
+        ("flag_eu", "🇪🇺"),
+        ("flag_un", "🇺🇳"),
+        ("flag_xk", "🇽🇰"),
+    ] {
+        let mut state = state_with_writable_channel();
+        state.start_composer();
+        state.insert_composer_text_at_cursor(&format!(":{shortcode}"));
+
+        let candidate = state
+            .composer_emoji_candidates()
+            .into_iter()
+            .next()
+            .expect("flag shortcode has an emoji candidate");
+        assert_eq!(candidate.shortcode, shortcode);
+        assert_eq!(candidate.emoji, expected);
+        assert!(state.confirm_composer_emoji());
+        assert_eq!(state.composer_input(), format!("{expected} "));
+        assert_eq!(state.composer_emoji_query(), None);
+    }
+}
+
+#[test]
 fn submit_expands_emoji_shortcodes_and_leaves_other_markup_literal() {
     for (input, expected) in [
         ("::", "::"),
@@ -2963,9 +2992,12 @@ fn submit_expands_emoji_shortcodes_and_leaves_other_markup_literal() {
         ("::::heart:", ":::❤️"),
         ("start :::heart: end", "start ::❤️ end"),
         ("take :heart: :unknown:", "take ❤️ :unknown:"),
+        (":flag_us::flag_kr: :flag_gb:", "🇺🇸🇰🇷 🇬🇧"),
+        (":flag_ac: :flag_eu: :flag_un: :flag_xk:", "🇦🇨 🇪🇺 🇺🇳 🇽🇰"),
+        (":us: :kr: :gb: :heart:", "🇺🇸 🇰🇷 🇬🇧 ❤️"),
         (
-            "custom <:heart:123> <a:party:456> :heart:",
-            "custom <:heart:123> <a:party:456> ❤️",
+            "custom <:heart:123> <a:flag_us:456> :heart: :flag_us:",
+            "custom <:heart:123> <a:flag_us:456> ❤️ 🇺🇸",
         ),
     ] {
         let mut state = state_with_writable_channel();
@@ -2983,7 +3015,7 @@ fn submit_expands_emoji_shortcodes_and_leaves_other_markup_literal() {
                 reply_to: None,
                 attachments: Vec::new(),
             }),
-            "empty emoji shortcode spans should preserve {input:?}",
+            "emoji shortcode expansion should match for {input:?}",
         );
     }
 }
@@ -3177,6 +3209,20 @@ fn composer_typing_indicator_throttles_and_resends() {
         state.note_composer_typing_at(start + Duration::from_secs(8)),
         typing
     );
+}
+
+#[test]
+fn composer_typing_indicator_can_be_disabled() {
+    use std::time::Instant;
+
+    let mut state = state_with_writable_channel();
+    state.open_options_category(OptionsCategory::Composer);
+    state.move_option_down();
+    state.toggle_selected_display_option();
+    state.start_composer();
+
+    assert!(!state.options.composer_options.typing_indicator);
+    assert_eq!(state.note_composer_typing_at(Instant::now()), None);
 }
 
 #[test]

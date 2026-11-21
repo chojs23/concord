@@ -88,9 +88,9 @@ pub(in crate::tui::ui) fn options_popup_lines(
             let control = item.value.as_ref().map_or_else(
                 || {
                     if item.enabled {
-                        "[x]".to_owned()
+                        Icon::Checked.glyph().to_owned()
                     } else {
-                        "[ ]".to_owned()
+                        Icon::Unchecked.glyph().to_owned()
                     }
                 },
                 |value| format!("[{value}]"),

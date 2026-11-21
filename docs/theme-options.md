@@ -1,11 +1,14 @@
 # Theme options
 
 Concord reads `theme.toml` beside `config.toml` and `keymap.toml`. Named UI
-Highlight Groups control colors and text modifiers, while `[ui.border]` and
-`[ui.indicator]` control UI geometry and glyphs. Every group and field is
-optional.
+Highlight Groups control colors and text modifiers, while `[ui]`, `[ui.border]`,
+and `[ui.indicator]` control icon sets, UI geometry, and glyphs. Every group and
+field is optional.
 
 ```toml
+[ui]
+icon_set = "nerd"
+
 [highlight.Normal]
 foreground = "terminal_default"
 background = "terminal_default"
@@ -26,6 +29,25 @@ composer = "rounded"
 [ui.indicator]
 selection = "❯ "
 ```
+
+## Icon sets
+
+Set `icon_set` under `[ui]` in `theme.toml`, not `config.toml`:
+
+```toml
+[ui]
+icon_set = "nerd"
+```
+
+The supported values are `"unicode"` and `"nerd"`. The default is `"nerd"`.
+Choose `"unicode"` to keep the original icons without a patched font. Nerd mode
+requires a Nerd Fonts 3.x Mono font selected in the terminal that displays
+Concord, including when Concord runs over SSH. Restart Concord after changing
+the setting. Concord does not auto-detect fonts.
+
+An explicit `[ui.indicator] selection` value always wins over the icon set's
+default selection marker. Remove that override to use the selected set's marker.
+User emoji and message content are not changed by this setting.
 
 ## Group fields
 
@@ -49,8 +71,8 @@ child wins over the linked group. `foreground = "none"` and
 Links may point forward or backward. Link cycles warn and ignore cyclic
 inheritance instead of stopping startup. Group and field names are exact and
 case-sensitive. Unknown groups, unknown fields, wrong field types, invalid
-colors, invalid border shapes, and invalid links warn and are ignored one leaf
-at a time. Valid sibling fields still apply. Run `concord --check-config` to
+colors, invalid border shapes, invalid icon sets, and invalid links warn and are
+ignored one leaf at a time. Valid sibling fields still apply. Run `concord --check-config` to
 see warnings.
 
 ## Colors
@@ -111,8 +133,9 @@ consistent with the other surfaces.
 ## Selection marker
 
 The selection marker is the glyph shown before the selected row in list panes
-and pickers. It defaults to `▸ ` and can be changed independently from its
-style.
+and pickers. It defaults to `▸ ` in Unicode mode and the Nerd Font selection
+icon followed by a space in Nerd mode. It can be changed independently from its
+style. An explicit value takes priority over either icon set.
 
 ```toml
 [ui.indicator]
@@ -121,8 +144,8 @@ selection = "❯ "
 
 The value must be a single-line string with non-zero Unicode display width.
 Concord reserves the same display width with spaces on unselected rows so list
-content stays aligned. Invalid values warn and fall back to `▸ `. Use
-`[highlight.SelectionMarker]` to change the marker's color and text modifiers.
+content stays aligned. Invalid values warn and fall back to the selected icon
+set's default marker. Use `[highlight.SelectionMarker]` to change the marker's color and text modifiers.
 
 ## Common semantic groups
 

@@ -9,7 +9,7 @@ use super::{
 };
 
 const DISPLAY_OPTION_COUNT: usize = DisplayOption::ALL.len();
-const COMPOSER_OPTION_COUNT: usize = 1;
+const COMPOSER_OPTION_COUNT: usize = ComposerOption::ALL.len();
 const NOTIFICATION_OPTION_COUNT: usize = 1;
 const VOICE_OPTION_COUNT: usize = VoiceOption::ALL.len();
 const OPTION_CATEGORY_COUNT: usize = 4;
@@ -22,6 +22,7 @@ enum DisplayOption {
     ImagePreviewQuality,
     AttachmentViewerQuality,
     ShowCustomEmoji,
+    ShowReactionEmoji,
     CircularAvatars,
     MediaPlayback,
     HourFormat24,
@@ -29,13 +30,14 @@ enum DisplayOption {
 }
 
 impl DisplayOption {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::DisableImagePreview,
         Self::ShowAvatars,
         Self::ShowImages,
         Self::ImagePreviewQuality,
         Self::AttachmentViewerQuality,
         Self::ShowCustomEmoji,
+        Self::ShowReactionEmoji,
         Self::CircularAvatars,
         Self::MediaPlayback,
         Self::HourFormat24,
@@ -66,10 +68,11 @@ enum VoiceOption {
     MicrophoneSensitivity,
     MicrophoneVolume,
     VoiceVolume,
+    ExportState,
 }
 
 impl VoiceOption {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::Muted,
         Self::Deafened,
         Self::InputSource,
@@ -81,7 +84,22 @@ impl VoiceOption {
         Self::MicrophoneSensitivity,
         Self::MicrophoneVolume,
         Self::VoiceVolume,
+        Self::ExportState,
     ];
+
+    fn at(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ComposerOption {
+    EmojisAsLinks,
+    TypingIndicator,
+}
+
+impl ComposerOption {
+    const ALL: [Self; 2] = [Self::EmojisAsLinks, Self::TypingIndicator];
 
     fn at(index: usize) -> Option<Self> {
         Self::ALL.get(index).copied()
@@ -302,6 +320,14 @@ impl DashboardState {
                 effective: options.custom_emoji_visible(),
                 description: "When off, custom emoji are shown as their emoji id.",
             },
+            DisplayOption::ShowReactionEmoji => DisplayOptionItem {
+                label: "Show reactions",
+                enabled: options.show_reaction_emoji,
+                value: None,
+                gauge: None,
+                effective: options.reaction_emoji_visible(),
+                description: "When off, all reactions are hidden.",
+            },
             DisplayOption::CircularAvatars => DisplayOptionItem {
                 label: "Circular avatars",
                 enabled: options.circular_avatars,
@@ -339,15 +365,32 @@ impl DashboardState {
     }
 
     fn display_option_items_for_composer(&self) -> Vec<DisplayOptionItem> {
+        ComposerOption::ALL
+            .iter()
+            .map(|option| self.composer_option_item(*option))
+            .collect()
+    }
+
+    fn composer_option_item(&self, option: ComposerOption) -> DisplayOptionItem {
         let options = self.options.composer_options;
-        vec![DisplayOptionItem {
-            label: "Emojis as links",
-            enabled: options.emojis_as_links,
-            value: None,
-            gauge: None,
-            effective: options.emojis_as_links,
-            description: "Sends unavailable emojis as a link instead.",
-        }]
+        match option {
+            ComposerOption::EmojisAsLinks => DisplayOptionItem {
+                label: "Emojis as links",
+                enabled: options.emojis_as_links,
+                value: None,
+                gauge: None,
+                effective: options.emojis_as_links,
+                description: "Sends unavailable emojis as a link instead.",
+            },
+            ComposerOption::TypingIndicator => DisplayOptionItem {
+                label: "Typing indicator",
+                enabled: options.typing_indicator,
+                value: None,
+                gauge: None,
+                effective: options.typing_indicator,
+                description: "Broadcast your typing status while composing.",
+            },
+        }
     }
 
     fn display_option_items_for_notifications(&self) -> Vec<DisplayOptionItem> {
@@ -480,6 +523,14 @@ impl DashboardState {
                 effective: !voice.self_deaf,
                 description: "",
             },
+            VoiceOption::ExportState => DisplayOptionItem {
+                label: "Export voice state",
+                enabled: voice.export_state,
+                value: None,
+                gauge: None,
+                effective: true,
+                description: "Share participant and speaking state with local overlays. No audio or tokens.",
+            },
         }
     }
 
@@ -518,9 +569,11 @@ impl DashboardState {
                 };
                 self.toggle_display_option(option);
             }
-            OptionsCategory::Composer if selected == 0 => {
-                self.options.composer_options.emojis_as_links =
-                    !self.options.composer_options.emojis_as_links
+            OptionsCategory::Composer => {
+                let Some(option) = ComposerOption::at(selected) else {
+                    return;
+                };
+                self.toggle_composer_option(option);
             }
             OptionsCategory::Notifications if selected == 0 => {
                 self.options.notification_options.desktop_notifications =
@@ -550,6 +603,9 @@ impl DashboardState {
             }
             DisplayOption::ShowCustomEmoji => {
                 options.show_custom_emoji = !options.show_custom_emoji
+            }
+            DisplayOption::ShowReactionEmoji => {
+                options.show_reaction_emoji = !options.show_reaction_emoji
             }
             DisplayOption::CircularAvatars => options.circular_avatars = !options.circular_avatars,
             DisplayOption::MediaPlayback => options.media_playback = !options.media_playback,
@@ -599,9 +655,21 @@ impl DashboardState {
                 self.mark_options_changed();
                 self.queue_current_voice_capture_permission_update();
             }
+            VoiceOption::ExportState => {
+                self.options.voice_options.export_state = !self.options.voice_options.export_state;
+                self.mark_options_changed();
+            }
             VoiceOption::MicrophoneSensitivity
             | VoiceOption::MicrophoneVolume
             | VoiceOption::VoiceVolume => {}
+        }
+    }
+
+    fn toggle_composer_option(&mut self, option: ComposerOption) {
+        let options = &mut self.options.composer_options;
+        match option {
+            ComposerOption::EmojisAsLinks => options.emojis_as_links = !options.emojis_as_links,
+            ComposerOption::TypingIndicator => options.typing_indicator = !options.typing_indicator,
         }
     }
 
@@ -670,7 +738,8 @@ impl DashboardState {
             | VoiceOption::AllowMicrophoneTransmit
             | VoiceOption::PushToTalk
             | VoiceOption::PushToTalkShortcut
-            | VoiceOption::NoiseSuppression => {}
+            | VoiceOption::NoiseSuppression
+            | VoiceOption::ExportState => {}
         }
     }
 

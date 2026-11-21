@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::icons::Icon;
 
 pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &DashboardState) {
     let dashboard = state;
@@ -59,8 +60,21 @@ pub(in crate::tui::ui) fn render_guilds(frame: &mut Frame, area: Rect, state: &D
                         Line::from(spans)
                     }
                     GuildPaneEntry::FolderHeader { folder, collapsed } => {
-                        let arrow = if *collapsed { "▶ " } else { "▼ " };
-                        let icon = if *collapsed { "📁" } else { "📂" };
+                        let arrow = format!(
+                            "{} ",
+                            if *collapsed {
+                                Icon::Collapsed
+                            } else {
+                                Icon::Expanded
+                            }
+                            .glyph()
+                        );
+                        let icon = if *collapsed {
+                            Icon::FolderClosed
+                        } else {
+                            Icon::FolderOpen
+                        }
+                        .glyph();
                         let folder_style = folder_style(folder.color);
                         let label = folder.name.as_deref().unwrap_or_default();
                         let title = if label.is_empty() {

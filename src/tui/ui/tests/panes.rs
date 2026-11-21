@@ -111,8 +111,8 @@ fn header_shows_voice_status_icons_without_voice_connection() {
     let header = dump.first().expect("dashboard render includes header");
 
     assert!(header.contains("Connected as muri"), "{header}");
-    assert!(header.contains("🔇"), "{header}");
-    assert!(header.contains("🎧"), "{header}");
+    assert!(header.contains("\u{f036d}"), "{header}");
+    assert!(header.contains("\u{f07ce}"), "{header}");
 }
 
 #[test]
@@ -188,8 +188,8 @@ fn header_labels_other_client_voice_connection() {
         header.contains("Voice guild - Lobby (other client)"),
         "{header}"
     );
-    assert!(header.contains("🔇"), "{header}");
-    assert!(header.contains("🎧"), "{header}");
+    assert!(header.contains("\u{f036d}"), "{header}");
+    assert!(header.contains("\u{f07ce}"), "{header}");
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn header_labels_active_voice_broadcast() {
     let dump = render_dashboard_dump(120, 10, &mut state);
     let header = dump.first().expect("dashboard render includes header");
 
-    assert!(header.contains("Voice guild - Lobby 🔴"), "{header}");
+    assert!(header.contains("Voice guild - Lobby \u{f0567}"), "{header}");
 }
 
 #[test]
@@ -392,7 +392,7 @@ fn one_to_one_dm_carries_presence_in_dot() {
     let channel = channel_with_recipients("dm", &[PresenceStatus::DoNotDisturb]);
 
     let dot = dm_presence_dot_span(&channel).expect("1-on-1 DM should produce a presence dot");
-    assert_eq!(dot.content.as_ref(), "● ");
+    assert_eq!(dot.content.as_ref(), "\u{f0376} ");
     assert_eq!(dot.style.fg, Some(Color::Red));
 }
 
@@ -454,7 +454,7 @@ fn selected_muted_server_name_uses_selection_emphasis() {
             .collect::<String>();
         if let Some(name_col) = text.find("guild") {
             assert!(
-                !buffer[(name_col as u16, row)]
+                !buffer[(text[..name_col].width() as u16, row)]
                     .modifier
                     .contains(Modifier::DIM)
             );
@@ -489,10 +489,14 @@ fn dm_channel_pane_shows_unread_channel_count_badge() {
         })
         .collect::<Vec<_>>();
 
-    assert!(channel_rows.iter().any(|row| row.contains("(1) @ new")));
+    assert!(
+        channel_rows
+            .iter()
+            .any(|row| row.contains("(1) \u{f0004} new"))
+    );
     let row = channel_rows
         .iter()
-        .position(|row| row.contains("(1) @ new"))
+        .position(|row| row.contains("(1) \u{f0004} new"))
         .expect("selected unread channel row");
     let name_start = channel_rows[row].find("new").expect("channel name");
     let name_col = channel_rows[row][..name_start].width();
@@ -636,7 +640,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         })
         .expect("populated voice row should render");
     let lobby_icon_col = (0..buffer.area.width)
-        .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
+        .find(|col| buffer[(*col, lobby_row)].symbol() == "\u{f05cb}")
         .expect("populated voice row should use loud speaker icon");
     assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Reset);
     let lobby_name_col = (0..buffer.area.width)
@@ -653,7 +657,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         })
         .expect("empty voice row should render");
     let empty_icon_col = (0..buffer.area.width)
-        .find(|col| buffer[(*col, empty_row)].symbol() == "🔈")
+        .find(|col| buffer[(*col, empty_row)].symbol() == "\u{f057e}")
         .expect("empty voice row should use quiet speaker icon");
     assert!(
         buffer[(empty_icon_col, empty_row)]
@@ -667,23 +671,23 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         channel_rows.join("\n")
     );
     assert!(
-        channel_rows.iter().any(|row| row.contains("🔴")),
+        channel_rows.iter().any(|row| row.contains("\u{f0567}")),
         "{}",
         channel_rows.join("\n")
     );
     assert!(
         channel_rows.iter().any(|row| row.contains("Alice")
-            && row.contains("🔴")
-            && row.contains("🔇")
-            && row.contains("🎧")
-            && row.find("🔴") < row.find("🔇")
-            && row.find("🔇") < row.find("🎧")),
+            && row.contains("\u{f0567}")
+            && row.contains("\u{f036d}")
+            && row.contains("\u{f07ce}")
+            && row.find("\u{f0567}") < row.find("\u{f036d}")
+            && row.find("\u{f036d}") < row.find("\u{f07ce}")),
         "{}",
         channel_rows.join("\n")
     );
     assert!(
         (0..buffer.area.height)
-            .any(|row| (0..buffer.area.width).any(|col| buffer[(col, row)].symbol() == "🔴"))
+            .any(|row| (0..buffer.area.width).any(|col| buffer[(col, row)].symbol() == "\u{f0567}"))
     );
     let alice_row = (0..buffer.area.height)
         .find(|row| {
@@ -723,7 +727,7 @@ fn channel_pane_shows_voice_participants_under_voice_channel() {
         })
         .expect("voice row should be visible");
     let lobby_icon_col = (0..buffer.area.width)
-        .find(|col| buffer[(*col, lobby_row)].symbol() == "🔊")
+        .find(|col| buffer[(*col, lobby_row)].symbol() == "\u{f05cb}")
         .expect("populated voice row should keep loud speaker icon");
     assert_eq!(buffer[(lobby_icon_col, lobby_row)].fg, Color::Reset);
 }
@@ -865,13 +869,15 @@ fn channel_pane_keeps_voice_participant_indicators_visible_after_name_truncation
         .collect::<Vec<_>>();
     let participant_row = channel_rows
         .iter()
-        .find(|row| row.contains("🔴") || row.contains("🔇") || row.contains("🎧"))
+        .find(|row| {
+            row.contains("\u{f0567}") || row.contains("\u{f036d}") || row.contains("\u{f07ce}")
+        })
         .expect("participant row should keep voice indicators visible");
 
     assert!(participant_row.contains("..."), "{participant_row}");
-    assert!(participant_row.contains("🔴"), "{participant_row}");
-    assert!(participant_row.contains("🔇"), "{participant_row}");
-    assert!(participant_row.contains("🎧"), "{participant_row}");
+    assert!(participant_row.contains("\u{f0567}"), "{participant_row}");
+    assert!(participant_row.contains("\u{f036d}"), "{participant_row}");
+    assert!(participant_row.contains("\u{f07ce}"), "{participant_row}");
 }
 
 #[test]
@@ -1033,12 +1039,15 @@ fn member_pane_keeps_normal_style_for_speaking_voice_members() {
     let alice_row = (0..buffer.area.width)
         .map(|column| buffer[(column, alice_cell.1)].symbol().to_owned())
         .collect::<String>();
-    assert!(alice_row.contains("▸ ● Alice"), "{alice_row}");
+    assert!(
+        alice_row.contains("\u{f0142} \u{f111} Alice"),
+        "{alice_row}"
+    );
     let marker_column = (0..buffer.area.width)
-        .find(|column| buffer[(*column, alice_cell.1)].symbol() == "▸")
+        .find(|column| buffer[(*column, alice_cell.1)].symbol() == "\u{f0142}")
         .expect("selected member should render a marker");
     let marker = (marker_column, alice_cell.1);
-    assert_eq!(buffer[marker].symbol(), "▸");
+    assert_eq!(buffer[marker].symbol(), "\u{f0142}");
     assert_eq!(
         buffer[marker].fg,
         theme::current().foreground(theme::HighlightGroup::SelectionMarker)
@@ -1125,8 +1134,8 @@ fn pane_filters_keep_content_width_when_active() {
         .clone();
 
     assert_eq!(
-        normal_server_row.replace('▸', " "),
-        filtered_server_row.replace('▸', " "),
+        normal_server_row.replace('\u{f0142}', " "),
+        filtered_server_row.replace('\u{f0142}', " "),
         "normal:\n{}\nfiltered:\n{}",
         normal_rows.join("\n"),
         filtered_rows.join("\n")
@@ -1190,7 +1199,7 @@ fn muted_category_and_channel_names_are_dimmed() {
             .collect::<String>();
         if let Some(name_col) = text.find("Text Channels") {
             assert!(
-                buffer[(name_col as u16, row)]
+                buffer[(text[..name_col].width() as u16, row)]
                     .modifier
                     .contains(Modifier::DIM)
             );
@@ -1198,7 +1207,7 @@ fn muted_category_and_channel_names_are_dimmed() {
         }
         if let Some(name_col) = text.find("general") {
             assert!(
-                buffer[(name_col as u16, row)]
+                buffer[(text[..name_col].width() as u16, row)]
                     .modifier
                     .contains(Modifier::DIM)
             );
@@ -1252,7 +1261,7 @@ fn forum_post_lines_render_title_author_and_preview() {
 
     assert_eq!(texts.len(), 8);
     assert_eq!(texts[0].trim_end(), "Active posts");
-    assert!(texts[1].starts_with("▸ ┏"));
+    assert!(texts[1].starts_with("\u{f0142} ┏"));
     assert!(texts[2].starts_with("  ┃ "));
     assert!(texts.iter().all(|text| text.width() == 80));
     assert!(texts[2].contains("A useful Rust crate"));
@@ -1261,8 +1270,8 @@ fn forum_post_lines_render_title_author_and_preview() {
     assert!(texts[2].contains("(locked)"));
     assert_eq!(lines[3].spans.len(), 4);
     assert!(texts[4].contains("neo: This crate solves"));
-    assert!(texts[5].contains("# question"));
-    assert!(texts[5].contains("# rust"));
+    assert!(texts[5].contains("\u{f04f9} question"));
+    assert!(texts[5].contains("\u{f04f9} rust"));
     assert!(texts[6].contains("4 comments"));
     assert!(texts[6].contains("3 new messages"));
     assert!(texts[6].contains("[👍 2]"));
@@ -1454,6 +1463,49 @@ fn forum_post_metadata_shows_three_leading_reactions() {
 }
 
 #[test]
+fn hidden_thread_card_reactions_preserve_counts_and_tag_emoji() {
+    let state = DashboardState::new_with_display_options(DisplayOptions {
+        show_reaction_emoji: false,
+        ..DisplayOptions::default()
+    });
+    let post = ChannelThreadItem {
+        label: "Tagged post".to_owned(),
+        applied_tags: vec![AppliedForumTag {
+            name: "fire".to_owned(),
+            unicode_emoji: Some("🔥".to_owned()),
+            custom_emoji_url: None,
+        }],
+        preview_reactions: vec![
+            ReactionInfo::test(ReactionEmoji::Unicode("👍".to_owned())),
+            ReactionInfo::test(ReactionEmoji::Custom {
+                id: Id::new(50),
+                name: Some("party".to_owned()),
+                animated: false,
+            }),
+        ],
+        comment_count: Some(4),
+        new_message_count: 3,
+        ..ChannelThreadItem::test(Id::new(30))
+    };
+
+    let lines = crate::tui::ui::thread_card::thread_card_viewport_lines_with_state(
+        &[post],
+        None,
+        80,
+        false,
+        0,
+        &state,
+    );
+    let text = line_texts_from_ratatui(&lines).join("\n");
+
+    assert!(text.contains("4 comments"));
+    assert!(text.contains("3 new messages"));
+    assert!(text.contains("🔥 fire"));
+    assert!(!text.contains("👍"));
+    assert!(!text.contains("party"));
+}
+
+#[test]
 fn forum_post_tag_line_renders_unicode_emoji_and_reserves_custom_image_slot() {
     let unicode_tag = AppliedForumTag {
         name: "fire".to_owned(),
@@ -1475,20 +1527,30 @@ fn forum_post_tag_line_renders_unicode_emoji_and_reserves_custom_image_slot() {
         ..ChannelThreadItem::test(Id::new(30))
     };
 
-    let lines = thread_card_viewport_lines(std::slice::from_ref(&post), Some(0), 80, false);
-    let texts = line_texts_from_ratatui(&lines);
+    for icon_set in [
+        crate::config::IconSet::Unicode,
+        crate::config::IconSet::Nerd,
+    ] {
+        let mut options = crate::config::ThemeOptions::default();
+        options.set_icon_set(icon_set);
+        let custom = theme::Theme::from_options(&options, &mut Vec::new());
+        theme::with_test_theme(custom, || {
+            let lines = thread_card_viewport_lines(std::slice::from_ref(&post), Some(0), 80, false);
+            let texts = line_texts_from_ratatui(&lines);
+            let marker = crate::tui::icons::Icon::Tag.glyph();
+            let tag_text = &texts[4];
+            assert!(tag_text.contains(&format!("{marker} 🔥 fire")));
+            assert!(tag_text.contains(&format!("{marker}    bug")));
 
-    let tag_text = &texts[4];
-    assert!(tag_text.contains("🔥 fire"));
-    assert!(tag_text.contains("bug"));
-
-    let rows = thread_card_tag_rows_for_test(&[post], 80, 20);
-    assert_eq!(rows.len(), 1);
-    let (row, cols) = &rows[0];
-    assert_eq!(*row, 4);
-    assert_eq!(cols.len(), 1);
-    // `# 🔥 fire`(9) + ` · `(3) + `# `(2) = column 14 within the card content.
-    assert_eq!(cols[0], 14);
+            let rows = thread_card_tag_rows_for_test(std::slice::from_ref(&post), 80, 20);
+            assert_eq!(rows.len(), 1);
+            let (row, cols) = &rows[0];
+            assert_eq!(*row, 4);
+            assert_eq!(cols.len(), 1);
+            let emoji_column = format!("{marker} 🔥 fire · {marker} ").width();
+            assert_eq!(cols[0], emoji_column);
+        });
+    }
 }
 
 #[test]
@@ -1511,7 +1573,7 @@ fn forum_post_lines_can_reserve_scrollbar_column() {
     );
     let texts = line_texts_from_ratatui(&lines);
 
-    assert!(texts[0].starts_with("▸ ╭"));
+    assert!(texts[0].starts_with("\u{f0142} ╭"));
     assert!(texts[0].ends_with("╮"));
     assert!(texts[1].ends_with("│"));
     // The untagged post has no tags row, so the card is six rows.
@@ -1555,7 +1617,7 @@ fn group_dm_has_no_presence_dot() {
     );
 
     assert!(dm_presence_dot_span(&channel).is_none());
-    assert_eq!(channel_prefix(&channel.kind), "👥 ");
+    assert_eq!(channel_prefix(&channel.kind), "\u{f0849} ");
 }
 
 #[test]

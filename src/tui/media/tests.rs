@@ -1481,11 +1481,7 @@ fn image_preview_keeps_protocols_per_crop_without_wrong_crop_fallback() {
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        key,
-        1,
-        decode_media_image_bytes(&encoded_png(8, 8)).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(key, 1, decode_media_image_bytes(&encoded_png(8, 8)));
 
     cache.prepare(std::slice::from_ref(&target));
     for job in cache.take_protocol_jobs() {
@@ -1533,11 +1529,7 @@ fn failed_new_crop_does_not_hide_ready_old_crop_or_load_forever() {
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        key,
-        1,
-        decode_media_image_bytes(&encoded_png(8, 8)).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(key, 1, decode_media_image_bytes(&encoded_png(8, 8)));
     cache.prepare(std::slice::from_ref(&target));
     for job in cache.take_protocol_jobs() {
         cache.store_protocol(build_media_protocol(job));
@@ -1589,11 +1581,7 @@ fn split_animation_builds_each_visible_crop_before_prefetching() {
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        key,
-        1,
-        decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(key, 1, decode_media_image_bytes(&encoded_animated_gif()));
 
     let targets = [top, bottom];
     for _ in 0..2 {
@@ -2340,7 +2328,7 @@ fn media_decode_cache_shares_one_url_decode_across_preview_requests() {
     );
     let outcome = decoded_images.complete(MediaImageDecodeResult {
         url: first.url.clone(),
-        result: decode_media_image_bytes(&encoded).map_err(MediaWorkError::Failed),
+        result: decode_media_image_bytes(&encoded),
     });
     let deliveries = outcome.deliveries;
     assert_eq!(deliveries.len(), 2);
@@ -2464,7 +2452,7 @@ fn media_decode_busy_retains_bytes_and_all_consumers_for_retry() {
 
     let completed = decoded.complete(MediaImageDecodeResult {
         url: preview_target.url,
-        result: decode_media_image_bytes(&encoded).map_err(MediaWorkError::Failed),
+        result: decode_media_image_bytes(&encoded),
     });
     assert_eq!(completed.deliveries.len(), 2);
     let diagnostics = decoded.diagnostics();
@@ -2496,11 +2484,7 @@ fn animate_previews_policy_decides_which_previews_keep_moving() {
                 last_used: 1,
             },
         );
-        cache.store_decoded(
-            key,
-            1,
-            decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
-        );
+        cache.store_decoded(key, 1, decode_media_image_bytes(&encoded_animated_gif()));
     }
     // Build every protocol so animation is only gated by the policy.
     for _ in 0..8 {
@@ -2578,7 +2562,7 @@ fn attachment_preview_waits_when_protocol_encoding_falls_behind() {
     cache.store_decoded(
         key.clone(),
         1,
-        decode_media_image_bytes(&encoded_three_frame_gif()).map_err(MediaWorkError::Failed),
+        decode_media_image_bytes(&encoded_three_frame_gif()),
     );
 
     for _ in 0..2 {
@@ -2752,7 +2736,7 @@ fn decode_image_bytes_reports_invalid_bytes() {
     let error =
         decode_image_bytes(b"not an image").expect_err("invalid bytes should fail to decode");
 
-    assert!(error.starts_with("decode failed:"));
+    assert!(error.to_string().starts_with("decode failed:"));
 }
 
 #[test]
@@ -2808,7 +2792,11 @@ fn media_decoder_preserves_and_plays_gif_and_webp_animation_frames() {
         Ok(_) => panic!("a corrupt later GIF frame should fail the full decode"),
         Err(error) => error,
     };
-    assert!(error.starts_with("decode failed at animation frame 2:"));
+    assert!(
+        error
+            .to_string()
+            .starts_with("decode failed at animation frame 2:")
+    );
 }
 
 #[test]
@@ -2834,6 +2822,38 @@ fn media_decoder_rasterizes_and_plays_lottie_animation_frames() {
 }
 
 #[test]
+fn media_decoder_renders_lottie_animations_from_concurrent_workers() {
+    let bytes = include_bytes!("testdata/moving-square-lottie.json");
+    let expected = decode_media_image_bytes(bytes).expect("serial Lottie decode should succeed");
+    let expected_frames = (0..expected.frame_count())
+        .map(|index| expected.frame_shared(index).to_rgba8())
+        .collect::<Vec<_>>();
+    let start = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        let workers = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    start.wait();
+                    for _ in 0..16 {
+                        let image = decode_media_image_bytes(bytes)
+                            .expect("each worker should decode its Lottie animation");
+
+                        assert_eq!(image.frame_count(), expected_frames.len());
+                        for (index, expected_frame) in expected_frames.iter().enumerate() {
+                            assert_eq!(&image.frame_shared(index).to_rgba8(), expected_frame);
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            worker.join().expect("Lottie worker should finish");
+        }
+    });
+}
+
+#[test]
 fn media_decoder_rejects_invalid_lottie_documents() {
     let mut oversized = vec![b' '; MAX_LOTTIE_JSON_BYTES + 1];
     oversized[0] = b'{';
@@ -2846,7 +2866,10 @@ fn media_decoder_rejects_invalid_lottie_documents() {
         let error = decode_media_image_bytes(bytes)
             .err()
             .unwrap_or_else(|| panic!("{label} Lottie document should fail"));
-        assert!(error.starts_with("decode failed:"), "{label}: {error}");
+        assert!(
+            error.to_string().starts_with("decode failed:"),
+            "{label}: {error}"
+        );
     }
 }
 
@@ -2931,7 +2954,7 @@ fn emoji_animation_clock_runs_only_while_the_image_is_visible() {
     cache.store_decoded(
         url.clone(),
         1,
-        decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
+        decode_media_image_bytes(&encoded_animated_gif()),
     );
     cache.prepare(std::slice::from_ref(&target));
     let _ = cache.render_state(std::slice::from_ref(&target));
@@ -3017,7 +3040,7 @@ fn attachment_preview_waits_for_a_ready_or_failed_next_animation_frame() {
     cache.store_decoded(
         key.clone(),
         1,
-        decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
+        decode_media_image_bytes(&encoded_animated_gif()),
     );
     cache.prepare(std::slice::from_ref(&target));
     let _ = cache.render_state(std::slice::from_ref(&target));
@@ -3115,6 +3138,21 @@ fn attachment_preview_waits_for_a_ready_or_failed_next_animation_frame() {
 }
 
 #[test]
+fn media_decoder_accepts_images_within_expanded_resource_limits() {
+    for (width, height) in [(8192, 1), (1, 8192), (5000, 3500)] {
+        let image = decode_media_image_bytes(&encoded_png(width, height))
+            .expect("image within the expanded dimension and memory limits should decode");
+
+        assert_eq!(image.current_frame().width(), width);
+        assert_eq!(image.current_frame().height(), height);
+        assert_eq!(
+            image.retained_bytes(),
+            u64::from(width) * u64::from(height) * 4
+        );
+    }
+}
+
+#[test]
 fn media_decode_rejects_oversized_image_dimensions() {
     for (width, height) in [
         (MAX_DECODED_IMAGE_WIDTH + 1, 1),
@@ -3123,8 +3161,9 @@ fn media_decode_rejects_oversized_image_dimensions() {
         let bytes = encoded_png(width, height);
         let error = decode_image_bytes(&bytes).expect_err("oversized image should be rejected");
 
+        assert!(matches!(error, MediaWorkError::DecodeLimit(_)));
         assert!(
-            error.starts_with("decode failed:"),
+            error.to_string().starts_with("decode failed:"),
             "oversized {width}x{height} image should fail with decode context, got {error:?}"
         );
     }
@@ -3206,6 +3245,39 @@ fn emoji_image_targets_include_visible_custom_reactions() {
 }
 
 #[test]
+fn hidden_message_reactions_request_only_body_emoji_images() {
+    let mut state = state_with_image_messages_and_display_options(
+        0,
+        &[],
+        DisplayOptions {
+            show_reaction_emoji: false,
+            ..DisplayOptions::default()
+        },
+    );
+    push_media_message(
+        &mut state,
+        MessageCreateFixture {
+            message_id: Id::new(1),
+            content: Some("hello <:wave:42>".to_owned()),
+            reactions: vec![ReactionInfo::test(ReactionEmoji::Custom {
+                id: Id::new(50),
+                name: Some("party".to_owned()),
+                animated: false,
+            })],
+            ..guild_message_create_fixture()
+        },
+    );
+
+    assert_eq!(
+        visible_emoji_image_targets(&state),
+        vec![EmojiImageTarget {
+            url: "https://cdn.discordapp.com/emojis/42.png".to_owned(),
+            image_size: EmojiImageSize::Compact,
+        }]
+    );
+}
+
+#[test]
 fn emoji_image_targets_deduplicate_and_promote_emoji_only_message_slots() {
     let mut state = state_with_image_messages(0, &[]);
     push_media_message(
@@ -3258,11 +3330,7 @@ fn standalone_emoji_cache_builds_compact_and_large_protocols() {
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        url,
-        1,
-        decode_media_image_bytes(&encoded_png(32, 32)).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(url, 1, decode_media_image_bytes(&encoded_png(32, 32)));
 
     cache.prepare(std::slice::from_ref(&target));
     assert!(cache.render_state(std::slice::from_ref(&target)).is_empty());
@@ -3653,7 +3721,10 @@ fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
     let guild_id = Id::new(1);
     let forum_id = Id::new(20);
     let thread_id = Id::new(30);
-    let mut state = DashboardState::new();
+    let mut state = DashboardState::new_with_display_options(DisplayOptions {
+        show_reaction_emoji: false,
+        ..DisplayOptions::default()
+    });
 
     state.push_event(guild_create_event(GuildCreateFixture {
         emojis: vec![CustomEmojiInfo {
@@ -3701,6 +3772,30 @@ fn emoji_image_targets_include_visible_forum_post_custom_tag_emoji() {
     }));
     state.confirm_selected_guild();
     state.confirm_selected_channel();
+
+    state.push_event(AppEvent::ForumPostDataLoaded {
+        channel_id: forum_id,
+        requested_thread_ids: vec![thread_id],
+        posts: vec![ForumPostDataInfo {
+            thread_id,
+            owner: None,
+            first_message: Some(MessageInfo {
+                guild_id: Some(guild_id),
+                channel_id: thread_id,
+                message_id: Id::new(thread_id.get()),
+                author_id: Id::new(99),
+                author: "neo".to_owned(),
+                content: Some("first post".to_owned()),
+                reactions: vec![ReactionInfo::test(ReactionEmoji::Custom {
+                    id: Id::new(50),
+                    name: Some("party".to_owned()),
+                    animated: false,
+                })],
+                ..MessageInfo::default()
+            }),
+            extra_fields: std::collections::BTreeMap::new(),
+        }],
+    });
 
     let targets = visible_emoji_image_targets(&state);
 
@@ -3907,11 +4002,7 @@ fn loaded_preview_cache(target: &ImagePreviewTarget, bytes: &[u8]) -> ImagePrevi
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        target.key(),
-        1,
-        decode_media_image_bytes(bytes).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(target.key(), 1, decode_media_image_bytes(bytes));
     cache
 }
 
@@ -3933,6 +4024,8 @@ fn image_preview_target(id: u64) -> ImagePreviewTarget {
         show_play_marker: false,
         message_id: Id::new(id),
         url: format!("https://cdn.discordapp.com/image-{id}.png"),
+        fallback_url: None,
+        scaled: false,
         filename: format!("image-{id}.png"),
     }
 }
@@ -4053,11 +4146,7 @@ fn animate_previews_policy_decides_which_avatars_keep_moving() {
                 last_used: 1,
             },
         );
-        cache.store_decoded(
-            url,
-            1,
-            decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
-        );
+        cache.store_decoded(url, 1, decode_media_image_bytes(&encoded_animated_gif()));
     }
     cache.prepare(&targets, None, None, false);
     for job in cache.take_protocol_jobs() {

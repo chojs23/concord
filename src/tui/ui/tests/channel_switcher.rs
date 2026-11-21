@@ -51,7 +51,7 @@ fn channel_switcher_lines_show_search_and_grouped_selection() {
         40,
     );
 
-    assert_eq!(lines[0].spans[0].content, "🔎 ");
+    assert_eq!(lines[0].spans[0].content, "\u{f0349} ");
     assert_eq!(lines[0].spans[1].content, "gen");
     assert!(
         lines

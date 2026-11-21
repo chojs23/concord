@@ -301,15 +301,17 @@ pub(super) fn composer_prompt_cursor_position(
 }
 
 pub(super) fn prefixed_composer_input(input: &str) -> String {
-    let mut prefixed = String::with_capacity(input.len().saturating_add(2));
+    let prompt = format!("{} ", crate::tui::icons::Icon::Prompt.glyph());
+    let continuation = " ".repeat(prompt.width());
+    let mut prefixed = String::with_capacity(input.len().saturating_add(prompt.len()));
     for (index, line) in input.split('\n').enumerate() {
         if index > 0 {
             prefixed.push('\n');
         }
         if index == 0 {
-            prefixed.push_str("> ");
+            prefixed.push_str(&prompt);
         } else {
-            prefixed.push_str("  ");
+            prefixed.push_str(&continuation);
         }
         prefixed.push_str(line);
     }

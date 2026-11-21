@@ -523,7 +523,11 @@ pub(in crate::tui::ui) fn emoji_reaction_picker_lines_with_custom_emoji_images(
                 .pinned_emojis
                 .iter()
                 .any(|pin| pin.pin_identity_eq(&reaction.emoji));
-            let pin_marker = if pinned { "★ " } else { "  " };
+            let pin_marker = if pinned {
+                format!("{} ", Icon::Pinned.glyph())
+            } else {
+                " ".repeat(Icon::Pinned.glyph().width() + 1)
+            };
             selected_row_line(
                 Line::from(vec![
                     selection_marker(is_selected),
@@ -604,8 +608,11 @@ fn render_emoji_reaction_images(
 }
 
 fn emoji_reaction_image_x_offset() -> u16 {
-    // Selection marker + shortcut prefix + the pinned-emoji marker ("★ "/"  ").
-    2 + shortcut_prefix(Some('q')).width() as u16 + 2
+    // Match the rendered selection, shortcut, and pinned-marker prefixes.
+    (selection_marker_width()
+        + shortcut_prefix(Some('q')).width()
+        + Icon::Pinned.glyph().width()
+        + 1) as u16
 }
 
 fn format_emoji_reaction_item(reaction: &EmojiReactionItem, thumbnail_ready: bool) -> String {

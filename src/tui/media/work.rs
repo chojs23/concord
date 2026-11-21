@@ -8,9 +8,13 @@ use tokio::sync::{Notify, Semaphore};
 const MAX_CONCURRENT_MEDIA_IMAGE_WORKERS: usize = 2;
 const MAX_MEDIA_IMAGE_WORK_JOBS: usize = 32;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(in crate::tui) enum MediaWorkError {
+    #[error("image worker is busy")]
     Busy,
+    #[error("{0}")]
+    DecodeLimit(String),
+    #[error("{0}")]
     Failed(String),
 }
 

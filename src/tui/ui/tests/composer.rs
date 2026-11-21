@@ -6,6 +6,34 @@ use crate::discord::{
 };
 
 #[test]
+fn composer_prompt_preserves_draft_text_and_cursor_alignment_for_each_icon_set() {
+    for (icon_set, expected_prompt) in [
+        (crate::config::IconSet::Unicode, "> hello 🔥"),
+        (crate::config::IconSet::Nerd, "\u{f0142} hello 🔥"),
+    ] {
+        let mut options = crate::config::ThemeOptions::default();
+        options.set_icon_set(icon_set);
+        let custom = theme::Theme::from_options(&options, &mut Vec::new());
+        theme::with_test_theme(custom, || {
+            let mut state = state_with_message();
+            state.start_composer();
+            let draft = "hello 🔥\n@someone #general";
+            state.insert_composer_text_at_cursor(draft);
+
+            assert_eq!(state.composer_input(), draft);
+            assert_eq!(
+                line_texts_from_ratatui(&composer_lines(&state, 77)),
+                vec![expected_prompt, "  @someone #general"]
+            );
+            assert_eq!(
+                composer_cursor_position(Rect::new(10, 20, 80, 6), &state),
+                Some(Position::new(11 + "  @someone #general".width() as u16, 22))
+            );
+        });
+    }
+}
+
+#[test]
 fn verification_composer_text_explains_each_restriction() {
     let cases = [
         (
@@ -110,7 +138,7 @@ fn composer_prompt_line_count_matches_prefixed_multiline_rendering() {
 
     let rendered = line_texts_from_ratatui(&composer_lines(&state, 5));
 
-    assert_eq!(rendered, vec!["> a", "  bbb", "b"]);
+    assert_eq!(rendered, vec!["\u{f0142} a", "  bbb", "b"]);
     assert_eq!(composer_prompt_line_count(state.composer_input(), 5), 3);
     assert_eq!(composer_content_line_count(&state, 5), 3);
 
@@ -140,7 +168,7 @@ fn composer_translation_ui_tracks_loading_and_completed_states() {
     assert_eq!(state.composer_title(), " Translating... ");
     assert_eq!(
         line_texts_from_ratatui(&composer_lines(&state, 24)),
-        vec!["> 안녕하세요"]
+        vec!["\u{f0142} 안녕하세요"]
     );
     assert_eq!(composer_content_line_count(&state, 24), 1);
     assert_eq!(
@@ -157,7 +185,11 @@ fn composer_translation_ui_tracks_loading_and_completed_states() {
     assert_eq!(state.composer_title(), " Message Input ");
     assert_eq!(
         line_texts_from_ratatui(&composer_lines(&state, 24)),
-        vec!["> 안녕하세요", "────── translated ──────", "> hello",]
+        vec![
+            "\u{f0142} 안녕하세요",
+            "────── translated ──────",
+            "\u{f0142} hello",
+        ]
     );
     assert_eq!(composer_content_line_count(&state, 24), 3);
     assert_eq!(
@@ -192,7 +224,7 @@ fn composer_lines_show_saved_draft_when_not_composing() {
 
     assert_eq!(
         line_texts_from_ratatui(&composer_lines(&state, 80)),
-        vec!["> draft"]
+        vec!["\u{f0142} draft"]
     );
 }
 
@@ -295,7 +327,7 @@ fn reply_composer_hint_line_shows_dim_excerpt_and_semantic_ping_indicator() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["reply to hello  @ on", "> "]
+        vec!["reply to hello  \u{f0065} on", "\u{f0142} "]
     );
     assert!(lines[0].spans[0].style.add_modifier.contains(Modifier::DIM));
     assert_eq!(
@@ -310,7 +342,7 @@ fn reply_composer_hint_line_shows_dim_excerpt_and_semantic_ping_indicator() {
     let lines = composer_lines(&state, 80);
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["reply to hello  @ off", "> "]
+        vec!["reply to hello  \u{f0065} off", "\u{f0142} "]
     );
     assert!(
         lines[0]
@@ -430,7 +462,7 @@ fn composer_lines_show_pending_upload_rows_above_input() {
             "",
             "",
             "────────────────────────────────────────────────────────────────────────────────",
-            "> ",
+            "\u{f0142} ",
         ]
     );
     assert_eq!(lines[0].spans[0].style.fg, Some(Color::Yellow));
@@ -450,7 +482,10 @@ fn composer_lines_show_pending_upload_rows_above_input() {
 
     assert_eq!(
         line_texts_from_ratatui(&processing_lines),
-        vec!["upload: ⠋ processing clipboard attachment...", "> "]
+        vec![
+            "upload: \u{f0772} processing clipboard attachment...",
+            "\u{f0142} "
+        ]
     );
     assert_eq!(processing_lines[0].spans[0].style.fg, Some(Color::Yellow));
     assert_eq!(composer_content_line_count(&processing, 80), 2);
@@ -481,9 +516,12 @@ fn composer_lines_use_image_width_for_loaded_custom_emoji() {
 
     assert_eq!(
         line_texts_from_ratatui(&loading_lines),
-        vec!["> :long_custom: text"]
+        vec!["\u{f0142} :long_custom: text"]
     );
-    assert_eq!(line_texts_from_ratatui(&loaded_lines), vec![">    text"]);
+    assert_eq!(
+        line_texts_from_ratatui(&loaded_lines),
+        vec!["\u{f0142}    text"]
+    );
 }
 
 #[test]
@@ -608,7 +646,7 @@ fn overflowing_pasted_composer_scrolls_naturally_and_shows_the_shared_scrollbar(
 
     assert_eq!(
         visible_composer_rows(area, &state),
-        vec!["> first", "  second", "  third"]
+        vec!["\u{f0142} first", "  second", "  third"]
     );
     assert_eq!(
         composer_cursor_position(area, &state),
@@ -774,7 +812,7 @@ fn mention_picker_selection_keeps_presence_foreground_and_base_background() {
         let lines = mention_picker_lines_for_test(&entries, 1, 80);
 
         assert_eq!(lines[0].spans[0].content, "  ");
-        assert_eq!(lines[1].spans[0].content, "▸ ");
+        assert_eq!(lines[1].spans[0].content, "\u{f0142} ");
         assert_eq!(lines[0].spans[1].style.fg, Some(Color::Green));
         assert_eq!(lines[0].spans[3].style.fg, None);
         assert_eq!(lines[0].spans[4].style.fg, None);

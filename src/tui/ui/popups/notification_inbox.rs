@@ -408,7 +408,7 @@ fn notification_inbox_card_content(
         }
         NotificationInboxItem::Mention(item) => {
             let mut header = vec![Span::styled(
-                format!("@ {}", item.title),
+                format!("{} {}", Icon::MentionRole.glyph(), item.title),
                 theme::current().style(theme::HighlightGroup::Strong),
             )];
             if let Some(context) = &item.context {

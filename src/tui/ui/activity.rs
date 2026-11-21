@@ -1,7 +1,9 @@
 use ratatui::text::{Line, Span};
 
 use crate::discord::{ActivityInfo, ActivityKind};
+use crate::tui::icons::Icon;
 use crate::tui::text::{sanitize_for_display_width, truncate_display_width_from};
+use unicode_width::UnicodeWidthStr;
 
 use super::{theme, types::EmojiImage};
 
@@ -13,9 +15,8 @@ pub(super) enum ActivityLeading {
     /// Nothing precedes the body (used by `Competing` / `Unknown` and by
     /// `Custom` when there is no emoji to show).
     None,
-    /// A single-char accent rendered in green by callers. The shared rule of
-    /// thumb: `▶` Playing, `◉` Streaming, `♪` Listening, `▷` Watching.
-    Icon(char),
+    /// An application icon from the selected palette, rendered in green.
+    Icon(&'static str),
     /// A custom emoji image that should be overlaid on top of a 2-cell
     /// placeholder. The string is the CDN URL used by both the cache and the
     /// later overlay pass.
@@ -69,7 +70,7 @@ pub(super) fn compact_activity_line(
     let has_body = !render.body.is_empty();
     let content_prefix_width = match &render.leading {
         ActivityLeading::None => 0,
-        ActivityLeading::Icon(_) => 1 + usize::from(has_body),
+        ActivityLeading::Icon(icon) => icon.width() + usize::from(has_body),
         ActivityLeading::Image(_) => ACTIVITY_IMAGE_WIDTH,
     };
     let body = truncate_display_width_from(
@@ -101,7 +102,7 @@ pub(super) fn compact_activity_line(
             let mut spans = vec![
                 leading,
                 Span::styled(
-                    icon.to_string(),
+                    icon,
                     theme::current().style(theme::HighlightGroup::PresenceOnline),
                 ),
             ];
@@ -129,11 +130,11 @@ pub(super) fn build_activity_render(
     match activity.kind {
         ActivityKind::Custom => build_custom(activity, emoji_images),
         ActivityKind::Playing => ActivityRender {
-            leading: ActivityLeading::Icon('▶'),
+            leading: ActivityLeading::Icon(Icon::ActivityPlaying.glyph()),
             body: sanitize_for_display_width(&activity.name),
         },
         ActivityKind::Streaming => ActivityRender {
-            leading: ActivityLeading::Icon('◉'),
+            leading: ActivityLeading::Icon(Icon::ActivityStreaming.glyph()),
             body: sanitize_for_display_width(&activity.name),
         },
         ActivityKind::Listening => {
@@ -150,12 +151,12 @@ pub(super) fn build_activity_render(
                 name
             };
             ActivityRender {
-                leading: ActivityLeading::Icon('♪'),
+                leading: ActivityLeading::Icon(Icon::ActivityListening.glyph()),
                 body,
             }
         }
         ActivityKind::Watching => ActivityRender {
-            leading: ActivityLeading::Icon('▷'),
+            leading: ActivityLeading::Icon(Icon::ActivityWatching.glyph()),
             body: sanitize_for_display_width(&activity.name),
         },
         ActivityKind::Competing => ActivityRender {
@@ -238,7 +239,7 @@ mod tests {
         );
         let icon = compact_activity_line(
             ActivityRender {
-                leading: ActivityLeading::Icon('▶'),
+                leading: ActivityLeading::Icon(Icon::ActivityPlaying.glyph()),
                 body: "status".to_owned(),
             },
             leading_width,
@@ -255,7 +256,7 @@ mod tests {
         assert_eq!(image.line.spans[0].content, icon.line.spans[0].content);
         assert_eq!(image.line.spans[1].content.as_ref(), "  ");
         assert_eq!(image.line.spans[2].content.as_ref(), "status");
-        assert_eq!(icon.line.spans[1].content.as_ref(), "▶");
+        assert_eq!(icon.line.spans[1].content.as_ref(), "\u{f0297}");
         assert_eq!(icon.line.spans[2].content.as_ref(), " ");
         assert_eq!(icon.line.spans[3].content.as_ref(), "status");
     }

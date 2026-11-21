@@ -36,6 +36,7 @@ mod upload;
 mod user_settings;
 mod verification;
 mod voice;
+mod voice_export;
 
 pub(crate) use action_policy::ActionDecision;
 pub use action_policy::{ActionBlockReason, DiscordAction};

@@ -963,23 +963,23 @@ fn friend_status_badge(status: FriendStatus) -> (String, Style) {
     let theme = theme::current();
     match status {
         FriendStatus::Friend => (
-            "● Friend".to_owned(),
+            format!("{} Friend", Icon::Relationship.glyph()),
             theme.style(theme::HighlightGroup::RelationshipFriend),
         ),
         FriendStatus::IncomingRequest => (
-            "● Incoming friend request".to_owned(),
+            format!("{} Incoming friend request", Icon::Relationship.glyph()),
             theme.style(theme::HighlightGroup::RelationshipIncoming),
         ),
         FriendStatus::OutgoingRequest => (
-            "● Outgoing friend request".to_owned(),
+            format!("{} Outgoing friend request", Icon::Relationship.glyph()),
             theme.style(theme::HighlightGroup::RelationshipOutgoing),
         ),
         FriendStatus::Blocked => (
-            "● Blocked".to_owned(),
+            format!("{} Blocked", Icon::Relationship.glyph()),
             theme.style(theme::HighlightGroup::RelationshipBlocked),
         ),
         FriendStatus::None | FriendStatus::Implicit => (
-            "● Not friends".to_owned(),
+            format!("{} Not friends", Icon::Relationship.glyph()),
             theme.style(theme::HighlightGroup::RelationshipNone),
         ),
     }
@@ -1219,7 +1219,7 @@ fn push_social_section(
                 format!("{guild_name}  ·  {nick}")
             });
         lines.push(Line::from(Span::styled(
-            truncate_display_width(&format!("  • {label}"), width),
+            truncate_display_width(&format!("  {} {label}", Icon::ListItem.glyph()), width),
             theme::current().style(theme::HighlightGroup::Description),
         )));
     }
@@ -1244,7 +1244,7 @@ fn push_social_section(
             format!("{display_name}  ·  @{username}")
         };
         lines.push(Line::from(Span::styled(
-            truncate_display_width(&format!("  • {label}"), width),
+            truncate_display_width(&format!("  {} {label}", Icon::ListItem.glyph()), width),
             theme::current().style(theme::HighlightGroup::Description),
         )));
     }
@@ -1260,8 +1260,7 @@ fn push_activity_lines(
     let render = build_activity_render(activity, emoji_images, false);
     if !render.is_empty() {
         let line_index = lines.len();
-        // The leading marker costs 2 columns, either a 2-cell image or an icon
-        // plus one space. The plain-body variant gets the full width.
+        // Images reserve two cells. Icon prefixes use their resolved display width.
         let line = match render.leading {
             ActivityLeading::Image(url) => {
                 emoji_overlays.push((line_index, url));
@@ -1274,10 +1273,10 @@ fn push_activity_lines(
                 ])
             }
             ActivityLeading::Icon(icon) => Line::from(vec![
-                Span::styled(icon.to_string(), Style::default()),
+                Span::styled(icon, Style::default()),
                 Span::raw(" "),
                 Span::styled(
-                    truncate_display_width(&render.body, width.saturating_sub(2)),
+                    truncate_display_width(&render.body, width.saturating_sub(icon.width() + 1)),
                     theme::current().style(theme::HighlightGroup::Activity),
                 ),
             ]),

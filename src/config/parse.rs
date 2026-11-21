@@ -7,8 +7,8 @@ use crate::Result;
 use crate::discord::ReactionEmoji;
 
 use super::{
-    AppOptions, BorderShape, BorderSurface, HighlightGroup, HighlightLinkOptions, KeymapOptions,
-    ReactionOptions, ThemeOptions, UiStateOptions,
+    AppOptions, BorderShape, BorderSurface, HighlightGroup, HighlightLinkOptions, IconSet,
+    KeymapOptions, ReactionOptions, ThemeOptions, UiStateOptions,
 };
 
 /// Parse `config.toml` tolerantly: a value with a wrong type or unknown variant
@@ -198,6 +198,20 @@ impl ThemeLeafParser {
     fn parse_ui(&mut self, table: &toml::Table) {
         for (field, value) in table {
             match field.as_str() {
+                "icon_set" => {
+                    let Some(raw) = value.as_str() else {
+                        self.warnings
+                            .push("[ui] icon_set must be a string and was ignored".to_owned());
+                        continue;
+                    };
+                    let Some(icon_set) = IconSet::from_name(raw) else {
+                        self.warnings.push(format!(
+                            "[ui] icon_set = \"{raw}\" is not a supported icon set and was ignored"
+                        ));
+                        continue;
+                    };
+                    self.options.set_icon_set(icon_set);
+                }
                 "border" => {
                     let Some(fields) = value.as_table() else {
                         self.warnings

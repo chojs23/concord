@@ -24,6 +24,7 @@ pub struct ImagePreview<'a> {
     pub preview_height: u16,
     pub visible_preview_height: u16,
     pub accent_color: Option<u32>,
+    pub scaled: bool,
     pub state: ImagePreviewState<'a>,
 }
 

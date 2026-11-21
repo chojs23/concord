@@ -45,7 +45,11 @@ pub(in crate::tui::ui) fn poll_vote_picker_lines(
             let shortcut = shortcut_prefix(crate::tui::keybindings::KeyBindings::indexed_shortcut(
                 index,
             ));
-            let checkbox = if answer.selected { "[x]" } else { "[ ]" };
+            let checkbox = if answer.selected {
+                Icon::Checked.glyph()
+            } else {
+                Icon::Unchecked.glyph()
+            };
             let style = if answer.selected {
                 theme::current().style(theme::HighlightGroup::Selection)
             } else {
