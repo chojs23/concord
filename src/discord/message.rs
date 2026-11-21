@@ -219,6 +219,7 @@ impl StickerInfo {
 
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
         Some(InlinePreviewInfo {
+            attachment_id: None,
             url: self.url.as_deref()?,
             proxy_url: self.proxy_url.as_deref(),
             filename: self.name.as_str(),
@@ -367,6 +368,8 @@ impl EmbedInfo {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InlinePreviewInfo<'a> {
+    /// Stable identity for attachment-backed previews, including forwarded files.
+    pub attachment_id: Option<Id<AttachmentMarker>>,
     pub url: &'a str,
     pub proxy_url: Option<&'a str>,
     pub filename: &'a str,
@@ -773,6 +776,7 @@ impl AttachmentInfo {
     pub fn inline_preview_info(&self) -> Option<InlinePreviewInfo<'_>> {
         if self.media_type() == Some(AttachmentMediaType::Video) && !self.proxy_url.is_empty() {
             return Some(InlinePreviewInfo {
+                attachment_id: Some(self.id),
                 url: self.proxy_url.as_str(),
                 proxy_url: Some(self.proxy_url.as_str()),
                 filename: self.filename.as_str(),
@@ -786,6 +790,7 @@ impl AttachmentInfo {
         }
 
         Some(InlinePreviewInfo {
+            attachment_id: Some(self.id),
             url: self.inline_preview_url()?,
             proxy_url: (!self.proxy_url.is_empty()).then_some(self.proxy_url.as_str()),
             filename: self.filename.as_str(),
@@ -807,6 +812,7 @@ impl EmbedInfo {
     pub fn inline_previews(&self) -> Vec<InlinePreviewInfo<'_>> {
         if let Some(url) = self.gifv_image_url.as_deref() {
             return vec![InlinePreviewInfo {
+                attachment_id: None,
                 url,
                 proxy_url: self.gifv_image_proxy_url.as_deref(),
                 filename: "embed-gifv",
@@ -825,6 +831,7 @@ impl EmbedInfo {
         if has_video {
             if let Some(url) = self.thumbnail_url.as_deref() {
                 return vec![InlinePreviewInfo {
+                    attachment_id: None,
                     url,
                     proxy_url: self.thumbnail_proxy_url.as_deref(),
                     filename: "embed-thumbnail",
@@ -838,6 +845,7 @@ impl EmbedInfo {
             }
             if let Some(url) = self.image_url.as_deref() {
                 return vec![InlinePreviewInfo {
+                    attachment_id: None,
                     url,
                     proxy_url: self.image_proxy_url.as_deref(),
                     filename: "embed-image",
@@ -851,6 +859,7 @@ impl EmbedInfo {
             }
             if let Some(url) = self.video_proxy_url.as_deref() {
                 return vec![InlinePreviewInfo {
+                    attachment_id: None,
                     url,
                     proxy_url: Some(url),
                     filename: "embed-video",
@@ -867,6 +876,7 @@ impl EmbedInfo {
         let mut previews = Vec::new();
         if let Some(url) = self.image_url.as_deref() {
             previews.push(InlinePreviewInfo {
+                attachment_id: None,
                 url,
                 proxy_url: self.image_proxy_url.as_deref(),
                 filename: "embed-image",
@@ -882,6 +892,7 @@ impl EmbedInfo {
             && self.image_url.as_deref() != Some(url)
         {
             previews.push(InlinePreviewInfo {
+                attachment_id: None,
                 url,
                 proxy_url: self.thumbnail_proxy_url.as_deref(),
                 filename: "embed-thumbnail",
@@ -939,6 +950,7 @@ impl ComponentMediaInfo {
         let proxy_url = self.proxy_url.as_deref();
         if media_type == AttachmentMediaType::Video {
             return Some(InlinePreviewInfo {
+                attachment_id: None,
                 url: proxy_url.unwrap_or(url),
                 proxy_url,
                 filename,
@@ -951,6 +963,7 @@ impl ComponentMediaInfo {
             });
         }
         (media_type == AttachmentMediaType::Image).then(|| InlinePreviewInfo {
+            attachment_id: None,
             url,
             proxy_url,
             filename,

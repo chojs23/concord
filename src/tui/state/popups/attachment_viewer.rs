@@ -4,9 +4,10 @@ use crate::discord::{
     ids::{Id, marker::MessageMarker},
 };
 
-use super::super::{AttachmentViewerItem, DashboardState};
+use super::super::{AttachmentViewerItem, DashboardState, FocusPane};
 use crate::tui::state::popups::{
     ActiveModalPopupKind, AttachmentViewerState, AttachmentViewerZoom, ModalPopup,
+    SelectablePopupState,
 };
 
 struct SelectedAttachmentViewerAttachment<'a> {
@@ -29,6 +30,50 @@ impl DashboardState {
             .set_modal(ModalPopup::AttachmentViewer(AttachmentViewerState {
                 message_id: message.id,
                 selection: Default::default(),
+                zoom: AttachmentViewerZoom::default(),
+            }));
+        true
+    }
+
+    /// Selects the clicked attachment by ID so duplicate filenames and forwarded
+    /// files cannot redirect the viewer to another item.
+    pub(in crate::tui) fn open_image_preview_at_viewport_position(
+        &mut self,
+        row: usize,
+        col: usize,
+        avatar_offset: u16,
+    ) -> bool {
+        let Some((message_id, attachment_id)) =
+            self.image_preview_at_viewport_position(row, col, avatar_offset)
+        else {
+            return false;
+        };
+        let Some((index, attachment_index)) = self
+            .messages()
+            .into_iter()
+            .enumerate()
+            .find(|(_, message)| message.id == message_id)
+            .and_then(|(index, message)| {
+                message
+                    .attachments_in_display_order()
+                    .position(|attachment| attachment.id == attachment_id)
+                    .map(|attachment_index| (index, attachment_index))
+            })
+        else {
+            return false;
+        };
+
+        self.focus_pane(FocusPane::Messages);
+        self.messages.selected_message = index;
+        self.messages.message_auto_follow = false;
+        self.messages.message_keep_selection_visible = false;
+
+        let mut selection = SelectablePopupState::default();
+        selection.select(attachment_index);
+        self.popups
+            .set_modal(ModalPopup::AttachmentViewer(AttachmentViewerState {
+                message_id,
+                selection,
                 zoom: AttachmentViewerZoom::default(),
             }));
         true

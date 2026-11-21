@@ -1,13 +1,20 @@
 use std::time::Duration;
 
-use crate::discord::{Id, MessageState, ReactionEmoji, marker::MessageMarker};
+use ratatui::layout::Rect;
+
+use crate::discord::{
+    Id, MessageState, ReactionEmoji,
+    marker::{AttachmentMarker, MessageMarker},
+};
 
 use super::{MessageRowContentMetrics, MessageRowContentMetricsCacheKey, *};
 use crate::tui::{
     media,
     message::{
-        format as message_format, layout::standalone_message_rendered_height,
-        rows::MessageRowMetrics, time as message_time,
+        format as message_format,
+        layout::{MessageViewportPlan, standalone_message_rendered_height},
+        rows::MessageRowMetrics,
+        time as message_time,
     },
 };
 
@@ -439,6 +446,71 @@ impl DashboardState {
                 return Some((message.id, emoji));
             }
             rendered_row = rendered_row.saturating_add(visible_height);
+        }
+        None
+    }
+
+    /// Resolves an attachment-backed flow preview using the renderer's final bounds.
+    /// Coordinates are relative to the message list. Embeds, stickers, thread cards,
+    /// and section thumbnails keep their normal message-row actions.
+    pub(in crate::tui) fn image_preview_at_viewport_position(
+        &self,
+        row: usize,
+        col: usize,
+        avatar_offset: u16,
+    ) -> Option<(Id<MessageMarker>, Id<AttachmentMarker>)> {
+        if self.message_pane_uses_thread_cards()
+            || self.messages.message_content_width == usize::MAX
+        {
+            return None;
+        }
+        let row = u16::try_from(row).ok()?;
+        let col = u16::try_from(col).ok()?;
+        let list = Rect::new(
+            0,
+            0,
+            u16::try_from(self.messages.message_view_width).ok()?,
+            u16::try_from(self.messages.message_view_height).ok()?,
+        );
+        let content_width = self.messages.message_content_width;
+        let preview_width = self.messages.message_preview_width;
+        let max_preview_height = self.messages.message_max_preview_height;
+        let messages = self.visible_messages();
+        let plan = MessageViewportPlan::new(
+            &messages,
+            self.focused_message_selection(),
+            self,
+            content_width,
+            preview_width,
+            max_preview_height,
+        );
+
+        for viewport_row in plan.rows() {
+            let previews = viewport_row.message.flow_inline_previews();
+            let album =
+                media::image_preview_album_layout(&previews, preview_width, max_preview_height);
+            let accent_color = (previews.len() == 1)
+                .then(|| previews[0].accent_color)
+                .flatten();
+            for cell in &album.cells {
+                let Some(attachment_id) = previews[cell.preview_index].attachment_id else {
+                    continue;
+                };
+                let Some(bounds) = crate::tui::ui::inline_image_preview_screen_area(
+                    list,
+                    viewport_row.image_preview_row(None, cell.y_offset_rows),
+                    cell.x_offset_columns,
+                    cell.width,
+                    cell.height,
+                    accent_color,
+                    avatar_offset,
+                ) else {
+                    continue;
+                };
+                if bounds.contains((col, row).into()) {
+                    return Some((viewport_row.message.id, attachment_id));
+                }
+            }
         }
         None
     }
