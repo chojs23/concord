@@ -988,3 +988,41 @@ fn voice_join_action_reflects_scope_permissions_and_participation() {
     );
     assert!(action(ChannelActionKind::ToggleMute).is_enabled());
 }
+
+#[test]
+fn voice_join_keeps_enabled_microphone_intent_in_listen_only_channels() {
+    let me = Id::new(10);
+    let guild_id = Id::new(1);
+    let voice_id = Id::new(11);
+    let mut state = DashboardState::new_with_voice_options(VoiceOptions {
+        allow_microphone_transmit: true,
+        ..VoiceOptions::default()
+    });
+    state.push_event(AppEvent::Ready {
+        user: "me".to_owned(),
+        user_id: Some(me),
+    });
+    state.push_event(guild_create_event(GuildCreateFixture {
+        owner_id: Some(Id::new(99)),
+        channels: vec![voice_channel_info(guild_id, voice_id, "Lobby")],
+        members: vec![member_with_username(me, "me", "me")],
+        roles: vec![role_info(
+            Id::new(guild_id.get()),
+            "@everyone",
+            PERM_VIEW_CHANNEL | PERM_CONNECT,
+        )],
+        ..GuildCreateFixture::new(guild_id)
+    }));
+    state.activate_guild(ActiveGuildScope::Guild(guild_id));
+    state.focus_pane(FocusPane::Channels);
+    state.open_selected_channel_actions();
+
+    assert!(matches!(
+        state.activate_selected_channel_action(),
+        Some(AppCommand::JoinVoiceChannel {
+            channel_id,
+            allow_microphone_transmit: true,
+            ..
+        }) if channel_id == voice_id
+    ));
+}

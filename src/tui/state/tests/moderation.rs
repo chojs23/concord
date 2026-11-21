@@ -178,3 +178,39 @@ fn move_member_lists_other_voice_channels_and_moves_to_selection() {
         moderate(MemberModeration::Move(AFK))
     );
 }
+
+#[test]
+fn participant_action_selection_tracks_the_action_across_channel_updates() {
+    for kind in [
+        ChannelActionKind::MoveMember,
+        ChannelActionKind::DisconnectMember,
+    ] {
+        let mut state = moderation_state(ME);
+        open_participant_actions(&mut state);
+        let row = state
+            .selected_channel_action_items()
+            .iter()
+            .position(|item| item.kind == kind)
+            .expect("participant action");
+        assert!(state.select_channel_action_row(row));
+
+        state.push_event(AppEvent::ChannelDelete {
+            guild_id: Some(GUILD),
+            channel_id: AFK,
+        });
+
+        if kind == ChannelActionKind::MoveMember {
+            assert!(!state.is_channel_action_menu_active());
+            assert_eq!(state.activate_selected_channel_action(), None);
+        } else {
+            let selected = state
+                .selected_channel_action_index()
+                .expect("selected action");
+            assert_eq!(state.selected_channel_action_items()[selected].kind, kind);
+            assert_eq!(
+                press(&mut state, KeyCode::Enter),
+                moderate(MemberModeration::Disconnect)
+            );
+        }
+    }
+}

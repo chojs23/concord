@@ -530,15 +530,12 @@ impl DashboardState {
                                 self_deaf: self.options.voice_options.self_deaf,
                                 input_source: self.options.voice_options.input_source.clone(),
                                 output_source: self.options.voice_options.output_source.clone(),
+                                // The client gates capture without losing the intent
+                                // needed to recheck permissions after a server move.
                                 allow_microphone_transmit: self
                                     .options
                                     .voice_options
-                                    .allow_microphone_transmit
-                                    && (channel.guild_id.is_none()
-                                        || self
-                                            .discord
-                                            .cache
-                                            .can_transmit_microphone_in_voice_channel(channel)),
+                                    .allow_microphone_transmit,
                                 noise_suppression: self.options.voice_options.noise_suppression,
                                 microphone_buffer_ms: self
                                     .options
