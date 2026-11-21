@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.2] - 2026-11-21
+
+### Bug Fixes
+
+- _(deps)_ Update ThorVG to 1.1.2 and retain ARM ABI fix by @chojs23
+- _(tui)_ Raise image decode limits and add scaled attachment viewer fallback (#437) in [#437](https://github.com/chojs23/concord/pull/437) by @chojs23
+
+### Features
+
+- Add ability to toggle reaction visibility (#436) in [#436](https://github.com/chojs23/concord/pull/436) by @regarager
+- _(tui)_ Add centralized icons with Nerd Font defaults (#434) in [#434](https://github.com/chojs23/concord/pull/434) by @regarager
+- Add composer option to disable outgoing typing indicator (#425) in [#425](https://github.com/chojs23/concord/pull/425) by @SailinEast
+- _(tui)_ Click an image thumbnail to open the attachment viewer (#411) in [#411](https://github.com/chojs23/concord/pull/411) by @rropleka
+- Add server mute, deafen, move and disconnect for voice members (#419) in [#419](https://github.com/chojs23/concord/pull/419) by @simeonnv
+
+### New Contributors
+
+- @simeonnv made their first contribution in [#419](https://github.com/chojs23/concord/pull/419)
+- @regarager made their first contribution in [#434](https://github.com/chojs23/concord/pull/434)
+
 ## [2.7.1] - 2026-11-16
 
 ### Bug Fixes
