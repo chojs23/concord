@@ -1481,11 +1481,7 @@ fn image_preview_keeps_protocols_per_crop_without_wrong_crop_fallback() {
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        key,
-        1,
-        decode_media_image_bytes(&encoded_png(8, 8)).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(key, 1, decode_media_image_bytes(&encoded_png(8, 8)));
 
     cache.prepare(std::slice::from_ref(&target));
     for job in cache.take_protocol_jobs() {
@@ -1533,11 +1529,7 @@ fn failed_new_crop_does_not_hide_ready_old_crop_or_load_forever() {
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        key,
-        1,
-        decode_media_image_bytes(&encoded_png(8, 8)).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(key, 1, decode_media_image_bytes(&encoded_png(8, 8)));
     cache.prepare(std::slice::from_ref(&target));
     for job in cache.take_protocol_jobs() {
         cache.store_protocol(build_media_protocol(job));
@@ -1589,11 +1581,7 @@ fn split_animation_builds_each_visible_crop_before_prefetching() {
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        key,
-        1,
-        decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(key, 1, decode_media_image_bytes(&encoded_animated_gif()));
 
     let targets = [top, bottom];
     for _ in 0..2 {
@@ -2340,7 +2328,7 @@ fn media_decode_cache_shares_one_url_decode_across_preview_requests() {
     );
     let outcome = decoded_images.complete(MediaImageDecodeResult {
         url: first.url.clone(),
-        result: decode_media_image_bytes(&encoded).map_err(MediaWorkError::Failed),
+        result: decode_media_image_bytes(&encoded),
     });
     let deliveries = outcome.deliveries;
     assert_eq!(deliveries.len(), 2);
@@ -2464,7 +2452,7 @@ fn media_decode_busy_retains_bytes_and_all_consumers_for_retry() {
 
     let completed = decoded.complete(MediaImageDecodeResult {
         url: preview_target.url,
-        result: decode_media_image_bytes(&encoded).map_err(MediaWorkError::Failed),
+        result: decode_media_image_bytes(&encoded),
     });
     assert_eq!(completed.deliveries.len(), 2);
     let diagnostics = decoded.diagnostics();
@@ -2496,11 +2484,7 @@ fn animate_previews_policy_decides_which_previews_keep_moving() {
                 last_used: 1,
             },
         );
-        cache.store_decoded(
-            key,
-            1,
-            decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
-        );
+        cache.store_decoded(key, 1, decode_media_image_bytes(&encoded_animated_gif()));
     }
     // Build every protocol so animation is only gated by the policy.
     for _ in 0..8 {
@@ -2578,7 +2562,7 @@ fn attachment_preview_waits_when_protocol_encoding_falls_behind() {
     cache.store_decoded(
         key.clone(),
         1,
-        decode_media_image_bytes(&encoded_three_frame_gif()).map_err(MediaWorkError::Failed),
+        decode_media_image_bytes(&encoded_three_frame_gif()),
     );
 
     for _ in 0..2 {
@@ -2752,7 +2736,7 @@ fn decode_image_bytes_reports_invalid_bytes() {
     let error =
         decode_image_bytes(b"not an image").expect_err("invalid bytes should fail to decode");
 
-    assert!(error.starts_with("decode failed:"));
+    assert!(error.to_string().starts_with("decode failed:"));
 }
 
 #[test]
@@ -2808,7 +2792,11 @@ fn media_decoder_preserves_and_plays_gif_and_webp_animation_frames() {
         Ok(_) => panic!("a corrupt later GIF frame should fail the full decode"),
         Err(error) => error,
     };
-    assert!(error.starts_with("decode failed at animation frame 2:"));
+    assert!(
+        error
+            .to_string()
+            .starts_with("decode failed at animation frame 2:")
+    );
 }
 
 #[test]
@@ -2878,7 +2866,10 @@ fn media_decoder_rejects_invalid_lottie_documents() {
         let error = decode_media_image_bytes(bytes)
             .err()
             .unwrap_or_else(|| panic!("{label} Lottie document should fail"));
-        assert!(error.starts_with("decode failed:"), "{label}: {error}");
+        assert!(
+            error.to_string().starts_with("decode failed:"),
+            "{label}: {error}"
+        );
     }
 }
 
@@ -2963,7 +2954,7 @@ fn emoji_animation_clock_runs_only_while_the_image_is_visible() {
     cache.store_decoded(
         url.clone(),
         1,
-        decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
+        decode_media_image_bytes(&encoded_animated_gif()),
     );
     cache.prepare(std::slice::from_ref(&target));
     let _ = cache.render_state(std::slice::from_ref(&target));
@@ -3049,7 +3040,7 @@ fn attachment_preview_waits_for_a_ready_or_failed_next_animation_frame() {
     cache.store_decoded(
         key.clone(),
         1,
-        decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
+        decode_media_image_bytes(&encoded_animated_gif()),
     );
     cache.prepare(std::slice::from_ref(&target));
     let _ = cache.render_state(std::slice::from_ref(&target));
@@ -3147,6 +3138,21 @@ fn attachment_preview_waits_for_a_ready_or_failed_next_animation_frame() {
 }
 
 #[test]
+fn media_decoder_accepts_images_within_expanded_resource_limits() {
+    for (width, height) in [(8192, 1), (1, 8192), (5000, 3500)] {
+        let image = decode_media_image_bytes(&encoded_png(width, height))
+            .expect("image within the expanded dimension and memory limits should decode");
+
+        assert_eq!(image.current_frame().width(), width);
+        assert_eq!(image.current_frame().height(), height);
+        assert_eq!(
+            image.retained_bytes(),
+            u64::from(width) * u64::from(height) * 4
+        );
+    }
+}
+
+#[test]
 fn media_decode_rejects_oversized_image_dimensions() {
     for (width, height) in [
         (MAX_DECODED_IMAGE_WIDTH + 1, 1),
@@ -3155,8 +3161,9 @@ fn media_decode_rejects_oversized_image_dimensions() {
         let bytes = encoded_png(width, height);
         let error = decode_image_bytes(&bytes).expect_err("oversized image should be rejected");
 
+        assert!(matches!(error, MediaWorkError::DecodeLimit(_)));
         assert!(
-            error.starts_with("decode failed:"),
+            error.to_string().starts_with("decode failed:"),
             "oversized {width}x{height} image should fail with decode context, got {error:?}"
         );
     }
@@ -3323,11 +3330,7 @@ fn standalone_emoji_cache_builds_compact_and_large_protocols() {
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        url,
-        1,
-        decode_media_image_bytes(&encoded_png(32, 32)).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(url, 1, decode_media_image_bytes(&encoded_png(32, 32)));
 
     cache.prepare(std::slice::from_ref(&target));
     assert!(cache.render_state(std::slice::from_ref(&target)).is_empty());
@@ -3999,11 +4002,7 @@ fn loaded_preview_cache(target: &ImagePreviewTarget, bytes: &[u8]) -> ImagePrevi
             last_used: 1,
         },
     );
-    cache.store_decoded(
-        target.key(),
-        1,
-        decode_media_image_bytes(bytes).map_err(MediaWorkError::Failed),
-    );
+    cache.store_decoded(target.key(), 1, decode_media_image_bytes(bytes));
     cache
 }
 
@@ -4025,6 +4024,8 @@ fn image_preview_target(id: u64) -> ImagePreviewTarget {
         show_play_marker: false,
         message_id: Id::new(id),
         url: format!("https://cdn.discordapp.com/image-{id}.png"),
+        fallback_url: None,
+        scaled: false,
         filename: format!("image-{id}.png"),
     }
 }
@@ -4145,11 +4146,7 @@ fn animate_previews_policy_decides_which_avatars_keep_moving() {
                 last_used: 1,
             },
         );
-        cache.store_decoded(
-            url,
-            1,
-            decode_media_image_bytes(&encoded_animated_gif()).map_err(MediaWorkError::Failed),
-        );
+        cache.store_decoded(url, 1, decode_media_image_bytes(&encoded_animated_gif()));
     }
     cache.prepare(&targets, None, None, false);
     for job in cache.take_protocol_jobs() {

@@ -72,6 +72,8 @@ pub(in crate::tui) struct ImagePreviewTarget {
     pub(in crate::tui) show_play_marker: bool,
     pub(in crate::tui) message_id: Id<MessageMarker>,
     pub(in crate::tui) url: String,
+    pub(in crate::tui) fallback_url: Option<String>,
+    pub(in crate::tui) scaled: bool,
     pub(in crate::tui) filename: String,
 }
 
@@ -187,6 +189,8 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             show_play_marker: preview.show_play_marker,
             message_id,
             url: preview_request_url(preview, preview_width, preview_height, quality),
+            fallback_url: attachment_viewer_fallback_url(preview, preview_width, preview_height),
+            scaled: false,
             filename: preview.filename.to_owned(),
         }];
     }
@@ -239,6 +243,8 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
                     show_play_marker: preview.show_play_marker,
                     message_id: row.message.id,
                     url: preview_request_url(preview, cell.width, cell.height, quality),
+                    fallback_url: None,
+                    scaled: false,
                     filename: preview.filename.to_owned(),
                 });
             }
@@ -308,6 +314,8 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
                 show_play_marker: preview.show_play_marker,
                 message_id: row.message.id,
                 url: preview_request_url(*preview, preview_width, preview_height, quality),
+                fallback_url: None,
+                scaled: false,
                 filename: preview.filename.to_owned(),
             });
         }
@@ -454,6 +462,8 @@ fn thread_card_image_preview_target(
         show_play_marker: false,
         message_id: image.message_id,
         url: preview_request_url(preview, preview_width, preview_height, quality),
+        fallback_url: None,
+        scaled: false,
         filename: preview.filename.to_owned(),
     })
 }
@@ -507,6 +517,27 @@ fn cell_aspect_ratio(font_size: Option<(u16, u16)>) -> (u128, u128) {
         Some((w, h)) if w > 0 && h > 0 => (u128::from(w), u128::from(h)),
         _ => (1, 3),
     }
+}
+
+fn attachment_viewer_fallback_url(
+    preview: InlinePreviewInfo<'_>,
+    width_columns: u16,
+    height_rows: u16,
+) -> Option<String> {
+    let proxy_url = preview.proxy_url?;
+    if !discord_media_proxy_supports_preview_resize(proxy_url) {
+        return None;
+    }
+
+    Some(discord_media_proxy_preview_url(
+        proxy_url,
+        width_columns,
+        height_rows,
+        preview.width,
+        preview.height,
+        ImagePreviewQualityPreset::Balanced,
+        preview.animated,
+    ))
 }
 
 fn preview_request_url(

@@ -19,7 +19,11 @@ pub(in crate::tui::ui) fn render_attachment_viewer(
     let zoom = state.attachment_viewer_zoom();
     let popup = attachment_viewer_popup(frame_area, zoom);
     let title_width = usize::from(popup.width.saturating_sub(4)).max(1);
-    let title = truncate_display_width(&attachment_viewer_title(&item), title_width);
+    let mut title = attachment_viewer_title(&item);
+    if image_preview.as_ref().is_some_and(|preview| preview.scaled) {
+        title = format!("[Scaled preview] {title}");
+    }
+    let title = truncate_display_width(&title, title_width);
     let inner = render_modal_frame(frame, popup, title);
     let hint_height = inner.height.min(1);
     let body_area = Rect {

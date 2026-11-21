@@ -302,7 +302,7 @@ async fn decode_preview_bytes(
         .map_err(|_| "Image worker stopped".to_owned())?;
     tokio::task::spawn_blocking(move || {
         let (_job_permit, _work_permit) = (job_permit, work_permit);
-        let image = decode_media_image_bytes(&bytes)?;
+        let image = decode_media_image_bytes(&bytes).map_err(|error| error.to_string())?;
         let protocol = preview_protocol(
             &picker,
             image.current_frame_shared().as_ref(),

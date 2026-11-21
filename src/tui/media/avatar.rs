@@ -440,7 +440,7 @@ impl AvatarImageCache {
                 );
             }
             Err(MediaWorkError::Busy) => {}
-            Err(MediaWorkError::Failed(_)) => {
+            Err(MediaWorkError::Failed(_) | MediaWorkError::DecodeLimit(_)) => {
                 self.cache
                     .entries
                     .insert(key, AvatarImageEntry::Failed { last_used });

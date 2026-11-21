@@ -437,6 +437,7 @@ fn loading_image_preview_at_message_offset(preview_y_offset_rows: usize) -> Imag
         preview_height: 4,
         visible_preview_height: 4,
         accent_color: None,
+        scaled: false,
         state: ImagePreviewState::Loading {
             filename: "cat.png".to_owned(),
         },
