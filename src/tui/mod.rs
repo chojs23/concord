@@ -3,6 +3,7 @@ mod commands;
 mod fuzzy;
 #[cfg(feature = "voice-playback")]
 mod global_push_to_talk;
+mod icons;
 mod input;
 mod keybindings;
 mod login;

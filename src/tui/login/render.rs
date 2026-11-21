@@ -5,6 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::tui::theme;
 
@@ -111,7 +112,10 @@ fn render_token_input(frame: &mut Frame, state: &LoginState) {
         Line::from(persistence_text),
         Line::from(""),
         Line::from(vec![
-            Span::styled("> Token  ", active_style()),
+            Span::styled(
+                format!("{} Token  ", crate::tui::icons::Icon::Prompt.glyph()),
+                active_style(),
+            ),
             Span::styled(masked, active_style()),
         ]),
     ];
@@ -151,8 +155,10 @@ fn render_password_input(frame: &mut Frame, state: &LoginState) {
     } else {
         dim_style()
     };
-    let login_marker = if login_active { "> " } else { "  " };
-    let password_marker = if password_active { "> " } else { "  " };
+    let prompt = format!("{} ", crate::tui::icons::Icon::Prompt.glyph());
+    let inactive = " ".repeat(prompt.width());
+    let login_marker = if login_active { &prompt } else { &inactive };
+    let password_marker = if password_active { &prompt } else { &inactive };
 
     let mut lines = vec![
         Line::from(Span::styled("Email/password login", accent_style())),

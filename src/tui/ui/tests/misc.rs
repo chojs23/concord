@@ -255,7 +255,7 @@ fn primary_activity_summary_picks_and_renders_the_leading_activity() {
                     ..ActivityInfo::test(ActivityKind::Custom, "Custom Status")
                 },
             ],
-            "▶ Concord",
+            "\u{f0297} Concord",
         ),
         (
             "listening spells out the track and artist",
@@ -264,7 +264,7 @@ fn primary_activity_summary_picks_and_renders_the_leading_activity() {
                 state: Some("Queen".to_owned()),
                 ..ActivityInfo::test(ActivityKind::Listening, "Spotify")
             }],
-            "♪ Spotify - Bohemian Rhapsody by Queen",
+            "\u{f075a} Spotify - Bohemian Rhapsody by Queen",
         ),
         (
             "a custom status emoji the terminal cannot width is sanitized",
@@ -301,7 +301,7 @@ fn offline_like_dm_status_uses_empty_dim_presence_marker() {
             let channel = channel_with_recipients("dm", &[status]);
 
             let dot = dm_presence_dot_span(&channel).expect("DM should still produce a dot");
-            assert_eq!(dot.content.as_ref(), "○ ");
+            assert_eq!(dot.content.as_ref(), "\u{f10c} ");
             assert_eq!(dot.style.fg, Some(Color::LightMagenta));
             assert!(dot.style.add_modifier.contains(Modifier::DIM));
         }
@@ -358,7 +358,7 @@ fn message_kind_decides_the_dim_first_line() {
                 message.message_kind = MessageKind::new(19);
                 message
             },
-            vec!["↳ Reply", "reply body", "[image: cat.png] 640x480"],
+            vec!["\u{f045a} Reply", "reply body", "[image: cat.png] 640x480"],
         ),
         (
             "reply kind with a preview replaces the label",
@@ -535,10 +535,13 @@ fn poll_message_replaces_empty_message_placeholder() {
     assert_eq!(texts[0], poll_box_border('╭', '╮', width));
     assert_eq!(texts[1], poll_test_line("What should we eat?", width));
     assert_eq!(texts[2], poll_test_line("Select one answer", width));
-    assert_eq!(texts[3], poll_test_line("  ◉ 1. Soup  2 votes  66%", width));
+    assert_eq!(
+        texts[3],
+        poll_test_line("  \u{f043e} 1. Soup  2 votes  66%", width)
+    );
     assert_eq!(
         texts[4],
-        poll_test_line("  ◯ 2. Noodles  1 votes  33%", width)
+        poll_test_line("  \u{f10c} 2. Noodles  1 votes  33%", width)
     );
     assert_eq!(
         texts[5],
@@ -701,12 +704,12 @@ fn forwarded_snapshot_content_wraps_after_prefix() {
         (
             "abcdefghijkl",
             7,
-            vec!["↱ Forwarded", "│ abcde", "│ fghij", "│ kl"],
+            vec!["\u{f0496} Forwarded", "│ abcde", "│ fghij", "│ kl"],
         ),
         (
             "漢字仮名交じ",
             12,
-            vec!["↱ Forwarded", "│ 漢字仮名交", "│ じ"],
+            vec!["\u{f0496} Forwarded", "│ 漢字仮名交", "│ じ"],
         ),
     ] {
         let message =
@@ -741,7 +744,7 @@ fn forwarded_snapshot_lines_include_channel_and_time() {
     assert_eq!(
         line_texts(&lines),
         vec![
-            "↱ Forwarded".to_owned(),
+            "\u{f0496} Forwarded".to_owned(),
             "│ hello".to_owned(),
             format!("│ #general · {expected_time}"),
         ]
@@ -763,7 +766,7 @@ fn forwarded_snapshot_renders_discord_embed_preview() {
     assert_eq!(
         line_texts(&lines),
         vec![
-            "↱ Forwarded",
+            "\u{f0496} Forwarded",
             "│ https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "│   ▎ YouTube",
             "│   ▎ Example Video",

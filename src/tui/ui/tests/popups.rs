@@ -207,14 +207,22 @@ fn create_post_body_scrolls_inside_a_bounded_editor_and_fields_remain_reachable(
     state.cycle_forum_post_field_next();
     state.request_forum_post_scroll_reveal();
     let tags_dump = render_dashboard_dump(100, 20, &mut state);
-    assert!(tags_dump.iter().any(|line| line.contains("› Tags *")));
+    assert!(
+        tags_dump
+            .iter()
+            .any(|line| line.contains("\u{f0142} Tags *"))
+    );
 
     state.cycle_forum_post_field_previous();
     state.cycle_forum_post_field_previous();
     state.cycle_forum_post_field_previous();
     state.request_forum_post_scroll_reveal();
     let title_dump = render_dashboard_dump(100, 20, &mut state);
-    assert!(title_dump.iter().any(|line| line.contains("› Title *")));
+    assert!(
+        title_dump
+            .iter()
+            .any(|line| line.contains("\u{f0142} Title *"))
+    );
 }
 
 #[test]
@@ -248,7 +256,7 @@ fn group_leave_confirmation_explains_rejoining_and_supports_mouse_buttons() {
         assert!(rendered.contains("Leave this group DM?"));
         assert!(rendered.contains("Group: Weekend plans with friends and family across s..."));
         assert!(rendered.contains("Another member must add you back to rejoin."));
-        assert!(rendered.contains("› [n] cancel"));
+        assert!(rendered.contains("\u{f0142} [n] cancel"));
         let row = dump
             .iter()
             .position(|line| line.contains(button_text))
@@ -284,7 +292,7 @@ fn long_message_confirmation_explains_the_file_fallback() {
             "This message is too long to send as text.",
             "Send the full text as message.txt instead?",
             "",
-            "› [y] send as file",
+            "\u{f0142} [y] send as file",
             "  [n] cancel",
         ]
     );
@@ -319,7 +327,7 @@ fn owned_stream_info_omits_local_capture_source_without_viewers() {
     assert!(state.toast_message().is_none());
     assert_eq!(
         line_texts_from_ratatui(&stream_info_lines_for_width(&state, 18)),
-        vec!["Me 🔴", "------------------"]
+        vec!["Me \u{f0567}", "------------------"]
     );
 }
 
@@ -391,15 +399,15 @@ fn stream_info_panel_lists_owned_and_multiple_watched_streams() {
     assert_eq!(
         line_texts_from_ratatui(&lines),
         vec![
-            "Me 🔴",
+            "Me \u{f0567}",
             "----------------------------------",
             "Viewer",
             "==================================",
-            "Broadcaster 🔴",
+            "Broadcaster \u{f0567}",
             "----------------------------------",
             "Me",
             "==================================",
-            "Second Broadcaster 🔴",
+            "Second Broadcaster \u{f0567}",
             "----------------------------------",
             "Me",
         ]
@@ -466,13 +474,13 @@ fn options_popup_lines_show_selected_toggle_state() {
                 .collect::<String>()
         };
 
-        assert_eq!(lines[0].spans[1].content, "[ ] ");
+        assert_eq!(lines[0].spans[1].content, "\u{f0131} ");
         assert_eq!(
             text(&lines[0]).trim_end(),
-            "  [ ] Disable all image previews"
+            "  \u{f0131} Disable all image previews"
         );
-        assert_eq!(lines[1].spans[0].content, "▸ ");
-        assert_eq!(lines[1].spans[1].content, "[x] ");
+        assert_eq!(lines[1].spans[0].content, "\u{f0142} ");
+        assert_eq!(lines[1].spans[1].content, "\u{f0132} ");
         assert_eq!(lines[1].spans[4].style.bg, Some(description_background));
         assert_eq!(lines[2].spans[1].content, "[balanced] ");
         assert!(lines[3].spans[0].content.contains("-100 dB"));
@@ -498,7 +506,7 @@ fn message_delete_confirmation_lines_show_controls_and_excerpt() {
     assert_eq!(lines[1].spans[0].content, "From: neo");
     assert!(lines[2].spans[0].content.contains("important message"));
     let texts = line_texts_from_ratatui(&lines);
-    assert_eq!(texts[4], "› [y] confirm");
+    assert_eq!(texts[4], "\u{f0142} [y] confirm");
     assert_eq!(texts[5], "  [n] cancel");
 }
 
@@ -513,7 +521,7 @@ fn message_pin_confirmation_lines_show_action_and_excerpt() {
     );
     assert_eq!(pin_lines[0].spans[0].content, "Pin this message?");
     let pin_texts = line_texts_from_ratatui(&pin_lines);
-    assert_eq!(pin_texts[4], "› [y] confirm");
+    assert_eq!(pin_texts[4], "\u{f0142} [y] confirm");
     assert_eq!(pin_texts[5], "  [n] cancel");
 
     let unpin_lines = message_confirmation_lines(
@@ -525,7 +533,7 @@ fn message_pin_confirmation_lines_show_action_and_excerpt() {
     );
     assert_eq!(unpin_lines[0].spans[0].content, "Unpin this message?");
     let unpin_texts = line_texts_from_ratatui(&unpin_lines);
-    assert_eq!(unpin_texts[4], "› [y] confirm");
+    assert_eq!(unpin_texts[4], "\u{f0142} [y] confirm");
     assert_eq!(unpin_texts[5], "  [n] cancel");
 
     let remove_lines = message_confirmation_lines(
@@ -540,7 +548,7 @@ fn message_pin_confirmation_lines_show_action_and_excerpt() {
         "Remove embeds from this message?"
     );
     let remove_texts = line_texts_from_ratatui(&remove_lines);
-    assert_eq!(remove_texts[4], "› [y] confirm");
+    assert_eq!(remove_texts[4], "\u{f0142} [y] confirm");
     assert_eq!(remove_texts[5], "  [n] cancel");
 }
 
@@ -551,9 +559,9 @@ fn quit_confirmation_lines_show_controls() {
     assert_eq!(lines[0].spans[0].content, "Quit Concord?");
     assert_eq!(lines[1].spans[0].content, "");
     let texts = line_texts_from_ratatui(&lines);
-    assert_eq!(texts[2], "› [y] confirm");
+    assert_eq!(texts[2], "\u{f0142} [y] confirm");
     assert_eq!(texts[3], "  [n] cancel");
-    assert_eq!(lines[2].spans[0].content, "› ");
+    assert_eq!(lines[2].spans[0].content, "\u{f0142} ");
     assert_eq!(lines[3].spans[0].content, "  ");
 }
 
@@ -689,7 +697,7 @@ fn options_popup_render_keeps_selected_row_visible_when_short() {
 
     assert!(
         dump.iter()
-            .any(|row| row.contains("▸") && row.contains("Desktop notifications")),
+            .any(|row| row.contains("\u{f0142}") && row.contains("Desktop notifications")),
         "{rendered}"
     );
 }
@@ -1066,10 +1074,10 @@ fn current_user_profile_settings_render_contract() {
 
     assert!(picker_texts.iter().any(|line| line.contains("Status")));
     assert!(picker_texts.iter().any(|line| line == "Choose status"));
-    assert!(picker_texts.iter().any(|line| line == "▸ Idle"));
+    assert!(picker_texts.iter().any(|line| line == "\u{f0142} Idle"));
     let selected_status = picker_lines
         .iter()
-        .find(|line| line.to_string() == "▸ Idle")
+        .find(|line| line.to_string() == "\u{f0142} Idle")
         .expect("selected status row");
     assert_eq!(
         selected_status.spans[1].style.fg,
@@ -1120,7 +1128,7 @@ fn current_user_profile_settings_viewport_and_feedback_contract() {
     assert!(
         initial_dump
             .iter()
-            .any(|line| line.contains("› Display name")),
+            .any(|line| line.contains("\u{f0142} Display name")),
         "initial selection should be visible:\n{}",
         initial_dump.join("\n")
     );
@@ -1136,7 +1144,9 @@ fn current_user_profile_settings_viewport_and_feedback_contract() {
     }
     let activity_dump = render_dashboard_dump(100, 14, &mut state);
     assert!(
-        activity_dump.iter().any(|line| line.contains("› Activity")),
+        activity_dump
+            .iter()
+            .any(|line| line.contains("\u{f0142} Activity")),
         "selection below the viewport should be revealed:\n{}",
         activity_dump.join("\n")
     );
@@ -1148,7 +1158,7 @@ fn current_user_profile_settings_viewport_and_feedback_contract() {
     assert!(
         selected_action_dump
             .iter()
-            .any(|line| line.contains("› [s] Save")),
+            .any(|line| line.contains("\u{f0142} [s] Save")),
         "selecting Save should reveal its document row:\n{}",
         selected_action_dump.join("\n")
     );
@@ -1171,7 +1181,7 @@ fn current_user_profile_settings_viewport_and_feedback_contract() {
     assert!(
         wrapped_selection_dump
             .iter()
-            .any(|line| line.contains("› Display name")),
+            .any(|line| line.contains("\u{f0142} Display name")),
         "wrapping selection should reveal the first field again:\n{}",
         wrapped_selection_dump.join("\n")
     );
@@ -1190,7 +1200,7 @@ fn current_user_profile_settings_viewport_and_feedback_contract() {
         failed_dump.contains("Save failed: profile validation rejected the value"),
         "{failed_dump}"
     );
-    assert!(failed_dump.contains("› [s] Save"), "{failed_dump}");
+    assert!(failed_dump.contains("\u{f0142} [s] Save"), "{failed_dump}");
     assert!(!failed_dump.contains("Display name"), "{failed_dump}");
 }
 
@@ -1271,10 +1281,10 @@ fn user_profile_popup_renders_activity_section() {
             .any(|line| line.trim_start().starts_with("ACTIVITY"))
     );
     assert!(texts.iter().any(|line| line == "🦀 Coding hard"));
-    assert!(texts.iter().any(|line| line == "♪ Spotify"));
+    assert!(texts.iter().any(|line| line == "\u{f075a} Spotify"));
     assert!(texts.iter().any(|line| line == "Bohemian Rhapsody"));
     assert!(texts.iter().any(|line| line == "by Queen"));
-    assert!(texts.iter().any(|line| line == "▶ Concord"));
+    assert!(texts.iter().any(|line| line == "\u{f0297} Concord"));
 }
 
 #[test]
@@ -1375,11 +1385,14 @@ fn guild_user_profile_popup_renders_sectioned_profile() {
     assert!(rendered.contains("@neo  ·  they/them"), "{rendered}");
     assert!(rendered.contains("[Admin] [Member]"), "{rendered}");
     assert!(!rendered.contains("@everyone"), "{rendered}");
-    assert!(texts.iter().any(|line| line == "  • guild-1"));
-    assert!(texts.iter().any(|line| line == "  • guild-3"));
+    assert!(texts.iter().any(|line| line == "  \u{f09df} guild-1"));
+    assert!(texts.iter().any(|line| line == "  \u{f09df} guild-3"));
     assert!(rendered.contains("Mutual friends  4"), "{rendered}");
-    assert!(rendered.contains("• Alice  ·  @alice"), "{rendered}");
-    assert!(rendered.contains("• @bob"), "{rendered}");
+    assert!(
+        rendered.contains("\u{f09df} Alice  ·  @alice"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("\u{f09df} @bob"), "{rendered}");
 
     let admin = lines
         .iter()
@@ -1428,21 +1441,36 @@ fn guild_user_profile_popup_renders_sectioned_profile() {
         );
     theme::with_test_theme(custom, || {
         let cases = [
-            (FriendStatus::Friend, "● Friend", Color::Green, false),
+            (
+                FriendStatus::Friend,
+                "\u{f0004} Friend",
+                Color::Green,
+                false,
+            ),
             (
                 FriendStatus::IncomingRequest,
-                "● Incoming friend request",
+                "\u{f0004} Incoming friend request",
                 Color::Yellow,
                 false,
             ),
             (
                 FriendStatus::OutgoingRequest,
-                "● Outgoing friend request",
+                "\u{f0004} Outgoing friend request",
                 Color::LightYellow,
                 false,
             ),
-            (FriendStatus::Blocked, "● Blocked", Color::Red, false),
-            (FriendStatus::None, "● Not friends", Color::Blue, true),
+            (
+                FriendStatus::Blocked,
+                "\u{f0004} Blocked",
+                Color::Red,
+                false,
+            ),
+            (
+                FriendStatus::None,
+                "\u{f0004} Not friends",
+                Color::Blue,
+                true,
+            ),
         ];
         for (relationship, label, expected, expect_dim) in cases {
             let mut profile = user_profile_info(10, "neo");
@@ -1497,7 +1525,7 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
         line_texts_from_ratatui(&lines),
         vec![
             "  [y] copy message",
-            "▸ [u] Show reacted users (no reactions)",
+            "\u{f0142} [u] Show reacted users (no reactions)",
             "  [c] Choose poll votes",
         ]
     );
@@ -1510,7 +1538,10 @@ fn message_action_menu_marks_selected_and_disabled_actions() {
     };
     let lines = message_action_menu_lines_with_keymap_options(&actions, 0, &disabled_copy_keymap);
 
-    assert_eq!(line_texts_from_ratatui(&lines)[0], "▸ [] copy message");
+    assert_eq!(
+        line_texts_from_ratatui(&lines)[0],
+        "\u{f0142} [] copy message"
+    );
 }
 
 #[test]
@@ -1532,7 +1563,7 @@ fn message_action_menu_uses_numbered_shortcuts_for_duplicate_preferred_keys() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["▸ [1] Show cat users", "  [2] Show dog users"]
+        vec!["\u{f0142} [1] Show cat users", "  [2] Show dog users"]
     );
 }
 
@@ -1592,11 +1623,11 @@ fn message_url_picker_render_truncates_fragment_urls_to_inner_width() {
         .collect::<Vec<_>>();
     let selected = rendered
         .iter()
-        .find(|line| line.contains("▸ [1]"))
+        .find(|line| line.contains("\u{f0142} [1]"))
         .expect("selected URL row should render");
 
     assert!(
-        selected.contains("▸ [1] https://thisis.c..."),
+        selected.contains("\u{f0142} [1] https://thisis.c..."),
         "rendered URL row: {selected:?}"
     );
     assert!(!selected.contains("querystrings#page"));
@@ -1687,7 +1718,7 @@ fn emoji_reaction_picker_uses_reaction_colors_and_selected_background() {
             line_texts_from_ratatui(&custom_lines),
             vec![
                 "  [1]   👍 Thumbs up",
-                "▸ [2]   :party: Party",
+                "\u{f0142} [2]   :party: Party",
                 "/ search   Ctrl+f pin",
             ]
         );
@@ -1712,7 +1743,7 @@ fn poll_vote_picker_marks_selected_and_checked_answers() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["  [1] [x] Soup", "▸ [2] [ ] Noodles"]
+        vec!["  [1] \u{f0132} Soup", "\u{f0142} [2] \u{f0131} Noodles"]
     );
     assert_eq!(
         lines[0].spans[2].style.fg,
@@ -1761,7 +1792,7 @@ fn reaction_users_popup_lists_reactions() {
             .into_iter()
             .map(|line| line.trim_end().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(trimmed, vec!["▸ 👍 55", "  :party: 23"]);
+        assert_eq!(trimmed, vec!["\u{f0142} 👍 55", "  :party: 23"]);
         assert_eq!(
             lines[0].spans[1].style.fg,
             theme::current()
@@ -1997,7 +2028,7 @@ fn emoji_reaction_picker_reserves_space_for_loaded_custom_image() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["▸ [1]      Party", "/ search   Ctrl+f pin"]
+        vec!["\u{f0142} [1]      Party", "/ search   Ctrl+f pin"]
     );
 }
 
@@ -2038,7 +2069,7 @@ fn emoji_reaction_picker_truncates_long_rows_to_inner_width() {
     }
     assert_eq!(
         line_texts_from_ratatui(&lines)[0].trim_end(),
-        "▸ [1]   :this_is_a_ve..."
+        "\u{f0142} [1]   :this_is_a_ve..."
     );
 }
 
@@ -2078,7 +2109,7 @@ fn emoji_reaction_picker_windows_long_lists_around_selection() {
         vec![
             "        :emoji_10: Emoji 10",
             "        :emoji_11: Emoji 11",
-            "▸       :emoji_12: Emoji 12",
+            "\u{f0142}       :emoji_12: Emoji 12",
             "        :emoji_13: Emoji 13",
             "        :emoji_14: Emoji 14",
             "/ search   Ctrl+f pin",
@@ -2116,7 +2147,7 @@ fn emoji_reaction_picker_shows_active_filter() {
 
     assert_eq!(
         line_texts_from_ratatui(&lines),
-        vec!["▸ [1]   :this: This goose", "Filter /thi",]
+        vec!["\u{f0142} [1]   :this: This goose", "Filter /thi",]
     );
 }
 
@@ -2523,7 +2554,7 @@ fn klipy_picker_renders_attribution_results_and_small_terminals() {
     state.move_gif_selection(crate::tui::keybindings::SelectionAction::Next);
     state.move_gif_selection(crate::tui::keybindings::SelectionAction::Next);
     let results = render_dashboard_dump(100, 30, &mut state).join("\n");
-    assert!(results.contains("› Goodbye cat"));
+    assert!(results.contains("\u{f0142} Goodbye cat"));
     assert!(results.contains("Loading preview"));
     assert!(
         background_media_occlusion_areas(Rect::new(0, 0, 100, 30), &state).contains(
@@ -2565,14 +2596,14 @@ fn klipy_picker_scrolls_all_titles_with_horizontal_keys() {
     );
     state.move_gif_selection(crate::tui::keybindings::SelectionAction::Next);
     let first = render_dashboard_dump(100, 30, &mut state).join("\n");
-    assert!(first.contains("› abcxxx"));
+    assert!(first.contains("\u{f0142} abcxxx"));
 
     crate::tui::input::handle_key(
         &mut state,
         KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
     );
     let one_step = render_dashboard_dump(100, 30, &mut state).join("\n");
-    assert!(one_step.contains("› bcxxxx"));
+    assert!(one_step.contains("\u{f0142} bcxxxx"));
     assert!(one_step.contains("  hort GIF"));
 
     crate::tui::input::handle_key(
@@ -2605,7 +2636,7 @@ fn klipy_picker_scrolls_all_titles_with_horizontal_keys() {
         );
     }
     let scrolled = render_dashboard_dump(100, 30, &mut state).join("\n");
-    assert!(scrolled.contains("› RIGHT_EDGE"));
+    assert!(scrolled.contains("\u{f0142} RIGHT_EDGE"));
 
     for _ in 0..60 {
         crate::tui::input::handle_key(&mut state, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
@@ -2659,4 +2690,32 @@ fn emoji_reaction_picker_click_targets_follow_rendered_rows() {
             );
         }
     }
+}
+
+#[test]
+fn nerd_channel_switcher_cursor_follows_rendered_search_prefix() {
+    let mut options = crate::config::ThemeOptions::default();
+    options.set_icon_set(crate::config::IconSet::Nerd);
+    let custom = theme::Theme::from_options(&options, &mut Vec::new());
+    theme::with_test_theme(custom, || {
+        let mut state = DashboardState::new();
+        state.open_channel_switcher();
+        for ch in "hello".chars() {
+            state.push_channel_switcher_char(ch);
+        }
+        let view = state.channel_switcher_view().expect("open switcher");
+        let lines = channel_switcher_lines(view, 10, 71);
+        let prefix = format!("{} ", crate::tui::icons::Icon::Search.glyph());
+        assert_eq!(lines[0].to_string(), format!("{prefix}hello"));
+
+        let area = Rect::new(0, 0, 100, 24);
+        let popup = crate::tui::ui::centered_rect(area, 74, 22);
+        assert_eq!(
+            channel_switcher_cursor_position(area, &state),
+            Some(Position::new(
+                popup.x + 1 + prefix.width() as u16 + "hello".width() as u16,
+                popup.y + 1,
+            ))
+        );
+    });
 }

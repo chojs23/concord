@@ -9,17 +9,19 @@ use ratatui::{
 };
 
 use crate::config::{
-    BorderShape, BorderShapeOptions, HighlightDefinitionOptions, HighlightLinkOptions, ThemeOptions,
+    BorderShape, BorderShapeOptions, HighlightDefinitionOptions, HighlightLinkOptions, IconSet,
+    ThemeOptions,
 };
 pub(super) use crate::config::{BorderSurface, HighlightGroup};
 
-const DEFAULT_SELECTION_MARKER: &str = "▸ ";
+use super::icons::Icon;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct Theme {
     highlights: [ResolvedHighlight; HighlightGroup::COUNT],
     borders: [BorderType; BorderSurface::COUNT],
     selection_marker: String,
+    icon_set: IconSet,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -65,10 +67,11 @@ impl Theme {
         Self {
             highlights: resolve_definitions(&definitions, warnings),
             borders: resolve_border_types(options.border_shapes()),
-            selection_marker: options
-                .selection_marker()
-                .unwrap_or(DEFAULT_SELECTION_MARKER)
-                .to_owned(),
+            icon_set: options.icon_set(),
+            selection_marker: options.selection_marker().map_or_else(
+                || format!("{} ", Icon::Selection.for_set(options.icon_set())),
+                str::to_owned,
+            ),
         }
     }
 
@@ -124,6 +127,10 @@ impl Theme {
 }
 
 impl ThemeAccessor {
+    pub(super) fn icon_set(self) -> IconSet {
+        read_current_theme(|theme| theme.icon_set)
+    }
+
     pub(super) fn style(self, group: HighlightGroup) -> Style {
         read_current_theme(|theme| theme.style(group))
     }
@@ -885,6 +892,52 @@ mod tests {
         BorderShape, BorderSurface, BorderType, Color, HighlightGroup, HighlightLinkOptions,
         Modifier, Style, Theme, ThemeOptions, parse_color,
     };
+
+    #[test]
+    fn default_theme_uses_nerd_icons_without_configuration() {
+        super::with_test_theme(Theme::default(), || {
+            assert_eq!(super::current().icon_set(), super::IconSet::Nerd);
+            assert_eq!(super::current().selection_marker(), "\u{f0142} ");
+            assert_eq!(super::Icon::PresenceMobile.glyph(), "\u{f10b}");
+        });
+    }
+
+    #[test]
+    fn icon_set_resolves_through_the_current_theme() {
+        for icon_set in [super::IconSet::Unicode, super::IconSet::Nerd] {
+            let mut options = ThemeOptions::default();
+            options.set_icon_set(icon_set);
+            let mut warnings = Vec::new();
+            let theme = Theme::from_options(&options, &mut warnings);
+            assert!(warnings.is_empty());
+            super::with_test_theme(theme, || {
+                assert_eq!(super::current().icon_set(), icon_set);
+                assert_eq!(
+                    super::Icon::Selection.glyph(),
+                    super::Icon::Selection.for_set(icon_set)
+                );
+                assert_eq!(
+                    super::current().selection_marker(),
+                    format!("{} ", super::Icon::Selection.for_set(icon_set))
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn custom_selection_marker_takes_priority_in_each_icon_set() {
+        for icon_set in [super::IconSet::Unicode, super::IconSet::Nerd] {
+            let mut options = ThemeOptions::default();
+            options.set_icon_set(icon_set);
+            options.set_selection_marker("❯ ".to_owned());
+            let mut warnings = Vec::new();
+            let theme = Theme::from_options(&options, &mut warnings);
+            assert!(warnings.is_empty());
+            super::with_test_theme(theme, || {
+                assert_eq!(super::current().selection_marker(), "❯ ");
+            });
+        }
+    }
 
     #[test]
     fn readme_default_theme_matches_builtin_theme() {

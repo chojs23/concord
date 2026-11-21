@@ -1,4 +1,5 @@
 use crate::discord::ids::{Id, marker::MessageMarker};
+use crate::tui::icons::Icon;
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -536,16 +537,17 @@ fn render_vertical_scrollbar(
     frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
-fn channel_prefix(kind: &str) -> &'static str {
-    match kind {
-        "dm" | "Private" => "@ ",
-        "group-dm" | "Group" => "👥 ",
-        "voice" | "GuildVoice" => "🔈 ",
-        "category" | "GuildCategory" => "▾ ",
-        "forum" | "GuildForum" => "📝 ",
-        kind if is_thread_kind(kind) => "» ",
-        _ => "# ",
-    }
+fn channel_prefix(kind: &str) -> String {
+    let icon = match kind {
+        "dm" | "Private" => Icon::DirectMessage,
+        "group-dm" | "Group" => Icon::GroupMessage,
+        "voice" | "GuildVoice" => Icon::VoiceChannel,
+        "category" | "GuildCategory" => Icon::Category,
+        "forum" | "GuildForum" => Icon::Forum,
+        kind if is_thread_kind(kind) => Icon::ThreadChannel,
+        _ => Icon::TextChannel,
+    };
+    format!("{} ", icon.glyph())
 }
 
 fn dm_presence_dot_span(channel: &ChannelState) -> Option<Span<'static>> {

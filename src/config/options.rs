@@ -364,9 +364,35 @@ pub struct ThemeOptions {
     highlights: BTreeMap<HighlightGroup, HighlightDefinitionOptions>,
     border_shapes: BorderShapeOptions,
     selection_marker: Option<String>,
+    icon_set: IconSet,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum IconSet {
+    Unicode,
+    #[default]
+    Nerd,
+}
+
+impl IconSet {
+    pub(super) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "unicode" => Some(Self::Unicode),
+            "nerd" => Some(Self::Nerd),
+            _ => None,
+        }
+    }
 }
 
 impl ThemeOptions {
+    pub(crate) const fn icon_set(&self) -> IconSet {
+        self.icon_set
+    }
+
+    pub(crate) fn set_icon_set(&mut self, icon_set: IconSet) {
+        self.icon_set = icon_set;
+    }
+
     pub(crate) fn highlights(&self) -> &BTreeMap<HighlightGroup, HighlightDefinitionOptions> {
         &self.highlights
     }

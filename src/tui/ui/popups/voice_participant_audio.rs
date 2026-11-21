@@ -111,7 +111,17 @@ pub(in crate::tui::ui) fn voice_participant_audio_popup_lines(
         selected_row_line(
             Line::from(vec![
                 selection_marker(muted_selected),
-                Span::styled(if muted { "[x] " } else { "[ ] " }, muted_style),
+                Span::styled(
+                    format!(
+                        "{} ",
+                        if muted {
+                            Icon::Checked.glyph()
+                        } else {
+                            Icon::Unchecked.glyph()
+                        }
+                    ),
+                    muted_style,
+                ),
                 Span::styled("Muted", muted_style),
             ]),
             muted_selected,
