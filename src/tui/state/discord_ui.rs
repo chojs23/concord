@@ -14,6 +14,7 @@ use crate::discord::{
 };
 
 use super::message_viewport::MessageViewportAnchor;
+use super::popups::ChannelActionMenuState;
 use super::{ChannelPaneCursor, DashboardState, DesktopNotification, message_notification_body};
 
 #[derive(Debug, Default)]
@@ -82,6 +83,7 @@ impl DashboardState {
             ActionBlockReason::ParticipationDataUnavailable(_) => {
                 "verification status unknown".to_owned()
             }
+            ActionBlockReason::MemberNotInVoice => "not in voice".to_owned(),
         })
     }
 
@@ -117,6 +119,17 @@ impl DashboardState {
     ) {
         let anchor = MessageViewportAnchor::capture(self);
         let channel_cursor = self.selected_channel_cursor();
+        // Live permissions and destinations can reorder moderation actions.
+        // Preserve the selected action rather than activating its replacement row.
+        let participant_action = match self.popups.channel_action_menu() {
+            Some(ChannelActionMenuState::ParticipantActions { selection, .. }) => {
+                let items = self.selected_channel_action_items();
+                items
+                    .get(selection.selected_for_len(items.len()))
+                    .map(|item| item.kind)
+            }
+            _ => None,
+        };
 
         restore(&mut self.discord.cache);
         self.reconcile_pending_messages_with_cache();
@@ -129,6 +142,17 @@ impl DashboardState {
         }
         if areas.navigation {
             self.repair_navigation_after_discord_restore(channel_cursor);
+        }
+        if let Some(kind) = participant_action {
+            let row = self
+                .selected_channel_action_items()
+                .iter()
+                .position(|item| item.kind == kind);
+            if let Some(row) = row {
+                self.select_channel_action_row(row);
+            } else {
+                self.close_channel_action_menu();
+            }
         }
 
         let in_message_view = self.message_pane_supports_auto_follow();

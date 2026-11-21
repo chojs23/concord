@@ -589,6 +589,14 @@ impl CommandDispatcher {
             AppCommand::LeaveGuild { guild_id, label } => {
                 message_commands::leave_guild(self.client.clone(), guild_id, label).await;
             }
+            AppCommand::ModerateMember {
+                guild_id,
+                user_id,
+                moderation,
+            } => {
+                user_commands::moderate_member(self.client.clone(), guild_id, user_id, moderation)
+                    .await;
+            }
             AppCommand::CloseDm { channel_id } => {
                 message_commands::close_dm(self.client.clone(), channel_id).await;
             }

@@ -5,12 +5,29 @@ use crate::discord::ids::{
 use crate::{
     DiscordClient,
     discord::{
-        ActivityInfo, AppEvent, PresenceEventFields, PresenceStatus, RichPresenceSelection,
-        UserProfileUpdate, UserSettingsInfo,
+        ActivityInfo, AppEvent, MemberModeration, PresenceEventFields, PresenceStatus,
+        RichPresenceSelection, UserProfileUpdate, UserSettingsInfo,
     },
 };
 
-use super::command_loop::log_app_error;
+use super::command_loop::{log_app_error, publish_app_error};
+
+pub(super) async fn moderate_member(
+    client: DiscordClient,
+    guild_id: Id<GuildMarker>,
+    user_id: Id<UserMarker>,
+    moderation: MemberModeration,
+) {
+    match client.moderate_member(guild_id, user_id, &moderation).await {
+        Ok(Some(member)) => {
+            client
+                .publish_event(AppEvent::GuildMemberUpsert { guild_id, member })
+                .await;
+        }
+        Ok(None) => {}
+        Err(error) => publish_app_error(&client, "member moderation failed", &error).await,
+    }
+}
 
 pub(super) async fn load_profile(
     client: DiscordClient,

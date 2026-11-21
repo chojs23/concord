@@ -928,6 +928,10 @@ impl KeyBindings {
             ChannelActionKind::ToggleMute => vec![char_chord('u')],
             ChannelActionKind::WatchStream => vec![char_chord('w')],
             ChannelActionKind::ParticipantAudioSettings => vec![char_chord('a')],
+            ChannelActionKind::ServerMute => vec![char_chord('M')],
+            ChannelActionKind::ServerDeafen => vec![char_chord('D')],
+            ChannelActionKind::MoveMember => vec![char_chord('v')],
+            ChannelActionKind::DisconnectMember => vec![char_chord('x')],
         }
     }
 

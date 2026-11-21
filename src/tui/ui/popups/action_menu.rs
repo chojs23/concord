@@ -261,6 +261,15 @@ fn channel_action_menu_content(
         );
         return Some(("Share screen", action_menu_lines(&rows, selected)));
     }
+    if state.is_channel_action_move_target_phase() {
+        let rows = indexed_action_menu_rows(
+            state
+                .selected_member_move_targets()
+                .iter()
+                .map(|(_, name)| name.clone()),
+        );
+        return Some(("Move to", action_menu_lines(&rows, selected)));
+    }
     let actions = state.selected_channel_action_items();
     if actions.is_empty() {
         return None;

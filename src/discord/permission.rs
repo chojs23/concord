@@ -30,6 +30,9 @@ const PERMISSION_MANAGE_THREADS: u64 = 0x0000_0004_0000_0000;
 const PERMISSION_SEND_MESSAGES_IN_THREADS: u64 = 0x0000_0040_0000_0000;
 const PERMISSION_PIN_MESSAGES: u64 = 0x0008_0000_0000_0000;
 const PERMISSION_BYPASS_SLOWMODE: u64 = 0x0010_0000_0000_0000;
+const PERMISSION_MUTE_MEMBERS: u64 = 0x0000_0000_0040_0000;
+const PERMISSION_DEAFEN_MEMBERS: u64 = 0x0000_0000_0080_0000;
+const PERMISSION_MOVE_MEMBERS: u64 = 0x0000_0000_0100_0000;
 
 const PERMISSIONS_ALL: u64 = u64::MAX;
 
@@ -53,6 +56,9 @@ pub enum DiscordPermission {
     EditOwnThread,
     ReopenThread,
     ManageChannelStructure,
+    MuteMembers,
+    DeafenMembers,
+    MoveMembers,
 }
 
 impl fmt::Display for DiscordPermission {
@@ -76,6 +82,9 @@ impl fmt::Display for DiscordPermission {
             Self::EditOwnThread => "Thread Creator or Manage Threads",
             Self::ReopenThread => "Send Messages, Thread Creator, or Manage Threads",
             Self::ManageChannelStructure => "Manage Channels or Manage Server",
+            Self::MuteMembers => "Mute Members",
+            Self::DeafenMembers => "Deafen Members",
+            Self::MoveMembers => "Move Members",
         })
     }
 }
@@ -434,6 +443,21 @@ impl DiscordState {
                 channel.guild_id.is_some()
                     && (permissions.contains(PERMISSION_MANAGE_CHANNELS)
                         || permissions.contains(PERMISSION_MANAGE_GUILD))
+            }
+            DiscordPermission::MuteMembers => {
+                channel.is_voice()
+                    && permissions.contains(PERMISSION_VIEW_CHANNEL)
+                    && permissions.contains(PERMISSION_MUTE_MEMBERS)
+            }
+            DiscordPermission::DeafenMembers => {
+                channel.is_voice()
+                    && permissions.contains(PERMISSION_VIEW_CHANNEL)
+                    && permissions.contains(PERMISSION_DEAFEN_MEMBERS)
+            }
+            DiscordPermission::MoveMembers => {
+                channel.is_voice()
+                    && permissions.contains(PERMISSION_VIEW_CHANNEL)
+                    && permissions.contains(PERMISSION_MOVE_MEMBERS)
             }
         }
     }

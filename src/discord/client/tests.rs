@@ -6,7 +6,7 @@ use crate::{
         ActionBlockReason, ActivityInfo, AppEvent, ApplicationCommandInvocation, ChannelInfo,
         DiscordAction, DiscordPermission, ForumPostCreate, ForumTagInfo, GuildBoostTier,
         GuildOnboardingInfo, GuildParticipationDataGap, GuildParticipationRestriction,
-        GuildVerificationLevel, MemberInfo, MentionInfo, MessageAttachmentUpload,
+        GuildVerificationLevel, MemberInfo, MemberModeration, MentionInfo, MessageAttachmentUpload,
         PermissionDataGap, ReactionEmoji, ReplyReference, RoleInfo, StreamCreateInfo,
         StreamUpdateInfo, ThreadGatewayInfo, ThreadMemberInfo, ThreadMetadataInfo, UserProfileInfo,
         VoiceAudioSettings, VoiceScope, VoiceSoundKind, VoiceStateInfo,
@@ -1046,6 +1046,18 @@ async fn microphone_transmit_requires_speak_and_voice_activity_permissions() {
                 .expect("voice request")
                 .allow_microphone_transmit
         );
+        let mut voice_events = client
+            .voice_events_rx
+            .lock()
+            .expect("voice event receiver mutex is not poisoned")
+            .take()
+            .expect("voice event receiver exists");
+        let last_event = std::iter::from_fn(|| voice_events.try_recv().ok()).last();
+        assert!(matches!(
+            last_event,
+            Some(VoiceRuntimeEvent::AudioSettingsChanged(settings))
+                if settings.allow_microphone_transmit
+        ));
     }
 }
 
@@ -1595,6 +1607,7 @@ const SEND_MESSAGES: u64 = 0x0000_0000_0000_0800;
 const MANAGE_MESSAGES: u64 = 0x0000_0000_0000_2000;
 const CONNECT: u64 = 0x0000_0000_0010_0000;
 const SPEAK: u64 = 0x0000_0000_0020_0000;
+const MOVE_MEMBERS: u64 = 0x0000_0000_0100_0000;
 const SEND_MESSAGES_IN_THREADS: u64 = 0x0000_0040_0000_0000;
 
 async fn publish_permission_fixture(
@@ -1846,4 +1859,55 @@ fn assert_voice_join_rejected(client: &DiscordClient, expected_error: &str) {
         gateway_commands.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
     ));
+}
+
+#[tokio::test]
+async fn member_moderation_fails_closed_before_rest_request() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = DiscordClient::new("test-token".to_owned()).expect("token is valid header");
+    publish_permission_fixture(&client, "GuildVoice", VIEW_CHANNEL | CONNECT | MOVE_MEMBERS).await;
+    client
+        .publish_event(AppEvent::GuildMemberUpsert {
+            guild_id: Id::new(1),
+            member: permission_fixture_member(Id::new(20)),
+        })
+        .await;
+    client
+        .publish_event(AppEvent::VoiceStateUpdate {
+            state: VoiceStateInfo::test(Id::new(1), Some(Id::new(2)), Id::new(20)),
+        })
+        .await;
+
+    assert_action_blocked(
+        client.ensure_can_moderate_member(
+            Id::new(1),
+            Id::new(20),
+            &MemberModeration::SetMute(true),
+        ),
+        DiscordAction::MuteMember,
+        ActionBlockReason::PermissionDenied(DiscordPermission::MuteMembers),
+    );
+    assert_action_blocked(
+        client.ensure_can_moderate_member(
+            Id::new(1),
+            Id::new(20),
+            &MemberModeration::SetDeaf(true),
+        ),
+        DiscordAction::DeafenMember,
+        ActionBlockReason::PermissionDenied(DiscordPermission::DeafenMembers),
+    );
+    assert_action_blocked(
+        client.ensure_can_moderate_member(
+            Id::new(1),
+            Id::new(20),
+            &MemberModeration::Move(Id::new(404)),
+        ),
+        DiscordAction::MoveMember,
+        ActionBlockReason::ChannelDataUnavailable,
+    );
+    assert!(
+        client
+            .ensure_can_moderate_member(Id::new(1), Id::new(20), &MemberModeration::Disconnect)
+            .is_ok()
+    );
 }

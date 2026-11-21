@@ -876,6 +876,7 @@ fn forum_post_block_message(reason: ActionBlockReason) -> String {
             "Channel permissions are still loading. The post was kept.".to_owned()
         }
         ActionBlockReason::ParticipationRestricted(restriction) => restriction.to_string(),
+        ActionBlockReason::MemberNotInVoice => ActionBlockReason::MemberNotInVoice.to_string(),
         ActionBlockReason::ParticipationDataUnavailable(_) => {
             "Server verification status is still loading. The post was kept.".to_owned()
         }
