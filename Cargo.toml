@@ -71,6 +71,7 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = [
 ] }
 tempfile = "3"
 toml = "1.1.2"
+unicode-normalization = { version = "0.1.26", default-features = false, features = ["std"] }
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"
 uuid = { version = "1.23.1", features = ["v4"] }

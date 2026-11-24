@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FuzzyScore(pub i32);
 
@@ -35,8 +37,8 @@ pub(super) fn fuzzy_name_match_score(
     query: &str,
 ) -> Option<(FuzzyMatchQuality, FuzzyScore)> {
     let score = fuzzy_text_score(value, query)?;
-    let value = value.to_lowercase();
-    let query = query.trim().to_lowercase();
+    let value = fold_text(value);
+    let query = fold_text(query.trim());
     let quality = if value == query {
         FuzzyMatchQuality::Exact
     } else if value.starts_with(&query) {
@@ -66,8 +68,8 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<FuzzyScore> {
 
     let value_chars: Vec<char> = value.chars().collect();
     let query_chars: Vec<char> = query.chars().collect();
-    let value_lower = lowercase_chars_with_source_indices(&value_chars);
-    let query_lower = lowercase_chars_with_source_indices(&query_chars);
+    let value_lower = folded_chars_with_source_indices(&value_chars);
+    let query_lower = folded_chars_with_source_indices(&query_chars);
     let value_folded = value_lower
         .iter()
         .map(|character| character.value)
@@ -167,17 +169,17 @@ pub(super) fn fuzzy_text_score(value: &str, query: &str) -> Option<FuzzyScore> {
 }
 
 #[derive(Clone, Copy)]
-struct LowercaseChar {
+struct FoldedChar {
     value: char,
     source_index: usize,
 }
 
-fn lowercase_chars_with_source_indices(chars: &[char]) -> Vec<LowercaseChar> {
+fn folded_chars_with_source_indices(chars: &[char]) -> Vec<FoldedChar> {
     chars
         .iter()
         .enumerate()
         .flat_map(|(source_index, value)| {
-            value.to_lowercase().map(move |value| LowercaseChar {
+            fold_char(*value).map(move |value| FoldedChar {
                 value,
                 source_index,
             })
@@ -231,6 +233,20 @@ fn is_camel_boundary(chars: &[char], index: usize) -> bool {
     }
 
     chars[index].is_uppercase() && chars[index - 1].is_lowercase()
+}
+
+/// Normalizes text for case- and diacritic-insensitive comparison: lowercases
+/// and drops combining marks after canonical decomposition, so `João` folds to
+/// `joao`. Every matcher should compare folded text through this point.
+pub(super) fn fold_text(value: &str) -> String {
+    value.chars().flat_map(fold_char).collect()
+}
+
+fn fold_char(value: char) -> impl Iterator<Item = char> {
+    value
+        .to_lowercase()
+        .flat_map(|lowered| lowered.nfd())
+        .filter(|character| !is_combining_mark(*character))
 }
 
 #[cfg(test)]
@@ -357,5 +373,46 @@ mod tests {
                 fuzzy_name_match_score(value, query).expect("value should match query");
             assert_eq!(quality, expected, "{value} / {query}");
         }
+    }
+
+    #[test]
+    fn diacritics_are_ignored_when_matching() {
+        for (value, query) in [
+            ("João", "joao"),
+            ("Conceição", "conceicao"),
+            ("Sérgio", "sergio"),
+            ("João", "João"),
+            ("Sérgio", "SÉRGIO"),
+            ("Sergio", "sérgio"),
+        ] {
+            assert!(
+                fuzzy_text_score(value, query).is_some(),
+                "{query:?} should match {value:?}"
+            );
+            let (quality, _) = fuzzy_name_match_score(value, query)
+                .unwrap_or_else(|| panic!("{query:?} should name-match {value:?}"));
+            assert_eq!(quality, FuzzyMatchQuality::Exact);
+        }
+        assert!(
+            fuzzy_name_match_score("João Silva", "joao")
+                .is_some_and(|(quality, _)| { quality == FuzzyMatchQuality::Prefix })
+        );
+        assert_eq!(fuzzy_text_score("João", "joan"), None);
+    }
+
+    #[test]
+    fn folding_keeps_char_indices_stable_for_scoring() {
+        // Folding must not shift positions: the boundary bonus for the second
+        // word has to apply to the same character with or without accents.
+        assert_eq!(score("João Silva", "js"), score("Joao Silva", "js"));
+        assert_eq!(score("a Éa", "ea"), score("a Ea", "ea"));
+    }
+
+    #[test]
+    fn fold_text_strips_marks_and_lowercases() {
+        assert_eq!(super::fold_text("Conceição"), "conceicao");
+        assert_eq!(super::fold_text("Sérgio"), "sergio");
+        // Precomposed and decomposed input fold to the same string.
+        assert_eq!(super::fold_text("Jo\u{0061}\u{0303}o"), "joao");
     }
 }
