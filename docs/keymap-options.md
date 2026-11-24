@@ -39,6 +39,7 @@ MarkAllRead = "a"
 
 [keymap.composer]
 OpenEditor = "<C-o>"
+OpenFilePicker = "<C-f>"
 TranslateComposer = "<C-t>"
 DeletePreviousWord = "<A-backspace>"
 ```

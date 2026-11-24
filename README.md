@@ -726,6 +726,7 @@ CopyId = "i"
 
 [keymap.composer]
 OpenEditor = "<C-e>"
+OpenFilePicker = "<C-o>"
 PasteClipboard = "<C-v>"
 InsertNewline = { keys = ["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"] }
 Submit = "enter"
