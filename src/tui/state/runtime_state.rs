@@ -94,6 +94,7 @@ pub(super) struct RuntimeUiState {
     pub(super) gateway_error: Option<String>,
     pub(super) voice_connection: Option<VoiceConnectionUiState>,
     pub(super) open_composer_in_editor_requested: bool,
+    pub(super) open_file_picker_requested: bool,
     pub(super) open_forum_post_body_in_editor_requested: bool,
     pub(super) paste_clipboard_requested: Option<ClipboardPasteRequest>,
     pub(super) terminal_refresh_requested: bool,

@@ -518,6 +518,7 @@ fn handle_forum_post_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
         ComposerAction::ClearInput => state.clear_forum_post_active_field(),
         ComposerAction::RemoveLastAttachment => state.pop_pending_forum_post_attachment(),
         ComposerAction::OpenInEditor
+        | ComposerAction::OpenFilePicker
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
         | ComposerAction::OpenGifPicker
@@ -550,6 +551,7 @@ fn handle_forum_post_tag_picker_key(
         ComposerAction::Close => state.close_active_popup(),
         ComposerAction::ClearInput => state.clear_forum_post_active_field(),
         ComposerAction::OpenInEditor
+        | ComposerAction::OpenFilePicker
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
         | ComposerAction::RemoveLastAttachment
@@ -578,6 +580,7 @@ fn handle_forum_post_composer_edit_key(
         ComposerAction::InsertChar(value) => state.push_forum_post_char(value),
         ComposerAction::RemoveLastAttachment => state.pop_pending_forum_post_attachment(),
         ComposerAction::OpenInEditor => state.request_open_forum_post_body_in_editor(),
+        ComposerAction::OpenFilePicker => state.request_open_file_picker(),
         ComposerAction::EditText(action) => state.edit_forum_post_active_text_input(action),
         ComposerAction::OpenGifPicker
         | ComposerAction::Translate
@@ -667,6 +670,7 @@ fn handle_thread_edit_key(state: &mut DashboardState, key: KeyEvent) -> Option<A
         ComposerAction::Close => state.close_active_popup(),
         ComposerAction::ClearInput => state.clear_thread_edit_active_field(),
         ComposerAction::OpenInEditor
+        | ComposerAction::OpenFilePicker
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
         | ComposerAction::RemoveLastAttachment
@@ -700,6 +704,7 @@ fn handle_thread_edit_tag_picker_key(
         ComposerAction::Close => state.close_active_popup(),
         ComposerAction::ClearInput => state.clear_thread_edit_active_field(),
         ComposerAction::OpenInEditor
+        | ComposerAction::OpenFilePicker
         | ComposerAction::PasteClipboard
         | ComposerAction::InsertNewline
         | ComposerAction::RemoveLastAttachment
@@ -728,6 +733,7 @@ fn handle_thread_edit_title_key(state: &mut DashboardState, key: KeyEvent) -> Op
         ComposerAction::InsertNewline
         | ComposerAction::RemoveLastAttachment
         | ComposerAction::OpenInEditor
+        | ComposerAction::OpenFilePicker
         | ComposerAction::OpenGifPicker
         | ComposerAction::Translate
         | ComposerAction::ToggleReplyPing

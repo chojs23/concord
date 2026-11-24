@@ -449,6 +449,7 @@ impl KeyBindings {
             ComposerAction::InsertChar(value) => Some(ProfilePopupAction::InsertChar(value)),
             ComposerAction::EditText(action) => Some(ProfilePopupAction::EditText(action)),
             ComposerAction::OpenInEditor
+            | ComposerAction::OpenFilePicker
             | ComposerAction::InsertNewline
             | ComposerAction::ClearInput
             | ComposerAction::RemoveLastAttachment

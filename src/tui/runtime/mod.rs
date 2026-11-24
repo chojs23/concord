@@ -8,8 +8,8 @@ use tokio::sync::{mpsc, watch};
 use crate::{
     Result, config,
     discord::{
-        AppCommand, AppEvent, DiscordClient, GuildMemberSearchSurface, SequencedAppEvent,
-        SnapshotRevision,
+        AppCommand, AppEvent, DiscordClient, GuildMemberSearchSurface, MessageAttachmentUpload,
+        SequencedAppEvent, SnapshotRevision,
     },
     logging,
 };
@@ -305,6 +305,11 @@ pub(super) async fn run_dashboard(
                             && let Err(error) = open_composer_in_editor(terminal, &mut state)
                         {
                             logging::error("tui", format!("editor failed: {error}"));
+                        }
+                        if state.take_open_file_picker_request()
+                            && let Err(error) = open_file_picker(terminal, &mut state)
+                        {
+                            logging::error("tui", format!("file picker failed: {error}"));
                         }
                         if state.take_open_forum_post_body_in_editor_request()
                             && let Err(error) =
@@ -762,6 +767,22 @@ fn open_composer_in_editor(
     Ok(())
 }
 
+fn open_file_picker(
+    terminal: &mut ratatui::DefaultTerminal,
+    state: &mut DashboardState,
+) -> crate::Result<()> {
+    use std::path::PathBuf;
+
+    if let Some(files) = select_files_from_file_picker(terminal)? {
+        let attachments = files
+            .iter()
+            .filter_map(|f| MessageAttachmentUpload::from_existing_path(PathBuf::from(f)).ok())
+            .collect();
+        state.add_pending_composer_attachments(attachments);
+    }
+    Ok(())
+}
+
 fn open_forum_post_body_in_editor(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut DashboardState,
@@ -830,6 +851,63 @@ fn edit_text_in_external_editor(
         && let Ok(content) = std::fs::read_to_string(&path)
     {
         return Ok(Some(content));
+    }
+    Ok(None)
+}
+
+/// Suspend the TUI, hand the terminal to `yazi` (TODO: read terminal file picker from env/config)
+/// then restores the TUI. Returns a list of file paths that were selected or None if
+/// cancelled/failed.
+fn select_files_from_file_picker(
+    terminal: &mut ratatui::DefaultTerminal,
+) -> crate::Result<Option<Vec<String>>> {
+    use crossterm::event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    };
+    use crossterm::execute;
+    use std::io::stdout;
+
+    let picker = "yazi".to_owned(); // TODO: allow configuration with other editors
+
+    let temp = tempfile::Builder::new()
+        .prefix("concord-files-")
+        .suffix(".txt")
+        .tempfile()?;
+
+    let path = temp.path().to_path_buf();
+
+    let _ = execute!(
+        stdout(),
+        PopKeyboardEnhancementFlags,
+        DisableMouseCapture,
+        DisableBracketedPaste,
+    );
+    ratatui::restore();
+
+    let status = tokio::task::block_in_place(|| {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{picker} --chooser-file=\"$1\""))
+            .arg("--")
+            .arg(&path)
+            .status()
+    });
+
+    *terminal = ratatui::init();
+    let _ = execute!(
+        stdout(),
+        PushKeyboardEnhancementFlags(super::terminal::keyboard_enhancement_flags()),
+        EnableMouseCapture,
+        EnableBracketedPaste,
+    );
+
+    if let Ok(status) = status
+        && status.success()
+        && let Ok(content) = std::fs::read_to_string(&path)
+    {
+        let files = content.split("\n").map(|s| s.to_owned()).collect();
+        return Ok(Some(files));
     }
     Ok(None)
 }

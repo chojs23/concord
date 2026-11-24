@@ -22,6 +22,10 @@ pub(super) fn handle_composer_key(state: &mut DashboardState, key: KeyEvent) -> 
             state.request_open_composer_in_editor();
             None
         }
+        ComposerAction::OpenFilePicker => {
+            state.request_open_file_picker();
+            None
+        }
         ComposerAction::PasteClipboard => {
             state.request_paste_clipboard();
             None

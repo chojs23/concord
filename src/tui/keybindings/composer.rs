@@ -77,6 +77,11 @@ define_composer_actions! {
         action: ComposerAction::OpenInEditor,
         defaults: vec![ctrl_chord('e')]
     ),
+    OpenFilePicker => (
+        aliases: ["OpenPicker"],
+        action: ComposerAction::OpenFilePicker,
+        defaults: vec![ctrl_chord('o')]
+    ),
     PasteClipboard => (
         aliases: [],
         action: ComposerAction::PasteClipboard,
