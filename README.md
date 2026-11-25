@@ -216,6 +216,7 @@ storage is unavailable. See the Security section below for details.
 - Rich content display (embeds, attachments, stickers, and mentions)
 - Detect URLs in message bodies and markdown links, then open them in your default browser
 - Translate messages and composer drafts
+- Use terminal file managers such as `yazi` or `ranger` to select attachments
 
 #### Markdown Rendering & Code syntax highlighting
 
@@ -294,6 +295,7 @@ With default vim-style navigation:
 | `/`                                       | Filter Guilds/Channels, search Messages/Members |
 | `Space`                                   | Open leader shortcut window                     |
 | `i`                                       | Text insert mode, or forum post composer        |
+| `Ctrl+o`                                  | Open file picker `picker_cmd` must be set       |
 | `Esc` / `q`                               | Close popup, cancel mode, or go back            |
 | `q`                                       | Quit Concord                                    |
 
@@ -350,7 +352,20 @@ selection.
 #### Composer
 
 The composer supports copied file attachments and editing the current draft in
-`$EDITOR`. Pending uploads appear above the input before sending.
+`$EDITOR`. Pending uploads appear above the input before sending. Attachments
+can be selected from terminal file managers such as `yazi` and `ranger` by
+setting the `picker_cmd` options under `[composer]`.
+
+```toml
+[composer]
+picker_cmd = "yazi" 
+# Optional: set a custom command (set the output file to $1)
+# picker_cmd = "yazi --chooser-file=\"$1\""
+```
+
+The current presets are as follows:
+- `yazi` - `yazi --chooser-file="$1"`
+- `ranger` - `ranger --choosefiles="$1"`
 
 #### GIF picker (KLIPY)
 
@@ -450,6 +465,13 @@ emojis_as_links = false
 
 # Broadcast your typing status in channels while composing.
 typing_indicator = true
+
+# Use a terminal file manager to select attachments
+# Presets currently include yazi and ranger
+# For custom file picker commands, redirect output to $1
+# Concord will set $1 to a temporary file and read files
+# separated by newlines (\n).
+# picker_cmd = "yazi" # or "yazi --chooser-file=\"$1\""
 
 [safety]
 # Enable Concord's extra account-risk safeguards for spam/message-request DMs,
