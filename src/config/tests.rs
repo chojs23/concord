@@ -729,6 +729,7 @@ fn options_save_and_load_round_trip() {
             emojis_as_links: true,
             ping_on_reply: false,
             typing_indicator: false,
+            picker_cmd: None,
         },
         safety: SafetyOptions { enabled: false },
         reactions: Default::default(),
