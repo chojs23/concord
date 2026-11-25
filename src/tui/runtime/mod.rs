@@ -773,7 +773,7 @@ fn open_file_picker(
 ) -> crate::Result<()> {
     use std::path::PathBuf;
 
-    if let Some(files) = select_files_from_file_picker(terminal)? {
+    if let Some(files) = select_files_from_file_picker(terminal, state)? {
         let attachments = files
             .iter()
             .filter_map(|f| MessageAttachmentUpload::from_existing_path(PathBuf::from(f)).ok())
@@ -860,6 +860,7 @@ fn edit_text_in_external_editor(
 /// cancelled/failed.
 fn select_files_from_file_picker(
     terminal: &mut ratatui::DefaultTerminal,
+    state: &mut DashboardState,
 ) -> crate::Result<Option<Vec<String>>> {
     use crossterm::event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -868,46 +869,63 @@ fn select_files_from_file_picker(
     use crossterm::execute;
     use std::io::stdout;
 
-    let picker = "yazi".to_owned(); // TODO: allow configuration with other editors
+    let picker = state.composer_options().picker_cmd;
 
-    let temp = tempfile::Builder::new()
-        .prefix("concord-files-")
-        .suffix(".txt")
-        .tempfile()?;
+    if let Some(pick) = picker {
+        // TODO: add more presets in the future
+        // Last arm allows user to set their own command if
+        // it is not detected as one of the presets
+        let cmd = match pick.as_str() {
+            "yazi" => "yazi --chooser-file=\"$1\"",
+            "ranger" => "ranger --choosefiles=\"$1\"",
+            x => x,
+        };
 
-    let path = temp.path().to_path_buf();
+        let temp = tempfile::Builder::new()
+            .prefix("concord-files-")
+            .suffix(".txt")
+            .tempfile()?;
 
-    let _ = execute!(
-        stdout(),
-        PopKeyboardEnhancementFlags,
-        DisableMouseCapture,
-        DisableBracketedPaste,
-    );
-    ratatui::restore();
+        let path = temp.path().to_path_buf();
 
-    let status = tokio::task::block_in_place(|| {
-        std::process::Command::new("sh")
-            .arg("-c")
-            .arg(format!("{picker} --chooser-file=\"$1\""))
-            .arg("--")
-            .arg(&path)
-            .status()
-    });
+        let _ = execute!(
+            stdout(),
+            PopKeyboardEnhancementFlags,
+            DisableMouseCapture,
+            DisableBracketedPaste,
+        );
+        ratatui::restore();
 
-    *terminal = ratatui::init();
-    let _ = execute!(
-        stdout(),
-        PushKeyboardEnhancementFlags(super::terminal::keyboard_enhancement_flags()),
-        EnableMouseCapture,
-        EnableBracketedPaste,
-    );
+        let status = tokio::task::block_in_place(|| {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(cmd)
+                .arg("--")
+                .arg(&path)
+                .status()
+        });
 
-    if let Ok(status) = status
-        && status.success()
-        && let Ok(content) = std::fs::read_to_string(&path)
-    {
-        let files = content.split("\n").map(|s| s.to_owned()).collect();
-        return Ok(Some(files));
+        *terminal = ratatui::init();
+        let _ = execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(super::terminal::keyboard_enhancement_flags()),
+            EnableMouseCapture,
+            EnableBracketedPaste,
+        );
+
+        if let Ok(status) = status
+            && status.success()
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            let files = content.split("\n").map(|s| s.to_owned()).collect();
+            return Ok(Some(files));
+        } else {
+            use std::time::Instant;
+            state.show_error_toast(
+                "Failed to select files from file picker (is this option set?)",
+                Instant::now(),
+            );
+        }
     }
     Ok(None)
 }
