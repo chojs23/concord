@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.7.3] - 2026-11-26
+
+### Bug Fixes
+
+- _(tui)_ Ignore diacritics when searching names (#442) in [#442](https://github.com/chojs23/concord/pull/442) by @Staberman
+- Removed tenor command (#439) in [#439](https://github.com/chojs23/concord/pull/439) by @regarager
+- Changed extension of temporary message file from .txt to .md (#440) in [#440](https://github.com/chojs23/concord/pull/440) by @regarager
+
+### Features
+
+- Optionally use a terminal file manager to select attachments (#441) in [#441](https://github.com/chojs23/concord/pull/441) by @regarager
+
+### New Contributors
+
+- @Staberman made their first contribution in [#442](https://github.com/chojs23/concord/pull/442)
+
 ## [2.7.2] - 2026-11-21
 
 ### Bug Fixes
