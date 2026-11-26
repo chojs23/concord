@@ -795,7 +795,7 @@ fn edit_text_in_external_editor(
 
     let mut temp = tempfile::Builder::new()
         .prefix("concord-message-")
-        .suffix(".txt")
+        .suffix(".md")
         .tempfile()?;
     std::io::Write::write_all(&mut temp, initial.as_bytes())?;
     let path = temp.path().to_path_buf();
