@@ -876,9 +876,6 @@ fn edit_text_in_external_editor(
     Ok(None)
 }
 
-/// Suspend the TUI, hand the terminal to `yazi` (TODO: read terminal file picker from env/config)
-/// then restores the TUI. Returns a list of file paths that were selected or None if
-/// cancelled/failed.
 fn select_files_from_file_picker(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut DashboardState,
@@ -890,67 +887,108 @@ fn select_files_from_file_picker(
     use crossterm::execute;
     use std::io::stdout;
 
-    let picker = state.composer_options().picker_cmd;
+    let Some(picker) = state.composer_options().picker_cmd else {
+        return Ok(None);
+    };
+    // PowerShell redirection cannot open the file while Concord holds a write handle on Windows.
+    let output = tempfile::Builder::new()
+        .prefix("concord-files-")
+        .suffix(".txt")
+        .tempfile()?
+        .into_temp_path();
+    let mut command = file_picker_command(&picker, &output);
 
-    if let Some(pick) = picker {
-        // TODO: add more presets in the future
-        // Last arm allows user to set their own command if
-        // it is not detected as one of the presets
-        let cmd = match pick.as_str() {
-            "yazi" => "yazi --chooser-file=\"$1\"",
-            "ranger" => "ranger --choosefiles=\"$1\"",
-            x => x,
-        };
+    let _ = execute!(
+        stdout(),
+        PopKeyboardEnhancementFlags,
+        DisableMouseCapture,
+        DisableBracketedPaste,
+    );
+    ratatui::restore();
 
-        let temp = tempfile::Builder::new()
-            .prefix("concord-files-")
-            .suffix(".txt")
-            .tempfile()?;
+    let status = tokio::task::block_in_place(|| command.status());
 
-        let path = temp.path().to_path_buf();
+    *terminal = ratatui::init();
+    let _ = execute!(
+        stdout(),
+        PushKeyboardEnhancementFlags(super::terminal::keyboard_enhancement_flags()),
+        EnableMouseCapture,
+        EnableBracketedPaste,
+    );
 
-        let _ = execute!(
-            stdout(),
-            PopKeyboardEnhancementFlags,
-            DisableMouseCapture,
-            DisableBracketedPaste,
-        );
-        ratatui::restore();
-
-        let status = tokio::task::block_in_place(|| {
-            std::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .arg("--")
-                .arg(&path)
-                .status()
-        });
-
-        *terminal = ratatui::init();
-        let _ = execute!(
-            stdout(),
-            PushKeyboardEnhancementFlags(super::terminal::keyboard_enhancement_flags()),
-            EnableMouseCapture,
-            EnableBracketedPaste,
-        );
-
-        if let Ok(status) = status
-            && status.success()
-            && let Ok(content) = std::fs::read_to_string(&path)
-        {
-            let files = content
-                .lines()
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect();
-            return Ok(Some(files));
-        } else {
-            use std::time::Instant;
-            state.show_error_toast(
-                "Failed to select files from file picker (is this option set?)",
-                Instant::now(),
-            );
-        }
+    if let Ok(status) = status
+        && status.success()
+        && let Ok(files) =
+            std::fs::read(&output).and_then(|bytes| decode_file_picker_output(&bytes))
+    {
+        return Ok(Some(files));
     }
+
+    state.show_error_toast(
+        "Failed to select files from file picker (is this option set?)",
+        std::time::Instant::now(),
+    );
     Ok(None)
+}
+
+fn file_picker_command(picker: &str, output: &std::path::Path) -> std::process::Command {
+    use std::process::Command;
+
+    let mut command = match picker {
+        "yazi" | "ranger" => {
+            let mut command = Command::new(picker);
+            let flag = if picker == "yazi" {
+                "--chooser-file"
+            } else {
+                "--choosefiles"
+            };
+            command.arg(flag).arg(output);
+            command
+        }
+        #[cfg(not(windows))]
+        _ => {
+            let mut command = Command::new("sh");
+            command.args(["-c", picker, "--"]).arg(output);
+            command
+        }
+        #[cfg(windows)]
+        _ => {
+            let mut command = Command::new("powershell.exe");
+            command.args(["-NoLogo", "-NoProfile", "-Command", picker]);
+            command
+        }
+    };
+    command.env("CONCORD_PICKER_OUTPUT", output);
+    command
+}
+
+fn decode_file_picker_output(bytes: &[u8]) -> std::io::Result<Vec<String>> {
+    use std::{
+        borrow::Cow,
+        io::{Error, ErrorKind},
+    };
+
+    let content = if let Some(bytes) = bytes.strip_prefix(b"\xFF\xFE") {
+        let (units, remainder) = bytes.as_chunks::<2>();
+        if !remainder.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "incomplete UTF-16LE code unit",
+            ));
+        }
+        let text = char::decode_utf16(units.iter().copied().map(u16::from_le_bytes))
+            .collect::<std::result::Result<String, _>>()
+            .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+        Cow::Owned(text)
+    } else {
+        let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+        let text =
+            str::from_utf8(bytes).map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+        Cow::Borrowed(text)
+    };
+    Ok(content
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
 }

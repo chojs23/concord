@@ -1,6 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{DashboardState, apply_file_picker_selection, input};
+use super::{
+    DashboardState, apply_file_picker_selection, decode_file_picker_output, file_picker_command,
+    input,
+};
 use crate::discord::ids::Id;
 use crate::discord::test_builders::{
     GuildCreateFixture, MessageHistoryLoadedFixture, guild_create_event,
@@ -102,4 +105,52 @@ fn file_picker_adds_selected_file_to_forum_post() {
     assert_eq!(post.attachments[0].path(), Some(path.as_path()));
     assert_eq!(post.attachments[0].filename, "forum note.txt");
     assert_eq!(post.attachments[0].size_bytes, 10);
+}
+
+#[test]
+fn file_picker_custom_command_writes_selected_paths() {
+    let output = tempfile::Builder::new()
+        .prefix("concord picker 출력-")
+        .tempfile()
+        .expect("picker output file")
+        .into_temp_path();
+    #[cfg(not(windows))]
+    let picker = r#"test "$1" = "$CONCORD_PICKER_OUTPUT" && printf '%s\n' '첨부 file.txt' > "$1""#;
+    #[cfg(windows)]
+    let picker = "'첨부 file.txt' > $env:CONCORD_PICKER_OUTPUT";
+
+    let status = file_picker_command(picker, &output)
+        .status()
+        .expect("run custom picker");
+    assert!(status.success());
+    let bytes = std::fs::read(&output).expect("read picker output");
+    assert_eq!(
+        decode_file_picker_output(&bytes).expect("decode picker output"),
+        ["첨부 file.txt"],
+    );
+}
+
+#[test]
+fn file_picker_decodes_supported_output_encodings() {
+    let content = " résumé 📎.txt \r\n\r\nfolder/다음 file.txt\n";
+    let utf16le_bom = [0xFF, 0xFE]
+        .into_iter()
+        .chain(content.encode_utf16().flat_map(u16::to_le_bytes))
+        .collect::<Vec<_>>();
+    let cases = [
+        ("UTF-8", content.as_bytes().to_vec()),
+        (
+            "UTF-8 with BOM",
+            [b"\xEF\xBB\xBF", content.as_bytes()].concat(),
+        ),
+        ("UTF-16LE with BOM", utf16le_bom),
+    ];
+
+    for (encoding, bytes) in cases {
+        assert_eq!(
+            decode_file_picker_output(&bytes).expect(encoding),
+            [" résumé 📎.txt ", "folder/다음 file.txt"],
+            "{encoding}",
+        );
+    }
 }

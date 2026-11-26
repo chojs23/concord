@@ -352,20 +352,36 @@ selection.
 #### Composer
 
 The composer supports copied file attachments and editing the current draft in
-`$EDITOR`. Pending uploads appear above the input before sending. Attachments
-can be selected from terminal file managers such as `yazi` and `ranger` by
-setting the `picker_cmd` options under `[composer]`.
+`$EDITOR`. Pending uploads appear above the input before sending. To select
+attachments with `Ctrl+o`, set `picker_cmd` under `[composer]`.
 
 ```toml
 [composer]
-picker_cmd = "yazi" 
-# Optional: set a custom command (set the output file to $1)
-# picker_cmd = "yazi --chooser-file=\"$1\""
+picker_cmd = 'yazi'
+# Or use ranger:
+# picker_cmd = 'ranger'
 ```
 
-The current presets are as follows:
-- `yazi` - `yazi --chooser-file="$1"`
-- `ranger` - `ranger --choosefiles="$1"`
+Concord starts the `yazi` and `ranger` presets directly with `--chooser-file`
+and `--choosefiles`, respectively. Concord runs all other values with `sh` on
+Linux and macOS and with Windows PowerShell (`powershell.exe`) on Windows.
+The picker inherits your exported environment, working directory, and terminal
+handles. Custom commands do not use aliases, functions, or profiles from the
+shell that launched Concord.
+
+Concord sets `CONCORD_PICKER_OUTPUT` to a temporary file in the picker process
+environment. Write one selected path per line to that file. Concord accepts
+UTF-8 with or without a BOM, and UTF-16LE with a BOM, the default for Windows
+PowerShell redirection. Custom commands on Linux and macOS can still use `$1`
+for the output path.
+
+```toml
+[composer]
+# Linux and macOS:
+picker_cmd = 'yazi --chooser-file "$CONCORD_PICKER_OUTPUT"'
+# Windows:
+# picker_cmd = 'yazi --chooser-file $env:CONCORD_PICKER_OUTPUT'
+```
 
 Only regular files can be attached. Other selected paths are skipped with an
 error; valid files are kept.
@@ -469,12 +485,13 @@ emojis_as_links = false
 # Broadcast your typing status in channels while composing.
 typing_indicator = true
 
-# Use a terminal file manager to select attachments
-# Presets currently include yazi and ranger
-# For custom file picker commands, redirect output to $1
-# Concord will set $1 to a temporary file and read files
-# separated by newlines (\n).
-# picker_cmd = "yazi" # or "yazi --chooser-file=\"$1\""
+# Select attachments with Ctrl+o. The yazi and ranger presets run directly.
+# picker_cmd = 'yazi'
+# Custom commands write one path per line to CONCORD_PICKER_OUTPUT.
+# Linux and macOS (sh, with $1 also available for the output path):
+# picker_cmd = 'yazi --chooser-file "$CONCORD_PICKER_OUTPUT"'
+# Windows (Windows PowerShell):
+# picker_cmd = 'yazi --chooser-file $env:CONCORD_PICKER_OUTPUT'
 
 [safety]
 # Enable Concord's extra account-risk safeguards for spam/message-request DMs,
