@@ -8,8 +8,8 @@ use tokio::sync::{mpsc, watch};
 use crate::{
     Result, config,
     discord::{
-        AppCommand, AppEvent, DiscordClient, GuildMemberSearchSurface, SequencedAppEvent,
-        SnapshotRevision,
+        AppCommand, AppEvent, DiscordClient, GuildMemberSearchSurface, MessageAttachmentUpload,
+        SequencedAppEvent, SnapshotRevision,
     },
     logging,
 };
@@ -33,6 +33,9 @@ mod placement;
 mod redraw;
 mod redraw_gate;
 mod scheduler;
+
+#[cfg(test)]
+mod tests;
 
 use effects as effect_helpers;
 use media_runtime::{
@@ -305,6 +308,11 @@ pub(super) async fn run_dashboard(
                             && let Err(error) = open_composer_in_editor(terminal, &mut state)
                         {
                             logging::error("tui", format!("editor failed: {error}"));
+                        }
+                        if state.take_open_file_picker_request()
+                            && let Err(error) = open_file_picker(terminal, &mut state)
+                        {
+                            logging::error("tui", format!("file picker failed: {error}"));
                         }
                         if state.take_open_forum_post_body_in_editor_request()
                             && let Err(error) =
@@ -762,6 +770,40 @@ fn open_composer_in_editor(
     Ok(())
 }
 
+fn open_file_picker(
+    terminal: &mut ratatui::DefaultTerminal,
+    state: &mut DashboardState,
+) -> crate::Result<()> {
+    if let Some(files) = select_files_from_file_picker(terminal, state)? {
+        apply_file_picker_selection(state, files);
+    }
+    Ok(())
+}
+
+fn apply_file_picker_selection(state: &mut DashboardState, files: Vec<String>) {
+    let mut attachments = Vec::new();
+    let mut skipped_paths = false;
+    for file in files {
+        match MessageAttachmentUpload::from_existing_path(file.into()) {
+            Ok(attachment) => attachments.push(attachment),
+            Err(_) => skipped_paths = true,
+        }
+    }
+
+    if state.is_forum_post_composer_active() {
+        state.add_pending_forum_post_attachments(attachments);
+    } else {
+        state.add_pending_composer_attachments(attachments);
+    }
+
+    if skipped_paths {
+        state.show_error_toast(
+            "Some selected paths could not be attached; choose regular files",
+            std::time::Instant::now(),
+        );
+    }
+}
+
 fn open_forum_post_body_in_editor(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut DashboardState,
@@ -832,4 +874,121 @@ fn edit_text_in_external_editor(
         return Ok(Some(content));
     }
     Ok(None)
+}
+
+fn select_files_from_file_picker(
+    terminal: &mut ratatui::DefaultTerminal,
+    state: &mut DashboardState,
+) -> crate::Result<Option<Vec<String>>> {
+    use crossterm::event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    };
+    use crossterm::execute;
+    use std::io::stdout;
+
+    let Some(picker) = state.composer_options().picker_cmd else {
+        return Ok(None);
+    };
+    // PowerShell redirection cannot open the file while Concord holds a write handle on Windows.
+    let output = tempfile::Builder::new()
+        .prefix("concord-files-")
+        .suffix(".txt")
+        .tempfile()?
+        .into_temp_path();
+    let mut command = file_picker_command(&picker, &output);
+
+    let _ = execute!(
+        stdout(),
+        PopKeyboardEnhancementFlags,
+        DisableMouseCapture,
+        DisableBracketedPaste,
+    );
+    ratatui::restore();
+
+    let status = tokio::task::block_in_place(|| command.status());
+
+    *terminal = ratatui::init();
+    let _ = execute!(
+        stdout(),
+        PushKeyboardEnhancementFlags(super::terminal::keyboard_enhancement_flags()),
+        EnableMouseCapture,
+        EnableBracketedPaste,
+    );
+
+    if let Ok(status) = status
+        && status.success()
+        && let Ok(files) =
+            std::fs::read(&output).and_then(|bytes| decode_file_picker_output(&bytes))
+    {
+        return Ok(Some(files));
+    }
+
+    state.show_error_toast(
+        "Failed to select files from file picker (is this option set?)",
+        std::time::Instant::now(),
+    );
+    Ok(None)
+}
+
+fn file_picker_command(picker: &str, output: &std::path::Path) -> std::process::Command {
+    use std::process::Command;
+
+    let mut command = match picker {
+        "yazi" | "ranger" => {
+            let mut command = Command::new(picker);
+            let flag = if picker == "yazi" {
+                "--chooser-file"
+            } else {
+                "--choosefiles"
+            };
+            command.arg(flag).arg(output);
+            command
+        }
+        #[cfg(not(windows))]
+        _ => {
+            let mut command = Command::new("sh");
+            command.args(["-c", picker, "--"]).arg(output);
+            command
+        }
+        #[cfg(windows)]
+        _ => {
+            let mut command = Command::new("powershell.exe");
+            command.args(["-NoLogo", "-NoProfile", "-Command", picker]);
+            command
+        }
+    };
+    command.env("CONCORD_PICKER_OUTPUT", output);
+    command
+}
+
+fn decode_file_picker_output(bytes: &[u8]) -> std::io::Result<Vec<String>> {
+    use std::{
+        borrow::Cow,
+        io::{Error, ErrorKind},
+    };
+
+    let content = if let Some(bytes) = bytes.strip_prefix(b"\xFF\xFE") {
+        let (units, remainder) = bytes.as_chunks::<2>();
+        if !remainder.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "incomplete UTF-16LE code unit",
+            ));
+        }
+        let text = char::decode_utf16(units.iter().copied().map(u16::from_le_bytes))
+            .collect::<std::result::Result<String, _>>()
+            .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+        Cow::Owned(text)
+    } else {
+        let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+        let text =
+            str::from_utf8(bytes).map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+        Cow::Borrowed(text)
+    };
+    Ok(content
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
 }

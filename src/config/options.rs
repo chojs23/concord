@@ -31,12 +31,13 @@ pub struct DisplayOptions {
     pub hour_format_24: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ComposerOptions {
     pub emojis_as_links: bool,
     pub ping_on_reply: bool,
     pub typing_indicator: bool,
+    pub picker_cmd: Option<String>,
 }
 
 impl Default for ComposerOptions {
@@ -45,6 +46,7 @@ impl Default for ComposerOptions {
             emojis_as_links: false,
             ping_on_reply: true,
             typing_indicator: true,
+            picker_cmd: None,
         }
     }
 }

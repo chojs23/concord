@@ -39,6 +39,7 @@ MarkAllRead = "a"
 
 [keymap.composer]
 OpenEditor = "<C-o>"
+OpenFilePicker = "<C-f>"
 TranslateComposer = "<C-t>"
 DeletePreviousWord = "<A-backspace>"
 ```
@@ -266,6 +267,8 @@ These action names can be assigned under `[keymap.composer]`. Configured keys
 replace that action's defaults. Any printable single character can be configured,
 but that key will run the composer action instead of inserting text.
 
+`OpenFilePicker` requires `[composer] picker_cmd` in `config.toml`.
+
 These shortcuts also apply inside the forum/media post composer overlay for
 shared actions such as paste, submit, close, clear, attachment removal, and
 cursor movement while editing a field. In the overlay, `Tab` and `Shift+Tab`
@@ -280,6 +283,7 @@ The GIF picker supports new messages and replies, not editing existing messages.
 | ---------------------- | -------------------------------------------------- | ------------------------------------------- |
 | `OpenGifPicker`        | `"<C-g>"`                                          | Search KLIPY GIFs and add one to the draft. |
 | `OpenEditor`           | `"<C-e>"`                                          | Open the current draft in `$EDITOR`.        |
+| `OpenFilePicker`       | `"<C-o>"`                                          | Open the configured file picker.           |
 | `PasteClipboard`       | `"<C-v>"`                                          | Request clipboard paste.                    |
 | `InsertNewline`        | `["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"]` | Insert a newline.                           |
 | `Submit`               | `"enter"`                                          | Submit the composer.                        |

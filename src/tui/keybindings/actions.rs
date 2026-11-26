@@ -468,6 +468,7 @@ pub(in crate::tui) enum VoiceParticipantAudioPopupAction {
 pub(in crate::tui) enum ComposerAction {
     OpenGifPicker,
     OpenInEditor,
+    OpenFilePicker,
     PasteClipboard,
     InsertNewline,
     Submit,

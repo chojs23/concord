@@ -17,6 +17,14 @@ impl DashboardState {
         std::mem::take(&mut self.runtime.open_composer_in_editor_requested)
     }
 
+    pub fn request_open_file_picker(&mut self) {
+        self.runtime.open_file_picker_requested = true;
+    }
+
+    pub fn take_open_file_picker_request(&mut self) -> bool {
+        std::mem::take(&mut self.runtime.open_file_picker_requested)
+    }
+
     pub fn request_paste_clipboard(&mut self) {
         let Some(target) = self.clipboard_paste_target() else {
             return;

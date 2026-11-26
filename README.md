@@ -216,6 +216,7 @@ storage is unavailable. See the Security section below for details.
 - Rich content display (embeds, attachments, stickers, and mentions)
 - Detect URLs in message bodies and markdown links, then open them in your default browser
 - Translate messages and composer drafts
+- Use terminal file managers such as `yazi` or `ranger` to select attachments
 
 #### Markdown Rendering & Code syntax highlighting
 
@@ -294,6 +295,7 @@ With default vim-style navigation:
 | `/`                                       | Filter Guilds/Channels, search Messages/Members |
 | `Space`                                   | Open leader shortcut window                     |
 | `i`                                       | Text insert mode, or forum post composer        |
+| `Ctrl+o`                                  | Open file picker `picker_cmd` must be set       |
 | `Esc` / `q`                               | Close popup, cancel mode, or go back            |
 | `q`                                       | Quit Concord                                    |
 
@@ -351,6 +353,20 @@ selection.
 
 The composer supports copied file attachments and editing the current draft in
 `$EDITOR`. Pending uploads appear above the input before sending.
+
+Set `picker_cmd` to `yazi` or `ranger` under `[composer]`, then press `Ctrl+o`
+to select attachments.
+
+```toml
+[composer]
+picker_cmd = 'yazi'
+```
+
+Custom commands run in `sh` on Linux and macOS or Windows PowerShell on
+Windows. Write one selected file path per line to the file given by the
+`CONCORD_PICKER_OUTPUT` environment variable.
+
+Only regular files can be attached.
 
 #### GIF picker (KLIPY)
 
@@ -450,6 +466,9 @@ emojis_as_links = false
 
 # Broadcast your typing status in channels while composing.
 typing_indicator = true
+
+# Select attachments with Ctrl+o using yazi or ranger.
+# picker_cmd = 'yazi'
 
 [safety]
 # Enable Concord's extra account-risk safeguards for spam/message-request DMs,
@@ -726,6 +745,7 @@ CopyId = "i"
 
 [keymap.composer]
 OpenEditor = "<C-e>"
+OpenFilePicker = "<C-o>"
 PasteClipboard = "<C-v>"
 InsertNewline = { keys = ["<C-j>", "<S-enter>", "<C-enter>", "<A-enter>"] }
 Submit = "enter"

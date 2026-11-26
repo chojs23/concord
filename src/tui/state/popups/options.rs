@@ -372,7 +372,7 @@ impl DashboardState {
     }
 
     fn composer_option_item(&self, option: ComposerOption) -> DisplayOptionItem {
-        let options = self.options.composer_options;
+        let options = &self.options.composer_options;
         match option {
             ComposerOption::EmojisAsLinks => DisplayOptionItem {
                 label: "Emojis as links",

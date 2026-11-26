@@ -140,9 +140,8 @@ impl DashboardState {
         self.options.display_options
     }
 
-    #[cfg(test)]
     pub fn composer_options(&self) -> ComposerOptions {
-        self.options.composer_options
+        self.options.composer_options.clone()
     }
 
     #[cfg(test)]
@@ -389,7 +388,7 @@ impl DashboardState {
         self.options.config_save_pending = false;
         Some(AppOptions {
             display: self.options.display_options,
-            composer: self.options.composer_options,
+            composer: self.options.composer_options.clone(),
             safety: self.options.safety_options,
             reactions: self.options.reaction_options.clone(),
             credentials: self.options.credential_options,
