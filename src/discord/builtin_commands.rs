@@ -1,7 +1,6 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuiltinSlashCommand {
     Gif,
-    Tenor,
     Tts,
     Me,
     Tableflip,
@@ -39,12 +38,6 @@ const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommandInfo] = &[
         name: "gif",
         description: "Search for a GIF",
         replacement: "/gif ",
-    },
-    BuiltinSlashCommandInfo {
-        kind: BuiltinSlashCommand::Tenor,
-        name: "tenor",
-        description: "Search Tenor GIFs",
-        replacement: "/tenor ",
     },
     BuiltinSlashCommandInfo {
         kind: BuiltinSlashCommand::Tts,
@@ -109,12 +102,13 @@ pub fn parse_builtin_slash_command(content: &str) -> BuiltinSlashCommandParse {
     };
 
     match command.kind {
-        BuiltinSlashCommand::Gif | BuiltinSlashCommand::Tenor => required_argument(argument)
-            .map_or(BuiltinSlashCommandParse::Incomplete, |_| {
+        BuiltinSlashCommand::Gif => {
+            required_argument(argument).map_or(BuiltinSlashCommandParse::Incomplete, |_| {
                 BuiltinSlashCommandParse::Ready(BuiltinSlashCommandSubmit::Unsupported {
                     message: "GIF slash commands are not supported in Concord yet".to_owned(),
                 })
-            }),
+            })
+        }
         BuiltinSlashCommand::Tts => {
             required_argument(argument).map_or(BuiltinSlashCommandParse::Incomplete, |message| {
                 BuiltinSlashCommandParse::Ready(BuiltinSlashCommandSubmit::Message {
