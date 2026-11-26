@@ -367,6 +367,9 @@ The current presets are as follows:
 - `yazi` - `yazi --chooser-file="$1"`
 - `ranger` - `ranger --choosefiles="$1"`
 
+Only regular files can be attached. Other selected paths are skipped with an
+error; valid files are kept.
+
 #### GIF picker (KLIPY)
 
 Set `KLIPY_API_KEY` before launching Concord, or add an opt-in key to

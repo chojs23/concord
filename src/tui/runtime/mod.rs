@@ -34,6 +34,9 @@ mod redraw;
 mod redraw_gate;
 mod scheduler;
 
+#[cfg(test)]
+mod tests;
+
 use effects as effect_helpers;
 use media_runtime::{
     DashboardMediaRuntime, LocalUploadPreviewResult, drain_pending_commands_after_draw,
@@ -771,16 +774,34 @@ fn open_file_picker(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut DashboardState,
 ) -> crate::Result<()> {
-    use std::path::PathBuf;
-
     if let Some(files) = select_files_from_file_picker(terminal, state)? {
-        let attachments = files
-            .iter()
-            .filter_map(|f| MessageAttachmentUpload::from_existing_path(PathBuf::from(f)).ok())
-            .collect();
-        state.add_pending_composer_attachments(attachments);
+        apply_file_picker_selection(state, files);
     }
     Ok(())
+}
+
+fn apply_file_picker_selection(state: &mut DashboardState, files: Vec<String>) {
+    let mut attachments = Vec::new();
+    let mut skipped_paths = false;
+    for file in files {
+        match MessageAttachmentUpload::from_existing_path(file.into()) {
+            Ok(attachment) => attachments.push(attachment),
+            Err(_) => skipped_paths = true,
+        }
+    }
+
+    if state.is_forum_post_composer_active() {
+        state.add_pending_forum_post_attachments(attachments);
+    } else {
+        state.add_pending_composer_attachments(attachments);
+    }
+
+    if skipped_paths {
+        state.show_error_toast(
+            "Some selected paths could not be attached; choose regular files",
+            std::time::Instant::now(),
+        );
+    }
 }
 
 fn open_forum_post_body_in_editor(
@@ -917,7 +938,11 @@ fn select_files_from_file_picker(
             && status.success()
             && let Ok(content) = std::fs::read_to_string(&path)
         {
-            let files = content.split("\n").map(|s| s.to_owned()).collect();
+            let files = content
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect();
             return Ok(Some(files));
         } else {
             use std::time::Instant;

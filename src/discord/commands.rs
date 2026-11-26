@@ -203,6 +203,12 @@ impl MessageAttachmentUpload {
 
     pub fn from_existing_path(path: PathBuf) -> io::Result<Self> {
         let metadata = path.metadata()?;
+        if !metadata.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "attachment must be a regular file",
+            ));
+        }
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
