@@ -11,7 +11,7 @@ use crate::discord::{
     custom_emoji_image_url,
 };
 
-use crate::tui::fuzzy::{FuzzyScore, fuzzy_text_score};
+use crate::tui::fuzzy::{FuzzyScore, fold_text, fuzzy_text_score};
 
 use super::super::{
     MemberEntry,
@@ -259,16 +259,16 @@ pub(super) fn build_mention_candidates(
     roles: Vec<&RoleState>,
     everyone_role_id: Option<Id<RoleMarker>>,
 ) -> Vec<MentionPickerEntry> {
-    let needle = query.to_lowercase();
+    let needle = fold_text(query);
     let mut scored: Vec<(u8, String, MentionPickerEntry)> = entries
         .into_iter()
         .filter_map(|entry| {
             let display_name = entry.display_name();
             let username = entry.username();
             let search_alias = entry.member_search_alias();
-            let lowered_display = display_name.to_lowercase();
-            let lowered_username = username.as_deref().map(str::to_lowercase);
-            let lowered_alias = search_alias.as_deref().map(str::to_lowercase);
+            let lowered_display = fold_text(&display_name);
+            let lowered_username = username.as_deref().map(fold_text);
+            let lowered_alias = search_alias.as_deref().map(fold_text);
 
             // Lower rank wins. These are the two member fields Discord's
             // Opcode 8 query can match by prefix.
@@ -303,7 +303,7 @@ pub(super) fn build_mention_candidates(
         .collect();
 
     scored.extend(roles.into_iter().filter_map(|role| {
-        let lowered_name = role.name.trim_start_matches('@').to_lowercase();
+        let lowered_name = fold_text(role.name.trim_start_matches('@'));
         let rank = match_name(&needle, &lowered_name)?;
         Some((
             rank.saturating_add(1),
@@ -331,12 +331,12 @@ pub(super) fn build_channel_mention_candidates(
     query: &str,
     channels: Vec<&ChannelState>,
 ) -> Vec<MentionPickerEntry> {
-    let needle = query.to_lowercase();
+    let needle = fold_text(query);
     let mut scored: Vec<(u8, String, MentionPickerEntry)> = channels
         .into_iter()
         .filter(|channel| !channel.is_category())
         .filter_map(|channel| {
-            let lowered_name = channel.name.to_lowercase();
+            let lowered_name = fold_text(&channel.name);
             let rank = match_name(&needle, &lowered_name)?;
             Some((
                 rank,
@@ -806,5 +806,22 @@ mod tests {
                 .iter()
                 .any(|entry| entry.target == MentionPickerTarget::Everyone(Id::new(1)))
         );
+    }
+
+    #[test]
+    fn mention_candidates_ignore_diacritics_in_both_directions() {
+        let accented = role(1, "Conceição");
+        let plain = role(2, "Sergio");
+
+        for (query, expected) in [
+            ("conceicao", MentionPickerTarget::Role(Id::new(1))),
+            ("conceição", MentionPickerTarget::Role(Id::new(1))),
+            ("sérgio", MentionPickerTarget::Role(Id::new(2))),
+        ] {
+            let candidates =
+                build_mention_candidates(query, Vec::new(), vec![&accented, &plain], None);
+            assert_eq!(candidates.len(), 1, "{query:?}");
+            assert_eq!(candidates[0].target, expected, "{query:?}");
+        }
     }
 }
