@@ -70,6 +70,8 @@ pub(in crate::tui) struct ImagePreviewTarget {
     pub(in crate::tui) top_clip_rows: u16,
     pub(in crate::tui) accent_color: Option<u32>,
     pub(in crate::tui) show_play_marker: bool,
+    /// Masked until the reader reveals the message this preview belongs to.
+    pub(in crate::tui) spoiler: bool,
     pub(in crate::tui) message_id: Id<MessageMarker>,
     pub(in crate::tui) url: String,
     pub(in crate::tui) fallback_url: Option<String>,
@@ -187,6 +189,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
             top_clip_rows: 0,
             accent_color: preview.accent_color,
             show_play_marker: preview.show_play_marker,
+            spoiler: preview.spoiler && !state.message_spoilers_revealed(message_id),
             message_id,
             url: preview_request_url(preview, preview_width, preview_height, quality),
             fallback_url: attachment_viewer_fallback_url(preview, preview_width, preview_height),
@@ -241,6 +244,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
                     top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
                     accent_color: album_accent_color,
                     show_play_marker: preview.show_play_marker,
+                    spoiler: preview.spoiler && !state.message_spoilers_revealed(row.message.id),
                     message_id: row.message.id,
                     url: preview_request_url(preview, cell.width, cell.height, quality),
                     fallback_url: None,
@@ -312,6 +316,7 @@ pub(in crate::tui) fn visible_image_preview_targets_from_plan(
                 top_clip_rows,
                 accent_color: None,
                 show_play_marker: preview.show_play_marker,
+                spoiler: preview.spoiler && !state.message_spoilers_revealed(row.message.id),
                 message_id: row.message.id,
                 url: preview_request_url(*preview, preview_width, preview_height, quality),
                 fallback_url: None,
@@ -359,6 +364,7 @@ fn visible_thread_card_image_preview_targets(
         ) {
             targets.push(ImagePreviewTarget {
                 selected: focused == Some(post_index),
+                spoiler: target.spoiler && !state.message_spoilers_revealed(target.message_id),
                 ..target
             });
         }
@@ -400,6 +406,7 @@ fn visible_embedded_thread_card_image_preview_targets(
             )?;
             Some(ImagePreviewTarget {
                 selected: row.selected,
+                spoiler: target.spoiler && !state.message_spoilers_revealed(target.message_id),
                 ..target
             })
         })
@@ -460,6 +467,7 @@ fn thread_card_image_preview_target(
         top_clip_rows: u16::try_from(visible_top - preview_top).unwrap_or(u16::MAX),
         accent_color: None,
         show_play_marker: false,
+        spoiler: preview.spoiler,
         message_id: image.message_id,
         url: preview_request_url(preview, preview_width, preview_height, quality),
         fallback_url: None,

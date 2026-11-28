@@ -2017,6 +2017,7 @@ mod tests {
             top_clip_rows: 0,
             accent_color: None,
             show_play_marker: false,
+            spoiler: false,
             message_id: Id::<MessageMarker>::new(1),
             url: "https://cdn.discordapp.com/image.png".to_owned(),
             fallback_url: None,

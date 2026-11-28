@@ -65,6 +65,7 @@ pub enum ImagePreviewState<'a> {
     Loading { filename: String },
     Failed { filename: String, message: String },
     Ready { protocol: &'a Protocol },
+    Spoiler { filename: String },
 }
 
 #[derive(Clone, Copy)]
