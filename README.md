@@ -207,6 +207,7 @@ storage is unavailable. See the Security section below for details.
 
 - View, filter, and create forum/media posts (active / archived)
 - Switch channels, threads, and posts with the fuzzy channel switcher (`Space`, `Space`); start the query with `*` to search servers instead
+- Opening a server reopens the channel you last had open there, including after a restart
 
 ### Messaging
 

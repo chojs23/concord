@@ -576,3 +576,108 @@ fn h_l_and_left_right_move_focus_without_toggling_tree_nodes() {
     assert_eq!(channel_state.focus(), FocusPane::Channels);
     assert_selected_channel_category_collapsed(&channel_state, false);
 }
+
+fn push_second_test_guild(state: &mut DashboardState) {
+    let guild_id = Id::new(2);
+    state.push_event(guild_create_event(message_test_guild_fixture(
+        guild_id,
+        Id::new(20),
+        vec![ChannelInfo {
+            guild_id: Some(guild_id),
+            position: Some(0),
+            name: "lobby".to_owned(),
+            last_message_id: Some(Id::new(1)),
+            message_count: Some(1),
+            ..ChannelInfo::test(Id::new(31), "text")
+        }],
+        MESSAGE_TEST_PERMISSIONS,
+    )));
+}
+
+fn open_test_guild_with_enter(
+    state: &mut DashboardState,
+    guild_id: Id<GuildMarker>,
+) -> Option<AppCommand> {
+    let row = state
+        .guild_pane_entries()
+        .iter()
+        .position(
+            |entry| matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == guild_id),
+        )
+        .expect("fixture guild is visible");
+    state.focus_pane(FocusPane::Guilds);
+    crate::tui::ui::sync_view_heights(dashboard_area(), state);
+    assert!(state.select_visible_pane_row(FocusPane::Guilds, row));
+    handle_key(state, key(KeyCode::Enter))
+}
+
+#[test]
+fn switching_servers_reopens_the_last_channel_opened_there() {
+    let mut state = state_with_channel_tree();
+    push_second_test_guild(&mut state);
+    select_test_channel(&mut state, Id::new(12));
+
+    let command = open_test_guild_with_enter(&mut state, Id::new(2));
+    assert_eq!(command, None);
+    assert_eq!(state.selected_channel_id(), None);
+    select_test_channel(&mut state, Id::new(31));
+
+    let command = open_test_guild_with_enter(&mut state, Id::new(1));
+    assert_eq!(state.selected_channel_id(), Some(Id::new(12)));
+    assert_eq!(state.focus(), FocusPane::Channels);
+    let random_row = state
+        .channel_pane_entries()
+        .iter()
+        .position(|entry| entry.channel_id() == Some(Id::new(12)));
+    assert_eq!(Some(state.selected_channel()), random_row);
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(12),
+        })
+    );
+
+    let command = open_test_guild_with_enter(&mut state, Id::new(2));
+    assert_eq!(state.selected_channel_id(), Some(Id::new(31)));
+    assert_eq!(
+        command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(2),
+            channel_id: Id::new(31),
+        })
+    );
+}
+
+#[test]
+fn last_opened_channels_are_saved_and_restored_on_the_next_start() {
+    let mut state = state_with_channel_tree();
+    push_second_test_guild(&mut state);
+    select_test_channel(&mut state, Id::new(12));
+    open_test_guild_with_enter(&mut state, Id::new(2));
+    select_test_channel(&mut state, Id::new(31));
+
+    let saved = state
+        .take_ui_state_save_request()
+        .expect("opening a channel requests a ui state save");
+    assert_eq!(saved.last_opened_channels, vec![Id::new(31), Id::new(12)]);
+
+    // Reopening the same channel keeps one entry per server.
+    select_test_channel(&mut state, Id::new(31));
+    assert_eq!(state.take_ui_state_save_request(), None);
+
+    let restarted = DashboardState::new_with_options(
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        saved,
+    );
+    let mut restarted = state_with_channel_tree_from_state(restarted);
+    push_second_test_guild(&mut restarted);
+    let command = open_test_guild_with_enter(&mut restarted, Id::new(1));
+    assert_eq!(restarted.selected_channel_id(), Some(Id::new(12)));
+    assert!(command.is_some());
+}

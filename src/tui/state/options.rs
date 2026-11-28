@@ -201,6 +201,7 @@ impl DashboardState {
         self.navigation.channels.collapsed_channel_categories =
             options.collapsed_channel_categories.into_iter().collect();
         self.navigation.channels.established_dms = options.established_dms.into_iter().collect();
+        self.navigation.channels.last_opened_channel_ids = options.last_opened_channels;
         self.options.voice_participant_playback = options
             .voice_participant_playback
             .into_iter()
@@ -265,6 +266,7 @@ impl DashboardState {
             collapsed_server_folder_ids,
             collapsed_server_folder_guilds,
             established_dms,
+            last_opened_channels: self.navigation.channels.last_opened_channel_ids.clone(),
             voice_participant_playback: self.voice_participant_playback_options(),
         }
     }

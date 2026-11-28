@@ -185,6 +185,7 @@ impl DashboardState {
             FocusPane::Guilds => {
                 if self.confirm_guild_pane_filter() {
                     self.focus_pane(FocusPane::Channels);
+                    return self.restore_last_opened_channel_command();
                 }
                 None
             }
