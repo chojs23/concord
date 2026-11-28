@@ -711,6 +711,8 @@ pub struct UiStateOptions {
     /// user. This avoids reclassifying an established conversation when those
     /// messages later fall outside the latest 50-message window.
     pub established_dms: Vec<Id<ChannelMarker>>,
+    /// Last opened channel for each server and for Direct Messages.
+    pub last_opened_channels: Vec<Id<ChannelMarker>>,
     pub voice_participant_playback: Vec<VoiceParticipantPlaybackOption>,
 }
 
@@ -727,6 +729,7 @@ impl Default for UiStateOptions {
             collapsed_server_folder_ids: Vec::new(),
             collapsed_server_folder_guilds: Vec::new(),
             established_dms: Vec::new(),
+            last_opened_channels: Vec::new(),
             voice_participant_playback: Vec::new(),
         }
     }

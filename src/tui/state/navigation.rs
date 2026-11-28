@@ -73,6 +73,9 @@ pub(super) struct ChannelPaneNavigationState {
     pub(super) active_channel_id: Option<Id<ChannelMarker>>,
     pub(super) list: PaneListState,
     pub(super) recent_channel_ids: VecDeque<Id<ChannelMarker>>,
+    /// Most recently opened channel per server (and one for Direct
+    /// Messages), newest first. Persisted so a server reopens on its last chat.
+    pub(super) last_opened_channel_ids: Vec<Id<ChannelMarker>>,
     pub(super) filter: Option<PaneFilterState>,
     pub(super) visible: bool,
     pub(super) width: u16,
@@ -250,6 +253,7 @@ impl Default for ChannelPaneNavigationState {
             active_channel_id: None,
             list: PaneListState::new(0),
             recent_channel_ids: VecDeque::new(),
+            last_opened_channel_ids: Vec::new(),
             filter: None,
             visible: true,
             width: DEFAULT_CHANNEL_LIST_WIDTH,

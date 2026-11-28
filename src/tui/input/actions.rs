@@ -19,6 +19,7 @@ pub(super) fn activate_focused_target(state: &mut DashboardState) -> Option<AppC
         FocusPane::Guilds => {
             if state.confirm_selected_guild() {
                 state.focus_pane(FocusPane::Channels);
+                return state.restore_last_opened_channel_command();
             }
             None
         }

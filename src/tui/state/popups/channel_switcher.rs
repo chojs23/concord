@@ -191,7 +191,7 @@ impl DashboardState {
                 // is picking one of its channels.
                 self.activate_guild(ActiveGuildScope::Guild(guild_id));
                 self.focus_pane(FocusPane::Channels);
-                return None;
+                return self.restore_last_opened_channel_command();
             }
         };
         let Some(channel) = self.discord.cache.channel(channel_id) else {

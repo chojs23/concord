@@ -33,6 +33,7 @@ use crate::tui::{
 };
 
 const RECENT_CHANNEL_LIMIT: usize = 10;
+const LAST_OPENED_CHANNEL_LIMIT: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ThreadCardListEntry {
@@ -1486,6 +1487,7 @@ impl DashboardState {
             self.record_latest_message_history_loading(channel_id);
         }
         self.record_recent_channel(channel_id);
+        self.remember_last_opened_channel(channel_id);
         let is_forum = self
             .discord
             .channel(channel_id)
@@ -1585,6 +1587,62 @@ impl DashboardState {
 
     pub(super) fn record_message_history_refreshed(&mut self, channel_id: Id<ChannelMarker>) {
         self.message_history_refresh.record_refreshed(channel_id);
+    }
+
+    /// Server scope (or Direct Messages) a cached channel belongs to.
+    fn last_opened_channel_scope(&self, channel_id: Id<ChannelMarker>) -> Option<ActiveGuildScope> {
+        let channel = self.discord.cache.channel(channel_id)?;
+        if channel.is_category() {
+            return None;
+        }
+        Some(match channel.guild_id {
+            Some(guild_id) => ActiveGuildScope::Guild(guild_id),
+            None => ActiveGuildScope::DirectMessages,
+        })
+    }
+
+    fn remember_last_opened_channel(&mut self, channel_id: Id<ChannelMarker>) {
+        if self.navigation.channels.last_opened_channel_ids.first() == Some(&channel_id) {
+            return;
+        }
+        let Some(scope) = self.last_opened_channel_scope(channel_id) else {
+            return;
+        };
+        let mut ids = std::mem::take(&mut self.navigation.channels.last_opened_channel_ids);
+        ids.retain(|id| *id != channel_id && self.last_opened_channel_scope(*id) != Some(scope));
+        ids.insert(0, channel_id);
+        ids.truncate(LAST_OPENED_CHANNEL_LIMIT);
+        self.navigation.channels.last_opened_channel_ids = ids;
+        self.options.ui_state_save_pending = true;
+    }
+
+    /// After switching servers, reopen the channel that was last open there.
+    pub(in crate::tui) fn restore_last_opened_channel_command(&mut self) -> Option<AppCommand> {
+        if self.navigation.channels.active_channel_id.is_some() {
+            return None;
+        }
+        let scope = self.navigation.guilds.active;
+        let channel_id = self
+            .navigation
+            .channels
+            .last_opened_channel_ids
+            .iter()
+            .copied()
+            .find(|id| self.last_opened_channel_scope(*id) == Some(scope))?;
+        if let Some(parent_id) = self
+            .discord
+            .cache
+            .channel(channel_id)
+            .and_then(|channel| channel.parent_id)
+        {
+            self.navigation
+                .channels
+                .collapsed_channel_categories
+                .remove(&parent_id);
+        }
+        self.restore_channel_cursor(Some(channel_id));
+        self.navigation.channels.list.keep_selection_visible();
+        self.activate_channel_command(channel_id)
     }
 
     fn record_recent_channel(&mut self, channel_id: Id<ChannelMarker>) {
