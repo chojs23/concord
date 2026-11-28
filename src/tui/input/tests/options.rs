@@ -60,7 +60,7 @@ fn show_reactions_option_tracks_visibility_independently_of_image_settings() {
 
 #[test]
 fn every_display_option_changes_only_its_own_setting() {
-    let cases: [(&str, DisplayOptionChange); 11] = [
+    let cases: [(&str, DisplayOptionChange); 12] = [
         ("disable image preview", |mut options| {
             options.disable_image_preview = !options.disable_image_preview;
             options
@@ -103,6 +103,10 @@ fn every_display_option_changes_only_its_own_setting() {
         }),
         ("animate previews", |mut options| {
             options.animate_previews = options.animate_previews.next();
+            options
+        }),
+        ("single-click open", |mut options| {
+            options.single_click_open = !options.single_click_open;
             options
         }),
     ];

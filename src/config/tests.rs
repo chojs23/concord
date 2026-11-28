@@ -47,6 +47,7 @@ fn global_disable_overrides_individual_toggles() {
         show_reaction_emoji: true,
         circular_avatars: false,
         hour_format_24: true,
+        single_click_open: false,
     };
 
     assert!(!options.avatars_visible());
@@ -193,6 +194,16 @@ fn update_check_defaults_to_enabled_and_follows_config() {
         assert_eq!(loaded.updates, direct.updates, "{content}");
         assert!(warnings.is_empty(), "{content}");
     }
+}
+
+#[test]
+fn single_click_open_defaults_to_disabled_and_can_be_enabled() {
+    let defaults: AppOptions = toml::from_str("").expect("empty config should parse");
+    let enabled: AppOptions = toml::from_str("[display]\nsingle_click_open = true\n")
+        .expect("display config should parse");
+
+    assert!(!defaults.display.single_click_open);
+    assert!(enabled.display.single_click_open);
 }
 
 #[test]
@@ -724,6 +735,7 @@ fn options_save_and_load_round_trip() {
             show_reaction_emoji: true,
             circular_avatars: true,
             hour_format_24: false,
+            single_click_open: true,
         },
         composer: ComposerOptions {
             emojis_as_links: true,

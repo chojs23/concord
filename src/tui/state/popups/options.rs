@@ -27,10 +27,11 @@ enum DisplayOption {
     MediaPlayback,
     HourFormat24,
     AnimatePreviews,
+    SingleClickOpen,
 }
 
 impl DisplayOption {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::DisableImagePreview,
         Self::ShowAvatars,
         Self::ShowImages,
@@ -42,6 +43,7 @@ impl DisplayOption {
         Self::MediaPlayback,
         Self::HourFormat24,
         Self::AnimatePreviews,
+        Self::SingleClickOpen,
     ];
 
     fn at(index: usize) -> Option<Self> {
@@ -352,6 +354,14 @@ impl DashboardState {
                 effective: options.hour_format_24,
                 description: "Use 24-hour time for message timestamps.",
             },
+            DisplayOption::SingleClickOpen => DisplayOptionItem {
+                label: "Single-click open",
+                enabled: options.single_click_open,
+                value: None,
+                gauge: None,
+                effective: options.single_click_open,
+                description: "Open servers and channels with one click instead of a double click.",
+            },
             DisplayOption::AnimatePreviews => DisplayOptionItem {
                 label: "Animate previews",
                 enabled: options.animate_previews != AnimatePreviews::Never,
@@ -610,6 +620,9 @@ impl DashboardState {
             DisplayOption::CircularAvatars => options.circular_avatars = !options.circular_avatars,
             DisplayOption::MediaPlayback => options.media_playback = !options.media_playback,
             DisplayOption::HourFormat24 => options.hour_format_24 = !options.hour_format_24,
+            DisplayOption::SingleClickOpen => {
+                options.single_click_open = !options.single_click_open
+            }
             DisplayOption::AnimatePreviews => {
                 options.animate_previews = options.animate_previews.next()
             }

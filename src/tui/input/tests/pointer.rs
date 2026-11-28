@@ -1118,3 +1118,113 @@ fn interaction_point(
         })
         .expect("interaction target should be visible")
 }
+
+fn single_click_open_state() -> DashboardState {
+    DashboardState::new_with_display_options(DisplayOptions {
+        single_click_open: true,
+        ..DisplayOptions::default()
+    })
+}
+
+fn guild_row_target(state: &mut DashboardState, row: usize) -> (u16, u16) {
+    crate::tui::ui::sync_view_heights(dashboard_area(), state);
+    interaction_point(
+        state,
+        dashboard_area(),
+        crate::tui::ui::InteractionTarget::PaneItem {
+            pane: FocusPane::Guilds,
+            row,
+        },
+    )
+}
+
+#[test]
+fn single_click_open_activates_channel_rows_with_one_click() {
+    let mut state = state_with_channel_tree_from_state(single_click_open_state());
+    state.focus_pane(FocusPane::Messages);
+    let mut clicks = MouseInputState::default();
+    let (column, row) = channel_row_point(1);
+    let event = mouse(MouseEventKind::Down(MouseButton::Left), column, row);
+
+    let first = handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
+
+    assert!(first.handled);
+    assert_eq!(
+        first.command,
+        Some(AppCommand::SubscribeGuildChannel {
+            guild_id: Id::new(1),
+            channel_id: Id::new(11),
+        })
+    );
+    assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+    assert_eq!(state.focus(), FocusPane::Messages);
+
+    // A quick second click is another single click, not a double click.
+    let second = handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
+    assert!(second.handled);
+    assert_eq!(state.selected_channel_id(), Some(Id::new(11)));
+}
+
+#[test]
+fn single_click_open_activates_server_rows_and_toggles_folders_once() {
+    let mut state = single_click_open_state();
+    for (guild_id, name) in [(Id::new(1), "first"), (Id::new(2), "second")] {
+        state.push_event(guild_create_event(GuildCreateFixture {
+            name: name.to_owned(),
+            ..GuildCreateFixture::new(guild_id)
+        }));
+    }
+    state.push_event(AppEvent::UserSettingsUpdate {
+        settings: UserSettingsInfo {
+            guild_folders: Some(vec![GuildFolder {
+                id: Some(42),
+                name: Some("folder".to_owned()),
+                color: None,
+                guild_ids: vec![Id::new(1), Id::new(2)],
+            }]),
+            ..UserSettingsInfo::default()
+        },
+    });
+    let mut clicks = MouseInputState::default();
+
+    let second_guild_row = state
+        .guild_pane_entries()
+        .iter()
+        .position(
+            |entry| matches!(entry, GuildPaneEntry::Guild { state, .. } if state.id == Id::new(2)),
+        )
+        .expect("second guild is visible");
+    let (column, row) = guild_row_target(&mut state, second_guild_row);
+    let result = handle_mouse_event(
+        &mut state,
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row),
+        dashboard_area(),
+        &mut clicks,
+    );
+    assert!(result.handled);
+    assert_eq!(state.selected_guild_id(), Some(Id::new(2)));
+    assert_eq!(state.focus(), FocusPane::Channels);
+
+    let folder_row = state
+        .guild_pane_entries()
+        .iter()
+        .position(|entry| matches!(entry, GuildPaneEntry::FolderHeader { .. }))
+        .expect("folder header is visible");
+    let folder_collapsed = |state: &DashboardState| {
+        matches!(
+            state.guild_pane_entries()[folder_row],
+            GuildPaneEntry::FolderHeader {
+                collapsed: true,
+                ..
+            }
+        )
+    };
+    let before = folder_collapsed(&state);
+    let (column, row) = guild_row_target(&mut state, folder_row);
+    let event = mouse(MouseEventKind::Down(MouseButton::Left), column, row);
+
+    handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
+    assert_eq!(folder_collapsed(&state), !before);
+    handle_mouse_event(&mut state, event, dashboard_area(), &mut clicks);
+    assert_eq!(folder_collapsed(&state), before);
+}

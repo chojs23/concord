@@ -329,6 +329,10 @@ impl DashboardState {
         self.options.display_options.hour_format_24
     }
 
+    pub fn single_click_open(&self) -> bool {
+        self.options.display_options.single_click_open
+    }
+
     pub fn show_images(&self) -> bool {
         self.options.display_options.images_visible()
     }

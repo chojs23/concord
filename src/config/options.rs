@@ -29,6 +29,8 @@ pub struct DisplayOptions {
     pub show_reaction_emoji: bool,
     pub circular_avatars: bool,
     pub hour_format_24: bool,
+    /// Open servers and channels with one click instead of a double click.
+    pub single_click_open: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -839,6 +841,7 @@ impl Default for DisplayOptions {
             show_reaction_emoji: true,
             circular_avatars: false,
             hour_format_24: true,
+            single_click_open: false,
         }
     }
 }
