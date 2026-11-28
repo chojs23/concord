@@ -107,7 +107,7 @@ pub fn handle_mouse_event(
         state.close_composer();
     }
 
-    let gesture = input.decode(mouse.kind, target);
+    let gesture = input.decode(mouse.kind, target, state.single_click_open());
     dispatch_gesture(
         state,
         area,
@@ -119,14 +119,19 @@ pub fn handle_mouse_event(
 }
 
 impl MouseInputState {
-    fn decode(&mut self, kind: MouseEventKind, target: Option<InteractionTarget>) -> MouseGesture {
+    fn decode(
+        &mut self,
+        kind: MouseEventKind,
+        target: Option<InteractionTarget>,
+        single_click_open: bool,
+    ) -> MouseGesture {
         match kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let Some(target) = target else {
                     self.clear_click_sequence();
                     return MouseGesture::Ignore;
                 };
-                if !supports_double_click(target) {
+                if !supports_double_click(target, single_click_open) {
                     self.clear_click_sequence();
                     return MouseGesture::Click(target);
                 }
@@ -228,9 +233,9 @@ fn handle_click(
             if !state.select_visible_pane_row(pane, row) {
                 return MouseEventResult::handled(None);
             }
-            let command = double_click
-                .then(|| activate_focused_target(state))
-                .flatten();
+            let activates =
+                double_click || (state.single_click_open() && opens_on_single_click(pane));
+            let command = activates.then(|| activate_focused_target(state)).flatten();
             MouseEventResult::handled(command)
         }
         InteractionTarget::ReactionChip { row, col } => {
@@ -418,11 +423,22 @@ fn handle_scroll(
     }
 }
 
-fn supports_double_click(target: InteractionTarget) -> bool {
-    matches!(
-        target,
-        InteractionTarget::PaneItem { .. } | InteractionTarget::PopupItem { .. }
-    )
+fn supports_double_click(target: InteractionTarget, single_click_open: bool) -> bool {
+    match target {
+        // With `single_click_open`, the first click already activates these
+        // rows. Treating the second click as a double click would activate
+        // them again, e.g. collapse a folder that the first click expanded.
+        InteractionTarget::PaneItem { pane, .. } => {
+            !(single_click_open && opens_on_single_click(pane))
+        }
+        InteractionTarget::PopupItem { .. } => true,
+        _ => false,
+    }
+}
+
+/// Panes whose rows open with one click when `single_click_open` is set.
+fn opens_on_single_click(pane: FocusPane) -> bool {
+    matches!(pane, FocusPane::Guilds | FocusPane::Channels)
 }
 
 fn interaction_pane(target: InteractionTarget) -> Option<FocusPane> {

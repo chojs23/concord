@@ -311,6 +311,9 @@ row movement keys are `SelectNext` and `SelectPrevious` and can be changed in
 | Double left click | Activate the selected item like `Enter`              |
 | Right click       | Open the clicked entry actions                       |
 
+Set `single_click_open = true` under `[display]` to open servers and channels
+with a single left click.
+
 #### Leader key
 
 Press `Space` to open the leader shortcut window.
@@ -459,6 +462,9 @@ circular_avatars = false
 
 # Show message times in 24-hour format (14:30) instead of 12-hour (02:30 PM).
 hour_format_24 = true
+
+# Open servers and channels with a single left click instead of a double click.
+single_click_open = false
 
 [composer]
 # Send custom emoji your account cannot use directly as image links.
